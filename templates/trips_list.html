@@ -61,12 +61,20 @@
     <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
     <div class="field"><label>From (Route)</label><input type="text" name="from_loc" value="{{ f_from }}" placeholder="e.g. Rourkela"></div>
     <div class="field"><label>To (Route)</label><input type="text" name="to_loc" value="{{ f_to }}" placeholder="e.g. Jajpur"></div>
+    <div class="field"><label>LR Number</label><input type="text" name="lr_number" value="{{ f_lr_number }}" placeholder="e.g. ATS-5984"></div>
     <div class="field">
       <label>Type</label>
       <select name="type"><option value="">All Types</option>
         <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
         <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
         <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Trip Status</label>
+      <select name="status"><option value="">All</option>
+        <option value="active" {% if f_status=='active' %}selected{% endif %}>Active</option>
+        <option value="completed" {% if f_status=='completed' %}selected{% endif %}>Completed</option>
       </select>
     </div>
     <div class="field">
@@ -84,6 +92,7 @@
     <div class="summary-card"><div class="lbl">Total Trips</div><div class="val">{{ total_count }}</div></div>
     <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(total_shown) }}</div></div>
     <div class="summary-card"><div class="lbl">Pending Balance</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(pending_total) }}</div></div>
+    <div class="summary-card"><div class="lbl">Active Trips</div><div class="val" style="color:var(--accent);">{{ active_count }}</div></div>
     <div class="summary-card"><div class="lbl">LR Received</div><div class="val" style="color:var(--green);">{{ lr_received_count }}</div></div>
     <div class="summary-card"><div class="lbl">LR Pending</div><div class="val" style="color:var(--red);">{{ lr_pending_count }}</div></div>
   </div>

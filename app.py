@@ -186,20 +186,17 @@ def get_or_create_vendor(conn, name):
     cur = conn.execute("INSERT INTO vendors (name) VALUES (?)", (name,))
     return cur.lastrowid
 
-@app.route('/accounts')
-def accounts():
-    conn = get_db()
-    search_f = request.args.get('search', '')
-    role_f = request.args.get('role', '')
-
-    parties_bal = conn.execute("""SELECT p.id, p.name, p.contact, p.email, p.address, p.credit_limit,
+def _accounts_rows(conn):
+    """Shared party+vendor balance list used by both the Ledger page and its export —
+    identical formula to what accounts()/dashboard() have always used, just factored out."""
+    parties_bal = conn.execute("""SELECT p.id, p.name, p.contact, p.email, p.address, p.credit_limit, p.category, p.gstin, p.status,
         (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE party_id=p.id) -
         (SELECT COALESCE(SUM(payment_received)+SUM(party_advance),0) FROM trips WHERE party_id=p.id) -
         (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE party_id=p.id AND payment_type='received') +
         COALESCE(p.opening_balance,0) as balance
         FROM parties p ORDER BY p.name""").fetchall()
 
-    vendors_bal = conn.execute("""SELECT v.id, v.name, v.contact, v.email, v.address, v.credit_limit,
+    vendors_bal = conn.execute("""SELECT v.id, v.name, v.contact, v.email, v.address, v.credit_limit, v.category, v.gstin, v.status,
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
@@ -209,25 +206,153 @@ def accounts():
         (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
         COALESCE(v.opening_balance,0) as balance
         FROM vendors v WHERE v.linked_party_id IS NULL ORDER BY v.name""").fetchall()
-    conn.close()
 
     rows = []
     for p in parties_bal:
         rows.append({'id': p['id'], 'name': p['name'], 'role': 'Party', 'balance': p['balance'] or 0,
-                      'contact': p['contact'], 'email': p['email'], 'address': p['address'], 'credit_limit': p['credit_limit']})
+                      'contact': p['contact'], 'email': p['email'], 'address': p['address'], 'credit_limit': p['credit_limit'],
+                      'group': p['category'] or '', 'gstin': p['gstin'], 'status': p['status'] or 'Active'})
     for v in vendors_bal:
         # Vendor's raw balance is costs-minus-paid (positive = we owe them).
         # Negate so positive consistently means "receivable" and negative means "payable", matching parties.
         rows.append({'id': v['id'], 'name': v['name'], 'role': 'Vendor', 'balance': -(v['balance'] or 0),
-                      'contact': v['contact'], 'email': v['email'], 'address': v['address'], 'credit_limit': v['credit_limit']})
+                      'contact': v['contact'], 'email': v['email'], 'address': v['address'], 'credit_limit': v['credit_limit'],
+                      'group': v['category'] or '', 'gstin': v['gstin'], 'status': v['status'] or 'Active'})
+    rows.sort(key=lambda r: r['name'])
+    return rows
 
+def _filter_accounts_rows(rows, search_f, role_f, group_f, status_f=''):
     if search_f:
-        rows = [r for r in rows if search_f.lower() in r['name'].lower()]
+        s = search_f.lower()
+        rows = [r for r in rows if s in r['name'].lower() or s in (r['contact'] or '').lower() or s in (r['email'] or '').lower()]
     if role_f:
         rows = [r for r in rows if r['role'] == role_f]
-    rows.sort(key=lambda r: r['name'])
+    if group_f:
+        rows = [r for r in rows if r['group'] == group_f]
+    if status_f:
+        rows = [r for r in rows if r['status'].lower() == status_f.lower()]
+    return rows
 
-    return render_template('home.html', rows=rows, f_search=search_f, f_role=role_f, active='accounts')
+@app.route('/accounts')
+def accounts():
+    conn = get_db()
+    search_f = request.args.get('search', '')
+    role_f = request.args.get('role', '')
+    group_f = request.args.get('group', '')
+    status_f = request.args.get('status', '')
+
+    all_rows = _accounts_rows(conn)
+    groups = sorted(set(r['group'] for r in all_rows if r['group']))
+    total_parties = sum(1 for r in all_rows if r['role'] == 'Party')
+    active_parties = sum(1 for r in all_rows if r['role'] == 'Party' and r['status'] == 'Active')
+    total_vendors = sum(1 for r in all_rows if r['role'] == 'Vendor')
+    active_vendors = sum(1 for r in all_rows if r['role'] == 'Vendor' and r['status'] == 'Active')
+    total_receivable = sum(r['balance'] for r in all_rows if r['balance'] > 0)
+    receivable_from = sum(1 for r in all_rows if r['balance'] > 0)
+    total_payable = sum(-r['balance'] for r in all_rows if r['balance'] < 0)
+    payable_to = sum(1 for r in all_rows if r['balance'] < 0)
+    net_balance = sum(r['balance'] for r in all_rows)
+
+    rows = _filter_accounts_rows(all_rows, search_f, role_f, group_f, status_f)
+    conn.close()
+
+    total_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+    # Tabs (All/Parties/Vendors) each set their own `role` — strip any existing role from the
+    # querystring they build on top of, otherwise clicking a tab appends a second role= param
+    # and request.args.get('role') keeps returning the *first* one, so tabs stop switching.
+    tab_params = dict(base_params)
+    tab_params.pop('role', None)
+    tab_qs = urlencode(tab_params)
+
+    return render_template('home.html', rows=page_rows, total_count=total_count,
+                            total_parties=total_parties, active_parties=active_parties,
+                            total_vendors=total_vendors, active_vendors=active_vendors,
+                            total_receivable=total_receivable, receivable_from=receivable_from,
+                            total_payable=total_payable, payable_to=payable_to, net_balance=net_balance,
+                            groups=groups, page=page, per_page=per_page, total_pages=total_pages,
+                            page_tokens=page_tokens, base_qs=base_qs, tab_qs=tab_qs,
+                            f_search=search_f, f_role=role_f, f_group=group_f, f_status=status_f, active='accounts')
+
+@app.route('/accounts/export')
+def export_accounts():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from flask import send_file
+    import io
+    conn = get_db()
+    rows = _filter_accounts_rows(_accounts_rows(conn), request.args.get('search', ''),
+                                  request.args.get('role', ''), request.args.get('group', ''), request.args.get('status', ''))
+    conn.close()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ledger"
+    headers = ["Name", "Type", "Group / Category", "Phone", "Email", "GSTIN", "Receivable", "Payable", "Balance", "Status"]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1B2A4A")
+    for r_idx, r in enumerate(rows, 2):
+        receivable = r['balance'] if r['balance'] > 0 else 0
+        payable = -r['balance'] if r['balance'] < 0 else 0
+        for c_idx, val in enumerate([r['name'], r['role'], r['group'], r['contact'] or '', r['email'] or '', r['gstin'] or '',
+                                      receivable, payable, r['balance'], r['status']], 1):
+            ws.cell(row=r_idx, column=c_idx, value=val)
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='ledger_export.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.route('/accounts/add', methods=['POST'])
+def add_account():
+    conn = get_db()
+    f = request.form
+    name = (f.get('name') or '').strip()
+    if not name:
+        conn.close()
+        return redirect(url_for('accounts'))
+    role = f.get('role', 'Party')
+    contact = f.get('contact') or None
+    email = f.get('email') or None
+    address = f.get('address') or None
+    category = f.get('category') or None
+    gstin = f.get('gstin') or None
+    credit_limit = float(f.get('credit_limit') or 0) or None
+    opening_balance = float(f.get('opening_balance') or 0)
+    try:
+        if role == 'Vendor':
+            conn.execute("""INSERT INTO vendors (name, category, contact, email, address, credit_limit, opening_balance, gstin)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                         (name, category, contact, email, address, credit_limit, opening_balance, gstin))
+        else:
+            conn.execute("""INSERT INTO parties (name, contact, email, address, credit_limit, opening_balance, category, gstin)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                         (name, contact, email, address, credit_limit, opening_balance, category, gstin))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+    conn.close()
+    return redirect(url_for('accounts'))
+
+@app.route('/accounts/<role>/<int:account_id>/toggle-status', methods=['POST'])
+def toggle_account_status(role, account_id):
+    conn = get_db()
+    table = 'vendors' if role == 'vendor' else 'parties'
+    current = conn.execute(f"SELECT status FROM {table} WHERE id=?", (account_id,)).fetchone()
+    new_status = 'Inactive' if (current and current['status'] == 'Active') else 'Active'
+    conn.execute(f"UPDATE {table} SET status=? WHERE id=?", (new_status, account_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('accounts', **request.args.to_dict()))
 
 @app.route('/')
 def home():
@@ -491,7 +616,9 @@ def trips_list():
     party_f = request.args.get('party', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    status_f = request.args.get('status', '')
     lr_f = request.args.get('lr_received', '')
+    lr_number_f = request.args.get('lr_number', '')
     from_f = request.args.get('from_loc', '')
     to_f = request.args.get('to_loc', '')
     type_f = request.args.get('type', '')
@@ -517,10 +644,17 @@ def trips_list():
     if date_to:
         query += " AND t.date <= ?"
         params.append(date_to)
+    if status_f == 'active':
+        query += " AND t.end_date IS NULL"
+    elif status_f == 'completed':
+        query += " AND t.end_date IS NOT NULL"
     if lr_f == 'received':
         query += " AND t.lr_received = 'Yes'"
     elif lr_f == 'not_received':
         query += " AND (t.lr_received IS NULL OR t.lr_received != 'Yes')"
+    if lr_number_f:
+        query += " AND t.lr_number LIKE ?"
+        params.append(f"%{lr_number_f}%")
     if from_f:
         query += " AND t.from_loc LIKE ?"
         params.append(f"%{from_f}%")
@@ -536,6 +670,7 @@ def trips_list():
     total_shown = conn.execute(f"SELECT COALESCE(SUM(t.billed_amount),0) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id {where_clause}", params).fetchone()[0]
     total_count = conn.execute(f"SELECT COUNT(*) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id {where_clause}", params).fetchone()[0]
     pending_total = conn.execute(f"SELECT COALESCE(SUM(t.billed_amount-COALESCE(t.payment_received,0)-COALESCE(t.party_advance,0)),0) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id {where_clause}", params).fetchone()[0]
+    active_count = conn.execute(f"SELECT COUNT(*) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id {where_clause} AND t.end_date IS NULL", params).fetchone()[0]
     lr_received_count = conn.execute(f"SELECT COUNT(*) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id {where_clause} AND t.lr_received='Yes'", params).fetchone()[0]
     lr_pending_count = total_count - lr_received_count
 
@@ -558,11 +693,12 @@ def trips_list():
     page_tokens = _page_tokens(page, total_pages)
 
     return render_template('trips_list.html', trips=trips, total_shown=total_shown, total_count=total_count,
-                            pending_total=pending_total, lr_received_count=lr_received_count, lr_pending_count=lr_pending_count,
+                            pending_total=pending_total, active_count=active_count,
+                            lr_received_count=lr_received_count, lr_pending_count=lr_pending_count,
                             page=page, total_pages=total_pages, per_page=per_page, base_qs=base_qs, page_tokens=page_tokens,
                             vehicles=vehicles, parties=parties,
                             f_vehicle=vehicle_f, f_party=party_f, f_date_from=date_from, f_date_to=date_to,
-                            f_lr=lr_f, f_from=from_f, f_to=to_f, f_type=type_f, active='trips')
+                            f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f, active='trips')
 
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
@@ -595,21 +731,19 @@ def add_trip():
 
         freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
 
-        total_charges = (n('driver_payment')+n('detention_charges')+n('gps_cost')+n('loading_charge')+
+        # Note: driver_payment ("Driver Bata") is no longer collected from this form — Driver Advance
+        # already covers driver payments, so this legacy field is left at its schema default (0) for
+        # new trips instead of being asked for twice.
+        total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
                           n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
                           n('weight_charges')+n('other_charges'))
         total_deductions = (n('brokerage')+n('builty_commission')+n('late_fees')+n('material_damage')+
                              n('shortage_amount')+n('tds')+n('other_deductions'))
         billed_amount = freight + total_charges - total_deductions
 
-        total_expense = (n('fuel_amount')+n('driver_adv_amount')+n('agent_commission')+n('builty_expense')+
-                          n('conductor_expense')+n('fine')+n('labour_charges')+n('parking')+n('puncture')+
-                          n('toll')+n('urea')+n('loading_expense')+n('unloading_expense')+n('wear_tear')+
-                          n('weighbridge_charges')+n('other_expense'))
-
         cols = ['date','lr_number','vehicle_id','type','party_id','from_loc','to_loc','quantity','rate',
                 'driver_name','material','rate_type','billed_amount',
-                'driver_payment','detention_charges','gps_cost','loading_charge','unloading_charge',
+                'detention_charges','gps_cost','loading_charge','unloading_charge',
                 'police_charges','sim_tracking','union_charges','weight_charges','other_charges',
                 'brokerage','builty_commission','late_fees','material_damage','shortage_amount','shortage_qty','tds','other_deductions',
                 'fuel_amount','fuel_vendor_id','driver_adv_amount','driver_adv_vendor_id','party_advance','payment_received',
@@ -619,7 +753,7 @@ def add_trip():
                 'lr_received']
         vals = [f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
                 quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
-                n('driver_payment'), n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
+                n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
                 n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
                 n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
                 n('shortage_qty'), n('tds'), n('other_deductions'),
@@ -630,7 +764,8 @@ def add_trip():
                 n('wear_tear'), n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
                 f.get('lr_received') or None]
         placeholders = ','.join('?' * len(cols))
-        conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
+        cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
+        _save_trip_custom_items(conn, cur.lastrowid, f)
         conn.commit()
         conn.close()
         return redirect(url_for('trips_list'))
@@ -639,7 +774,34 @@ def add_trip():
     conn2 = get_db()
     employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
     conn2.close()
-    return render_template('add_trip.html', vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names, employees=employees, active='trips')
+    return render_template('trip_form.html', mode='add', t={}, custom_items=[],
+                            vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
+                            employees=employees, active='trips')
+
+def _save_trip_custom_items(conn, trip_id, form):
+    """Replace a trip's custom "Others" line items (stored in invoice_items, the same table the
+    per-trip invoice editor already uses) from the submitted other_desc/other_type/other_rate/other_qty
+    rows. Amount stored is rate*qty — the invoice-facing table only keeps the final amount."""
+    conn.execute("DELETE FROM invoice_items WHERE trip_id=?", (trip_id,))
+    descs = form.getlist('other_desc')
+    types = form.getlist('other_type')
+    rates = form.getlist('other_rate')
+    qtys = form.getlist('other_qty')
+    for i, desc in enumerate(descs):
+        desc = (desc or '').strip()
+        if not desc:
+            continue
+        try:
+            rate = float(rates[i]) if i < len(rates) and rates[i] else 0
+        except ValueError:
+            rate = 0
+        try:
+            qty = float(qtys[i]) if i < len(qtys) and qtys[i] else 1
+        except ValueError:
+            qty = 1
+        item_type = types[i] if i < len(types) and types[i] in ('charge', 'deduction') else 'charge'
+        conn.execute("INSERT INTO invoice_items (trip_id, description, amount, item_type) VALUES (?,?,?,?)",
+                     (trip_id, desc, rate * (qty or 1), item_type))
 
 def _get_autocomplete_lists():
     conn = get_db()
@@ -745,6 +907,65 @@ def _filter_entries_by_date(entries, date_from, date_to):
         entries = [e for e in entries if (e['date'] or '') <= date_to]
     return entries
 
+def _filter_ledger_entries(entries, date_from, date_to, kind_f='', vtype_f=''):
+    """Same date filtering as before, plus the new Transaction Type (kind) and vehicle Type filters —
+    purely narrowing which already-computed entries are shown; none of their debit/credit/balance
+    math is touched here."""
+    entries = _filter_entries_by_date(entries, date_from, date_to)
+    if kind_f:
+        entries = [e for e in entries if e.get('kind') == kind_f]
+    if vtype_f:
+        entries = [e for e in entries if e.get('vehicle_type') == vtype_f]
+    return entries
+
+def _ledger_export_entries(all_entries):
+    """Applies the same date/Transaction-Type/vehicle-Type/tab filters the page view uses, so an
+    export always matches whatever the user currently has filtered — reads straight from the
+    querystring since every export route is a plain GET with the same filter param names as the page."""
+    entries = _filter_ledger_entries(all_entries, request.args.get('date_from', ''), request.args.get('date_to', ''),
+                                      request.args.get('txn_type', ''), request.args.get('type', ''))
+    entries = _tab_filter_entries(entries, request.args.get('tab', ''))
+    return entries
+
+def _tab_filter_entries(entries, tab_f):
+    if tab_f == 'receivables':
+        return [e for e in entries if e['debit'] > 0]
+    if tab_f == 'payables':
+        return [e for e in entries if e['credit'] > 0]
+    return entries
+
+def _ledger_page_context(all_entries):
+    """Shared filter/tab/pagination handling for both party_ledger() and vendor_ledger()."""
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    kind_f = request.args.get('txn_type', '')
+    vtype_f = request.args.get('type', '')
+    tab_f = request.args.get('tab', '')
+
+    entries = _filter_ledger_entries(all_entries, date_from, date_to, kind_f, vtype_f)
+    entries = _tab_filter_entries(entries, tab_f)
+
+    total_count = len(entries)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_entries = entries[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+    tab_params = dict(base_params)
+    tab_params.pop('tab', None)
+    tab_qs = urlencode(tab_params)
+
+    return {
+        'entries': page_entries, 'total_count': total_count, 'page': page, 'per_page': per_page,
+        'total_pages': total_pages, 'page_tokens': page_tokens, 'base_qs': base_qs, 'tab_qs': tab_qs,
+        'f_date_from': date_from, 'f_date_to': date_to, 'f_txn_type': kind_f, 'f_type': vtype_f, 'f_tab': tab_f or 'all',
+    }
+
 @app.route('/ledger/party/<int:party_id>')
 def party_ledger(party_id):
     conn = get_db()
@@ -761,18 +982,16 @@ def party_ledger(party_id):
     total_pending_trips = sum(t['pending'] for t in pending_trips)
     all_entries = _get_party_ledger_entries(party_id)
     final_balance = all_entries[0]['balance'] if all_entries else 0
+    ctx = _ledger_page_context(all_entries)
 
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-    entries = _filter_entries_by_date(all_entries, date_from, date_to)
-
-    return render_template('ledger.html', name=party['name'], role='Party', entries=entries,
+    return render_template('ledger.html', name=party['name'], role='Party',
                             final_balance=final_balance, payment_url=f'/payment/party/{party_id}', export_url=f'/ledger/party/{party_id}/export',
                             entity_id=party_id, entity_type='party', address=party['address'], contact=party['contact'],
                             email=party['email'], credit_limit=party['credit_limit'], since_date=party['since_date'],
                             opening_balance=party['opening_balance'], opening_balance_date=party['opening_balance_date'],
+                            gstin=party['gstin'], category=party['category'], status=party['status'] or 'Active',
                             pending_trips=pending_trips, total_pending_trips=total_pending_trips,
-                            f_date_from=date_from, f_date_to=date_to, active='accounts')
+                            active='accounts', **ctx)
 
 @app.route('/ledger/vendor/<int:vendor_id>')
 def vendor_ledger(vendor_id):
@@ -794,18 +1013,16 @@ def vendor_ledger(vendor_id):
     total_pending_trips = sum(t['pending'] for t in pending_trips)
     all_entries = _get_vendor_ledger_entries(vendor_id)
     final_balance = all_entries[0]['balance'] if all_entries else 0
+    ctx = _ledger_page_context(all_entries)
 
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-    entries = _filter_entries_by_date(all_entries, date_from, date_to)
-
-    return render_template('ledger.html', name=vendor['name'], role='Vendor', entries=entries,
+    return render_template('ledger.html', name=vendor['name'], role='Vendor',
                             final_balance=final_balance, payment_url=f'/payment/vendor/{vendor_id}', export_url=f'/ledger/vendor/{vendor_id}/export',
                             entity_id=vendor_id, entity_type='vendor', address=vendor['address'], contact=vendor['contact'],
                             email=vendor['email'], credit_limit=vendor['credit_limit'], since_date=vendor['since_date'],
                             opening_balance=vendor['opening_balance'], opening_balance_date=vendor['opening_balance_date'],
+                            gstin=vendor['gstin'], category=vendor['category'], status=vendor['status'] or 'Active',
                             pending_trips=pending_trips, total_pending_trips=total_pending_trips,
-                            f_date_from=date_from, f_date_to=date_to, active='accounts')
+                            active='accounts', **ctx)
 
 def _export_ledger_entries(name, entries):
     from openpyxl import Workbook
@@ -815,21 +1032,29 @@ def _export_ledger_entries(name, entries):
     wb = Workbook()
     ws = wb.active
     ws.title = "Ledger"
-    headers = ["Date","Detail","Debit","Credit","Balance"]
+    headers = ["Date","Type","Detail","Ref / Document","Debit","Credit","Balance"]
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=1, column=i, value=h)
         c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1B2A4A")
     for r_idx, e in enumerate(entries, 2):
         ws.cell(row=r_idx, column=1, value=e['date'])
-        ws.cell(row=r_idx, column=2, value=e['detail'])
-        ws.cell(row=r_idx, column=3, value=e['debit'] or None)
-        ws.cell(row=r_idx, column=4, value=e['credit'] or None)
-        ws.cell(row=r_idx, column=5, value=e['balance'])
+        ws.cell(row=r_idx, column=2, value=e.get('kind', ''))
+        ws.cell(row=r_idx, column=3, value=e['detail'])
+        ws.cell(row=r_idx, column=4, value=e.get('ref', ''))
+        ws.cell(row=r_idx, column=5, value=e['debit'] or None)
+        ws.cell(row=r_idx, column=6, value=e['credit'] or None)
+        ws.cell(row=r_idx, column=7, value=e['balance'])
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
     safe_name = "".join(c for c in name if c.isalnum() or c in " _-")[:40]
     return send_file(buf, as_attachment=True, download_name=f'ledger_{safe_name}.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+def _lr_label(lr_number, trip_id):
+    """LR numbers in this data are sometimes stored already prefixed with '#' — avoid stacking a second one."""
+    val = lr_number or trip_id
+    val = str(val)
+    return val if val.startswith('#') else f"#{val}"
 
 def _payment_base_detail(p, label):
     parts = [label]
@@ -845,7 +1070,7 @@ def _payment_base_detail(p, label):
 def _get_party_ledger_entries(party_id):
     conn = get_db()
     party = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM parties WHERE id=?", (party_id,)).fetchone()
-    trips = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount, payment_received, party_advance
+    trips = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount, payment_received, party_advance, type
                              FROM trips WHERE party_id=? ORDER BY date""", (party_id,)).fetchall()
     # How much of each trip's payment_received came from a ledger payment allocation (vs. being
     # recorded directly on the trip itself) — so the trip's own row isn't inflated with money
@@ -854,6 +1079,12 @@ def _get_party_ledger_entries(party_id):
     for row in conn.execute("""SELECT pa.trip_id, SUM(pa.amount) as amt FROM payment_allocations pa
                                JOIN trips t ON pa.trip_id=t.id WHERE t.party_id=? GROUP BY pa.trip_id""", (party_id,)).fetchall():
         trip_alloc[row['trip_id']] = row['amt'] or 0
+    # Real invoice number for a trip, if one's been generated yet — shown in Ref/Document ahead
+    # of the LR number, since that's the more official document once it exists.
+    trip_invoice_no = {}
+    for row in conn.execute("SELECT trip_id, invoice_number FROM invoices WHERE trip_id IS NOT NULL").fetchall():
+        if row['invoice_number']:
+            trip_invoice_no[row['trip_id']] = row['invoice_number']
     payments = conn.execute("""SELECT id, date, amount, allocated_amount, mode, reference_id, remarks FROM payments
                                 WHERE party_id=? AND payment_type='received' ORDER BY date""", (party_id,)).fetchall()
     linked_vendor = conn.execute("SELECT id FROM vendors WHERE linked_party_id=?", (party_id,)).fetchone()
@@ -861,21 +1092,23 @@ def _get_party_ledger_entries(party_id):
     if party and party['opening_balance']:
         ob = party['opening_balance']
         entries.append({'date': party['opening_balance_date'] or party['since_date'] or '', 'detail': 'Opening Balance',
-                         'debit': max(ob, 0), 'credit': max(-ob, 0)})
+                         'debit': max(ob, 0), 'credit': max(-ob, 0), 'kind': 'Opening Balance', 'ref': '', 'vehicle_type': ''})
     for t in trips:
         original_received = (t['payment_received'] or 0) - trip_alloc.get(t['id'], 0)
-        entries.append({'date': t['date'], 'detail': f"{t['lr_number']}: {t['from_loc']} -> {t['to_loc']}",
-                         'debit': t['billed_amount'] or 0, 'credit': original_received + (t['party_advance'] or 0)})
+        entries.append({'date': t['date'], 'detail': f"Trip: {_lr_label(t['lr_number'], t['id'])} — {t['from_loc']} → {t['to_loc']}",
+                         'debit': t['billed_amount'] or 0, 'credit': original_received + (t['party_advance'] or 0),
+                         'kind': 'Trip Bill', 'ref': trip_invoice_no.get(t['id']) or t['lr_number'] or '', 'vehicle_type': t['type'] or ''})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment received')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
                                  JOIN trips t ON pa.trip_id=t.id WHERE pa.payment_id=? ORDER BY pa.id""", (p['id'],)).fetchall()
         for a in allocs:
             entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to {a['lr_number'] or 'trip'}",
-                             'debit': 0, 'credit': a['amount']})
+                             'debit': 0, 'credit': a['amount'], 'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
         leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
         if leftover > 0.004 or not allocs:
-            entries.append({'date': p['date'], 'detail': base_detail, 'debit': 0, 'credit': max(leftover, 0)})
+            entries.append({'date': p['date'], 'detail': base_detail, 'debit': 0, 'credit': max(leftover, 0),
+                             'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
     conn.close()
     if linked_vendor:
         # Same organization also acts as a vendor (fuel/maintenance/owner-hire) — pull those in too,
@@ -883,7 +1116,8 @@ def _get_party_ledger_entries(party_id):
         vendor_entries = _get_vendor_ledger_entries(linked_vendor['id'])
         for ve in vendor_entries:
             entries.append({'date': ve['date'], 'detail': ve['detail'] + ' (vendor side)',
-                             'debit': ve['debit'], 'credit': ve['credit']})
+                             'debit': ve['debit'], 'credit': ve['credit'],
+                             'kind': ve.get('kind', 'Expense Adj.'), 'ref': ve.get('ref', ''), 'vehicle_type': ve.get('vehicle_type', '')})
     entries.sort(key=lambda x: x['date'] or '')
     balance = 0
     for e in entries:
@@ -897,9 +1131,9 @@ def _get_vendor_ledger_entries(vendor_id):
     vendor = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM vendors WHERE id=?", (vendor_id,)).fetchone()
     maint = conn.execute("""SELECT date, category, amount, paid_amount FROM maintenance
                              WHERE vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
-    fuel = conn.execute("""SELECT date, fuel_amount FROM trips WHERE fuel_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
-    adv = conn.execute("""SELECT date, driver_adv_amount FROM trips WHERE driver_adv_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
-    owner_trips = conn.execute("""SELECT id, date, lr_number, rate_type, fixed_rate_amount, owner_rate, quantity, paid_to_owner
+    fuel = conn.execute("""SELECT date, fuel_amount, type FROM trips WHERE fuel_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
+    adv = conn.execute("""SELECT date, driver_adv_amount, type FROM trips WHERE driver_adv_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
+    owner_trips = conn.execute("""SELECT id, date, lr_number, rate_type, fixed_rate_amount, owner_rate, quantity, paid_to_owner, type
                                   FROM trips WHERE owner_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
     # Ledger-allocated portion of each owner-hire trip's paid_to_owner (see party-side comment above).
     trip_alloc = {}
@@ -912,30 +1146,35 @@ def _get_vendor_ledger_entries(vendor_id):
     if vendor and vendor['opening_balance']:
         ob = vendor['opening_balance']
         entries.append({'date': vendor['opening_balance_date'] or vendor['since_date'] or '', 'detail': 'Opening Balance',
-                         'debit': max(ob, 0), 'credit': max(-ob, 0)})
+                         'debit': max(ob, 0), 'credit': max(-ob, 0), 'kind': 'Opening Balance', 'ref': '', 'vehicle_type': ''})
     for m in maint:
         entries.append({'date': m['date'], 'detail': f"Maintenance: {m['category']}",
-                         'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0})
+                         'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': ''})
     for f in fuel:
-        entries.append({'date': f['date'], 'detail': 'Fuel', 'debit': 0, 'credit': f['fuel_amount'] or 0})
+        entries.append({'date': f['date'], 'detail': 'Fuel', 'debit': 0, 'credit': f['fuel_amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': f['type'] or ''})
     for a in adv:
-        entries.append({'date': a['date'], 'detail': 'Driver Advance', 'debit': 0, 'credit': a['driver_adv_amount'] or 0})
+        entries.append({'date': a['date'], 'detail': 'Driver Advance', 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': a['type'] or ''})
     for o in owner_trips:
         owed = o['fixed_rate_amount'] if o['rate_type']=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
             original_paid = (o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0)
-            entries.append({'date': o['date'], 'detail': f"Vehicle hire: {o['lr_number']}",
-                             'debit': original_paid, 'credit': owed})
+            entries.append({'date': o['date'], 'detail': f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire",
+                             'debit': original_paid, 'credit': owed,
+                             'kind': 'Trip Bill', 'ref': o['lr_number'] or '', 'vehicle_type': o['type'] or ''})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment made')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
                                  JOIN trips t ON pa.trip_id=t.id WHERE pa.payment_id=? ORDER BY pa.id""", (p['id'],)).fetchall()
         for a in allocs:
             entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to {a['lr_number'] or 'trip'}",
-                             'debit': a['amount'], 'credit': 0})
+                             'debit': a['amount'], 'credit': 0, 'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
         leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
         if leftover > 0.004 or not allocs:
-            entries.append({'date': p['date'], 'detail': base_detail, 'debit': max(leftover, 0), 'credit': 0})
+            entries.append({'date': p['date'], 'detail': base_detail, 'debit': max(leftover, 0), 'credit': 0,
+                             'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
     conn.close()
     entries.sort(key=lambda x: x['date'] or '')
     balance = 0
@@ -951,7 +1190,7 @@ def export_party_ledger(party_id):
     party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
     conn.close()
     entries = _get_party_ledger_entries(party_id)
-    entries = _filter_entries_by_date(entries, request.args.get('date_from', ''), request.args.get('date_to', ''))
+    entries = _ledger_export_entries(entries)
     return _export_ledger_entries(party['name'], entries)
 
 @app.route('/ledger/vendor/<int:vendor_id>/export')
@@ -960,7 +1199,7 @@ def export_vendor_ledger(vendor_id):
     vendor = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
     conn.close()
     entries = _get_vendor_ledger_entries(vendor_id)
-    entries = _filter_entries_by_date(entries, request.args.get('date_from', ''), request.args.get('date_to', ''))
+    entries = _ledger_export_entries(entries)
     return _export_ledger_entries(vendor['name'], entries)
 
 def _export_ledger_pdf(name, entries, role='', contact='', email='', address=''):
@@ -995,18 +1234,18 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
         story.append(Paragraph(contact_line, label_style))
     story.append(Spacer(1, 14))
 
-    rows = [['Date', 'Detail', 'Debit (Rs.)', 'Credit (Rs.)', 'Balance (Rs.)']]
+    rows = [['Date', 'Type', 'Detail', 'Ref', 'Debit (Rs.)', 'Credit (Rs.)', 'Balance (Rs.)']]
     for e in entries:
-        rows.append([e['date'] or '', e['detail'] or '',
+        rows.append([e['date'] or '', e.get('kind', ''), e['detail'] or '', e.get('ref', ''),
                      f"{e['debit']:,.0f}" if e['debit'] else '', f"{e['credit']:,.0f}" if e['credit'] else '',
                      f"{e['balance']:,.0f}"])
-    t = Table(rows, colWidths=[0.9*inch, 2.9*inch, 1*inch, 1*inch, 1*inch])
+    t = Table(rows, colWidths=[0.75*inch, 0.85*inch, 2.15*inch, 0.85*inch, 0.85*inch, 0.85*inch, 0.9*inch])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A4A')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8.5),
-        ('ALIGN', (2,0), (4,-1), 'RIGHT'),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('ALIGN', (4,0), (6,-1), 'RIGHT'),
         ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#DDE3EC')),
         ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5),
     ]))
@@ -1022,7 +1261,7 @@ def export_party_ledger_pdf(party_id):
     party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
     conn.close()
     entries = _get_party_ledger_entries(party_id)
-    entries = _filter_entries_by_date(entries, request.args.get('date_from', ''), request.args.get('date_to', ''))
+    entries = _ledger_export_entries(entries)
     return _export_ledger_pdf(party['name'], entries, role='Party', contact=party['contact'] or '', email=party['email'] or '', address=party['address'] or '')
 
 @app.route('/ledger/vendor/<int:vendor_id>/export/pdf')
@@ -1031,7 +1270,7 @@ def export_vendor_ledger_pdf(vendor_id):
     vendor = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
     conn.close()
     entries = _get_vendor_ledger_entries(vendor_id)
-    entries = _filter_entries_by_date(entries, request.args.get('date_from', ''), request.args.get('date_to', ''))
+    entries = _ledger_export_entries(entries)
     return _export_ledger_pdf(vendor['name'], entries, role='Vendor', contact=vendor['contact'] or '', email=vendor['email'] or '', address=vendor['address'] or '')
 
 @app.route('/payment/party/<int:party_id>', methods=['GET', 'POST'])
@@ -1277,9 +1516,11 @@ def export_trips():
     party_f = request.args.get('party', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    status_f = request.args.get('status', '')
     lr_f = request.args.get('lr_received', '')
+    lr_number_f = request.args.get('lr_number', '')
     query = """SELECT t.date, t.lr_number, v.vehicle_no, p.name as party_name,
-               t.from_loc, t.to_loc, t.billed_amount, t.lr_received
+               t.from_loc, t.to_loc, t.billed_amount, t.lr_received, t.end_date
                FROM trips t LEFT JOIN vehicles v ON t.vehicle_id = v.id
                LEFT JOIN parties p ON t.party_id = p.id WHERE 1=1"""
     params = []
@@ -1287,8 +1528,11 @@ def export_trips():
     if party_f: query += " AND p.name LIKE ?"; params.append(f"%{party_f}%")
     if date_from: query += " AND t.date >= ?"; params.append(date_from)
     if date_to: query += " AND t.date <= ?"; params.append(date_to)
+    if status_f == 'active': query += " AND t.end_date IS NULL"
+    elif status_f == 'completed': query += " AND t.end_date IS NOT NULL"
     if lr_f == 'received': query += " AND t.lr_received = 'Yes'"
     elif lr_f == 'not_received': query += " AND (t.lr_received IS NULL OR t.lr_received != 'Yes')"
+    if lr_number_f: query += " AND t.lr_number LIKE ?"; params.append(f"%{lr_number_f}%")
     query += " ORDER BY t.date DESC"
     rows = conn.execute(query, params).fetchall()
     conn.close()
@@ -1296,12 +1540,13 @@ def export_trips():
     wb = Workbook()
     ws = wb.active
     ws.title = "Trips"
-    headers = ["Date","LR Number","Vehicle","Party","From","To","Billed Amount","LR Received"]
+    headers = ["Date","LR Number","Vehicle","Party","From","To","Billed Amount","LR Received","Trip Status"]
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=1, column=i, value=h)
         c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1B2A4A")
     for r_idx, row in enumerate(rows, 2):
-        for c_idx, val in enumerate(row, 1):
+        vals = list(row)[:-2] + ['Yes' if row['lr_received'] == 'Yes' else 'No', 'Completed' if row['end_date'] else 'Active']
+        for c_idx, val in enumerate(vals, 1):
             ws.cell(row=r_idx, column=c_idx, value=val)
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
@@ -1322,9 +1567,11 @@ def export_trips_pdf():
     party_f = request.args.get('party', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    status_f = request.args.get('status', '')
     lr_f = request.args.get('lr_received', '')
+    lr_number_f = request.args.get('lr_number', '')
     query = """SELECT t.date, t.lr_number, v.vehicle_no, p.name as party_name,
-               t.from_loc, t.to_loc, t.billed_amount, t.lr_received
+               t.from_loc, t.to_loc, t.billed_amount, t.lr_received, t.end_date
                FROM trips t LEFT JOIN vehicles v ON t.vehicle_id = v.id
                LEFT JOIN parties p ON t.party_id = p.id WHERE 1=1"""
     params = []
@@ -1332,8 +1579,11 @@ def export_trips_pdf():
     if party_f: query += " AND p.name LIKE ?"; params.append(f"%{party_f}%")
     if date_from: query += " AND t.date >= ?"; params.append(date_from)
     if date_to: query += " AND t.date <= ?"; params.append(date_to)
+    if status_f == 'active': query += " AND t.end_date IS NULL"
+    elif status_f == 'completed': query += " AND t.end_date IS NOT NULL"
     if lr_f == 'received': query += " AND t.lr_received = 'Yes'"
     elif lr_f == 'not_received': query += " AND (t.lr_received IS NULL OR t.lr_received != 'Yes')"
+    if lr_number_f: query += " AND t.lr_number LIKE ?"; params.append(f"%{lr_number_f}%")
     query += " ORDER BY t.date DESC"
     rows = conn.execute(query, params).fetchall()
     conn.close()
@@ -1344,14 +1594,15 @@ def export_trips_pdf():
     title_style = ParagraphStyle('T', parent=styles['Heading1'], fontSize=15, textColor=colors.HexColor('#1B2A4A'))
     story = [Paragraph("Trips — Filtered View", title_style), Spacer(1, 10)]
 
-    table_rows = [['Date', 'LR Number', 'Vehicle', 'Party', 'From', 'To', 'Billed (Rs.)', 'LR Received']]
+    table_rows = [['Date', 'LR Number', 'Vehicle', 'Party', 'From', 'To', 'Billed (Rs.)', 'LR Recv.', 'Status']]
     total_billed = 0
     for r in rows:
         total_billed += r['billed_amount'] or 0
         table_rows.append([r['date'] or '', r['lr_number'] or '', r['vehicle_no'] or '', r['party_name'] or '',
                             r['from_loc'] or '', r['to_loc'] or '', f"{r['billed_amount'] or 0:,.0f}",
-                            'Yes' if r['lr_received']=='Yes' else 'No'])
-    t = Table(table_rows, colWidths=[0.8*inch, 1*inch, 0.9*inch, 1.6*inch, 1.7*inch, 1.7*inch, 1*inch, 0.9*inch], repeatRows=1)
+                            'Yes' if r['lr_received'] == 'Yes' else 'No',
+                            'Completed' if r['end_date'] else 'Active'])
+    t = Table(table_rows, colWidths=[0.75*inch, 0.9*inch, 0.8*inch, 1.4*inch, 1.5*inch, 1.5*inch, 0.9*inch, 0.7*inch, 0.8*inch], repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A4A')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
@@ -2701,8 +2952,10 @@ def update_contact(entity_type, entity_id):
     conn = get_db()
     f = request.form
     table = 'parties' if entity_type == 'party' else 'vendors'
-    conn.execute(f"UPDATE {table} SET address=?, contact=?, email=?, credit_limit=? WHERE id=?",
-                 (f.get('address'), f.get('contact'), f.get('email'), f.get('credit_limit') or None, entity_id))
+    status = f.get('status') if f.get('status') in ('Active', 'Inactive') else 'Active'
+    conn.execute(f"UPDATE {table} SET address=?, contact=?, email=?, credit_limit=?, gstin=?, category=?, status=? WHERE id=?",
+                 (f.get('address'), f.get('contact'), f.get('email'), f.get('credit_limit') or None,
+                  f.get('gstin') or None, f.get('category') or None, status, entity_id))
     conn.commit()
     conn.close()
     if entity_type == 'party':
@@ -3363,13 +3616,16 @@ def edit_trip(trip_id):
         party_id = get_or_create_party(conn, f.get('party_name'))
         fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
         driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
+        misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
 
         quantity = n('quantity')
         rate = n('rate')
         rate_type = f.get('rate_type')
         fixed_rate_amount = n('fixed_rate_amount')
         freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
-        total_charges = (n('driver_payment')+n('detention_charges')+n('gps_cost')+n('loading_charge')+
+        # driver_payment ("Driver Bata") no longer has a form field — deliberately left out of both
+        # the recompute and the UPDATE below so an existing trip's historical value is never touched.
+        total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
                           n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
                           n('weight_charges')+n('other_charges'))
         total_deductions = (n('brokerage')+n('builty_commission')+n('late_fees')+n('material_damage')+
@@ -3381,18 +3637,18 @@ def edit_trip(trip_id):
         conn.execute("""UPDATE trips SET
             date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, rate=?,
             driver_name=?, material=?, rate_type=?, billed_amount=?,
-            driver_payment=?, detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
+            detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
             police_charges=?, sim_tracking=?, union_charges=?, weight_charges=?, other_charges=?,
             brokerage=?, builty_commission=?, late_fees=?, material_damage=?, shortage_amount=?, shortage_qty=?, tds=?, other_deductions=?,
             fuel_amount=?, driver_adv_amount=?, party_advance=?, payment_received=?, fuel_vendor_id=?, driver_adv_vendor_id=?,
             owner_name=?, fixed_rate_amount=?, owner_rate=?, paid_to_owner=?, owner_vendor_id=?,
             agent_commission=?, builty_expense=?, conductor_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
-            toll=?, urea=?, loading_expense=?, unloading_expense=?, wear_tear=?, weighbridge_charges=?, other_expense=?,
+            toll=?, urea=?, loading_expense=?, unloading_expense=?, wear_tear=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
             lr_received=?
             WHERE id=?""",
             (f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
              quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
-             n('driver_payment'), n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
+             n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
              n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
              n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
              n('shortage_qty'), n('tds'), n('other_deductions'),
@@ -3400,26 +3656,36 @@ def edit_trip(trip_id):
              f.get('owner_name'), fixed_rate_amount, n('owner_rate'), n('paid_to_owner'), owner_vendor_id,
              n('agent_commission'), n('builty_expense'), n('conductor_expense'), n('fine'), n('labour_charges'),
              n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
-             n('wear_tear'), n('weighbridge_charges'), n('other_expense'),
+             n('wear_tear'), n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
              f.get('lr_received') or None, trip_id))
+        _save_trip_custom_items(conn, trip_id, f)
         conn.commit()
         conn.close()
         return redirect(url_for('trips_list'))
 
     trip = conn.execute("""SELECT t.*, v.vehicle_no, p.name as party_name,
-                           fv.name as fuel_vendor_name, dv.name as driveradv_vendor_name
+                           fv.name as fuel_vendor_name, dv.name as driveradv_vendor_name, mv.name as misc_vendor_name
                            FROM trips t
                            LEFT JOIN vehicles v ON t.vehicle_id=v.id
                            LEFT JOIN parties p ON t.party_id=p.id
                            LEFT JOIN vendors fv ON t.fuel_vendor_id=fv.id
                            LEFT JOIN vendors dv ON t.driver_adv_vendor_id=dv.id
+                           LEFT JOIN vendors mv ON t.misc_vendor_id=mv.id
                            WHERE t.id=?""", (trip_id,)).fetchone()
+    if not trip:
+        conn.close()
+        return redirect(url_for('trips_list'))
+    custom_item_rows = conn.execute("SELECT description, amount, item_type FROM invoice_items WHERE trip_id=?", (trip_id,)).fetchall()
+    custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1}
+                     for r in custom_item_rows]
     conn.close()
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
     conn2 = get_db()
     employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
     conn2.close()
-    return render_template('edit_trip.html', t=trip, combined_names=combined_names, employees=employees, active='trips')
+    return render_template('trip_form.html', mode='edit', t=dict(trip), custom_items=custom_items,
+                            vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
+                            employees=employees, active='trips')
 
 @app.route('/business-performance')
 def business_performance():

@@ -1,54 +1,166 @@
 {% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
 {% block title %}Ledger{% endblock %}
 {% block extra_head %}
 <style>
-  .cols { display: grid; grid-template-columns: 1fr; }
-  .summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }
-  .summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
-  .summary-card .lbl { font-size:0.78rem; color:var(--steel); }
-  .summary-card .val { font-size:1.3rem; font-weight:700; margin-top:2px; }
-  .type-pill { display:inline-block; padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+  .lg-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:4px; flex-wrap:wrap; }
+  .lg-head .sub { color:var(--steel); font-size:0.9rem; }
+  .lg-head-actions { display:flex; gap:10px; flex-shrink:0; }
+  .lg-btn-outline { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:7px; }
+  .lg-btn-outline:hover { border-color:var(--accent); color:var(--accent); }
+  .lg-btn-primary { background:var(--accent); border:none; color:#fff; padding:10px 18px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
+  .lg-btn-primary:hover { opacity:0.92; }
+
+  .lg-filters { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:18px 0; display:grid; grid-template-columns:1.4fr 1fr 1fr 1fr auto; gap:14px; align-items:end; }
+  @media (max-width:1100px) { .lg-filters { grid-template-columns:1fr 1fr; } }
+  .lg-field label { display:block; font-size:0.72rem; font-weight:700; color:var(--ink); margin-bottom:6px; }
+  .lg-field input, .lg-field select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px; font-size:0.85rem; box-sizing:border-box; }
+  .lg-search-wrap { position:relative; }
+  .lg-search-wrap input { padding-left:32px; }
+  .lg-search-wrap .ic { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--steel); font-size:0.85rem; }
+
+  .lg-kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:6px; }
+  @media (max-width:1300px) { .lg-kpi-row { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px) { .lg-kpi-row { grid-template-columns:repeat(2,1fr); } }
+  .lg-kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:15px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+  .lg-kpi .lbl { font-size:0.78rem; color:var(--steel); margin-bottom:5px; }
+  .lg-kpi .val { font-size:1.35rem; font-weight:800; line-height:1; }
+  .lg-kpi .sub { font-size:0.72rem; color:var(--steel); margin-top:5px; }
+  .lg-kpi-icon { width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1rem; }
+
+  .lg-tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:18px 0 0; }
+  .lg-tab { padding:10px 4px; margin-right:22px; font-size:0.86rem; font-weight:600; color:var(--steel); text-decoration:none; border-bottom:2px solid transparent; }
+  .lg-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .lg-table-bar { display:flex; justify-content:flex-end; margin:14px 0 10px; }
+
+  .lg-type-pill { display:inline-block; padding:3px 11px; border-radius:10px; font-size:0.75rem; font-weight:700; }
+  .lg-status-pill { display:inline-block; padding:3px 11px; border-radius:10px; font-size:0.75rem; font-weight:700; background:#e8f5ee; color:var(--green); }
+  .lg-view-btn { background:none; border:1px solid var(--line); border-radius:6px; padding:5px 9px; cursor:pointer; color:var(--steel); }
+  .lg-view-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .lg-fin td { font-variant-numeric:tabular-nums; }
+  .lg-modal-box .fld { margin-bottom:13px; }
+  .lg-modal-box label { font-size:0.72rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; display:block; margin-bottom:4px; }
+  .lg-modal-box input, .lg-modal-box select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px; font-size:0.88rem; box-sizing:border-box; font-family:inherit; }
+  .lg-row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 </style>
 {% endblock %}
 {% block content %}
-<div class="wrap">
-  <h1>Ledger</h1>
-  <div style="color:var(--steel);font-size:0.9rem;margin-bottom:16px;">Every party and vendor, with their current balance. Click any row for their full history.</div>
+<div class="wrap" style="max-width:1500px;">
+  <div class="lg-head">
+    <div>
+      <h1 style="margin-bottom:2px;">Ledger</h1>
+      <div class="sub" style="font-weight:600;color:var(--ink);">Party &amp; Vendor Ledger</div>
+      <div class="sub">View and manage all parties and vendors with their current balances and transaction history.</div>
+    </div>
+    <div class="lg-head-actions">
+      <a class="lg-btn-outline" href="/accounts/export?{{ request.query_string.decode() }}">&#8681; Export</a>
+      <button type="button" class="lg-btn-primary" onclick="document.getElementById('addAccountModal').classList.add('open')">+ Add Party / Vendor</button>
+    </div>
+  </div>
 
-  <form class="filter-bar" method="GET">
-    <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Name, phone, email..."></div>
-    <div class="field">
-      <label>Type</label>
+  <form class="lg-filters" method="GET">
+    <div class="lg-field lg-search-wrap"><label>Search</label><span class="ic">&#128269;</span><input type="text" name="search" value="{{ f_search }}" placeholder="Name, phone, email..."></div>
+    <div class="lg-field"><label>Type</label>
       <select name="role">
-        <option value="">All</option>
+        <option value="">All (Party + Vendor)</option>
         <option value="Party" {% if f_role=='Party' %}selected{% endif %}>Party</option>
         <option value="Vendor" {% if f_role=='Vendor' %}selected{% endif %}>Vendor</option>
       </select>
     </div>
-    <button type="submit">Apply</button>
-    <a class="clear" href="/accounts">Clear</a>
+    <div class="lg-field"><label>Group / Category</label>
+      <select name="group">
+        <option value="">All</option>
+        {% for g in groups %}<option value="{{ g }}" {% if f_group==g %}selected{% endif %}>{{ g }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="lg-field"><label>Status</label>
+      <select name="status">
+        <option value="">All</option>
+        <option value="Active" {% if f_status=='Active' %}selected{% endif %}>Active</option>
+        <option value="Inactive" {% if f_status=='Inactive' %}selected{% endif %}>Inactive</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button type="submit" class="lg-btn-primary" style="padding:9px 16px;">Apply</button>
+      <a class="lg-btn-outline" href="/accounts">Clear</a>
+    </div>
   </form>
 
-  <div class="summary-cards">
-    <div class="summary-card"><div class="lbl">Total Parties</div><div class="val">{{ rows|selectattr('role','equalto','Party')|list|length }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Vendors</div><div class="val">{{ rows|selectattr('role','equalto','Vendor')|list|length }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Receivable</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(rows|selectattr('balance','gt',0)|sum(attribute='balance')) }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Payable</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format((rows|selectattr('balance','lt',0)|sum(attribute='balance'))|abs) }}</div></div>
+  <div class="lg-kpi-row">
+    <div class="lg-kpi"><div><div class="lbl">Total Parties</div><div class="val">{{ total_parties }}</div><div class="sub">Active {{ active_parties }}</div></div><div class="lg-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128101;</div></div>
+    <div class="lg-kpi"><div><div class="lbl">Total Vendors</div><div class="val">{{ total_vendors }}</div><div class="sub">Active {{ active_vendors }}</div></div><div class="lg-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#127970;</div></div>
+    <div class="lg-kpi"><div><div class="lbl">Total Receivable</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(total_receivable) }}</div><div class="sub">From {{ receivable_from }} parties</div></div><div class="lg-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128176;</div></div>
+    <div class="lg-kpi"><div><div class="lbl">Total Payable</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(total_payable) }}</div><div class="sub">To {{ payable_to }} vendors</div></div><div class="lg-kpi-icon" style="background:#fdecea;color:var(--red);">&#8681;</div></div>
+    <div class="lg-kpi"><div><div class="lbl">Net Balance</div><div class="val" style="color:{% if net_balance>=0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(net_balance) }}</div><div class="sub">Overall Position</div></div><div class="lg-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#9878;</div></div>
   </div>
 
-  <table>
-    <tr><th>Type</th><th>Name</th><th>Phone</th><th>Email</th><th class="num">Balance</th></tr>
+  <div class="lg-tabs">
+    <a class="lg-tab {{ 'active' if not f_role }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}role=">All</a>
+    <a class="lg-tab {{ 'active' if f_role=='Party' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}role=Party">Parties</a>
+    <a class="lg-tab {{ 'active' if f_role=='Vendor' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}role=Vendor">Vendors</a>
+  </div>
+
+  <div class="lg-table-bar">
+    <span style="color:var(--steel);font-size:0.85rem;">Showing {{ rows|length }} of {{ total_count }} entries</span>
+  </div>
+
+  {% if rows %}
+  <table class="lg-fin">
+    <tr><th>Name</th><th>Type</th><th>Group / Category</th><th>Phone</th><th>Email / GSTIN</th><th class="num">Receivable</th><th class="num">Payable</th><th class="num">Balance</th><th>Status</th><th>Action</th></tr>
     {% for r in rows %}
-    <tr class="clickable-row" onclick="goTo('/ledger/{{ 'party' if r['role']=='Party' else 'vendor' }}/{{ r['id'] }}')">
-      <td><span class="type-pill" style="background:{% if r['role']=='Party' %}#eaf1fb;color:#2a78d6{% else %}#e8f5ee;color:#1a9c5b{% endif %};">{{ r['role'] }}</span></td>
-      <td style="color:var(--accent);font-weight:500;">{{ r['name'] }}</td>
-      <td>{{ r['contact'] or '—' }}</td>
-      <td>{{ r['email'] or '—' }}</td>
-      <td class="num" style="font-weight:600;color:{% if r['balance'] > 0 %}var(--green){% elif r['balance'] < 0 %}var(--red){% else %}var(--steel){% endif %};">
-        ₹{{ '{:,.0f}'.format(r['balance']|abs) }}
+    <tr class="clickable-row" onclick="goTo('/ledger/{{ 'party' if r.role=='Party' else 'vendor' }}/{{ r.id }}')">
+      <td style="font-weight:600;">{{ r.name }}</td>
+      <td><span class="lg-type-pill" style="background:{% if r.role=='Party' %}#eaf1fb;color:#2a78d6{% else %}#fff3e8;color:var(--accent){% endif %};">{{ r.role }}</span></td>
+      <td>{{ r.group or '—' }}</td>
+      <td>{{ r.contact or '—' }}</td>
+      <td>{{ r.email or '—' }}{% if r.gstin %}<br><span style="color:var(--steel);font-size:0.76rem;">{{ r.gstin }}</span>{% endif %}</td>
+      <td class="num" style="color:var(--green);">{{ '₹{:,.0f}'.format(r.balance) if r.balance > 0 else '₹0' }}</td>
+      <td class="num" style="color:var(--red);">{{ '₹{:,.0f}'.format(-r.balance) if r.balance < 0 else '₹0' }}</td>
+      <td class="num" style="font-weight:700;color:{% if r.balance>0 %}var(--green){% elif r.balance<0 %}var(--red){% else %}var(--steel){% endif %};">{{ '-' if r.balance < 0 }}₹{{ '{:,.0f}'.format(r.balance|abs) }}</td>
+      <td><span class="lg-status-pill" style="{% if r.status!='Active' %}background:#f1f2f5;color:var(--steel);{% endif %}">{{ r.status }}</span></td>
+      <td onclick="event.stopPropagation();">
+        <form method="POST" action="/accounts/{{ 'party' if r.role=='Party' else 'vendor' }}/{{ r.id }}/toggle-status?{{ base_qs }}" style="display:inline;">
+          <button type="submit" class="lg-view-btn" title="{{ 'Deactivate' if r.status=='Active' else 'Activate' }}">{{ '&#128683;'|safe if r.status=='Active' else '&#9989;'|safe }}</button>
+        </form>
       </td>
     </tr>
     {% endfor %}
   </table>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:40px;background:var(--white);border:1px solid var(--line);border-radius:10px;">No parties or vendors match this filter.</div>
+  {% endif %}
+</div>
+
+<div class="modal-overlay" id="addAccountModal">
+  <div class="modal-box lg-modal-box" style="width:460px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addAccountModal').classList.remove('open')">&#10005;</button>
+    <h3 style="margin:0 0 16px;">Add Party / Vendor</h3>
+    <form method="POST" action="/accounts/add">
+      <div class="lg-row2">
+        <div class="fld"><label>Type</label>
+          <select name="role">
+            <option value="Party">Party</option>
+            <option value="Vendor">Vendor</option>
+          </select>
+        </div>
+        <div class="fld"><label>Group / Category</label><input type="text" name="category" placeholder="e.g. Steel Supplier, Transporter"></div>
+      </div>
+      <div class="fld"><label>Name</label><input type="text" name="name" required></div>
+      <div class="lg-row2">
+        <div class="fld"><label>Phone</label><input type="text" name="contact"></div>
+        <div class="fld"><label>Email</label><input type="email" name="email"></div>
+      </div>
+      <div class="lg-row2">
+        <div class="fld"><label>Address</label><input type="text" name="address"></div>
+        <div class="fld"><label>GSTIN</label><input type="text" name="gstin" placeholder="e.g. 21ABCDE1234F1Z5"></div>
+      </div>
+      <div class="lg-row2">
+        <div class="fld"><label>Credit Limit</label><input type="number" step="0.01" name="credit_limit"></div>
+        <div class="fld"><label>Opening Balance</label><input type="number" step="0.01" name="opening_balance"></div>
+      </div>
+      <button type="submit" class="modal-save-btn">Save</button>
+    </form>
+  </div>
 </div>
 {% endblock %}
