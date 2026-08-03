@@ -1,13 +1,9 @@
 {% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
 {% block title %}Maintenance{% endblock %}
 {% block extra_head %}
 <style>
-.modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
-.modal-overlay.open { display:flex; }
-.modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:480px; max-width:90vw; max-height:85vh; overflow-y:auto; }
-.format-choice { display:flex; gap:12px; margin-top:10px; }
-.format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
-.format-choice a:hover { border-color:var(--accent); background:var(--paper); }
+.modal-box { width:480px; max-height:85vh; overflow-y:auto; }
 .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
 .modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
 .modal-box input, .modal-box select, .modal-box textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; }
@@ -25,7 +21,7 @@
     <h1 style="margin:0;">Maintenance</h1>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Maintenance</button>
-      <button onclick="document.getElementById('dlModal').classList.add('open')" class="add-btn" style="background:var(--green);border:none;cursor:pointer;">Download This View</button>
+      <button onclick="document.getElementById('dlModal').classList.add('open')" class="download-btn">&#8681; Download This View</button>
     </div>
   </div>
 
@@ -73,17 +69,6 @@
   <div class="summary-strip">
     <span>Showing <b>{{ rows|length }}</b> of <b>{{ total_count }}</b> entries</span>
   </div>
-  <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:8px;font-size:0.85rem;">
-    <span style="color:var(--steel);">Page {{ page }} of {{ total_pages }}</span>
-    {% set qs = request.query_string.decode() %}
-    {% set base_qs = qs.split('&page=')[0].split('page=')[0] if 'page=' in qs else qs %}
-    {% if page > 1 %}
-    <a href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page - 1 }}" style="color:var(--accent);text-decoration:none;">&larr; Previous</a>
-    {% endif %}
-    {% if page < total_pages %}
-    <a href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page + 1 }}" style="color:var(--accent);text-decoration:none;">Next &rarr;</a>
-    {% endif %}
-  </div>
 
   <table>
     <tr><th>Date</th><th>Vehicle</th><th>Category</th><th>Vendor</th><th class="num">Amount</th><th>Status</th><th></th></tr>
@@ -97,6 +82,7 @@
     </tr>
     {% endfor %}
   </table>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
 </div>
 
 {% for r in rows %}
@@ -158,8 +144,8 @@
 
 <div class="modal-overlay" id="dlModal">
   <div class="modal-box">
-    <button type="button" onclick="document.getElementById('dlModal').classList.remove('open')" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--steel);">&#10005;</button>
-    <h3>Download Maintenance — This View</h3>
+    <button type="button" class="modal-close-x" onclick="document.getElementById('dlModal').classList.remove('open')">&#10005;</button>
+    <h3>Download This View — Maintenance</h3>
     <div style="font-size:0.85rem;color:var(--steel);">Choose a format</div>
     <div class="format-choice">
       <a href="/maintenance/export/pdf?{{ request.query_string.decode() }}">PDF</a>

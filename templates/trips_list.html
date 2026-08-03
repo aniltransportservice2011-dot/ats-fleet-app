@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
 {% block title %}Trips{% endblock %}
 {% block extra_head %}
 <style>
@@ -9,13 +10,8 @@
   .lr-badge { padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
   .lr-badge.yes { background:#e8f5ee; color:var(--green); }
   .lr-badge.no { background:#fdecea; color:var(--red); }
-  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
-  .modal-overlay.open { display:flex; }
-  .modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:400px; max-width:90vw; }
+  .modal-box { width:400px; }
   .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
-  .format-choice { display:flex; gap:12px; margin-top:10px; }
-  .format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
-  .format-choice a:hover { border-color:var(--accent); background:var(--paper); }
   .end-trip-btn { background:var(--accent); color:#fff; border:none; padding:6px 14px; border-radius:4px; font-size:0.78rem; font-weight:600; cursor:pointer; white-space:nowrap; }
   .end-trip-btn:hover { opacity:0.9; }
   .completed-badge { padding:3px 10px; border-radius:10px; font-size:0.72rem; font-weight:600; background:#e8f5ee; color:var(--green); white-space:nowrap; }
@@ -34,12 +30,6 @@
   .fld-sm label { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.02em; color:var(--steel); font-weight:600; display:block; margin-bottom:4px; }
   .fld-sm input, .fld-sm select, .fld-sm textarea { width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:3px; font-size:0.87rem; font-family:inherit; box-sizing:border-box; }
   .info-note { background:#eaf1fb; border-radius:6px; padding:10px 12px; margin:14px 0; font-size:0.78rem; color:var(--steel); display:flex; gap:8px; align-items:flex-start; }
-  .pager-row { display:flex; justify-content:flex-end; align-items:center; gap:18px; margin-top:14px; font-size:0.85rem; flex-wrap:wrap; }
-  .pager-btns { display:flex; align-items:center; gap:4px; }
-  .pager-btn { min-width:28px; height:28px; padding:0 6px; border-radius:5px; border:1px solid var(--line); background:var(--white); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink); text-decoration:none; font-size:0.82rem; }
-  .pager-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .pager-btn.disabled { opacity:0.4; pointer-events:none; }
-  .pager-ellipsis { padding:0 4px; color:var(--steel); }
 </style>
 {% endblock %}
 {% block content %}
@@ -51,7 +41,7 @@
     </div>
     <div style="display:flex;gap:10px;flex-shrink:0;">
       <a href="/trips/add" class="add-btn" style="background:var(--ink);">+ Add Trip</a>
-      <button onclick="document.getElementById('dlModal').classList.add('open')" class="add-btn" style="background:var(--green);border:none;cursor:pointer;">Download This View</button>
+      <button onclick="document.getElementById('dlModal').classList.add('open')" class="download-btn">&#8681; Download This View</button>
     </div>
   </div>
   <div style="margin-bottom:14px;"></div>
@@ -132,28 +122,7 @@
     {% endfor %}
   </table>
 
-  <div class="pager-row" id="pager">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <span style="color:var(--steel);">Rows per page:</span>
-      <select onchange="window.location='?{{ base_qs }}{% if base_qs %}&{% endif %}per_page='+this.value+'#pager'" style="padding:6px 9px;border:1px solid var(--line);border-radius:4px;">
-        {% for n in [10,25,50,100] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
-      </select>
-    </div>
-    <div class="pager-btns">
-      <a class="pager-btn {{ 'disabled' if page<=1 }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page=1&per_page={{ per_page }}#pager" title="First page">&laquo;</a>
-      <a class="pager-btn {{ 'disabled' if page<=1 }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page-1 }}&per_page={{ per_page }}#pager" title="Previous">&lsaquo;</a>
-      {% for tok in page_tokens %}
-        {% if tok == '...' %}
-        <span class="pager-ellipsis">&hellip;</span>
-        {% else %}
-        <a class="pager-btn {{ 'active' if tok==page }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ tok }}&per_page={{ per_page }}#pager">{{ tok }}</a>
-        {% endif %}
-      {% endfor %}
-      <a class="pager-btn {{ 'disabled' if page>=total_pages }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page+1 }}&per_page={{ per_page }}#pager" title="Next">&rsaquo;</a>
-      <a class="pager-btn {{ 'disabled' if page>=total_pages }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ total_pages }}&per_page={{ per_page }}#pager" title="Last page">&raquo;</a>
-    </div>
-    <span style="color:var(--steel);">Page {{ page }} of {{ total_pages }}</span>
-  </div>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
 </div>
 
 {% for t in trips %}
@@ -219,8 +188,8 @@
 
 <div class="modal-overlay" id="dlModal">
   <div class="modal-box">
-    <button type="button" onclick="document.getElementById('dlModal').classList.remove('open')" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--steel);">&#10005;</button>
-    <h3>Download Trips — This View</h3>
+    <button type="button" class="modal-close-x" onclick="document.getElementById('dlModal').classList.remove('open')">&#10005;</button>
+    <h3>Download This View — Trips</h3>
     <div style="font-size:0.85rem;color:var(--steel);">Choose a format</div>
     <div class="format-choice">
       <a href="/trips/export/pdf?{{ request.query_string.decode() }}">PDF</a>

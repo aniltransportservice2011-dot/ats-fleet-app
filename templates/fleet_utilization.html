@@ -4,8 +4,6 @@
 <style>
   .fu-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; }
   .fu-head .sub { color:var(--steel); font-size:0.9rem; margin-top:2px; }
-  .fu-export-btn { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:11px 18px; border-radius:6px; font-size:0.88rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
-  .fu-export-btn:hover { border-color:var(--accent); color:var(--accent); }
 
   .kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
   .kpi-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:flex-start; }
@@ -60,10 +58,7 @@
       <h1 style="margin-bottom:2px;">Fleet Utilization &amp; Efficiency</h1>
       <div class="sub">Monitor idle time and empty runs to improve fleet performance and reduce operational costs.</div>
     </div>
-    <a class="fu-export-btn" href="/fleet-utilization/export?{{ request.query_string.decode() }}">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-      Export
-    </a>
+    <a class="download-btn" href="/fleet-utilization/export?{{ request.query_string.decode() }}">&#8681; Download This View</a>
   </div>
 
   <form class="filter-bar" method="GET">

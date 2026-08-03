@@ -2,17 +2,10 @@
 {% block title %}{{ name }} — Ledger{% endblock %}
 {% block extra_head %}
 <style>
-.modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
-.modal-overlay.open { display:flex; }
-.modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:420px; max-width:90vw; }
-.modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:4px; }
-.modal-close-x:hover { background:var(--paper); color:var(--ink); }
+.modal-box { width:420px; }
 .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
 .modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
 .modal-box input { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; }
-.format-choice { display:flex; gap:12px; margin-top:10px; }
-.format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
-.format-choice a:hover { border-color:var(--accent); background:var(--paper); }
 .letterhead { text-align:center; border-bottom:2px solid var(--ink); padding-bottom:14px; margin-bottom:18px; }
 .letterhead h3 { margin:0 0 4px; font-size:1.2rem; }
 .letterhead .addr { font-size:0.78rem; color:var(--steel); }
@@ -64,7 +57,7 @@
     </div>
     <div style="display:flex;gap:10px;">
       <button type="button" onclick="document.getElementById('paymentModal').classList.add('open')" class="add-btn">+ Add Payment</button>
-      <button onclick="document.getElementById('dlModal').classList.add('open')" class="add-btn" style="background:var(--green);border:none;cursor:pointer;">Download Ledger</button>
+      <button onclick="document.getElementById('dlModal').classList.add('open')" class="download-btn">&#8681; Download This View</button>
     </div>
   </div>
 
@@ -235,14 +228,12 @@
 
 <div class="modal-overlay" id="dlModal">
   <div class="modal-box">
-    <h3>Download Ledger — {{ name }}</h3>
+    <button type="button" class="modal-close-x" onclick="document.getElementById('dlModal').classList.remove('open')">&#10005;</button>
+    <h3>Download This View — {{ name }}</h3>
     <div style="font-size:0.85rem;color:var(--steel);">Choose a format</div>
     <div class="format-choice">
       <a href="{{ export_url }}/pdf?{{ request.query_string.decode() }}">PDF</a>
       <a href="{{ export_url }}?{{ request.query_string.decode() }}">Excel</a>
-    </div>
-    <div style="margin-top:16px;text-align:right;">
-      <button type="button" onclick="document.getElementById('dlModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:8px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
     </div>
   </div>
 </div>

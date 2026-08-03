@@ -1,11 +1,10 @@
 {% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
 {% block title %}Performance{% endblock %}
 {% block extra_head %}
 <style>
   .perf-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; }
   .perf-head .sub { color:var(--steel); font-size:0.9rem; margin-top:2px; }
-  .perf-export-btn { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:11px 18px; border-radius:6px; font-size:0.88rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
-  .perf-export-btn:hover { border-color:var(--accent); color:var(--accent); }
 
   .perf-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
   .perf-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:2px solid transparent; }
@@ -33,11 +32,7 @@
   .cssbar-fill { height:100%; border-radius:4px; }
   .cssbar-value { width:60px; text-align:right; font-size:0.78rem; font-weight:600; flex-shrink:0; }
 
-  .perf-pager { display:flex; justify-content:flex-end; align-items:center; gap:16px; margin-top:14px; font-size:0.85rem; flex-wrap:wrap; }
-  .perf-page-btns { display:flex; align-items:center; gap:4px; }
-  .perf-page-btn { min-width:28px; height:28px; padding:0 6px; border-radius:5px; border:1px solid var(--line); background:var(--white); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink); text-decoration:none; font-size:0.82rem; }
-  .perf-page-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .perf-page-btn.disabled { opacity:0.4; pointer-events:none; }
+
 </style>
 {% endblock %}
 {% block content %}
@@ -47,10 +42,7 @@
       <h1 style="margin-bottom:2px;">Performance</h1>
       <div class="sub">Track and compare Driver &amp; Vehicle performance in one place.</div>
     </div>
-    <a class="perf-export-btn" href="#" onclick="return false;" title="Coming soon">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
-      Export
-    </a>
+    <a class="download-btn" href="/performance/export?{{ request.query_string.decode() }}">&#8681; Download This View</a>
   </div>
 
   <form class="filter-bar" method="GET">
@@ -123,20 +115,7 @@
         <tr><td colspan="6" style="text-align:center;color:var(--steel);padding:30px;">No drivers found for this selection.</td></tr>
         {% endfor %}
       </table>
-      <div class="perf-pager" id="driverPager">
-        <span style="color:var(--steel);">Rows per page:</span>
-        <select onchange="perfChangePerPage(this.value, 'driverPager')" style="padding:6px 9px;border:1px solid var(--line);border-radius:4px;">
-          {% for n in [5,10,25,50] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
-        </select>
-        <div class="perf-page-btns">
-          <a class="perf-page-btn {{ 'disabled' if d_page<=1 }}" href="?{{ base_qs }}&tab=driver&d_page={{ d_page-1 }}&v_page={{ v_page }}&per_page={{ per_page }}#driverPager" title="Previous">&lsaquo;</a>
-          {% for p in range(1, d_total_pages+1) %}
-          <a class="perf-page-btn {{ 'active' if p==d_page }}" href="?{{ base_qs }}&tab=driver&d_page={{ p }}&v_page={{ v_page }}&per_page={{ per_page }}#driverPager">{{ p }}</a>
-          {% endfor %}
-          <a class="perf-page-btn {{ 'disabled' if d_page>=d_total_pages }}" href="?{{ base_qs }}&tab=driver&d_page={{ d_page+1 }}&v_page={{ v_page }}&per_page={{ per_page }}#driverPager" title="Next">&rsaquo;</a>
-        </div>
-        <span style="color:var(--steel);">Page {{ d_page }} of {{ d_total_pages }}</span>
-      </div>
+      {{ pager.render_pager('driverPager', d_page, d_total_pages, per_page, base_qs ~ ('&' if base_qs else '') ~ 'tab=driver&v_page=' ~ v_page, d_page_tokens, per_page_options=[5,10,25,50], page_param='d_page') }}
     </div>
   </div>
 
@@ -200,20 +179,7 @@
         <tr><td colspan="8" style="text-align:center;color:var(--steel);padding:30px;">No vehicles found for this selection.</td></tr>
         {% endfor %}
       </table>
-      <div class="perf-pager" id="vehiclePager">
-        <span style="color:var(--steel);">Rows per page:</span>
-        <select onchange="perfChangePerPage(this.value, 'vehiclePager')" style="padding:6px 9px;border:1px solid var(--line);border-radius:4px;">
-          {% for n in [5,10,25,50] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
-        </select>
-        <div class="perf-page-btns">
-          <a class="perf-page-btn {{ 'disabled' if v_page<=1 }}" href="?{{ base_qs }}&tab=vehicle&d_page={{ d_page }}&v_page={{ v_page-1 }}&per_page={{ per_page }}#vehiclePager" title="Previous">&lsaquo;</a>
-          {% for p in range(1, v_total_pages+1) %}
-          <a class="perf-page-btn {{ 'active' if p==v_page }}" href="?{{ base_qs }}&tab=vehicle&d_page={{ d_page }}&v_page={{ p }}&per_page={{ per_page }}#vehiclePager">{{ p }}</a>
-          {% endfor %}
-          <a class="perf-page-btn {{ 'disabled' if v_page>=v_total_pages }}" href="?{{ base_qs }}&tab=vehicle&d_page={{ d_page }}&v_page={{ v_page+1 }}&per_page={{ per_page }}#vehiclePager" title="Next">&rsaquo;</a>
-        </div>
-        <span style="color:var(--steel);">Page {{ v_page }} of {{ v_total_pages }}</span>
-      </div>
+      {{ pager.render_pager('vehiclePager', v_page, v_total_pages, per_page, base_qs ~ ('&' if base_qs else '') ~ 'tab=vehicle&d_page=' ~ d_page, v_page_tokens, per_page_options=[5,10,25,50], page_param='v_page') }}
     </div>
   </div>
 </div>
@@ -225,14 +191,6 @@ function showPerfTab(which, btn) {
   document.getElementById('perf-' + which).classList.add('active');
   (btn || document.getElementById('tabBtn-' + which)).classList.add('active');
   document.getElementById('activeTabField').value = which;
-}
-function perfChangePerPage(val, anchorId) {
-  var url = new URL(window.location.href);
-  url.searchParams.set('per_page', val);
-  url.searchParams.delete('d_page');
-  url.searchParams.delete('v_page');
-  url.hash = anchorId || '';
-  window.location = url.toString();
 }
 (function() {
   var initial = document.getElementById('activeTabField').value || 'driver';

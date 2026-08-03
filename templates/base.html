@@ -35,6 +35,15 @@
   .modal-close-x:hover { background:var(--paper); color:var(--ink); }
   .modal-save-btn { display:block; width:100%; padding:13px; margin-top:16px; background:var(--accent); color:#fff; border:none; border-radius:6px; font-size:0.95rem; font-weight:600; cursor:pointer; text-align:center; }
   .modal-save-btn:hover { opacity:0.92; }
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:440px; max-width:90vw; }
+  .format-choice { display:flex; gap:12px; margin-top:10px; }
+  .format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
+  .format-choice a:hover { border-color:var(--accent); background:var(--paper); }
+  /* Every "Download This View" button in the app shares this style — filter-aware Excel/PDF export. */
+  .download-btn { background:var(--green); color:#fff; padding:9px 18px; border-radius:3px; font-size:0.82rem; font-weight:600; border:none; cursor:pointer; font-family:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
+  .download-btn:hover { opacity:0.9; }
   .nav-group { padding:0 12px; margin-bottom:18px; }
   .nav-label { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:rgba(255,255,255,0.4); padding:6px 10px; }
   .nav-item {
@@ -78,8 +87,7 @@
     </div>
     <div class="nav-group">
       <div class="nav-label">Analysis</div>
-      <a href="/route-rates" class="nav-item {% if active=='route-rates' %}active{% endif %}"><span class="nav-icon">&#128506;</span>Route Rates</a>
-      <a href="/best-routes" class="nav-item {% if active=='best-routes' %}active{% endif %}"><span class="nav-icon">&#127942;</span>Best Routes</a>
+      <a href="/route-analytics" class="nav-item {% if active=='route-analytics' %}active{% endif %}"><span class="nav-icon">&#127942;</span>Route Analytics</a>
       <a href="/fleet-utilization" class="nav-item {% if active=='fleet-utilization' %}active{% endif %}"><span class="nav-icon">&#9201;</span>Fleet Utilization</a>
       <a href="/performance" class="nav-item {% if active=='performance' %}active{% endif %}"><span class="nav-icon">&#128200;</span>Performance</a>
       <a href="/business-performance" class="nav-item {% if active=='business-performance' %}active{% endif %}"><span class="nav-icon">&#128181;</span>Business Performance</a>

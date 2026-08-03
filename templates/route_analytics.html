@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
+{% block title %}Route Analytics{% endblock %}
+{% block extra_head %}
+<style>
+  .ra-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; }
+  .ra-head .sub { color:var(--steel); font-size:0.9rem; margin-top:2px; }
+
+  .ra-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
+  .ra-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:2px solid transparent; }
+  .ra-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .ra-tab-panel { display:none; }
+  .ra-tab-panel.active { display:block; }
+
+  .kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
+  .kpi-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:flex-start; }
+  .kpi-card .lbl { font-size:0.76rem; color:var(--steel); margin-bottom:6px; }
+  .kpi-card .val { font-size:1.4rem; font-weight:700; line-height:1; }
+  .kpi-card .sub { font-size:0.74rem; color:var(--steel); margin-top:5px; }
+  .kpi-icon { width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1.05rem; }
+  @media (max-width:1300px) { .kpi-row { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px) { .kpi-row { grid-template-columns:repeat(2,1fr); } }
+
+  .ra-grid-2 { display:grid; grid-template-columns:1.1fr 1fr; gap:16px; margin-bottom:18px; }
+  .ra-panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  .ra-panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+  .ra-panel h3 { font-size:0.95rem; margin:0; }
+  @media (max-width:1000px) { .ra-grid-2 { grid-template-columns:1fr; } }
+
+  .rank-badge { width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:0.72rem; font-weight:700; color:#fff; }
+  .hbar-row { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .hbar-label { width:130px; font-size:0.78rem; color:var(--steel); flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hbar-track { flex:1; background:var(--paper); border-radius:4px; height:20px; overflow:hidden; }
+  .hbar-fill { height:100%; border-radius:4px; background:var(--green); }
+  .hbar-value { width:90px; text-align:right; font-size:0.78rem; font-weight:600; flex-shrink:0; }
+
+  .donut { width:130px; height:130px; border-radius:50%; margin:0 auto 12px; display:flex; align-items:center; justify-content:center; }
+  .donut-inner { width:88px; height:88px; background:var(--white); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .donut-inner .num { font-size:1.05rem; font-weight:700; }
+  .donut-inner .lbl { font-size:0.62rem; color:var(--steel); }
+  .legend-item { display:flex; align-items:center; gap:6px; font-size:0.82rem; margin-bottom:6px; }
+  .legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:1500px;">
+  <div class="ra-head">
+    <div>
+      <h1 style="margin-bottom:2px;">Route Analytics</h1>
+      <div class="sub">Analyze route performance, rates and profitability to make smarter business decisions.</div>
+    </div>
+    <a class="download-btn" href="/route-analytics/export?{{ request.query_string.decode() }}">&#8681; Download This View</a>
+  </div>
+
+  <form class="filter-bar" method="GET" id="raFilterForm">
+    <input type="hidden" name="tab" id="activeTabField" value="{{ tab }}">
+    <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <div class="field">
+      <label>Route</label>
+      <select name="route">
+        <option value="">All Routes</option>
+        {% for r in all_routes_list %}
+        <option value="{{ r }}" {% if f_route==r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>Vehicle Type</label>
+      <select name="vehicle_type">
+        <option value="">All Types</option>
+        <option value="Line" {% if f_vehicle_type=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if f_vehicle_type=='Local' %}selected{% endif %}>Local</option>
+        <option value="Market" {% if f_vehicle_type=='Market' %}selected{% endif %}>Market</option>
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/route-analytics">Clear</a>
+  </form>
+
+  <div class="ra-tabs">
+    <button type="button" class="ra-tab {{ 'active' if tab=='best-routes' }}" id="tabBtn-best-routes" onclick="showRTab('best-routes', this)">&#127942; Best Routes</button>
+    <button type="button" class="ra-tab {{ 'active' if tab=='route-rates' }}" id="tabBtn-route-rates" onclick="showRTab('route-rates', this)">&#128176; Route Rates</button>
+  </div>
+
+  <!-- ===================== BEST ROUTES TAB ===================== -->
+  <div class="ra-tab-panel {{ 'active' if tab=='best-routes' }}" id="ra-best-routes">
+    <div class="kpi-row">
+      <div class="kpi-card"><div><div class="lbl">Total Routes</div><div class="val">{{ total_routes }}</div><div class="sub">Active Routes</div></div><div class="kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128506;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Trips</div><div class="val">{{ total_trips_sel }}</div><div class="sub">In Selected Period</div></div><div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128666;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Revenue</div><div class="val">₹{{ '{:,.0f}'.format(total_revenue_sel) }}</div><div class="sub">In Selected Period</div></div><div class="kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128176;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Avg Rate</div><div class="val">₹{{ '{:,.0f}'.format(avg_rate) }}</div><div class="sub">Per-MT trips, all routes</div></div><div class="kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#8377;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Avg Margin</div><div class="val" style="color:{% if avg_margin>=0 %}var(--green){% else %}var(--red){% endif %};">{{ avg_margin }}%</div><div class="sub">(Revenue - Cost)</div></div><div class="kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128200;</div></div>
+    </div>
+
+    <div class="ra-grid-2">
+      <div class="ra-panel">
+        <div class="ra-panel-head"><h3>Top 5 Best Performing Routes (By Profit Margin %)</h3></div>
+        {% if top5_by_margin %}
+        <table>
+          <tr><th>Rank</th><th>Route</th><th class="num">Trips</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">Margin %</th></tr>
+          {% for r in top5_by_margin %}
+          <tr>
+            <td><span class="rank-badge" style="background:{% if loop.index==1 %}#eda100{% elif loop.index==2 %}#9aa7c2{% elif loop.index==3 %}#c07a3a{% else %}#c7cede{% endif %};">{{ loop.index }}</span></td>
+            <td>{{ r.clean_from }} &rarr; {{ r.clean_to }}</td>
+            <td class="num">{{ r.trips }}</td>
+            <td class="num">₹{{ '{:,.0f}'.format(r.revenue) }}</td>
+            <td class="num">₹{{ '{:,.0f}'.format(r.profit) }}</td>
+            <td class="num" style="color:{% if r.margin>=0 %}var(--green){% else %}var(--red){% endif %};font-weight:600;">{{ r.margin }}%</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No routes found for this selection.</div>
+        {% endif %}
+      </div>
+      <div class="ra-panel">
+        <div class="ra-panel-head"><h3>Top Routes by Revenue</h3></div>
+        {% if top5_by_revenue %}
+        {% for r in top5_by_revenue %}
+        <div class="hbar-row">
+          <div class="hbar-label">{{ r.clean_from }} &rarr; {{ r.clean_to }}</div>
+          <div class="hbar-track"><div class="hbar-fill" style="width:{{ r.pct }}%;"></div></div>
+          <div class="hbar-value">₹{{ '{:,.0f}'.format(r.revenue) }}</div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No routes found for this selection.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="ra-panel">
+      <div class="ra-panel-head"><h3>Route Summary</h3></div>
+      {% if summary_rows %}
+      <table>
+        <tr><th>Route</th><th class="num">Trips</th><th class="num">Total Revenue</th><th class="num">Total Cost</th><th class="num">Profit</th><th class="num">Margin %</th><th>Action</th></tr>
+        {% for r in summary_rows %}
+        <tr>
+          <td>{{ r.clean_from }} &rarr; {{ r.clean_to }}</td>
+          <td class="num">{{ r.trips }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.revenue) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.cost) }}</td>
+          <td class="num" style="color:{% if r.profit>=0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(r.profit) }}</td>
+          <td class="num" style="font-weight:600;color:{% if r.margin>=0 %}var(--green){% else %}var(--red){% endif %};">{{ r.margin }}%</td>
+          <td><a href="/trips?from_loc={{ r.clean_from }}&to_loc={{ r.clean_to }}" title="View trips on this route" style="color:var(--accent);">&#128065;</a></td>
+        </tr>
+        {% endfor %}
+      </table>
+      {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+      {% else %}
+      <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No routes found for this selection.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ===================== ROUTE RATES TAB ===================== -->
+  <div class="ra-tab-panel {{ 'active' if tab=='route-rates' }}" id="ra-route-rates">
+    <div class="kpi-row" style="grid-template-columns:repeat(4,1fr);">
+      <div class="kpi-card"><div><div class="lbl">Highest Rate</div><div class="val">₹{{ '{:,.0f}'.format(highest_entry[2]) if highest_entry else 0 }}</div><div class="sub">{{ (highest_entry[0] ~ ' → ' ~ highest_entry[1]) if highest_entry else '' }}</div></div><div class="kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128200;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Average Rate</div><div class="val">₹{{ '{:,.0f}'.format(rr_avg_rate_overall) }}</div><div class="sub">All routes</div></div><div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#8377;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Lowest Rate</div><div class="val">₹{{ '{:,.0f}'.format(lowest_entry[2]) if lowest_entry else 0 }}</div><div class="sub">{{ (lowest_entry[0] ~ ' → ' ~ lowest_entry[1]) if lowest_entry else '' }}</div></div><div class="kpi-icon" style="background:#fdecea;color:var(--red);">&#128201;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Routes</div><div class="val">{{ rr_total_routes }}</div><div class="sub">All types</div></div><div class="kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128506;</div></div>
+    </div>
+
+    <div class="ra-grid-2">
+      <div class="ra-panel">
+        <div class="ra-panel-head"><h3>Rate Trend (Average Rate Over Time)</h3></div>
+        {% if svg_points %}
+        <svg viewBox="0 0 400 160" style="width:100%;height:160px;">
+          <polyline points="{{ svg_points }}" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+          {% for label in svg_labels %}
+          <text x="{{ (loop.index0 / (svg_labels|length - 1) * 400) if svg_labels|length > 1 else 200 }}" y="155" font-size="9" fill="#5A6B8C" text-anchor="middle">{{ label }}</text>
+          {% endfor %}
+        </svg>
+        {% else %}
+        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">Not enough data for a trend yet.</div>
+        {% endif %}
+      </div>
+      <div class="ra-panel" style="text-align:center;">
+        <div class="ra-panel-head" style="text-align:left;"><h3>Rate Breakdown</h3></div>
+        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% 100%);">
+          <div class="donut-inner"><div class="num">₹{{ '{:,.0f}'.format(rr_avg_rate_overall) }}</div><div class="lbl">Total Avg Rate</div></div>
+        </div>
+        <div style="text-align:left;">
+          <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Line Routes &nbsp;₹{{ '{:,.0f}'.format(line_avg) }}</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Local Routes &nbsp;₹{{ '{:,.0f}'.format(local_avg) }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ra-panel">
+      <div class="ra-panel-head"><h3>Route Rates</h3></div>
+      {% if rr_rows %}
+      <table>
+        <tr><th>From</th><th>To</th><th>Type</th><th class="num">Highest</th><th class="num">Average</th><th class="num">Lowest</th><th class="num">Trips</th></tr>
+        {% for r in rr_rows %}
+        <tr>
+          <td>{{ r.clean_from }}</td><td>{{ r.clean_to }}</td><td>{{ r.type }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.highest) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.average) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.lowest) }}</td>
+          <td class="num">{{ r.trips }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No per-MT rate data for this selection.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+function showRTab(which, btn) {
+  document.querySelectorAll('.ra-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.ra-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById('ra-' + which).classList.add('active');
+  (btn || document.getElementById('tabBtn-' + which)).classList.add('active');
+  document.getElementById('activeTabField').value = which;
+}
+(function() {
+  var initial = document.getElementById('activeTabField').value || 'best-routes';
+  showRTab(initial);
+  if (window.location.hash) {
+    var target = document.querySelector(window.location.hash);
+    if (target) target.scrollIntoView();
+  }
+})();
+</script>
+{% endblock %}

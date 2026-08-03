@@ -110,6 +110,45 @@ def _quarter_bounds(d):
     end = datetime.date(d.year, end_month, last_day)
     return start.isoformat(), end.isoformat()
 
+def _paginate(page_raw, per_page_raw, total_count, per_page_options=(10, 25, 50, 100), default_per_page=50):
+    """Shared page/per_page/total_pages math so every list page paginates identically."""
+    try:
+        per_page = int(per_page_raw) if per_page_raw else default_per_page
+    except (TypeError, ValueError):
+        per_page = default_per_page
+    if per_page not in per_page_options:
+        per_page = default_per_page
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    try:
+        page = max(1, int(page_raw or 1))
+    except (TypeError, ValueError):
+        page = 1
+    page = min(page, total_pages)
+    return page, per_page, total_pages
+
+def _page_tokens(page, total_pages):
+    """Windowed page-number list with ellipses, e.g. [1, '...', 6, 7, 8, '...', 42]."""
+    if total_pages <= 7:
+        return list(range(1, total_pages + 1))
+    tokens = [1]
+    if page > 3:
+        tokens.append('...')
+    for p in range(max(2, page - 1), min(total_pages, page + 1) + 1):
+        tokens.append(p)
+    if page < total_pages - 2:
+        tokens.append('...')
+    if total_pages not in tokens:
+        tokens.append(total_pages)
+    return tokens
+
+_LOCATION_ALIASES = {'RKL': 'ROURKELA', 'BBSR': 'BHUBANESWAR', 'SAGJOR': 'SAGJORE'}
+def _clean_loc(raw):
+    if not raw:
+        return ''
+    first_word = raw.split(' ')[0] if ' ' in raw else raw
+    cleaned = first_word.upper().replace(',', '').strip()
+    return _LOCATION_ALIASES.get(cleaned, cleaned)
+
 def get_or_create_party(conn, name):
     if not name or not name.strip():
         return None
@@ -500,12 +539,8 @@ def trips_list():
     lr_received_count = conn.execute(f"SELECT COUNT(*) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id {where_clause} AND t.lr_received='Yes'", params).fetchone()[0]
     lr_pending_count = total_count - lr_received_count
 
-    page = max(1, int(request.args.get('page', 1)))
-    per_page = int(request.args.get('per_page', 50))
-    if per_page not in (10, 25, 50, 100):
-        per_page = 50
-    total_pages = max(1, (total_count + per_page - 1) // per_page)
-    page = min(page, total_pages)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=50)
     offset = (page - 1) * per_page
 
     query += f" ORDER BY t.date DESC LIMIT {per_page} OFFSET {offset}"
@@ -520,20 +555,7 @@ def trips_list():
     base_params.pop('page', None)
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
-
-    page_tokens = []
-    if total_pages <= 7:
-        page_tokens = list(range(1, total_pages + 1))
-    else:
-        page_tokens = [1]
-        if page > 3:
-            page_tokens.append('...')
-        for p in range(max(2, page - 1), min(total_pages, page + 1) + 1):
-            page_tokens.append(p)
-        if page < total_pages - 2:
-            page_tokens.append('...')
-        if total_pages not in page_tokens:
-            page_tokens.append(total_pages)
+    page_tokens = _page_tokens(page, total_pages)
 
     return render_template('trips_list.html', trips=trips, total_shown=total_shown, total_count=total_count,
                             pending_total=pending_total, lr_received_count=lr_received_count, lr_pending_count=lr_pending_count,
@@ -664,10 +686,8 @@ def maintenance_list():
     paid_total = conn.execute(f"SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id {where_clause}", params).fetchone()[0]
     unpaid_total = total_shown - paid_total
 
-    page = max(1, int(request.args.get('page', 1)))
-    per_page = 50
-    total_pages = max(1, (total_count + per_page - 1) // per_page)
-    page = min(page, total_pages)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=50)
     offset = (page - 1) * per_page
     query += f" ORDER BY m.date DESC LIMIT {per_page} OFFSET {offset}"
 
@@ -676,9 +696,17 @@ def maintenance_list():
     vendors = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
     categories = conn.execute("SELECT DISTINCT category FROM maintenance WHERE category IS NOT NULL ORDER BY category").fetchall()
     conn.close()
+
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+    page_tokens = _page_tokens(page, total_pages)
+
     return render_template('maintenance_list.html', rows=rows, total_shown=total_shown, total_count=total_count,
                             paid_total=paid_total, unpaid_total=unpaid_total,
-                            page=page, total_pages=total_pages,
+                            page=page, total_pages=total_pages, per_page=per_page, base_qs=base_qs, page_tokens=page_tokens,
                             vehicles=vehicles, vendors=vendors, categories=categories,
                             f_vehicle=vehicle_f, f_vendor=vendor_f, f_category=category_f,
                             f_date_from=date_from, f_date_to=date_to, active='maintenance')
@@ -1698,18 +1726,16 @@ def performance():
     conn.close()
 
     # ---------- Pagination (client-independent, shared page-size convention) ----------
-    d_page = max(1, int(request.args.get('d_page', 1)))
-    per_page = int(request.args.get('per_page', 5))
-    if per_page not in (5, 10, 25, 50):
-        per_page = 5
-    d_total_pages = max(1, (total_drivers + per_page - 1) // per_page)
-    d_page = min(d_page, d_total_pages)
+    per_page_raw = request.args.get('per_page')
+    d_page, per_page, d_total_pages = _paginate(request.args.get('d_page'), per_page_raw, total_drivers,
+                                                 per_page_options=(5, 10, 25, 50), default_per_page=5)
     driver_page_rows = driver_rows[(d_page - 1) * per_page: d_page * per_page]
 
-    v_page = max(1, int(request.args.get('v_page', 1)))
-    v_total_pages = max(1, (total_vehicles + per_page - 1) // per_page)
-    v_page = min(v_page, v_total_pages)
+    v_page, per_page, v_total_pages = _paginate(request.args.get('v_page'), per_page_raw, total_vehicles,
+                                                 per_page_options=(5, 10, 25, 50), default_per_page=5)
     vehicle_page_rows = vehicle_rows[(v_page - 1) * per_page: v_page * per_page]
+    d_page_tokens = _page_tokens(d_page, d_total_pages)
+    v_page_tokens = _page_tokens(v_page, v_total_pages)
 
     from urllib.parse import urlencode
     base_params = request.args.to_dict()
@@ -1722,13 +1748,93 @@ def performance():
         driver_total_billed=driver_total_billed, driver_total_fuel=driver_total_fuel, driver_total_profit=driver_total_profit,
         driver_avg_trips=driver_avg_trips, top5_drivers=top5_drivers,
         driver_monthly=driver_monthly, driver_trend_max=driver_trend_max, driver_chart_bottom=driver_chart_bottom, driver_y_ticks=driver_y_ticks,
-        d_page=d_page, d_total_pages=d_total_pages,
+        d_page=d_page, d_total_pages=d_total_pages, d_page_tokens=d_page_tokens,
         vehicle_rows=vehicle_page_rows, total_vehicles=total_vehicles, vehicle_total_trips=vehicle_total_trips,
         vehicle_total_billed=vehicle_total_billed, vehicle_total_fuel=vehicle_total_fuel, vehicle_total_maint=vehicle_total_maint,
         vehicle_total_profit=vehicle_total_profit, vehicle_avg_trips=vehicle_avg_trips, top5_vehicles=top5_vehicles,
         vehicle_monthly=vehicle_monthly, vehicle_trend_max=vehicle_trend_max, vehicle_chart_bottom=vehicle_chart_bottom, vehicle_y_ticks=vehicle_y_ticks,
-        v_page=v_page, v_total_pages=v_total_pages,
+        v_page=v_page, v_total_pages=v_total_pages, v_page_tokens=v_page_tokens,
         per_page=per_page, f_date_from=date_from, f_date_to=date_to, active='performance')
+
+@app.route('/performance/export')
+def export_performance():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from flask import send_file
+    import io
+    conn = get_db()
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2026-07-31')
+
+    driver_query = """SELECT driver_name, COUNT(*) as trip_count, SUM(billed_amount) as total_billed,
+        SUM(fuel_amount) as total_fuel,
+        SUM(COALESCE(driver_payment,0)+COALESCE(toll,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
+        MAX(date) as last_trip
+        FROM trips WHERE driver_name IS NOT NULL AND driver_name != ''"""
+    dparams = []
+    if date_from:
+        driver_query += " AND date >= ?"; dparams.append(date_from)
+    if date_to:
+        driver_query += " AND date <= ?"; dparams.append(date_to)
+    driver_query += " GROUP BY driver_name ORDER BY total_billed DESC"
+    driver_raw = conn.execute(driver_query, dparams).fetchall()
+
+    vehicle_query = """SELECT v.id, v.vehicle_no, v.type, COUNT(t.id) as trip_count,
+        COALESCE(SUM(t.billed_amount),0) as total_billed, COALESCE(SUM(t.fuel_amount),0) as total_fuel,
+        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.toll,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
+        MAX(t.date) as last_trip
+        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type IN ('Line','Local')"""
+    vparams = []
+    if date_from:
+        vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
+    if date_to:
+        vehicle_query += " AND t.date <= ?"; vparams.append(date_to)
+    vehicle_query += " GROUP BY v.id ORDER BY total_billed DESC"
+    vehicle_raw = conn.execute(vehicle_query, vparams).fetchall()
+
+    vehicle_rows = []
+    for r in vehicle_raw:
+        maint_q = "SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE vehicle_id=?"
+        maint_params = [r['id']]
+        if date_from:
+            maint_q += " AND date >= ?"; maint_params.append(date_from)
+        if date_to:
+            maint_q += " AND date <= ?"; maint_params.append(date_to)
+        maint_cost = conn.execute(maint_q, maint_params).fetchone()[0]
+        profit = (r['total_billed'] or 0) - (r['total_fuel'] or 0) - (r['total_other_costs'] or 0) - maint_cost
+        vehicle_rows.append((r['vehicle_no'], r['type'], r['trip_count'], r['total_billed'] or 0,
+                              r['total_fuel'] or 0, maint_cost, profit, r['last_trip'] or ''))
+    conn.close()
+
+    navy = "1B2A4A"
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor=navy)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Drivers"
+    headers = ["Driver", "Trips", "Total Billed", "Fuel Cost", "Other Costs", "Profit", "Last Trip"]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
+    for r_idx, r in enumerate(driver_raw, 2):
+        profit = (r['total_billed'] or 0) - (r['total_fuel'] or 0) - (r['total_other_costs'] or 0)
+        row = (r['driver_name'], r['trip_count'], r['total_billed'] or 0, r['total_fuel'] or 0,
+               r['total_other_costs'] or 0, profit, r['last_trip'] or '')
+        for c_idx, val in enumerate(row, 1):
+            ws.cell(row=r_idx, column=c_idx, value=val)
+
+    ws2 = wb.create_sheet("Vehicles")
+    headers2 = ["Vehicle No", "Type", "Trips", "Total Billed", "Fuel Cost", "Maintenance Cost", "Profit", "Last Trip"]
+    for i, h in enumerate(headers2, 1):
+        c = ws2.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
+    for r_idx, row in enumerate(vehicle_rows, 2):
+        for c_idx, val in enumerate(row, 1):
+            ws2.cell(row=r_idx, column=c_idx, value=val)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='performance_export.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/employees/add', methods=['GET', 'POST'])
 def add_employee():
@@ -2823,70 +2929,125 @@ def delete_user(user_id):
     conn.close()
     return redirect(url_for('settings_page'))
 
-@app.route('/route-rates')
-def route_rates():
+@app.route('/route-analytics')
+def route_analytics():
     conn = get_db()
-    from_f = request.args.get('from_loc', '')
-    to_f = request.args.get('to_loc', '')
-    type_f = request.args.get('type', '')
+    tab = request.args.get('tab', 'best-routes')
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2026-07-31')
+    route_f = request.args.get('route', '')
+    type_f = request.args.get('vehicle_type', '')
 
-    LOCATION_ALIASES = {'RKL': 'ROURKELA', 'BBSR': 'BHUBANESWAR', 'SAGJOR': 'SAGJORE'}
-    def clean_loc(raw):
-        if not raw:
-            return ''
-        first_word = raw.split(' ')[0] if ' ' in raw else raw
-        cleaned = first_word.upper().replace(',', '').strip()
-        return LOCATION_ALIASES.get(cleaned, cleaned)
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
 
-    trips = conn.execute("""SELECT from_loc, to_loc, type, rate FROM trips
-                            WHERE rate_type='PER_MT' AND rate > 0
-                            AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')""").fetchall()
+    # All routes ever seen (unfiltered), for the Route dropdown — independent of the current filters.
+    all_routes_rows = conn.execute("SELECT DISTINCT from_loc, to_loc FROM trips").fetchall()
+    all_routes_list = sorted(set(f"{_clean_loc(r['from_loc'])} → {_clean_loc(r['to_loc'])}" for r in all_routes_rows
+                                  if r['from_loc'] and r['to_loc']))
 
+    trip_query = """SELECT from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
+                    toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
+                    puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
+                    other_expense, permit_charges, fixed_rate_amount, owner_rate, quantity
+                    FROM trips WHERE date>=? AND date<=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
+    params = [date_from, date_to]
+    if type_f:
+        trip_query += " AND type=?"
+        params.append(type_f)
+    trips = conn.execute(trip_query, params).fetchall()
+
+    # ---------- Shared per-route revenue/cost/profit (both tabs draw from this) ----------
     groups = {}
     for t in trips:
-        cf, ct = clean_loc(t['from_loc']), clean_loc(t['to_loc'])
-        key = (cf, ct, t['type'])
-        groups.setdefault(key, []).append(t['rate'])
+        cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
+        if route_f and f"{cf} → {ct}" != route_f:
+            continue
+        d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
+        d['trips'] += 1
+        d['revenue'] += t['billed_amount'] or 0
+        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0) +
+                (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
+                (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
+                (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
+                (t['other_expense'] or 0) + (t['permit_charges'] or 0))
+        if t['type'] == 'Market':
+            cost += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+        d['cost'] += cost
 
-    filtered = []
-    for (cf, ct, ttype), rates in groups.items():
-        if from_f and from_f.upper() not in cf:
-            continue
-        if to_f and to_f.upper() not in ct:
-            continue
-        if type_f and ttype != type_f:
-            continue
-        filtered.append({'clean_from': cf, 'clean_to': ct, 'type': ttype,
-                          'highest': max(rates), 'average': sum(rates)/len(rates),
-                          'lowest': min(rates), 'trips': len(rates)})
-    filtered.sort(key=lambda r: (r['clean_from'], r['clean_to']))
+    route_rows = []
+    for (cf, ct), d in groups.items():
+        profit = d['revenue'] - d['cost']
+        margin = round(profit / d['revenue'] * 100, 1) if d['revenue'] else 0
+        route_rows.append({'route': f"{cf} → {ct}", 'clean_from': cf, 'clean_to': ct, 'trips': d['trips'],
+                            'revenue': d['revenue'], 'cost': d['cost'], 'profit': profit, 'margin': margin})
 
-    # Summary stats across ALL routes (unfiltered), for the top cards
-    all_rates_flat = [r for rates in groups.values() for r in rates]
+    total_routes = len(route_rows)
+    total_trips_sel = sum(r['trips'] for r in route_rows)
+    total_revenue_sel = sum(r['revenue'] for r in route_rows)
+    total_cost_sel = sum(r['cost'] for r in route_rows)
+    avg_margin = round((total_revenue_sel - total_cost_sel) / total_revenue_sel * 100, 1) if total_revenue_sel else 0
+
+    rate_values = [t['rate'] for t in trips if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0
+                   and (not route_f or f"{_clean_loc(t['from_loc'])} → {_clean_loc(t['to_loc'])}" == route_f)]
+    avg_rate = round(sum(rate_values) / len(rate_values), 0) if rate_values else 0
+
+    top5_by_margin = sorted(route_rows, key=lambda r: r['margin'], reverse=True)[:5]
+    top5_by_revenue = sorted(route_rows, key=lambda r: r['revenue'], reverse=True)[:5]
+    top_rev_max = max([r['revenue'] for r in top5_by_revenue], default=1) or 1
+    for r in top5_by_revenue:
+        r['pct'] = round(r['revenue'] / top_rev_max * 100, 1)
+
+    # Route Summary table — same rows, paginated, sorted by revenue.
+    route_rows.sort(key=lambda r: r['revenue'], reverse=True)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_routes,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    summary_rows = route_rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+
+    # ---------- Route Rates tab: rate stats grouped by (from, to, vehicle type) ----------
+    rr_groups = {}
+    for t in trips:
+        if t['rate_type'] != 'PER_MT' or not t['rate'] or t['rate'] <= 0:
+            continue
+        cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
+        if route_f and f"{cf} → {ct}" != route_f:
+            continue
+        rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
+
+    rr_rows = []
+    for (cf, ct, ttype), rates in rr_groups.items():
+        rr_rows.append({'clean_from': cf, 'clean_to': ct, 'type': ttype, 'highest': max(rates),
+                         'average': sum(rates) / len(rates), 'lowest': min(rates), 'trips': len(rates)})
+    rr_rows.sort(key=lambda r: (r['clean_from'], r['clean_to']))
+
+    all_rates_flat = [r for rates in rr_groups.values() for r in rates]
     highest_entry = None
     lowest_entry = None
-    for (cf, ct, ttype), rates in groups.items():
-        h = max(rates)
-        l = min(rates)
+    for (cf, ct, ttype), rates in rr_groups.items():
+        h, l = max(rates), min(rates)
         if highest_entry is None or h > highest_entry[2]:
             highest_entry = (cf, ct, h)
         if lowest_entry is None or l < lowest_entry[2]:
             lowest_entry = (cf, ct, l)
-    avg_rate_overall = round(sum(all_rates_flat) / len(all_rates_flat), 0) if all_rates_flat else 0
-    total_routes = len(groups)
+    rr_avg_rate_overall = round(sum(all_rates_flat) / len(all_rates_flat), 0) if all_rates_flat else 0
+    rr_total_routes = len(rr_groups)
 
-    # Rate breakdown: Line vs Local average
-    line_rates = [r for (cf, ct, ttype), rates in groups.items() if ttype == 'Line' for r in rates]
-    local_rates = [r for (cf, ct, ttype), rates in groups.items() if ttype == 'Local' for r in rates]
+    line_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Line' for r in rates]
+    local_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Local' for r in rates]
     line_avg = round(sum(line_rates) / len(line_rates), 0) if line_rates else 0
     local_avg = round(sum(local_rates) / len(local_rates), 0) if local_rates else 0
     line_pct = round(len(line_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
 
-    # Monthly average rate trend
-    monthly_trips = conn.execute("""SELECT substr(date,1,7) as month, AVG(rate) as avg_rate FROM trips
-                                    WHERE rate_type='PER_MT' AND rate > 0
-                                    AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')
-                                    GROUP BY month ORDER BY month""").fetchall()
+    rt_query = """SELECT substr(date,1,7) as month, AVG(rate) as avg_rate FROM trips
+                  WHERE rate_type='PER_MT' AND rate > 0 AND date>=? AND date<=?
+                  AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
+    rt_params = [date_from, date_to]
+    if type_f:
+        rt_query += " AND type=?"
+        rt_params.append(type_f)
+    rt_query += " GROUP BY month ORDER BY month"
+    monthly_trips = conn.execute(rt_query, rt_params).fetchall()
     trend_points = [{'month': m['month'], 'rate': round(m['avg_rate'] or 0)} for m in monthly_trips]
     svg_points = ''
     svg_labels = []
@@ -2905,10 +3066,110 @@ def route_rates():
         svg_labels = [p['month'][5:] + '/' + p['month'][2:4] for p in trend_points]
 
     conn.close()
-    return render_template('route_rates.html', rows=filtered, f_from=from_f, f_to=to_f, f_type=type_f,
-                            highest_entry=highest_entry, lowest_entry=lowest_entry, avg_rate_overall=avg_rate_overall,
-                            total_routes=total_routes, line_avg=line_avg, local_avg=local_avg, line_pct=line_pct,
-                            trend_points=trend_points, svg_points=svg_points, svg_labels=svg_labels, active='route-rates')
+
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    return render_template('route_analytics.html',
+        tab=tab, f_date_from=date_from, f_date_to=date_to, f_route=route_f, f_vehicle_type=type_f,
+        all_routes_list=all_routes_list,
+        total_routes=total_routes, total_trips_sel=total_trips_sel, total_revenue_sel=total_revenue_sel,
+        avg_rate=avg_rate, avg_margin=avg_margin,
+        top5_by_margin=top5_by_margin, top5_by_revenue=top5_by_revenue,
+        summary_rows=summary_rows, page=page, per_page=per_page, total_pages=total_pages,
+        page_tokens=page_tokens, base_qs=base_qs,
+        rr_rows=rr_rows, highest_entry=highest_entry, lowest_entry=lowest_entry, rr_avg_rate_overall=rr_avg_rate_overall,
+        rr_total_routes=rr_total_routes, line_avg=line_avg, local_avg=local_avg, line_pct=line_pct,
+        trend_points=trend_points, svg_points=svg_points, svg_labels=svg_labels,
+        active='route-analytics')
+
+@app.route('/route-analytics/export')
+def export_route_analytics():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from flask import send_file
+    import io
+    conn = get_db()
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2026-07-31')
+    route_f = request.args.get('route', '')
+    type_f = request.args.get('vehicle_type', '')
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    trip_query = """SELECT from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
+                    toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
+                    puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
+                    other_expense, permit_charges, fixed_rate_amount, owner_rate, quantity
+                    FROM trips WHERE date>=? AND date<=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
+    params = [date_from, date_to]
+    if type_f:
+        trip_query += " AND type=?"
+        params.append(type_f)
+    trips = conn.execute(trip_query, params).fetchall()
+    conn.close()
+
+    groups = {}
+    rr_groups = {}
+    for t in trips:
+        cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
+        if route_f and f"{cf} → {ct}" != route_f:
+            continue
+        d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
+        d['trips'] += 1
+        d['revenue'] += t['billed_amount'] or 0
+        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0) +
+                (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
+                (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
+                (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
+                (t['other_expense'] or 0) + (t['permit_charges'] or 0))
+        if t['type'] == 'Market':
+            cost += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+        d['cost'] += cost
+        if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0:
+            rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
+
+    route_rows = []
+    for (cf, ct), d in groups.items():
+        profit = d['revenue'] - d['cost']
+        margin = round(profit / d['revenue'] * 100, 1) if d['revenue'] else 0
+        route_rows.append((f"{cf} → {ct}", d['trips'], d['revenue'], d['cost'], profit, margin))
+    route_rows.sort(key=lambda r: r[2], reverse=True)
+
+    rate_rows = []
+    for (cf, ct, ttype), rates in rr_groups.items():
+        rate_rows.append((f"{cf} → {ct}", ttype, max(rates), sum(rates) / len(rates), min(rates), len(rates)))
+    rate_rows.sort(key=lambda r: r[0])
+
+    navy = "1B2A4A"
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor=navy)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Route Summary"
+    headers = ["Route", "Trips", "Total Revenue", "Total Cost", "Profit", "Margin %"]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
+    for r_idx, row in enumerate(route_rows, 2):
+        for c_idx, val in enumerate(row, 1):
+            ws.cell(row=r_idx, column=c_idx, value=val)
+
+    ws2 = wb.create_sheet("Route Rates")
+    headers2 = ["Route", "Type", "Highest Rate", "Average Rate", "Lowest Rate", "Trips"]
+    for i, h in enumerate(headers2, 1):
+        c = ws2.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
+    for r_idx, row in enumerate(rate_rows, 2):
+        for c_idx, val in enumerate(row, 1):
+            ws2.cell(row=r_idx, column=c_idx, value=val)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='route_analytics_export.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/idle-tracker')
 def idle_tracker():
@@ -3080,48 +3341,6 @@ def export_fleet_utilization():
     wb.save(buf); buf.seek(0)
     return send_file(buf, as_attachment=True, download_name='fleet_utilization.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-@app.route('/best-routes')
-def best_routes():
-    conn = get_db()
-    type_f = request.args.get('type', 'Line')
-
-    LOCATION_ALIASES = {'RKL': 'ROURKELA', 'BBSR': 'BHUBANESWAR', 'SAGJOR': 'SAGJORE'}
-    def clean_loc(raw):
-        if not raw:
-            return ''
-        first_word = raw.split(' ')[0] if ' ' in raw else raw
-        cleaned = first_word.upper().replace(',', '').strip()
-        return LOCATION_ALIASES.get(cleaned, cleaned)
-
-    trips = conn.execute("""SELECT from_loc, to_loc, billed_amount FROM trips
-                            WHERE type=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')""", (type_f,)).fetchall()
-    conn.close()
-    groups = {}
-    for t in trips:
-        key = (clean_loc(t['from_loc']), clean_loc(t['to_loc']))
-        groups.setdefault(key, []).append(t['billed_amount'] or 0)
-
-    all_rows = []
-    for (cf, ct), amounts in groups.items():
-        all_rows.append({'clean_from': cf, 'clean_to': ct, 'trips': len(amounts),
-                          'total_billed': sum(amounts), 'avg_billed': sum(amounts)/len(amounts)})
-    all_rows.sort(key=lambda r: r['total_billed'], reverse=True)
-
-    total_routes = len(all_rows)
-    total_trips_all = sum(r['trips'] for r in all_rows)
-    most_profitable = max(all_rows, key=lambda r: r['avg_billed'], default=None)
-    highest_billed = all_rows[0] if all_rows else None
-
-    page = max(1, int(request.args.get('page', 1)))
-    per_page = 10
-    total_pages = max(1, (total_routes + per_page - 1) // per_page)
-    page = min(page, total_pages)
-    rows = all_rows[(page-1)*per_page : page*per_page]
-
-    return render_template('best_routes.html', rows=rows, f_type=type_f, total_routes=total_routes,
-                            total_trips_all=total_trips_all, most_profitable=most_profitable, highest_billed=highest_billed,
-                            page=page, total_pages=total_pages, active='best-routes')
 
 @app.route('/trips/edit/<int:trip_id>', methods=['GET', 'POST'])
 def edit_trip(trip_id):
@@ -3526,6 +3745,115 @@ def business_performance():
         insights=insights, sub_scores=sub_scores, overall_score=overall_score, health_label=health_label, health_kind=health_kind,
         suggestions=suggestions,
         active='business-performance')
+
+@app.route('/business-performance/export')
+def export_business_performance():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from flask import send_file
+    import io
+    conn = get_db()
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    default_from, default_to = _month_bounds(last_month_end.year, last_month_end.month)
+    date_from = request.args.get('date_from') or default_from
+    date_to = request.args.get('date_to') or default_to
+
+    curr = _period_financials(conn, date_from, date_to)
+
+    party_rows = conn.execute("""SELECT p.id, p.name,
+        (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE party_id=p.id) -
+        (SELECT COALESCE(SUM(payment_received)+SUM(party_advance),0) FROM trips WHERE party_id=p.id) -
+        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE party_id=p.id AND payment_type='received') +
+        COALESCE(p.opening_balance,0) as balance
+        FROM parties p""").fetchall()
+    party_balance = {r['id']: (r['balance'] or 0) for r in party_rows}
+    party_name = {r['id']: r['name'] for r in party_rows}
+    total_receivables = sum(b for b in party_balance.values() if b > 0)
+
+    vendor_rows = conn.execute("""SELECT v.id, v.name,
+        (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
+        (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) -
+        (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
+        (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
+        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
+        COALESCE(v.opening_balance,0) as balance
+        FROM vendors v WHERE v.linked_party_id IS NULL""").fetchall()
+    total_payables = sum((r['balance'] or 0) for r in vendor_rows if (r['balance'] or 0) > 0)
+
+    cash_collected = conn.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type='received' AND date>=? AND date<=?",
+                                   (date_from, date_to)).fetchone()[0]
+    cash_collected += sum(t['party_advance'] or 0 for t in curr['trips'])
+    cash_paid = conn.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type='paid' AND date>=? AND date<=?",
+                              (date_from, date_to)).fetchone()[0]
+    cash_paid += curr['maint'] + curr['overheads'] + curr['salaries']
+    collection_efficiency = round(cash_collected / curr['revenue'] * 100, 2) if curr['revenue'] else 0
+    operating_ratio = round(curr['total_expenses'] / curr['revenue'] * 100, 2) if curr['revenue'] else 0
+
+    party_period = {}
+    for t in curr['trips']:
+        if not t['party_id']:
+            continue
+        d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0})
+        d['revenue'] += t['billed_amount'] or 0
+        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0)
+        if t['type'] == 'Market':
+            direct += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+        d['direct_cost'] += direct
+    top_customers = []
+    for pid, d in sorted(party_period.items(), key=lambda kv: kv[1]['revenue'], reverse=True):
+        top_customers.append((party_name.get(pid, '—'), d['revenue'], d['revenue'] - d['direct_cost'],
+                               max(party_balance.get(pid, 0), 0)))
+
+    expense_breakdown = [
+        ('Fuel', curr['fuel']), ('Driver Advance', curr['driver_adv']), ('Maintenance', curr['maint']),
+        ('Salary', curr['salaries']), ('Toll / Parking', curr['toll'] + curr['parking']),
+        ('Other Expenses', curr['misc'] + curr['overheads'] + curr['owner_cost']),
+    ]
+    conn.close()
+
+    navy = "1B2A4A"
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor=navy)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    ws.append(["Business Performance", f"{date_from} to {date_to}"])
+    ws['A1'].font = Font(bold=True, size=13)
+    ws.append([])
+    summary_pairs = [
+        ("Total Revenue", curr['revenue']), ("Net Profit", curr['net_profit']), ("Profit Margin %", curr['margin']),
+        ("Outstanding Receivables", total_receivables), ("Outstanding Payables", total_payables),
+        ("Cash Collected", cash_collected), ("Cash Paid", cash_paid),
+        ("Collection Efficiency %", collection_efficiency), ("Operating Ratio %", operating_ratio),
+        ("Total Trips", curr['trip_count']),
+    ]
+    for label, val in summary_pairs:
+        ws.append([label, val])
+    for row in ws.iter_rows(min_row=3, max_row=2 + len(summary_pairs), min_col=1, max_col=1):
+        for c in row:
+            c.font = Font(bold=True)
+
+    ws2 = wb.create_sheet("Top Customers")
+    for i, h in enumerate(["Customer", "Revenue", "Profit", "Outstanding"], 1):
+        c = ws2.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
+    for r_idx, row in enumerate(top_customers, 2):
+        for c_idx, val in enumerate(row, 1):
+            ws2.cell(row=r_idx, column=c_idx, value=val)
+
+    ws3 = wb.create_sheet("Expense Breakdown")
+    for i, h in enumerate(["Category", "Amount"], 1):
+        c = ws3.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
+    for r_idx, row in enumerate(expense_breakdown, 2):
+        for c_idx, val in enumerate(row, 1):
+            ws3.cell(row=r_idx, column=c_idx, value=val)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='business_performance_export.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/export')
 def export_excel():
