@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Generated Invoices{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Generated Invoices <a href="/invoice-center" class="add-btn">+ New Invoice</a></h1>
+  <div style="font-size:12px;color:var(--steel);margin:-6px 0 14px;">Every invoice generated from Invoice Center — edit its details or download it again anytime.</div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Party, vendor or invoice no."></div>
+    <div class="field"><label>Type</label>
+      <select name="invoice_type">
+        <option value="">All Types</option>
+        <option value="party" {% if f_type=='party' %}selected{% endif %}>Party Invoice</option>
+        <option value="vehicle_owner" {% if f_type=='vehicle_owner' %}selected{% endif %}>Market Vehicle Invoice</option>
+        <option value="tax" {% if f_type=='tax' %}selected{% endif %}>Tax Invoice</option>
+        <option value="bill" {% if f_type=='bill' %}selected{% endif %}>Bill Invoice</option>
+      </select>
+    </div>
+    <button type="submit">Apply Filters</button>
+    <a class="clear" href="/invoices/generated">Clear</a>
+  </form>
+
+  {% if rows %}
+  <table>
+    <tr><th>Invoice No.</th><th>Type</th><th>Bill To</th><th>Invoice Date</th><th>Due Date</th>
+        <th>Trips</th><th>Payment Status</th><th>Actions</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r['invoice_number'] }}</td>
+      <td>{{ {'party':'Party Invoice','vehicle_owner':'Market Vehicle Invoice','tax':'Tax Invoice','bill':'Bill Invoice'}.get(r['invoice_type'], r['invoice_type']) }}</td>
+      <td>{{ r['vendor_name'] if r['invoice_type']=='vehicle_owner' else r['party_name'] }}</td>
+      <td>{{ r['invoice_date'] }}</td>
+      <td>{{ r['due_date'] or '—' }}</td>
+      <td class="num">{{ r['trip_count'] }}</td>
+      <td>
+        <span style="padding:3px 10px;border-radius:10px;font-size:0.75rem;font-weight:600;
+          {% if r['payment_status']=='PAID' %}background:#e8f5e9;color:#2e7d32;{% else %}background:#fff8e1;color:#b8860b;{% endif %}">
+          {{ r['payment_status'] }}
+        </span>
+      </td>
+      <td>
+        <a href="/invoices/generated/{{ r['id'] }}/edit" style="margin-right:10px;">Edit</a>
+        <a href="/invoices/generated/{{ r['id'] }}/pdf">Download</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div style="color:var(--steel);padding:30px;text-align:center;">No invoices generated yet. Go to Invoice Center to create one.</div>
+  {% endif %}
+</div>
+{% endblock %}

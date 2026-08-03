@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block title %}Fleet Utilization & Efficiency{% endblock %}
+{% block extra_head %}
+<style>
+  .fu-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; }
+  .fu-head .sub { color:var(--steel); font-size:0.9rem; margin-top:2px; }
+  .fu-export-btn { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:11px 18px; border-radius:6px; font-size:0.88rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
+  .fu-export-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+  .kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
+  .kpi-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:flex-start; }
+  .kpi-card .lbl { font-size:0.76rem; color:var(--steel); margin-bottom:6px; }
+  .kpi-card .val { font-size:1.55rem; font-weight:700; line-height:1; }
+  .kpi-card .sub { font-size:0.74rem; color:var(--steel); margin-top:5px; }
+  .kpi-icon { width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1.05rem; }
+  @media (max-width:1300px) { .kpi-row { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px) { .kpi-row { grid-template-columns:repeat(2,1fr); } }
+
+  .fu-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
+  .fu-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; }
+  .fu-tab.active { background:#fff6ee; color:var(--accent); }
+  .fu-tab-panel { display:none; }
+  .fu-tab-panel.active { display:block; }
+
+  .fu-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; }
+  .fu-panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  .fu-panel h3 { font-size:0.95rem; margin:0 0 16px; }
+  @media (max-width:1000px) { .fu-grid-2 { grid-template-columns:1fr; } }
+
+  .donut-wrap { display:flex; align-items:center; gap:24px; }
+  .donut { width:180px; height:180px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .donut-inner { width:120px; height:120px; background:var(--white); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .donut-inner .num { font-size:1.7rem; font-weight:700; }
+  .donut-inner .lbl { font-size:0.72rem; color:var(--steel); }
+  .legend-item { display:flex; align-items:center; gap:8px; font-size:0.88rem; margin-bottom:12px; }
+  .legend-dot { width:11px; height:11px; border-radius:50%; flex-shrink:0; }
+  .legend-item b { display:block; font-size:0.95rem; }
+
+  .status-badge { padding:3px 11px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+  .idle-pct-pill { padding:3px 9px; border-radius:10px; font-size:0.75rem; font-weight:700; }
+
+  .fu-table-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px; }
+  .fu-search { position:relative; }
+  .fu-search input { padding:9px 14px 9px 34px; border:1px solid var(--line); border-radius:6px; font-size:0.86rem; width:220px; }
+  .fu-search svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--steel); }
+  .fu-pagination { display:flex; justify-content:space-between; align-items:center; margin-top:14px; font-size:0.85rem; color:var(--steel); }
+  .fu-page-btns { display:flex; gap:6px; align-items:center; }
+  .fu-page-btn { width:30px; height:30px; border-radius:5px; border:1px solid var(--line); background:var(--white); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink); }
+  .fu-page-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .fu-page-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .fu-page-size { padding:6px 10px; border:1px solid var(--line); border-radius:5px; font-size:0.82rem; }
+  .eye-btn { background:none; border:none; cursor:pointer; color:var(--steel); }
+  .eye-btn:hover { color:var(--accent); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:1500px;">
+  <div class="fu-head">
+    <div>
+      <h1 style="margin-bottom:2px;">Fleet Utilization &amp; Efficiency</h1>
+      <div class="sub">Monitor idle time and empty runs to improve fleet performance and reduce operational costs.</div>
+    </div>
+    <a class="fu-export-btn" href="/fleet-utilization/export?{{ request.query_string.decode() }}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+      Export
+    </a>
+  </div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>From Date</label><input type="date" name="date_from" id="fuDateFrom" value="{{ f_date_from }}" max="{{ f_date_to }}" onchange="document.getElementById('fuDateTo').min=this.value;"></div>
+    <div class="field"><label>To Date</label><input type="date" name="date_to" id="fuDateTo" value="{{ f_date_to }}" min="{{ f_date_from }}" onchange="document.getElementById('fuDateFrom').max=this.value;"></div>
+    <div class="field"><label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field"><label>Group / Type</label>
+      <select name="type">
+        <option value="">All</option>
+        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/fleet-utilization">Clear</a>
+  </form>
+
+  <div class="kpi-row">
+    <div class="kpi-card"><div><div class="lbl">Total Vehicles</div><div class="val">{{ total_vehicles }}</div></div>
+      <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128667;</div></div>
+    <div class="kpi-card"><div><div class="lbl">Active Vehicles</div><div class="val" style="color:var(--green);">{{ active_vehicles }}</div><div class="sub">{{ active_pct }}%</div></div>
+      <div class="kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+    <div class="kpi-card"><div><div class="lbl">Idle Vehicles (Any Day)</div><div class="val" style="color:var(--red);">{{ idle_vehicles }}</div><div class="sub">{{ idle_vehicles_pct }}%</div></div>
+      <div class="kpi-icon" style="background:#fdecea;color:var(--red);">&#128337;</div></div>
+    <div class="kpi-card"><div><div class="lbl">Empty Run Trips</div><div class="val" style="color:#eda100;">{{ empty_run_trips }}</div><div class="sub">{{ empty_run_pct_overall }}% of total trips</div></div>
+      <div class="kpi-icon" style="background:#fff6e8;color:#eda100;">&#128230;</div></div>
+    <div class="kpi-card"><div><div class="lbl">Avg Idle Days / Vehicle</div><div class="val">{{ avg_idle_days }}</div></div>
+      <div class="kpi-icon" style="background:#f0edfb;color:#7a5ad6;">&#128202;</div></div>
+  </div>
+
+  <div class="fu-tabs">
+    <button type="button" class="fu-tab active" onclick="showFuTab('overview', this)">&#128260; Overview</button>
+    <button type="button" class="fu-tab" onclick="showFuTab('idle', this)">&#128337; Idle Analysis</button>
+    <button type="button" class="fu-tab" onclick="showFuTab('empty', this)">&#8644; Empty Run Analysis</button>
+  </div>
+
+  <div id="fu-overview" class="fu-tab-panel active">
+    <div class="fu-grid-2">
+      <div class="fu-panel">
+        <h3>Idle vs Active Days (This Period)</h3>
+        <div class="donut-wrap">
+          <div class="donut" style="background:conic-gradient(#e34948 0% {{ idle_days_pct }}%, #1a9c5b {{ idle_days_pct }}% 100%);">
+            <div class="donut-inner"><div class="num">{{ '{:,.0f}'.format(total_active_days + total_idle_days) }}</div><div class="lbl">Total Days</div></div>
+          </div>
+          <div>
+            <div class="legend-item"><span class="legend-dot" style="background:#e34948;"></span><span>Idle Days<br><b>{{ '{:,.0f}'.format(total_idle_days) }} ({{ idle_days_pct }}%)</b></span></div>
+            <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span><span>Active Days<br><b>{{ '{:,.0f}'.format(total_active_days) }} ({{ active_days_pct }}%)</b></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="fu-panel">
+        <h3>Idle Days Trend (Last 12 Weeks)</h3>
+        {% include 'partials/_idle_trend_chart.html' %}
+      </div>
+    </div>
+
+    <div class="fu-panel">
+      <div class="fu-table-head">
+        <h3 style="margin:0;">Vehicle Utilization Summary</h3>
+        <div class="fu-search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="text" id="fuSearch" placeholder="Search vehicle..." oninput="fuFilterTable()">
+        </div>
+      </div>
+      <table id="fuTable">
+        <tr><th>Vehicle No</th><th>Type</th><th>Group</th><th class="num">Active Days<br>(This Period)</th><th class="num">Idle Days<br>(This Period)</th><th class="num">Total Days</th><th class="num">Empty Run Trips</th><th class="num">Idle %</th><th>Last Trip Date</th><th>Status</th><th>Action</th></tr>
+        {% for r in rows %}
+        <tr class="fu-row" data-name="{{ r['vehicle_no']|lower }}">
+          <td>{{ r['vehicle_no'] }}</td><td>{{ r['type'] }}</td><td>{{ r['group'] }}</td>
+          <td class="num" style="color:var(--green);">{{ r['active_days'] }}</td>
+          <td class="num" style="color:var(--red);">{{ r['idle_days'] }}</td>
+          <td class="num">{{ r['total_days'] }}</td>
+          <td class="num">{{ r['empty_run_count'] }}{% if r['empty_run_count'] %} ({{ r['empty_pct'] }}%){% endif %}</td>
+          <td class="num"><span class="idle-pct-pill" style="background:{% if r['idle_pct']>=70 %}#fdecea{% elif r['idle_pct']>=30 %}#fff6e8{% else %}#e8f5ee{% endif %};color:{% if r['idle_pct']>=70 %}var(--red){% elif r['idle_pct']>=30 %}#b8860b{% else %}var(--green){% endif %};">{{ r['idle_pct'] }}%</span></td>
+          <td>{{ r['last_trip'] or '—' }}</td>
+          <td><span class="status-badge" style="background:{% if r['status']=='Active' %}#e8f5ee;color:var(--green){% else %}#fdecea;color:var(--red){% endif %};">{{ r['status'] }}</span></td>
+          <td><button class="eye-btn" title="View" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" style="text-align:center;color:var(--steel);padding:30px;">No own vehicles found for this selection.</td></tr>
+        {% endfor %}
+      </table>
+      <div class="fu-pagination">
+        <span id="fuPageInfo"></span>
+        <div class="fu-page-btns" id="fuPageBtns"></div>
+        <select class="fu-page-size" id="fuPageSize" onchange="fuRenderPage(1)">
+          <option value="10">10 / page</option>
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div id="fu-idle" class="fu-tab-panel">
+    <div class="fu-panel" style="margin-bottom:18px;">
+      <h3>Most Idle Vehicles</h3>
+      {% for v in most_idle %}
+      <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:0.9rem;">
+        <span>{{ v['vehicle_no'] }} <span style="color:var(--steel);font-size:0.78rem;">({{ v['type'] }})</span></span>
+        <span style="color:var(--red);font-weight:600;">{{ v['idle_days'] }} days idle</span>
+      </div>
+      {% else %}
+      <div style="color:var(--steel);text-align:center;padding:20px;">No data for this selection.</div>
+      {% endfor %}
+    </div>
+    <div class="fu-panel">
+      <h3>All Vehicles — Idle Detail</h3>
+      <table>
+        <tr><th>Vehicle No</th><th>Type</th><th class="num">Active Days</th><th class="num">Idle Days</th><th class="num">Total Days</th><th>Last Trip Date</th><th>Status</th></tr>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r['vehicle_no'] }}</td><td>{{ r['type'] }}</td>
+          <td class="num" style="color:var(--green);">{{ r['active_days'] }}</td>
+          <td class="num" style="color:var(--red);font-weight:600;">{{ r['idle_days'] }}</td>
+          <td class="num">{{ r['total_days'] }}</td>
+          <td>{{ r['last_trip'] or '—' }}</td>
+          <td><span class="status-badge" style="background:{% if r['status']=='Active' %}#e8f5ee;color:var(--green){% else %}#fdecea;color:var(--red){% endif %};">{{ r['status'] }}</span></td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div id="fu-empty" class="fu-tab-panel">
+    <div class="kpi-row" style="grid-template-columns:repeat(3,1fr);">
+      <div class="kpi-card"><div><div class="lbl">Empty Run Trips</div><div class="val">{{ empty_run_trips }}</div><div class="sub">This period</div></div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Fuel Cost</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(total_fuel) }}</div><div class="sub">This period</div></div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Loss</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(total_empty_cost) }}</div><div class="sub">Fuel + Toll</div></div></div>
+    </div>
+    <div class="fu-panel">
+      <h3>Empty Run Trips</h3>
+      <table>
+        <tr><th>Date</th><th>Vehicle</th><th>From</th><th>To</th><th class="num">Fuel (₹)</th><th class="num">Toll (₹)</th><th class="num">Total Loss (₹)</th></tr>
+        {% for r in empty_rows %}
+        <tr>
+          <td>{{ r['date'] }}</td><td>{{ r['vehicle_no'] }}</td><td>{{ r['from_loc'] }}</td><td>{{ r['to_loc'] }}</td>
+          <td class="num" style="color:var(--red);">-₹{{ '{:,.0f}'.format(r['fuel_amount'] or 0) }}</td>
+          <td class="num" style="color:var(--red);">-₹{{ '{:,.0f}'.format(r['toll'] or 0) }}</td>
+          <td class="num" style="color:var(--red);font-weight:600;">-₹{{ '{:,.0f}'.format((r['fuel_amount'] or 0)+(r['toll'] or 0)) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" style="text-align:center;color:var(--steel);padding:30px;">No empty runs found for this selection.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function showFuTab(id, btn) {
+  document.querySelectorAll('.fu-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.fu-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById('fu-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+var fuAllRows = Array.from(document.querySelectorAll('#fuTable tr.fu-row'));
+var fuFiltered = fuAllRows;
+var fuPage = 1;
+
+function fuFilterTable() {
+  var q = document.getElementById('fuSearch').value.toLowerCase();
+  fuFiltered = fuAllRows.filter(function(r) { return r.dataset.name.indexOf(q) !== -1; });
+  fuRenderPage(1);
+}
+
+function fuRenderPage(page) {
+  var pageSize = parseInt(document.getElementById('fuPageSize').value, 10);
+  var totalPages = Math.max(1, Math.ceil(fuFiltered.length / pageSize));
+  fuPage = Math.min(Math.max(1, page), totalPages);
+
+  fuAllRows.forEach(function(r) { r.style.display = 'none'; });
+  var start = (fuPage - 1) * pageSize;
+  fuFiltered.slice(start, start + pageSize).forEach(function(r) { r.style.display = ''; });
+
+  var info = document.getElementById('fuPageInfo');
+  if (fuFiltered.length === 0) {
+    info.textContent = 'No vehicles found';
+  } else {
+    info.textContent = 'Showing ' + (start + 1) + ' to ' + Math.min(start + pageSize, fuFiltered.length) + ' of ' + fuFiltered.length + ' vehicles';
+  }
+
+  var btnsEl = document.getElementById('fuPageBtns');
+  btnsEl.innerHTML = '';
+  var prev = document.createElement('button');
+  prev.className = 'fu-page-btn'; prev.textContent = '<'; prev.disabled = fuPage <= 1;
+  prev.onclick = function() { fuRenderPage(fuPage - 1); };
+  btnsEl.appendChild(prev);
+  for (var p = 1; p <= totalPages; p++) {
+    (function(p) {
+      var b = document.createElement('button');
+      b.className = 'fu-page-btn' + (p === fuPage ? ' active' : '');
+      b.textContent = p;
+      b.onclick = function() { fuRenderPage(p); };
+      btnsEl.appendChild(b);
+    })(p);
+  }
+  var next = document.createElement('button');
+  next.className = 'fu-page-btn'; next.textContent = '>'; next.disabled = fuPage >= totalPages;
+  next.onclick = function() { fuRenderPage(fuPage + 1); };
+  btnsEl.appendChild(next);
+}
+fuRenderPage(1);
+</script>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Edit Vehicle{% endblock %}
+{% block extra_head %}
+<style>
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/vehicles">&larr; Back</a>
+  <h1>Edit Vehicle</h1>
+  <form class="stack" method="POST">
+    <div><label>Vehicle No</label><input type="text" name="vehicle_no" value="{{ v['vehicle_no'] }}" required></div>
+    <div><label>Type</label>
+      <select name="type">
+        <option value="Line" {% if v['type']=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if v['type']=='Local' %}selected{% endif %}>Local</option>
+        <option value="Market" {% if v['type']=='Market' %}selected{% endif %}>Market</option>
+      </select>
+    </div>
+    <button type="submit" class="submit">Save Changes</button>
+  </form>
+</div>
+{% endblock %}

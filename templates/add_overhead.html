@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Add Expense{% endblock %}
+{% block extra_head %}
+<style>
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/overheads">&larr; Back</a>
+  
+  <h1>Add Expense Entry</h1>
+  <form class="stack" method="POST">
+    <div><label>Date</label><input type="date" name="date" required></div>
+    <div><label>Category</label><input type="text" name="category" placeholder="e.g. Toll, Office Expense, Room Rent" required></div>
+    <div><label>Amount</label><input type="number" step="0.01" name="amount" required></div>
+    <div><label>Notes</label><input type="text" name="notes"></div>
+    <button type="submit" class="submit">Save</button>
+  </form>
+</div>
+{% endblock %}

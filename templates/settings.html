@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Profile & Settings{% endblock %}
+{% block extra_head %}
+<style>
+  .settings-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:20px; overflow-x:auto; }
+  .settings-tab { padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; }
+  .settings-tab.active { background:#fff6ee; color:var(--accent); }
+  .settings-tab-panel { display:none; }
+  .settings-tab-panel.active { display:block; }
+  .grid-2card { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:20px; margin-bottom:16px; }
+  .card-head { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-bottom:16px; }
+  .card-head h3 { margin:0; font-size:0.95rem; }
+  .card-head .sub { font-size:0.75rem; color:var(--steel); margin-top:2px; }
+  .edit-toggle-btn { background:#fff6ee; border:1px solid var(--accent); color:var(--accent); padding:6px 14px; border-radius:4px; font-size:0.8rem; font-weight:600; cursor:pointer; flex-shrink:0; white-space:nowrap; }
+  .kv-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 20px; font-size:0.85rem; }
+  .kv-grid .lbl { color:var(--steel); font-size:0.75rem; margin-bottom:2px; }
+  .toggle-badge { padding:2px 10px; border-radius:10px; font-size:0.72rem; font-weight:600; }
+  .toggle-badge.on { background:#e8f5ee; color:var(--green); }
+  .toggle-badge.off { background:#fdecea; color:var(--red); }
+  .settings-form { display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  .settings-form.open { display:block; }
+  @media (max-width:900px) { .grid-2card { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Profile &amp; Settings</h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;margin-bottom:16px;">Manage your company profile, banking details, tax settings and invoice preferences.</div>
+
+  <div class="settings-tabs">
+    <button type="button" class="settings-tab {{ 'active' if not user_error }}" onclick="showSTab('tab-company', this)">Company Profile</button>
+    <button type="button" class="settings-tab" onclick="showSTab('tab-invoice', this)">Invoice Settings</button>
+    <button type="button" class="settings-tab" onclick="showSTab('tab-tax', this)">Tax &amp; Compliance</button>
+    <button type="button" class="settings-tab {{ 'active' if user_error }}" onclick="showSTab('tab-users', this)">Users &amp; Roles</button>
+  </div>
+
+  <div id="tab-company" class="settings-tab-panel {{ 'active' if not user_error }}">
+    <div class="grid-2card">
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Company Details</h3><div class="sub">Update your company information and contact details.</div></div>
+          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('companyView','companyForm',this)">Edit</button>
+        </div>
+        <div class="kv-grid" id="companyView">
+          <div><div class="lbl">Company Name</div>{{ s['company_name'] }}</div>
+          <div><div class="lbl">GSTIN</div>{{ s['gstin'] }}</div>
+          <div><div class="lbl">Address</div>{{ s['address'] }}</div>
+          <div><div class="lbl">PAN</div>{{ s['pan'] }}</div>
+          <div><div class="lbl">State</div>{{ s['state'] }}</div>
+          <div><div class="lbl">Business Type</div>{{ s['business_type'] }}</div>
+          <div><div class="lbl">Phone</div>{{ s['phone'] }}</div>
+          <div><div class="lbl">Company Since</div>{{ s['company_since'] }}</div>
+          <div><div class="lbl">Email</div>{{ s['email'] }}</div>
+          <div><div class="lbl">Currency</div>{{ s['currency'] }}</div>
+        </div>
+        <form method="POST" class="settings-form" id="companyForm">
+          <input type="hidden" name="form_type" value="company">
+          <div class="row2"><div><label>Company Name</label><input type="text" name="company_name" value="{{ s['company_name'] }}"></div>
+            <div><label>GSTIN</label><input type="text" name="gstin" value="{{ s['gstin'] }}"></div></div>
+          <div><label>Address</label><input type="text" name="address" value="{{ s['address'] }}"></div>
+          <div class="row2"><div><label>State</label><input type="text" name="state" value="{{ s['state'] }}"></div>
+            <div><label>PAN</label><input type="text" name="pan" value="{{ s['pan'] }}"></div></div>
+          <div class="row2"><div><label>Business Type</label><input type="text" name="business_type" value="{{ s['business_type'] }}"></div>
+            <div><label>Company Since</label><input type="date" name="company_since" value="{{ s['company_since'] }}"></div></div>
+          <div class="row2"><div><label>Phone</label><input type="text" name="phone" value="{{ s['phone'] }}"></div>
+            <div><label>Email</label><input type="email" name="email" value="{{ s['email'] }}"></div></div>
+          <div><label>Currency</label><input type="text" name="currency" value="{{ s['currency'] }}"></div>
+          <button type="submit" class="modal-save-btn">Update Company Details</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Banking Details</h3><div class="sub">Manage bank accounts used for transactions.</div></div>
+          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('bankView','bankForm',this)">Edit</button>
+        </div>
+        <div class="kv-grid" id="bankView">
+          <div><div class="lbl">Bank Name</div>{{ s['bank_name'] or '—' }}</div>
+          <div><div class="lbl">Account Holder Name</div>{{ s['account_holder'] or '—' }}</div>
+          <div><div class="lbl">Account Number</div>{{ s['account_number'] or '—' }}</div>
+          <div><div class="lbl">IFSC Code</div>{{ s['ifsc_code'] or '—' }}</div>
+          <div><div class="lbl">Branch</div>{{ s['branch'] or '—' }}</div>
+          <div><div class="lbl">Account Type</div>{{ s['account_type'] or '—' }}</div>
+        </div>
+        <div style="font-size:11px;color:var(--steel);margin-top:10px;">Shown only on Tax Invoices.</div>
+        <form method="POST" class="settings-form" id="bankForm">
+          <input type="hidden" name="form_type" value="banking">
+          <div class="row2"><div><label>Bank Name</label><input type="text" name="bank_name" value="{{ s['bank_name'] }}"></div>
+            <div><label>Account Holder</label><input type="text" name="account_holder" value="{{ s['account_holder'] }}"></div></div>
+          <div class="row2"><div><label>Account Number</label><input type="text" name="account_number" value="{{ s['account_number'] }}"></div>
+            <div><label>IFSC Code</label><input type="text" name="ifsc_code" value="{{ s['ifsc_code'] }}"></div></div>
+          <div class="row2"><div><label>Branch</label><input type="text" name="branch" value="{{ s['branch'] }}"></div>
+            <div><label>Account Type</label><input type="text" name="account_type" value="{{ s['account_type'] }}"></div></div>
+          <button type="submit" class="modal-save-btn">Update Banking Details</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-invoice" class="settings-tab-panel">
+    <div class="grid-2card">
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Invoice Preferences</h3><div class="sub">Set default preferences for invoice generation.</div></div>
+          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('prefsView','prefsForm',this)">Edit</button>
+        </div>
+        <div class="kv-grid" id="prefsView">
+          <div><div class="lbl">Default Invoice Type</div>{{ {'party':'Party Invoice','vehicle_owner':'Market Vehicle Invoice','tax':'Tax Invoice (With GST)','bill':'Bill Invoice'}[s['default_invoice_type']] if s['default_invoice_type'] else '—' }}</div>
+          <div><div class="lbl">Show Company Logo</div><span class="toggle-badge {{ 'on' if s['show_company_logo']=='1' else 'off' }}">{{ 'Enabled' if s['show_company_logo']=='1' else 'Disabled' }}</span></div>
+          <div><div class="lbl">Payment Terms</div>{{ s['default_payment_terms'] or '—' }}</div>
+          <div><div class="lbl">Show Bank Details</div><span class="toggle-badge {{ 'on' if s['show_bank_details']=='1' else 'off' }}">{{ 'Enabled' if s['show_bank_details']=='1' else 'Disabled' }}</span></div>
+          <div><div class="lbl">Place of Supply</div>{{ s['default_place_of_supply'] or '—' }}</div>
+          <div><div class="lbl">Show Authorised Signatory</div><span class="toggle-badge {{ 'on' if s['show_signatory']=='1' else 'off' }}">{{ 'Enabled' if s['show_signatory']=='1' else 'Disabled' }}</span></div>
+          <div><div class="lbl">Default Due Days</div>{{ s['default_due_days'] or '—' }} Days</div>
+          <div><div class="lbl">Print Amount in Words</div><span class="toggle-badge {{ 'on' if s['print_amount_words']=='1' else 'off' }}">{{ 'Enabled' if s['print_amount_words']=='1' else 'Disabled' }}</span></div>
+        </div>
+        <form method="POST" class="settings-form" id="prefsForm">
+          <input type="hidden" name="form_type" value="invoice_prefs">
+          <div><label>Default Invoice Type</label>
+            <select name="default_invoice_type">
+              <option value="party" {% if s['default_invoice_type']=='party' %}selected{% endif %}>Party Invoice</option>
+              <option value="vehicle_owner" {% if s['default_invoice_type']=='vehicle_owner' %}selected{% endif %}>Market Vehicle Invoice</option>
+              <option value="tax" {% if s['default_invoice_type']=='tax' %}selected{% endif %}>Tax Invoice (With GST)</option>
+              <option value="bill" {% if s['default_invoice_type']=='bill' %}selected{% endif %}>Bill Invoice</option>
+            </select>
+          </div>
+          <div class="row2"><div><label>Payment Terms</label><input type="text" name="default_payment_terms" value="{{ s['default_payment_terms'] }}"></div>
+            <div><label>Place of Supply</label><input type="text" name="default_place_of_supply" value="{{ s['default_place_of_supply'] }}"></div></div>
+          <div><label>Default Due Days</label><input type="number" name="default_due_days" value="{{ s['default_due_days'] }}"></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_company_logo" {% if s['show_company_logo']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Company Logo</label></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_bank_details" {% if s['show_bank_details']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Bank Details</label></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_signatory" {% if s['show_signatory']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Authorised Signatory</label></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><input type="checkbox" name="print_amount_words" {% if s['print_amount_words']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Print Amount in Words</label></div>
+          <button type="submit" class="modal-save-btn">Update Preferences</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Invoice Numbering</h3><div class="sub">Configure invoice number series and formats.</div></div>
+          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('numberingView','numForm',this)">Edit</button>
+        </div>
+        <div class="kv-grid" id="numberingView">
+          <div><div class="lbl">Invoice Prefix</div>{{ s['invoice_prefix'] }}</div>
+          <div><div class="lbl">Next Invoice Number</div>{{ s['next_invoice_number'] }}</div>
+          <div style="grid-column:span 2;"><div class="lbl">Example</div><span style="background:#fff6ee;color:var(--accent);padding:3px 10px;border-radius:4px;font-weight:600;">{{ invoice_example }}</span></div>
+        </div>
+        <form method="POST" class="settings-form" id="numForm">
+          <input type="hidden" name="form_type" value="invoice_numbering">
+          <div class="row2"><div><label>Invoice Prefix</label><input type="text" name="invoice_prefix" value="{{ s['invoice_prefix'] }}"></div>
+            <div><label>Next Invoice Number</label><input type="number" name="next_invoice_number" value="{{ s['next_invoice_number'] }}"></div></div>
+          <button type="submit" class="modal-save-btn">Update Numbering</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-tax" class="settings-tab-panel">
+    <div class="card">
+      <div class="card-head">
+        <div><h3>GST &amp; Tax Settings</h3><div class="sub">Configure GST rates, reverse charge and other tax related settings.</div></div>
+        <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('taxView','taxForm',this)">Edit</button>
+      </div>
+      <div class="grid-2card" id="taxView" style="grid-template-columns:repeat(4,1fr);">
+        <div>
+          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;">GST Rates</div>
+          <div class="kv-grid" style="grid-template-columns:1fr;">
+            <div style="display:flex;justify-content:space-between;"><span class="lbl" style="margin:0;">CGST Rate</span><b>{{ s['cgst_rate'] }}%</b></div>
+            <div style="display:flex;justify-content:space-between;"><span class="lbl" style="margin:0;">SGST Rate</span><b>{{ s['sgst_rate'] }}%</b></div>
+            <div style="display:flex;justify-content:space-between;"><span class="lbl" style="margin:0;">IGST Rate</span><b>{{ s['igst_rate'] }}%</b></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;">Reverse Charge</div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>Reverse Charge Applicable</span><span class="toggle-badge {{ 'on' if s['reverse_charge_applicable']=='1' else 'off' }}">{{ 'Yes' if s['reverse_charge_applicable']=='1' else 'No' }}</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>RCM on Transport (Goods)</span><span class="toggle-badge {{ 'on' if s['rcm_on_transport']=='1' else 'off' }}">{{ 'Yes' if s['rcm_on_transport']=='1' else 'No' }}</span></div>
+        </div>
+        <div>
+          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;">TDS Settings</div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>TDS Applicable</span><span class="toggle-badge {{ 'on' if s['tds_applicable']=='1' else 'off' }}">{{ 'Yes' if s['tds_applicable']=='1' else 'No' }}</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>TDS Rate</span><b>{{ s['tds_rate_default'] }}%</b></div>
+        </div>
+        <div>
+          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;">Other Settings</div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>E-Way Bill Mandatory</span><span class="toggle-badge {{ 'on' if s['eway_bill_mandatory']=='1' else 'off' }}">{{ 'Yes' if s['eway_bill_mandatory']=='1' else 'No' }}</span></div>
+          <div style="display:flex;justify-content:space-between;"><span>Round Off Limit</span><b>₹{{ s['round_off_limit'] }}</b></div>
+        </div>
+      </div>
+      <form method="POST" class="settings-form" id="taxForm">
+        <input type="hidden" name="form_type" value="tax">
+        <div class="row2"><div><label>CGST Rate (%)</label><input type="number" step="0.01" name="cgst_rate" value="{{ s['cgst_rate'] }}"></div>
+          <div><label>SGST Rate (%)</label><input type="number" step="0.01" name="sgst_rate" value="{{ s['sgst_rate'] }}"></div></div>
+        <div><label>IGST Rate (%)</label><input type="number" step="0.01" name="igst_rate" value="{{ s['igst_rate'] }}"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="reverse_charge_applicable" {% if s['reverse_charge_applicable']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Reverse Charge Applicable</label></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="rcm_on_transport" {% if s['rcm_on_transport']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">RCM on Transport (Goods)</label></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="tds_applicable" {% if s['tds_applicable']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">TDS Applicable</label></div>
+        <div><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate_default" value="{{ s['tds_rate_default'] }}"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="eway_bill_mandatory" {% if s['eway_bill_mandatory']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">E-Way Bill Mandatory</label></div>
+        <div><label>Round Off Limit (₹)</label><input type="number" step="0.01" name="round_off_limit" value="{{ s['round_off_limit'] }}"></div>
+        <button type="submit" class="modal-save-btn">Update Tax Settings</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><h3>RCM Clause (Tax Invoices)</h3><div class="sub">The exact legal text printed on every Tax Invoice.</div></div></div>
+      <form method="POST" class="stack">
+        <input type="hidden" name="form_type" value="rcm">
+        <textarea name="rcm_clause" rows="4" style="width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:3px;font-size:0.9rem;font-family:inherit;">{{ s['rcm_clause'] }}</textarea>
+        <button type="submit" class="modal-save-btn">Save RCM Clause</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="tab-users" class="settings-tab-panel {{ 'active' if user_error }}">
+    <div class="card">
+      <div class="card-head"><div><h3>Staff Access</h3><div class="sub">Login is required for everyone. Add staff below to give them their own access.</div></div></div>
+      {% if users %}
+      <table style="margin-bottom:20px;">
+        <tr><th>Username</th><th>Role</th><th>Admin</th><th>Mobile (for OTP login)</th><th></th></tr>
+        {% for u in users %}
+        <tr>
+          <td>{{ u['username'] }}</td><td>{{ u['role'] }}</td><td>{{ 'Yes' if u['is_admin'] else 'No' }}</td>
+          <td>
+            <form method="POST" action="/settings/users/{{ u['id'] }}/phone" style="display:flex;gap:6px;align-items:center;">
+              <input type="text" name="phone" value="{{ u['phone'] or '' }}" placeholder="+91XXXXXXXXXX" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;font-size:0.82rem;width:150px;">
+              <button type="submit" style="background:none;border:1px solid var(--line);border-radius:3px;padding:5px 10px;font-size:0.78rem;cursor:pointer;color:var(--steel);">Save</button>
+            </form>
+          </td>
+          <td><form method="POST" action="/settings/users/{{ u['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Remove this staff member\'s access?');"><button type="submit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.85rem;">Remove Access</button></form></td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+      <div style="font-weight:600;margin-bottom:10px;font-size:0.9rem;">Add Staff Access</div>
+      {% if user_error %}
+      <div style="background:#fdecea;color:var(--red);padding:10px 14px;border-radius:4px;font-size:0.85rem;margin-bottom:14px;">{{ user_error }}</div>
+      {% endif %}
+      <form method="POST" action="/settings/users/add" class="stack">
+        <div class="row2"><div><label>Username</label><input type="text" name="username" required></div>
+          <div><label>Password</label><input type="password" name="password" required></div></div>
+        <div class="row2"><div><label>Role</label><input type="text" name="role" placeholder="e.g. Accountant, Manager"></div>
+          <div><label>Mobile Number (optional, for OTP login)</label><input type="text" name="phone" placeholder="+91XXXXXXXXXX"></div></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <input type="checkbox" name="is_admin" style="width:auto;margin:0;">
+          <label style="margin:0;text-transform:none;font-weight:400;">Give admin access</label>
+        </div>
+        <button type="submit" class="modal-save-btn">Add Staff Member</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>Mobile OTP Login (SMS via Twilio)</h3><div class="sub">Lets staff sign in with just their phone number and a one-time code. Requires a Twilio account.</div></div>
+        <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('smsView','smsForm',this)">Edit</button>
+      </div>
+      <div class="kv-grid" id="smsView">
+        <div><div class="lbl">Account SID</div>{{ s['twilio_account_sid'] or '—' }}</div>
+        <div><div class="lbl">Auth Token</div>{{ '••••••••' if s['twilio_auth_token'] else '—' }}</div>
+        <div><div class="lbl">From Number</div>{{ s['twilio_from_number'] or '—' }}</div>
+        <div><div class="lbl">Status</div>
+          <span class="toggle-badge {{ 'on' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'off' }}">
+            {{ 'Configured' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'Not Configured' }}
+          </span>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--steel);margin-top:10px;">Get these from your Twilio Console (twilio.com/console). Each OTP sent is billed by Twilio.</div>
+      <form method="POST" class="settings-form" id="smsForm">
+        <input type="hidden" name="form_type" value="sms">
+        <div><label>Account SID</label><input type="text" name="twilio_account_sid" value="{{ s['twilio_account_sid'] }}" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></div>
+        <div><label>Auth Token</label><input type="password" name="twilio_auth_token" value="{{ s['twilio_auth_token'] }}"></div>
+        <div><label>From Number (Twilio number)</label><input type="text" name="twilio_from_number" value="{{ s['twilio_from_number'] }}" placeholder="+1XXXXXXXXXX"></div>
+        <button type="submit" class="modal-save-btn">Save SMS Settings</button>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+function showSTab(id, btn) {
+  document.querySelectorAll('.settings-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.settings-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+function toggleEditMode(viewId, formId, btn) {
+  var view = document.getElementById(viewId);
+  var form = document.getElementById(formId);
+  var opening = !form.classList.contains('open');
+  form.classList.toggle('open', opening);
+  view.style.display = opening ? 'none' : '';
+  if (btn) btn.textContent = opening ? 'Cancel' : 'Edit';
+}
+</script>
+{% endblock %}

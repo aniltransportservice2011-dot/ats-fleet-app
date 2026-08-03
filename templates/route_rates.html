@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Route Rates{% endblock %}
+{% block extra_head %}
+<style>
+  .summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0; }
+  .summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .summary-card .lbl { font-size:0.76rem; color:var(--steel); }
+  .summary-card .val { font-size:1.15rem; font-weight:700; margin-top:2px; }
+  .summary-card .sub { font-size:0.72rem; color:var(--steel); margin-top:2px; }
+  .grid-2 { display:grid; grid-template-columns:2fr 1fr; gap:16px; margin:16px 0; }
+  .panel { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:18px; }
+  .panel h3 { font-size:0.92rem; margin:0 0 14px; }
+  .donut { width:130px; height:130px; border-radius:50%; margin:0 auto 12px; display:flex; align-items:center; justify-content:center; }
+  .donut-inner { width:88px; height:88px; background:var(--white); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .donut-inner .num { font-size:1.05rem; font-weight:700; }
+  .donut-inner .lbl { font-size:0.62rem; color:var(--steel); }
+  .legend-item { display:flex; align-items:center; gap:6px; font-size:0.82rem; margin-bottom:6px; }
+  .legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  @media (max-width:900px) { .grid-2 { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Route Rates</h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;margin-bottom:14px;">Compare route rates and analyze pricing trends.</div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>From</label><input type="text" name="from_loc" value="{{ f_from }}" placeholder="e.g. Rourkela"></div>
+    <div class="field"><label>To</label><input type="text" name="to_loc" value="{{ f_to }}" placeholder="e.g. Jajpur"></div>
+    <div class="field">
+      <label>Type</label>
+      <select name="type"><option value="">All Types</option>
+        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
+        <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/route-rates">Clear</a>
+  </form>
+
+  <div class="summary-cards">
+    <div class="summary-card"><div class="lbl">Highest Rate</div><div class="val">₹{{ '{:,.0f}'.format(highest_entry[2]) if highest_entry else 0 }}</div>
+      <div class="sub">{{ highest_entry[1] if highest_entry else '' }}</div></div>
+    <div class="summary-card"><div class="lbl">Average Rate</div><div class="val">₹{{ '{:,.0f}'.format(avg_rate_overall) }}</div><div class="sub">All routes</div></div>
+    <div class="summary-card"><div class="lbl">Lowest Rate</div><div class="val">₹{{ '{:,.0f}'.format(lowest_entry[2]) if lowest_entry else 0 }}</div>
+      <div class="sub">{{ lowest_entry[1] if lowest_entry else '' }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Routes</div><div class="val">{{ total_routes }}</div><div class="sub">All types</div></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h3>Rate Trend (Average Rate Over Time)</h3>
+      {% if svg_points %}
+      <svg viewBox="0 0 400 160" style="width:100%;height:160px;">
+        <polyline points="{{ svg_points }}" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+        {% for label in svg_labels %}
+        <text x="{{ (loop.index0 / (svg_labels|length - 1) * 400) if svg_labels|length > 1 else 200 }}" y="155" font-size="9" fill="#5A6B8C" text-anchor="middle">{{ label }}</text>
+        {% endfor %}
+      </svg>
+      {% else %}
+      <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">Not enough data for a trend yet.</div>
+      {% endif %}
+    </div>
+    <div class="panel" style="text-align:center;">
+      <h3 style="text-align:left;">Rate Breakdown</h3>
+      <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% 100%);">
+        <div class="donut-inner"><div class="num">₹{{ '{:,.0f}'.format(avg_rate_overall) }}</div><div class="lbl">Total Avg Rate</div></div>
+      </div>
+      <div style="text-align:left;">
+        <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Line Routes &nbsp;₹{{ '{:,.0f}'.format(line_avg) }}</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Local Routes &nbsp;₹{{ '{:,.0f}'.format(local_avg) }}</div>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>From</th><th>To</th><th>Type</th><th class="num">Highest</th><th class="num">Average</th><th class="num">Lowest</th><th class="num">Trips</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r['clean_from'] }}</td><td>{{ r['clean_to'] }}</td><td>{{ r['type'] }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['highest']) }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['average']) }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['lowest']) }}</td>
+      <td class="num">{{ r['trips'] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

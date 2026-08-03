@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Expenses{% endblock %}
+{% block extra_head %}
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:460px; max-width:90vw; max-height:85vh; overflow-y:auto; }
+.modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
+.modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
+.modal-box input, .modal-box select, .modal-box textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; }
+.modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
+.section-label { font-size:0.72rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.06em; text-align:center; margin:16px 0 12px; border-top:1px solid var(--line); padding-top:14px; }
+.detail-row { padding:6px 0; border-bottom:1px solid var(--line); font-size:0.88rem; }
+.detail-row .lbl { color:var(--steel); font-size:0.72rem; text-transform:uppercase; }
+.summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }
+.summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+.summary-card .lbl { font-size:0.78rem; color:var(--steel); }
+.summary-card .val { font-size:1.3rem; font-weight:700; margin-top:2px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Expenses <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Expense</button></h1>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Category</label>
+      <select name="category"><option value="">All</option>
+        {% for c in categories %}<option value="{{ c['category'] }}" {% if f_category==c['category'] %}selected{% endif %}>{{ c['category'] }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/overheads">Clear</a>
+  </form>
+
+  <div class="summary-cards">
+    <div class="summary-card"><div class="lbl">Total Expenses</div><div class="val">{{ total_count }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Amount</div><div class="val">₹{{ '{:,.0f}'.format(total_amount) }}</div></div>
+    <div class="summary-card"><div class="lbl">This Month</div><div class="val">₹{{ '{:,.0f}'.format(this_month_amount) }}</div></div>
+    <div class="summary-card"><div class="lbl">Avg. Per Month</div><div class="val">₹{{ '{:,.0f}'.format(avg_per_month) }}</div></div>
+  </div>
+
+  <table>
+    <tr><th>Date</th><th>Category</th><th>Payment Mode</th><th class="num">Amount</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('ohModal{{ loop.index }}').classList.add('open')">
+      <td>{{ r['date'] }}</td><td>{{ r['category'] }}</td><td>{{ r['payment_mode'] or '—' }}</td><td class="num">₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</td>
+      <td onclick="event.stopPropagation();"><form method="POST" action="/overheads/delete/{{ r['id'] }}" style="display:inline;" onsubmit="return confirm('Delete this entry permanently?');"><button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% for r in rows %}
+<div class="modal-overlay" id="ohModal{{ loop.index }}">
+  <div class="modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('ohModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>{{ r['category'] }} — {{ r['date'] }}</h3>
+    <div class="detail-row"><div class="lbl">Amount</div>₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</div>
+    <div class="detail-row"><div class="lbl">Payment Mode</div>{{ r['payment_mode'] or '—' }}</div>
+    <div class="detail-row"><div class="lbl">Receipt / Invoice No.</div>{{ r['receipt_number'] or '—' }}</div>
+    <div class="detail-row" style="border-bottom:none;"><div class="lbl">Notes</div>{{ r['notes'] or 'No notes for this entry' }}</div>
+    <div class="modal-actions">
+      <button type="button" onclick="document.getElementById('ohModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Close</button>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="modal-overlay" id="addModal">
+  <div class="modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addModal').classList.remove('open')">&#10005;</button>
+    <h3>Add Expense</h3>
+    <form method="POST" action="/overheads/add">
+      <label>Date</label>
+      <input type="date" name="date" required>
+      <label>Category</label>
+      <input type="text" name="category" placeholder="e.g. Rent, Electricity, Salaries" required>
+      <label>Amount</label>
+      <input type="number" step="0.01" name="amount" required>
+      <label>Description</label>
+      <textarea name="description_" rows="2" placeholder="Optional"></textarea>
+      <div class="section-label">Additional Details</div>
+      <label>Payment Mode</label>
+      <select name="payment_mode">
+        <option value="">Select Mode</option>
+        <option value="Cash">Cash</option>
+        <option value="Bank Transfer">Bank Transfer</option>
+        <option value="UPI">UPI</option>
+        <option value="Cheque">Cheque</option>
+      </select>
+      <label>Receipt / Invoice No.</label>
+      <input type="text" name="receipt_number" placeholder="Optional">
+      <label>Notes</label>
+      <textarea name="notes" rows="3" placeholder="Add any notes here..."></textarea>
+      <button type="submit" class="modal-save-btn">Save Expense</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

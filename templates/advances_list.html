@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Employee Advances{% endblock %}
+{% block extra_head %}
+<style>
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Employee Advances <a class="add-btn" href="/advances/add">+ Add Advance</a></h1>
+
+  <div style="font-size:14px;font-weight:500;margin:16px 0 8px;">Outstanding by employee</div>
+  <table>
+    <tr><th>Employee</th><th class="num">Given</th><th class="num">Repaid</th><th class="num">Outstanding</th></tr>
+    {% for r in rows %}
+    <tr><td>{{ r['employee'] }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['total_given'] or 0) }}</td>
+      <td class="num" style="color:var(--green);">₹{{ '{:,.0f}'.format(r['total_repaid'] or 0) }}</td>
+      <td class="num" style="font-weight:600;color:{% if r['outstanding'] > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(r['outstanding'] or 0) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div style="font-size:14px;font-weight:500;margin:24px 0 8px;">All advance entries</div>
+  <table>
+    <tr><th>Date</th><th>Employee</th><th>Type</th><th class="num">Amount</th><th>Notes</th></tr>
+    {% for e in entries %}
+    <tr><td>{{ e['date'] }}</td><td>{{ e['employee'] }}</td><td>{{ e['type'] }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(e['amount'] or 0) }}</td><td>{{ e['notes'] }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

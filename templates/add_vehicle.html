@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Add Vehicle{% endblock %}
+{% block extra_head %}
+<style>
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/vehicles">&larr; Back</a>
+  <h1>Add Vehicle</h1>
+  <form class="stack" method="POST">
+    <div><label>Vehicle No</label><input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required></div>
+    <div><label>Type</label>
+      <select name="type">
+        <option value="Line">Line</option>
+        <option value="Local">Local</option>
+        <option value="Market">Market</option>
+      </select>
+    </div>
+    <button type="submit" class="submit">Save Vehicle</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}Trips{% endblock %}
+{% block extra_head %}
+<style>
+  .summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0; }
+  .summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .summary-card .lbl { font-size:0.76rem; color:var(--steel); }
+  .summary-card .val { font-size:1.25rem; font-weight:700; margin-top:2px; }
+  .lr-badge { padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+  .lr-badge.yes { background:#e8f5ee; color:var(--green); }
+  .lr-badge.no { background:#fdecea; color:var(--red); }
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:400px; max-width:90vw; }
+  .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
+  .format-choice { display:flex; gap:12px; margin-top:10px; }
+  .format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
+  .format-choice a:hover { border-color:var(--accent); background:var(--paper); }
+  .end-trip-btn { background:var(--accent); color:#fff; border:none; padding:6px 14px; border-radius:4px; font-size:0.78rem; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .end-trip-btn:hover { opacity:0.9; }
+  .completed-badge { padding:3px 10px; border-radius:10px; font-size:0.72rem; font-weight:600; background:#e8f5ee; color:var(--green); white-space:nowrap; }
+  .action-menu-wrap { position:relative; display:inline-block; }
+  .action-menu-btn { background:none; border:none; cursor:pointer; color:var(--steel); font-size:1.1rem; padding:4px 10px; line-height:1; }
+  .action-menu-btn:hover { color:var(--ink); }
+  .action-menu-dropdown { display:none; position:absolute; right:0; top:100%; margin-top:2px; background:var(--white); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.14); z-index:50; min-width:130px; overflow:hidden; }
+  .action-menu-dropdown.open { display:block; }
+  .action-menu-dropdown button { width:100%; text-align:left; padding:9px 14px; background:none; border:none; cursor:pointer; font-size:0.83rem; color:var(--red); display:flex; align-items:center; gap:8px; }
+  .action-menu-dropdown button:hover { background:var(--paper); }
+  .end-trip-summary { background:var(--paper); border-radius:6px; padding:12px 14px; margin-bottom:16px; font-size:0.85rem; }
+  .end-trip-summary .route { margin-top:4px; color:var(--steel); }
+  .shortage-box { background:#fff8e8; border:1px solid #f5d99b; border-radius:6px; padding:14px; margin:14px 0; }
+  .shortage-box .hd { font-weight:600; font-size:0.85rem; margin-bottom:10px; }
+  .shortage-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .fld-sm label { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.02em; color:var(--steel); font-weight:600; display:block; margin-bottom:4px; }
+  .fld-sm input, .fld-sm select, .fld-sm textarea { width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:3px; font-size:0.87rem; font-family:inherit; box-sizing:border-box; }
+  .info-note { background:#eaf1fb; border-radius:6px; padding:10px 12px; margin:14px 0; font-size:0.78rem; color:var(--steel); display:flex; gap:8px; align-items:flex-start; }
+  .pager-row { display:flex; justify-content:flex-end; align-items:center; gap:18px; margin-top:14px; font-size:0.85rem; flex-wrap:wrap; }
+  .pager-btns { display:flex; align-items:center; gap:4px; }
+  .pager-btn { min-width:28px; height:28px; padding:0 6px; border-radius:5px; border:1px solid var(--line); background:var(--white); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink); text-decoration:none; font-size:0.82rem; }
+  .pager-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .pager-btn.disabled { opacity:0.4; pointer-events:none; }
+  .pager-ellipsis { padding:0 4px; color:var(--steel); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+    <div>
+      <h1>Trips</h1>
+      <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;">Manage all trips and track billing, pending amounts and LR status.</div>
+    </div>
+    <div style="display:flex;gap:10px;flex-shrink:0;">
+      <a href="/trips/add" class="add-btn" style="background:var(--ink);">+ Add Trip</a>
+      <button onclick="document.getElementById('dlModal').classList.add('open')" class="add-btn" style="background:var(--green);border:none;cursor:pointer;">Download This View</button>
+    </div>
+  </div>
+  <div style="margin-bottom:14px;"></div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field"><label>Party</label>
+      <select name="party"><option value="">All Parties</option>
+        {% for p in parties %}<option value="{{ p['name'] }}" {% if f_party==p['name'] %}selected{% endif %}>{{ p['name'] }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <div class="field"><label>From (Route)</label><input type="text" name="from_loc" value="{{ f_from }}" placeholder="e.g. Rourkela"></div>
+    <div class="field"><label>To (Route)</label><input type="text" name="to_loc" value="{{ f_to }}" placeholder="e.g. Jajpur"></div>
+    <div class="field">
+      <label>Type</label>
+      <select name="type"><option value="">All Types</option>
+        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
+        <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>LR Received</label>
+      <select name="lr_received"><option value="">All</option>
+        <option value="received" {% if f_lr=='received' %}selected{% endif %}>Received</option>
+        <option value="not_received" {% if f_lr=='not_received' %}selected{% endif %}>Not Received</option>
+      </select>
+    </div>
+    <button type="submit">Apply Filters</button>
+    <a class="clear" href="/trips">Clear</a>
+  </form>
+
+  <div class="summary-cards">
+    <div class="summary-card"><div class="lbl">Total Trips</div><div class="val">{{ total_count }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(total_shown) }}</div></div>
+    <div class="summary-card"><div class="lbl">Pending Balance</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(pending_total) }}</div></div>
+    <div class="summary-card"><div class="lbl">LR Received</div><div class="val" style="color:var(--green);">{{ lr_received_count }}</div></div>
+    <div class="summary-card"><div class="lbl">LR Pending</div><div class="val" style="color:var(--red);">{{ lr_pending_count }}</div></div>
+  </div>
+
+  <div class="summary-strip">
+    <span>Showing <b>{{ trips|length }}</b> of <b>{{ total_count }}</b> trips</span>
+  </div>
+
+  <table>
+    <tr><th>Date</th><th>LR Number</th><th>Vehicle</th><th>Party</th><th>From</th><th>To</th><th class="num">Billed</th><th class="num">Pending</th><th>End Trip</th><th>Action</th></tr>
+    {% for t in trips %}
+    <tr class="clickable-row" onclick="goTo('/trips/edit/{{ t['id'] }}')">
+      <td>{{ t['date'] }}</td><td style="color:var(--accent);">{{ t['lr_number'] }}</td><td>{{ t['vehicle_no'] }}</td>
+      <td>{{ t['party_name'] }}</td><td>{{ t['from_loc'] }}</td><td>{{ t['to_loc'] }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(t['billed_amount'] or 0) }}</td>
+      {% set pending = (t['billed_amount'] or 0) - (t['payment_received'] or 0) - (t['party_advance'] or 0) %}
+      <td class="num" style="color:{% if pending > 0 %}var(--red){% else %}var(--green){% endif %};font-weight:600;">₹{{ '{:,.0f}'.format(pending) }}</td>
+      <td onclick="event.stopPropagation();">
+        {% if t['end_date'] %}
+        <span class="completed-badge">Completed</span>
+        {% else %}
+        <button type="button" class="end-trip-btn" onclick="document.getElementById('endTripModal{{ t['id'] }}').classList.add('open')">End Trip</button>
+        {% endif %}
+      </td>
+      <td onclick="event.stopPropagation();">
+        <div class="action-menu-wrap">
+          <button type="button" class="action-menu-btn" onclick="toggleActionMenu({{ t['id'] }}, event)">&#8942;</button>
+          <div class="action-menu-dropdown" id="actionMenu{{ t['id'] }}">
+            <form method="POST" action="/trips/delete/{{ t['id'] }}" onsubmit="return confirm('Delete this trip permanently? This cannot be undone.');">
+              <button type="submit">&#128465; Delete</button>
+            </form>
+          </div>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="pager-row" id="pager">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="color:var(--steel);">Rows per page:</span>
+      <select onchange="window.location='?{{ base_qs }}{% if base_qs %}&{% endif %}per_page='+this.value+'#pager'" style="padding:6px 9px;border:1px solid var(--line);border-radius:4px;">
+        {% for n in [10,25,50,100] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="pager-btns">
+      <a class="pager-btn {{ 'disabled' if page<=1 }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page=1&per_page={{ per_page }}#pager" title="First page">&laquo;</a>
+      <a class="pager-btn {{ 'disabled' if page<=1 }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page-1 }}&per_page={{ per_page }}#pager" title="Previous">&lsaquo;</a>
+      {% for tok in page_tokens %}
+        {% if tok == '...' %}
+        <span class="pager-ellipsis">&hellip;</span>
+        {% else %}
+        <a class="pager-btn {{ 'active' if tok==page }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ tok }}&per_page={{ per_page }}#pager">{{ tok }}</a>
+        {% endif %}
+      {% endfor %}
+      <a class="pager-btn {{ 'disabled' if page>=total_pages }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ page+1 }}&per_page={{ per_page }}#pager" title="Next">&rsaquo;</a>
+      <a class="pager-btn {{ 'disabled' if page>=total_pages }}" href="?{{ base_qs }}{% if base_qs %}&{% endif %}page={{ total_pages }}&per_page={{ per_page }}#pager" title="Last page">&raquo;</a>
+    </div>
+    <span style="color:var(--steel);">Page {{ page }} of {{ total_pages }}</span>
+  </div>
+</div>
+
+{% for t in trips %}
+{% if not t['end_date'] %}
+<div class="modal-overlay" id="endTripModal{{ t['id'] }}">
+  <div class="modal-box" style="width:540px;">
+    <button type="button" onclick="document.getElementById('endTripModal{{ t['id'] }}').classList.remove('open')" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--steel);">&#10005;</button>
+    <h3>End Trip</h3>
+    <div style="font-size:0.82rem;color:var(--steel);margin-top:-12px;margin-bottom:16px;">Complete trip details and close this trip.</div>
+    <div class="end-trip-summary">
+      <div><b>LR:</b> {{ t['lr_number'] or '—' }} &nbsp;|&nbsp; <b>Vehicle:</b> {{ t['vehicle_no'] }} &nbsp;|&nbsp; <b>Party:</b> {{ t['party_name'] }}</div>
+      <div class="route">{{ t['from_loc'] }} &rarr; {{ t['to_loc'] }}</div>
+    </div>
+    <form method="POST" action="/trips/{{ t['id'] }}/end?{{ request.query_string.decode() }}">
+      <div class="row2">
+        <div class="fld-sm"><label>End Date *</label><input type="date" name="end_date" required></div>
+        <div class="fld-sm"><label>End Time</label><input type="time" name="end_time"></div>
+      </div>
+      <div class="row2" style="margin-top:10px;">
+        <div class="fld-sm"><label>Actual KM</label><input type="number" step="0.01" name="actual_km"></div>
+        <div class="fld-sm"><label>LR Received?</label>
+          <select name="lr_received">
+            <option value="">Select</option>
+            <option value="Yes" {% if t['lr_received']=='Yes' %}selected{% endif %}>Yes</option>
+            <option value="No" {% if t['lr_received'] and t['lr_received']!='Yes' %}selected{% endif %}>No</option>
+          </select>
+        </div>
+      </div>
+      <div class="fld-sm" style="margin-top:10px;"><label>Freight Amount (₹)</label><input type="number" step="0.01" name="freight_amount" value="{{ t['billed_amount'] or 0 }}"></div>
+
+      <div class="shortage-box">
+        <div class="hd">Shortage Details</div>
+        <div class="shortage-grid">
+          <div class="fld-sm"><label>Shortage Qty</label><input type="number" step="0.01" name="shortage_qty" value="{{ t['shortage_qty'] or '' }}"></div>
+          <div class="fld-sm"><label>Shortage Unit</label>
+            <select name="shortage_unit">
+              <option value="MT" {% if t['shortage_unit']=='MT' or not t['shortage_unit'] %}selected{% endif %}>MT</option>
+              <option value="KG" {% if t['shortage_unit']=='KG' %}selected{% endif %}>KG</option>
+              <option value="Bags" {% if t['shortage_unit']=='Bags' %}selected{% endif %}>Bags</option>
+              <option value="Units" {% if t['shortage_unit']=='Units' %}selected{% endif %}>Units</option>
+            </select>
+          </div>
+          <div class="fld-sm"><label>Shortage Amount (₹)</label><input type="number" step="0.01" name="shortage_amount" value="{{ t['shortage_amount'] or 0 }}"></div>
+        </div>
+        <div class="fld-sm" style="margin-top:10px;"><label>Shortage Remarks (optional)</label><textarea name="shortage_remarks" rows="2" maxlength="300">{{ t['shortage_remarks'] or '' }}</textarea></div>
+      </div>
+
+      <div class="fld-sm"><label>Remarks (optional)</label><textarea name="remarks" rows="2" maxlength="300">{{ t['remarks'] or '' }}</textarea></div>
+
+      <div class="info-note">
+        <span>&#8505;&#65039;</span><span>Once you end this trip, it will be marked as completed and no further edits can be made.</span>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;">
+        <button type="button" onclick="document.getElementById('endTripModal{{ t['id'] }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">End Trip</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<div class="modal-overlay" id="dlModal">
+  <div class="modal-box">
+    <button type="button" onclick="document.getElementById('dlModal').classList.remove('open')" style="position:absolute;top:14px;right:16px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--steel);">&#10005;</button>
+    <h3>Download Trips — This View</h3>
+    <div style="font-size:0.85rem;color:var(--steel);">Choose a format</div>
+    <div class="format-choice">
+      <a href="/trips/export/pdf?{{ request.query_string.decode() }}">PDF</a>
+      <a href="/trips/export?{{ request.query_string.decode() }}">Excel</a>
+    </div>
+  </div>
+</div>
+<script>
+function toggleActionMenu(id, event) {
+  event.stopPropagation();
+  var target = document.getElementById('actionMenu' + id);
+  document.querySelectorAll('.action-menu-dropdown').forEach(function(d) {
+    if (d !== target) d.classList.remove('open');
+  });
+  target.classList.toggle('open');
+}
+document.addEventListener('click', function() {
+  document.querySelectorAll('.action-menu-dropdown').forEach(function(d) { d.classList.remove('open'); });
+});
+</script>
+{% endblock %}

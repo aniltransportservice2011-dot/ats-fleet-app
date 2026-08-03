@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Add Payment{% endblock %}
+{% block extra_head %}
+<style>
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/accounts">&larr; Back</a>
+  
+  <h1>Add Payment — {{ name }} ({{ role }})</h1>
+  <form class="stack" method="POST" action="{{ action_url }}">
+    <div><label>Date</label><input type="date" name="date" required></div>
+    <div><label>Amount</label><input type="number" step="0.01" name="amount" required></div>
+    <div><label>Mode</label><input type="text" name="mode" placeholder="Cash, Bank Transfer, UPI..."></div>
+    <button type="submit" class="submit">Save Payment</button>
+  </form>
+</div>
+{% endblock %}

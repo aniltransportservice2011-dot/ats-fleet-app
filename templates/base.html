@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{% block title %}Anil Transport Service{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Segoe UI', -apple-system, Arial, sans-serif; background:var(--paper); }
+  .app-shell { display:flex; min-height:100vh; }
+  .sidebar {
+    width:220px; flex-shrink:0; background:var(--ink); color:#fff;
+    display:flex; flex-direction:column; padding:20px 0; position:sticky; top:0; align-self:flex-start; max-height:100vh; overflow-y:auto;
+  }
+  .sidebar .brand { padding:0 20px 20px; font-weight:700; font-size:1.05rem; border-bottom:1px solid rgba(255,255,255,0.12); margin-bottom:14px; }
+  .sidebar .brand span { color:var(--accent); }
+  .sidebar.collapsed { width:0; padding:20px 0; overflow:hidden; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .hamburger-btn { background:none; border:none; cursor:pointer; padding:6px; border-radius:4px; display:flex; align-items:center; flex-shrink:0; }
+  .hamburger-btn:hover { background:var(--paper); }
+  .hamburger-btn svg { width:20px; height:20px; }
+  .topbar-right { display:flex; align-items:center; gap:14px; }
+  .topbar-icon { position:relative; cursor:pointer; color:var(--steel); font-size:1.1rem; }
+  .topbar-icon .dot { position:absolute; top:-2px; right:-2px; width:8px; height:8px; background:var(--red); border-radius:50%; border:1.5px solid var(--white); }
+  .topbar-user { display:flex; align-items:center; gap:8px; }
+  .topbar-user .avatar { width:32px; height:32px; border-radius:50%; background:var(--ink); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.8rem; font-weight:700; flex-shrink:0; }
+  .topbar-user .info { font-size:0.8rem; line-height:1.2; }
+  .topbar-user .info .name { font-weight:600; color:var(--ink); }
+  .topbar-user .info .role { color:var(--steel); font-size:0.72rem; }
+  .autocomplete-list { position:fixed; background:var(--white); border:1px solid var(--line); border-radius:4px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto; z-index:500; display:none; }
+  .autocomplete-item { padding:8px 12px; font-size:0.88rem; cursor:pointer; }
+  .autocomplete-item:hover, .autocomplete-item.highlighted { background:var(--paper); }
+  .modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:4px; }
+  .modal-close-x:hover { background:var(--paper); color:var(--ink); }
+  .modal-save-btn { display:block; width:100%; padding:13px; margin-top:16px; background:var(--accent); color:#fff; border:none; border-radius:6px; font-size:0.95rem; font-weight:600; cursor:pointer; text-align:center; }
+  .modal-save-btn:hover { opacity:0.92; }
+  .nav-group { padding:0 12px; margin-bottom:18px; }
+  .nav-label { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:rgba(255,255,255,0.4); padding:6px 10px; }
+  .nav-item {
+    display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:6px;
+    color:rgba(255,255,255,0.85); text-decoration:none; font-size:0.87rem; margin-bottom:2px;
+  }
+  .nav-item:hover { background:rgba(255,255,255,0.08); color:#fff; }
+  .nav-item.active { background:var(--accent); color:#fff; font-weight:600; }
+  .nav-icon { width:18px; text-align:center; flex-shrink:0; font-size:0.95rem; }
+  .main-content { flex:1; min-width:0; padding:28px 32px 60px; transition:width 0.25s ease; }
+  .detail-panel {
+    width:0; flex-shrink:0; background:var(--paper); border-left:1px solid var(--line);
+    overflow-y:auto; overflow-x:hidden; transition:width 0.25s ease; height:100vh; position:sticky; top:0;
+  }
+  .detail-panel.open { width:520px; }
+  .detail-panel-inner { width:520px; padding:24px 28px; }
+  .detail-panel-close { position:absolute; top:20px; right:20px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); }
+</style>
+{% block extra_head %}{% endblock %}
+<script>
+  if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
+  // Skip the forced scroll-to-top when the URL carries a hash (e.g. pagination links
+  // pointing back at #pager) — let the browser jump to that anchor instead.
+  window.addEventListener('DOMContentLoaded', function() { if (!window.location.hash) window.scrollTo(0, 0); });
+</script>
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar">
+    <div class="brand">{{ company_name }}</div>
+    <div class="nav-group">
+      <div class="nav-label">Overview</div>
+      <a href="/dashboard" class="nav-item {% if active=='dashboard' %}active{% endif %}"><span class="nav-icon">&#128202;</span>Dashboard</a>
+      <a href="/accounts" class="nav-item {% if active=='accounts' %}active{% endif %}"><span class="nav-icon">&#128220;</span>Ledger</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Operations</div>
+      <a href="/trips" class="nav-item {% if active=='trips' %}active{% endif %}"><span class="nav-icon">&#128666;</span>Trips</a>
+      <a href="/maintenance" class="nav-item {% if active=='maintenance' %}active{% endif %}"><span class="nav-icon">&#128295;</span>Maintenance</a>
+      <a href="/vehicles" class="nav-item {% if active=='vehicles' %}active{% endif %}"><span class="nav-icon">&#128667;</span>Vehicles</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Analysis</div>
+      <a href="/route-rates" class="nav-item {% if active=='route-rates' %}active{% endif %}"><span class="nav-icon">&#128506;</span>Route Rates</a>
+      <a href="/best-routes" class="nav-item {% if active=='best-routes' %}active{% endif %}"><span class="nav-icon">&#127942;</span>Best Routes</a>
+      <a href="/fleet-utilization" class="nav-item {% if active=='fleet-utilization' %}active{% endif %}"><span class="nav-icon">&#9201;</span>Fleet Utilization</a>
+      <a href="/performance" class="nav-item {% if active=='performance' %}active{% endif %}"><span class="nav-icon">&#128200;</span>Performance</a>
+      <a href="/business-performance" class="nav-item {% if active=='business-performance' %}active{% endif %}"><span class="nav-icon">&#128181;</span>Business Performance</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Finance</div>
+      <a href="/salaries" class="nav-item {% if active=='salaries' %}active{% endif %}"><span class="nav-icon">&#128181;</span>Salaries</a>
+      <a href="/invoice-center" class="nav-item {% if active=='invoices' %}active{% endif %}"><span class="nav-icon">&#129534;</span>Invoices</a>
+      <a href="/overheads" class="nav-item {% if active=='overheads' %}active{% endif %}"><span class="nav-icon">&#127970;</span>Expenses</a>
+    </div>
+    <div style="flex:1;"></div>
+    <div class="nav-group" style="border-top:1px solid rgba(255,255,255,0.12);padding-top:14px;">
+      <a href="/settings" class="nav-item {% if active=='settings' %}active{% endif %}"><span class="nav-icon">&#9881;</span>Profile &amp; Settings</a>
+      {% if session.get('username') %}
+      <div style="padding:9px 10px;font-size:0.78rem;color:rgba(255,255,255,0.5);">Signed in as {{ session.get('username') }}</div>
+      <a href="/logout" class="nav-item" data-hard-nav="1"><span class="nav-icon">&#128682;</span>Logout</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="content-area" style="flex:1; min-width:0; display:flex; flex-direction:column;">
+    <div class="topbar" style="padding:14px 32px 0;">
+      <button class="hamburger-btn" onclick="toggleSidebar()" title="Toggle menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div class="topbar-right">
+        <div class="topbar-icon" title="Notifications">&#128276;<span class="dot"></span></div>
+        <div class="topbar-user">
+          <div class="avatar">{{ session.get('username','?')[:2]|upper }}</div>
+          <div class="info"><div class="name">{{ session.get('username','Guest') }}</div><div class="role">{{ 'Administrator' if session.get('is_admin') else 'Staff' }}</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="main-content" id="main-content">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-panel-inner" id="detailPanelInner"></div>
+  </div>
+</div>
+<script>
+(function() {
+  var mainEl = document.getElementById('main-content');
+
+  function updateActiveNav(url) {
+    var path = url.split('?')[0];
+    document.querySelectorAll('.sidebar a.nav-item').forEach(function(link) {
+      var linkPath = (link.getAttribute('href') || '').split('?')[0];
+      if (linkPath && linkPath === path) {
+        link.classList.add('active');
+      } else {
+        link.classList.remove('active');
+      }
+    });
+  }
+
+  function swapContent(html, url, pushState) {
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(html, 'text/html');
+    var newMain = doc.getElementById('main-content');
+    var newTitle = doc.querySelector('title');
+
+    // Remove any page-specific styles injected by a previous soft-nav
+    document.querySelectorAll('style[data-page-style]').forEach(function(el) { el.remove(); });
+
+    // Re-inject the new page's <style> blocks (page-specific CSS lives in <head>, not #main-content)
+    var newStyles = doc.querySelectorAll('head style');
+    newStyles.forEach(function(styleEl, i) {
+      // Skip the first style block, which is the shared base layout CSS already present
+      if (i === 0) return;
+      var clone = document.createElement('style');
+      clone.setAttribute('data-page-style', '1');
+      clone.textContent = styleEl.textContent;
+      document.head.appendChild(clone);
+    });
+
+    if (newMain) {
+      mainEl.innerHTML = newMain.innerHTML;
+      // Scripts inserted via innerHTML are inert by design — re-create each one so page-specific
+      // JS (e.g. Settings tab switching) actually runs after a soft navigation, not just on a hard reload.
+      mainEl.querySelectorAll('script').forEach(function(oldScript) {
+        var newScript = document.createElement('script');
+        Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
+        newScript.textContent = oldScript.textContent;
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
+    }
+    if (newTitle) {
+      document.title = newTitle.textContent;
+    }
+    updateActiveNav(url);
+    if (pushState) {
+      history.pushState({ softNav: true }, '', url);
+    }
+    window.scrollTo(0, 0);
+  }
+
+  function goTo(url) {
+    fetch(url, { headers: { 'X-Soft-Nav': '1' } })
+      .then(function(resp) { return resp.text(); })
+      .then(function(html) { swapContent(html, url, true); })
+      .catch(function() { window.location = url; });
+  }
+  window.goTo = goTo;
+
+  function openDetailPanel(url) {
+    var panel = document.getElementById('detailPanel');
+    var inner = document.getElementById('detailPanelInner');
+    inner.innerHTML = '<div style="padding:40px;text-align:center;color:var(--steel);">Loading...</div>';
+    panel.classList.add('open');
+    fetch(url, { headers: { 'X-Soft-Nav': '1' } })
+      .then(function(resp) { return resp.text(); })
+      .then(function(html) {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(html, 'text/html');
+        var newMain = doc.getElementById('main-content');
+        if (newMain) {
+          inner.innerHTML = '<button class="detail-panel-close" onclick="closeDetailPanel()">&#10005;</button>' + newMain.innerHTML;
+          inner.querySelectorAll('script').forEach(function(oldScript) {
+            var newScript = document.createElement('script');
+            Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
+            newScript.textContent = oldScript.textContent;
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+          });
+        }
+      })
+      .catch(function() { inner.innerHTML = '<div style="padding:40px;color:var(--red);">Could not load.</div>'; });
+  }
+  window.openDetailPanel = openDetailPanel;
+
+  function closeDetailPanel() {
+    document.getElementById('detailPanel').classList.remove('open');
+  }
+  window.closeDetailPanel = closeDetailPanel;
+
+  function toggleSidebar() {
+    var sidebar = document.querySelector('.sidebar');
+    sidebar.classList.toggle('collapsed');
+    try { localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0'); } catch(e) {}
+  }
+  window.toggleSidebar = toggleSidebar;
+
+  (function restoreSidebarState() {
+    try {
+      if (localStorage.getItem('sidebarCollapsed') === '1') {
+        document.querySelector('.sidebar').classList.add('collapsed');
+      }
+    } catch(e) {}
+  })();
+
+  function attachHandlers() {
+    // Sidebar nav links use soft navigation
+    document.querySelectorAll('.sidebar a.nav-item').forEach(function(link) {
+      link.addEventListener('click', function(e) {
+        var href = link.getAttribute('href');
+        if (!href || href.startsWith('http') || link.target === '_blank' || link.hasAttribute('data-hard-nav')) return;
+        e.preventDefault();
+        goTo(href);
+      });
+    });
+  }
+  attachHandlers();
+
+  function enhanceAutocompleteInputs() {
+    document.querySelectorAll('input[list]').forEach(function(input) {
+      if (input.dataset.acEnhanced) return;
+      var listId = input.getAttribute('list');
+      var datalist = document.getElementById(listId);
+      if (!datalist) return;
+      input.dataset.acEnhanced = '1';
+      input.removeAttribute('list');
+      input.setAttribute('autocomplete', 'off');
+
+      var options = Array.from(datalist.querySelectorAll('option')).map(function(o) { return o.value; });
+
+      var dropdown = document.createElement('div');
+      dropdown.className = 'autocomplete-list';
+      document.body.appendChild(dropdown);
+
+      function positionDropdown() {
+        var rect = input.getBoundingClientRect();
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.top = (rect.bottom + 2) + 'px';
+        dropdown.style.width = rect.width + 'px';
+      }
+
+      function showMatches() {
+        var val = input.value.toLowerCase();
+        var matches = val ? options.filter(function(o) { return o.toLowerCase().indexOf(val) !== -1; }) : options;
+        matches = matches.slice(0, 50);
+        if (matches.length === 0) { dropdown.style.display = 'none'; return; }
+        dropdown.innerHTML = '';
+        matches.forEach(function(m) {
+          var item = document.createElement('div');
+          item.className = 'autocomplete-item';
+          item.textContent = m;
+          item.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            input.value = m;
+            dropdown.style.display = 'none';
+          });
+          dropdown.appendChild(item);
+        });
+        positionDropdown();
+        dropdown.style.display = 'block';
+      }
+
+      input.addEventListener('focus', showMatches);
+      input.addEventListener('input', showMatches);
+      input.addEventListener('blur', function() { setTimeout(function() { dropdown.style.display = 'none'; }, 150); });
+      window.addEventListener('scroll', function() { if (dropdown.style.display === 'block') positionDropdown(); }, true);
+      window.addEventListener('resize', function() { if (dropdown.style.display === 'block') positionDropdown(); });
+    });
+  }
+  enhanceAutocompleteInputs();
+  window.enhanceAutocompleteInputs = enhanceAutocompleteInputs;
+
+  window.addEventListener('popstate', function() {
+    goTo(window.location.pathname + window.location.search);
+  });
+})();
+</script>
+</body>
+</html>

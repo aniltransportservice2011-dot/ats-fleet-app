@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Performance{% endblock %}
+{% block extra_head %}
+<style>
+  .perf-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; }
+  .perf-head .sub { color:var(--steel); font-size:0.9rem; margin-top:2px; }
+  .perf-export-btn { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:11px 18px; border-radius:6px; font-size:0.88rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
+  .perf-export-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+  .perf-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
+  .perf-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:2px solid transparent; }
+  .perf-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .perf-tab-panel { display:none; }
+  .perf-tab-panel.active { display:block; }
+
+  .kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
+  .kpi-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:flex-start; }
+  .kpi-card .lbl { font-size:0.76rem; color:var(--steel); margin-bottom:6px; }
+  .kpi-card .val { font-size:1.4rem; font-weight:700; line-height:1; }
+  .kpi-card .sub { font-size:0.74rem; color:var(--steel); margin-top:5px; }
+  .kpi-icon { width:38px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1.05rem; }
+  @media (max-width:1300px) { .kpi-row { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px) { .kpi-row { grid-template-columns:repeat(2,1fr); } }
+
+  .perf-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; }
+  .perf-panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  .perf-panel h3 { font-size:0.95rem; margin:0 0 16px; }
+  @media (max-width:1000px) { .perf-grid-2 { grid-template-columns:1fr; } }
+
+  .cssbar-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .cssbar-label { width:110px; font-size:0.78rem; color:var(--steel); flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cssbar-track { flex:1; background:var(--paper); border-radius:4px; height:16px; overflow:hidden; }
+  .cssbar-fill { height:100%; border-radius:4px; }
+  .cssbar-value { width:60px; text-align:right; font-size:0.78rem; font-weight:600; flex-shrink:0; }
+
+  .perf-pager { display:flex; justify-content:flex-end; align-items:center; gap:16px; margin-top:14px; font-size:0.85rem; flex-wrap:wrap; }
+  .perf-page-btns { display:flex; align-items:center; gap:4px; }
+  .perf-page-btn { min-width:28px; height:28px; padding:0 6px; border-radius:5px; border:1px solid var(--line); background:var(--white); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--ink); text-decoration:none; font-size:0.82rem; }
+  .perf-page-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .perf-page-btn.disabled { opacity:0.4; pointer-events:none; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:1500px;">
+  <div class="perf-head">
+    <div>
+      <h1 style="margin-bottom:2px;">Performance</h1>
+      <div class="sub">Track and compare Driver &amp; Vehicle performance in one place.</div>
+    </div>
+    <a class="perf-export-btn" href="#" onclick="return false;" title="Coming soon">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+      Export
+    </a>
+  </div>
+
+  <form class="filter-bar" method="GET">
+    <input type="hidden" name="tab" id="activeTabField" value="{{ request.args.get('tab', 'driver') }}">
+    <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/performance">Clear</a>
+  </form>
+
+  <div class="perf-tabs">
+    <button type="button" class="perf-tab" id="tabBtn-driver" onclick="showPerfTab('driver', this)">&#128100; Driver Performance</button>
+    <button type="button" class="perf-tab" id="tabBtn-vehicle" onclick="showPerfTab('vehicle', this)">&#128667; Vehicle Performance</button>
+  </div>
+
+  <div id="perf-driver" class="perf-tab-panel">
+    <div class="kpi-row">
+      <div class="kpi-card"><div><div class="lbl">Total Drivers</div><div class="val">{{ total_drivers }}</div></div>
+        <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128100;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Completed Trips</div><div class="val">{{ driver_total_trips }}</div></div>
+        <div class="kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(driver_total_billed) }}</div></div>
+        <div class="kpi-icon" style="background:#fff6e8;color:#eda100;">&#8377;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Fuel Cost</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(driver_total_fuel) }}</div></div>
+        <div class="kpi-icon" style="background:#fdecea;color:var(--red);">&#9981;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Profit</div><div class="val" style="color:{% if driver_total_profit>=0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(driver_total_profit) }}</div></div>
+        <div class="kpi-icon" style="background:#f0edfb;color:#7a5ad6;">&#128200;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Avg Trips / Driver</div><div class="val">{{ driver_avg_trips }}</div></div>
+        <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128202;</div></div>
+    </div>
+
+    <div class="perf-grid-2">
+      <div class="perf-panel">
+        <h3>Top 5 Drivers by Completed Trips</h3>
+        {% for d in top5_drivers %}
+        <div class="cssbar-row">
+          <div class="cssbar-label">{{ d['name'] }}</div>
+          <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ d['pct'] }}%;background:#2a78d6;"></div></div>
+          <div class="cssbar-value">{{ d['trip_count'] }}</div>
+        </div>
+        {% else %}
+        <div style="color:var(--steel);text-align:center;padding:20px;">No data for this selection.</div>
+        {% endfor %}
+      </div>
+      <div class="perf-panel">
+        <h3>Trips Trend (All Drivers)</h3>
+        {% set trend = driver_monthly %}
+        {% set trend_max = driver_trend_max %}
+        {% set chart_bottom = driver_chart_bottom %}
+        {% set y_ticks = driver_y_ticks %}
+        {% set line_color = '#2a78d6' %}
+        {% include 'partials/_perf_trend_chart.html' with context %}
+      </div>
+    </div>
+
+    <div class="perf-panel">
+      <h3>Driver Performance Detail</h3>
+      <table>
+        <tr><th>Driver Name</th><th class="num">Completed Trips</th><th class="num">Total Billed</th><th class="num">Fuel Cost</th><th class="num">Profit</th><th>Last Trip Date</th></tr>
+        {% for r in driver_rows %}
+        <tr>
+          <td>{{ r['name'] }}</td>
+          <td class="num">{{ r['trip_count'] }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r['total_billed']) }}</td>
+          <td class="num" style="color:var(--red);">-₹{{ '{:,.0f}'.format(r['total_fuel']) }}</td>
+          <td class="num" style="font-weight:600;color:{% if r['profit']>=0 %}var(--green){% else %}var(--red){% endif %};">{% if r['profit']>=0 %}₹{{ '{:,.0f}'.format(r['profit']) }}{% else %}-₹{{ '{:,.0f}'.format(r['profit']|abs) }}{% endif %}</td>
+          <td>{{ r['last_trip'] or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--steel);padding:30px;">No drivers found for this selection.</td></tr>
+        {% endfor %}
+      </table>
+      <div class="perf-pager" id="driverPager">
+        <span style="color:var(--steel);">Rows per page:</span>
+        <select onchange="perfChangePerPage(this.value, 'driverPager')" style="padding:6px 9px;border:1px solid var(--line);border-radius:4px;">
+          {% for n in [5,10,25,50] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select>
+        <div class="perf-page-btns">
+          <a class="perf-page-btn {{ 'disabled' if d_page<=1 }}" href="?{{ base_qs }}&tab=driver&d_page={{ d_page-1 }}&v_page={{ v_page }}&per_page={{ per_page }}#driverPager" title="Previous">&lsaquo;</a>
+          {% for p in range(1, d_total_pages+1) %}
+          <a class="perf-page-btn {{ 'active' if p==d_page }}" href="?{{ base_qs }}&tab=driver&d_page={{ p }}&v_page={{ v_page }}&per_page={{ per_page }}#driverPager">{{ p }}</a>
+          {% endfor %}
+          <a class="perf-page-btn {{ 'disabled' if d_page>=d_total_pages }}" href="?{{ base_qs }}&tab=driver&d_page={{ d_page+1 }}&v_page={{ v_page }}&per_page={{ per_page }}#driverPager" title="Next">&rsaquo;</a>
+        </div>
+        <span style="color:var(--steel);">Page {{ d_page }} of {{ d_total_pages }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="perf-vehicle" class="perf-tab-panel">
+    <div style="color:var(--steel);font-size:0.82rem;margin:-8px 0 14px;">Own vehicles only (Line + Local) — Market (hired) vehicles are excluded.</div>
+    <div class="kpi-row">
+      <div class="kpi-card"><div><div class="lbl">Total Vehicles</div><div class="val">{{ total_vehicles }}</div></div>
+        <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128667;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Completed Trips</div><div class="val">{{ vehicle_total_trips }}</div></div>
+        <div class="kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(vehicle_total_billed) }}</div></div>
+        <div class="kpi-icon" style="background:#fff6e8;color:#eda100;">&#8377;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Fuel + Maintenance</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(vehicle_total_fuel + vehicle_total_maint) }}</div></div>
+        <div class="kpi-icon" style="background:#fdecea;color:var(--red);">&#128295;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Total Profit</div><div class="val" style="color:{% if vehicle_total_profit>=0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(vehicle_total_profit) }}</div></div>
+        <div class="kpi-icon" style="background:#f0edfb;color:#7a5ad6;">&#128200;</div></div>
+      <div class="kpi-card"><div><div class="lbl">Avg Trips / Vehicle</div><div class="val">{{ vehicle_avg_trips }}</div></div>
+        <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128202;</div></div>
+    </div>
+
+    <div class="perf-grid-2">
+      <div class="perf-panel">
+        <h3>Top 5 Vehicles by Completed Trips</h3>
+        {% for v in top5_vehicles %}
+        <div class="cssbar-row">
+          <div class="cssbar-label">{{ v['name'] }}</div>
+          <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ v['pct'] }}%;background:#1a9c5b;"></div></div>
+          <div class="cssbar-value">{{ v['trip_count'] }}</div>
+        </div>
+        {% else %}
+        <div style="color:var(--steel);text-align:center;padding:20px;">No data for this selection.</div>
+        {% endfor %}
+      </div>
+      <div class="perf-panel">
+        <h3>Trips Trend (All Vehicles)</h3>
+        {% set trend = vehicle_monthly %}
+        {% set trend_max = vehicle_trend_max %}
+        {% set chart_bottom = vehicle_chart_bottom %}
+        {% set y_ticks = vehicle_y_ticks %}
+        {% set line_color = '#1a9c5b' %}
+        {% include 'partials/_perf_trend_chart.html' with context %}
+      </div>
+    </div>
+
+    <div class="perf-panel">
+      <h3>Vehicle Performance Detail</h3>
+      <table>
+        <tr><th>Vehicle No</th><th>Type</th><th class="num">Completed Trips</th><th class="num">Total Billed</th><th class="num">Fuel Cost</th><th class="num">Maintenance</th><th class="num">Profit</th><th>Last Trip Date</th></tr>
+        {% for r in vehicle_rows %}
+        <tr>
+          <td>{{ r['name'] }}</td>
+          <td>{{ r['type'] or '—' }}</td>
+          <td class="num">{{ r['trip_count'] }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r['total_billed']) }}</td>
+          <td class="num" style="color:var(--red);">-₹{{ '{:,.0f}'.format(r['total_fuel']) }}</td>
+          <td class="num" style="color:var(--red);">-₹{{ '{:,.0f}'.format(r['maint_cost']) }}</td>
+          <td class="num" style="font-weight:600;color:{% if r['profit']>=0 %}var(--green){% else %}var(--red){% endif %};">{% if r['profit']>=0 %}₹{{ '{:,.0f}'.format(r['profit']) }}{% else %}-₹{{ '{:,.0f}'.format(r['profit']|abs) }}{% endif %}</td>
+          <td>{{ r['last_trip'] or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" style="text-align:center;color:var(--steel);padding:30px;">No vehicles found for this selection.</td></tr>
+        {% endfor %}
+      </table>
+      <div class="perf-pager" id="vehiclePager">
+        <span style="color:var(--steel);">Rows per page:</span>
+        <select onchange="perfChangePerPage(this.value, 'vehiclePager')" style="padding:6px 9px;border:1px solid var(--line);border-radius:4px;">
+          {% for n in [5,10,25,50] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select>
+        <div class="perf-page-btns">
+          <a class="perf-page-btn {{ 'disabled' if v_page<=1 }}" href="?{{ base_qs }}&tab=vehicle&d_page={{ d_page }}&v_page={{ v_page-1 }}&per_page={{ per_page }}#vehiclePager" title="Previous">&lsaquo;</a>
+          {% for p in range(1, v_total_pages+1) %}
+          <a class="perf-page-btn {{ 'active' if p==v_page }}" href="?{{ base_qs }}&tab=vehicle&d_page={{ d_page }}&v_page={{ p }}&per_page={{ per_page }}#vehiclePager">{{ p }}</a>
+          {% endfor %}
+          <a class="perf-page-btn {{ 'disabled' if v_page>=v_total_pages }}" href="?{{ base_qs }}&tab=vehicle&d_page={{ d_page }}&v_page={{ v_page+1 }}&per_page={{ per_page }}#vehiclePager" title="Next">&rsaquo;</a>
+        </div>
+        <span style="color:var(--steel);">Page {{ v_page }} of {{ v_total_pages }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showPerfTab(which, btn) {
+  document.querySelectorAll('.perf-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelectorAll('.perf-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById('perf-' + which).classList.add('active');
+  (btn || document.getElementById('tabBtn-' + which)).classList.add('active');
+  document.getElementById('activeTabField').value = which;
+}
+function perfChangePerPage(val, anchorId) {
+  var url = new URL(window.location.href);
+  url.searchParams.set('per_page', val);
+  url.searchParams.delete('d_page');
+  url.searchParams.delete('v_page');
+  url.hash = anchorId || '';
+  window.location = url.toString();
+}
+(function() {
+  var initial = document.getElementById('activeTabField').value || 'driver';
+  showPerfTab(initial);
+  // The pagination anchor lives inside a tab panel that starts display:none, so the browser's
+  // native hash-scroll can fire before showPerfTab() makes it visible and silently do nothing.
+  // Scroll explicitly, now that the right tab is showing.
+  if (window.location.hash) {
+    var target = document.querySelector(window.location.hash);
+    if (target) target.scrollIntoView();
+  }
+})();
+</script>
+{% endblock %}

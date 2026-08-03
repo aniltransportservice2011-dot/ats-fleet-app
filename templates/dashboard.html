@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block extra_head %}
+<style>
+  .kpi-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin:20px 0; }
+  .kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; gap:12px; align-items:flex-start; }
+  .kpi-icon { width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.1rem; flex-shrink:0; }
+  .kpi .label { font-size:0.78rem; color:var(--steel); }
+  .kpi .value { font-size:1.35rem; font-weight:700; margin-top:2px; }
+  .kpi .sub { font-size:0.72rem; color:var(--steel); margin-top:3px; }
+  .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:16px; }
+  .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
+  .grid-4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:16px; margin-top:16px; }
+  .panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .panel h3 { font-size:0.92rem; margin:0 0 14px; }
+  .bal-box { padding:12px; border-radius:6px; margin-bottom:6px; }
+  .bal-box.recv { background:#e8f5ee; }
+  .bal-box.pay { background:#fdecea; }
+  .bal-box .label { font-size:0.78rem; color:var(--steel); }
+  .bal-box .amt { font-size:1.1rem; font-weight:700; }
+  .bal-box.recv .amt { color:var(--green); }
+  .bal-box.pay .amt { color:var(--red); }
+  .row-item { display:flex; justify-content:space-between; padding:6px 0; font-size:0.85rem; border-bottom:1px solid var(--line); }
+  .cssbar-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .cssbar-label { width:110px; font-size:0.78rem; color:var(--steel); flex-shrink:0; }
+  .cssbar-track { flex:1; background:var(--paper); border-radius:4px; height:16px; overflow:hidden; }
+  .cssbar-fill { height:100%; border-radius:4px; }
+  .cssbar-value { width:85px; text-align:right; font-size:0.78rem; font-weight:600; flex-shrink:0; }
+  .donut { width:140px; height:140px; border-radius:50%; margin:0 auto 12px; display:flex; align-items:center; justify-content:center; }
+  .donut-inner { width:96px; height:96px; background:var(--white); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .donut-inner .num { font-size:1.3rem; font-weight:700; }
+  .donut-inner .lbl { font-size:0.65rem; color:var(--steel); }
+  .legend-item { display:flex; align-items:center; gap:6px; font-size:0.78rem; margin-bottom:6px; }
+  .legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .alert-item { display:flex; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:0.82rem; }
+  .alert-dot { width:8px; height:8px; border-radius:50%; background:var(--red); margin-top:5px; flex-shrink:0; }
+  .qa-link { display:flex; align-items:center; gap:8px; padding:8px 4px; color:var(--accent); text-decoration:none; font-size:0.85rem; font-weight:600; }
+  .status-badge { padding:2px 9px; border-radius:10px; font-size:0.72rem; font-weight:600; }
+  @media (max-width:1100px) { .grid-3, .grid-4 { grid-template-columns:1fr 1fr; } }
+  @media (max-width:700px) { .grid-2, .grid-3, .grid-4 { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:none; width:100%;">
+  <h1>Dashboard</h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;margin-bottom:14px;">Welcome back</div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Financial Year</label>
+      <select name="fy" onchange="if(this.value){document.querySelector('[name=date_from]').value=this.value.split('|')[0];document.querySelector('[name=date_to]').value=this.value.split('|')[1];}">
+        <option value="" {% if f_fy=='' %}selected{% endif %}>Custom</option>
+        <option value="2026-04-01|2027-03-31" {% if f_fy=='2026-04-01|2027-03-31' %}selected{% endif %}>FY 2026-27</option>
+        <option value="2025-04-01|2026-03-31" {% if f_fy=='2025-04-01|2026-03-31' %}selected{% endif %}>FY 2025-26</option>
+      </select>
+    </div>
+    <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <div class="field">
+      <label>Vehicle</label>
+      <select name="vehicle">
+        <option value="">All vehicles</option>
+        {% for v in vehicles %}
+        <option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/dashboard">Clear</a>
+  </form>
+
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128666;</div>
+      <div><div class="label">Total Trips</div><div class="value">{{ trip_count }}</div></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:#e8f5ee;color:#1a9c5b;">&#8377;</div>
+      <div><div class="label">Total Revenue</div><div class="value">₹{{ '{:,.0f}'.format(total_revenue) }}</div></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:{% if total_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if total_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128200;</div>
+      <div><div class="label">Total Profit</div>
+      {% if total_profit >= 0 %}
+      <div class="value" style="color:var(--green);">₹{{ '{:,.0f}'.format(total_profit) }}</div>
+      {% else %}
+      <div class="value" style="color:var(--red);">-₹{{ '{:,.0f}'.format(total_profit|abs) }}</div>
+      {% endif %}
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:#eaf1fb;color:#7a5ad6;">&#128666;</div>
+      <div><div class="label">Own Vehicle Revenue</div><div class="value">₹{{ '{:,.0f}'.format(own_vehicle_turnover) }}</div>
+      <div class="sub">Line + Local only</div></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:{% if market_vehicle_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if market_vehicle_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128176;</div>
+      <div><div class="label">Market Vehicle Profit</div>
+      {% if market_vehicle_profit >= 0 %}
+      <div class="value" style="color:var(--green);">₹{{ '{:,.0f}'.format(market_vehicle_profit) }}</div>
+      {% else %}
+      <div class="value" style="color:var(--red);">-₹{{ '{:,.0f}'.format(market_vehicle_profit|abs) }}</div>
+      {% endif %}
+      <div class="sub">{{ market_trip_count }} trips &middot; party rate minus owner's rate</div></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:#fdecea;color:#e34948;">&#9981;</div>
+      <div><div class="label">Fuel Expense</div><div class="value">₹{{ '{:,.0f}'.format(fuel_total) }}</div></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:#fff6e8;color:#eda100;">&#128295;</div>
+      <div><div class="label">Maintenance Cost</div><div class="value">₹{{ '{:,.0f}'.format(maint_total) }}</div></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-icon" style="background:#eaf1fb;color:#7a5ad6;">&#128203;</div>
+      <div><div class="label">Total Payable</div><div class="value">₹{{ '{:,.0f}'.format(total_payables) }}</div>
+      <div class="sub"><a href="/accounts" style="color:var(--accent);">View Ledger &rarr;</a></div></div>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <div class="panel">
+      <h3>Vehicle-wise Revenue <span style="font-size:0.7rem;color:var(--steel);font-weight:400;">(own vehicles only)</span></h3>
+      {% for v in vehicle_revenue %}
+      <div class="cssbar-row">
+        <div class="cssbar-label">{{ v['vehicle_no'] }}</div>
+        <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ v['pct'] }}%;background:#2a78d6;"></div></div>
+        <div class="cssbar-value">₹{{ '{:,.0f}'.format(v['revenue']) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="panel">
+      <h3>Expense Breakdown</h3>
+      {% for e in exp_breakdown %}
+      <div class="cssbar-row">
+        <div class="cssbar-label">{{ e['label'] }}</div>
+        <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ e['pct'] }}%;background:{{ e['color'] }};"></div></div>
+        <div class="cssbar-value">₹{{ '{:,.0f}'.format(e['value']) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="panel">
+      <h3>Recent Alerts</h3>
+      {% for a in alerts %}
+      <div class="alert-item">
+        <div class="alert-dot"></div>
+        <div><div>{{ a['text'] }}</div><div style="color:var(--steel);font-size:0.75rem;">{{ a['sub'] }}</div></div>
+      </div>
+      {% else %}
+      <div style="color:var(--steel);font-size:0.85rem;">No alerts right now.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="grid-4">
+    <div class="panel" style="text-align:center;">
+      <h3 style="text-align:left;">Fleet Status</h3>
+      <div class="donut" style="background:conic-gradient(#1a9c5b 0% {{ fleet_running_pct }}%, #e34948 {{ fleet_running_pct }}% 100%);">
+        <div class="donut-inner"><div class="num">{{ own_vehicle_count }}</div><div class="lbl">Total</div></div>
+      </div>
+      <div style="text-align:left;">
+        <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Running ({{ own_vehicle_count - own_idle_count }})</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#e34948;"></span>Idle ({{ own_idle_count }})</div>
+      </div>
+    </div>
+
+    <div class="panel" style="grid-column:span 2;">
+      <h3>Top Performing Vehicles</h3>
+      <table style="width:100%;font-size:0.82rem;">
+        <tr style="color:var(--steel);text-align:left;"><th style="padding:4px 0;">Vehicle</th><th>Trips</th><th style="text-align:right;">Revenue</th></tr>
+        {% for v in top_vehicles %}
+        <tr><td style="padding:6px 0;border-top:1px solid var(--line);">{{ v['vehicle_no'] }}</td>
+          <td style="border-top:1px solid var(--line);">{{ v['trips'] }}</td>
+          <td style="text-align:right;border-top:1px solid var(--line);">₹{{ '{:,.0f}'.format(v['revenue']) }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>Quick Actions</h3>
+      <a href="/trips/add" class="qa-link">+ Add New Trip</a>
+      <a href="/maintenance/add" class="qa-link">+ Add Maintenance</a>
+      <a href="/vehicles/add" class="qa-link">+ Add Vehicle</a>
+      <a href="/employees/add" class="qa-link">+ Add Employee</a>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top:16px;">
+    <div class="panel">
+      <h3>Recent Trips <a href="/trips" style="float:right;font-size:0.78rem;color:var(--accent);">View All</a></h3>
+      <table style="width:100%;font-size:0.8rem;">
+        <tr style="color:var(--steel);text-align:left;"><th style="padding:4px 0;">LR Number</th><th>Vehicle</th><th>From &rarr; To</th><th style="text-align:right;">Freight</th></tr>
+        {% for t in recent_trips %}
+        <tr>
+          <td style="padding:6px 0;border-top:1px solid var(--line);">{{ t['lr_number'] }}</td>
+          <td style="border-top:1px solid var(--line);">{{ t['vehicle_no'] }}</td>
+          <td style="border-top:1px solid var(--line);">{{ t['from_loc'] }} &rarr; {{ t['to_loc'] }}</td>
+          <td style="text-align:right;border-top:1px solid var(--line);">₹{{ '{:,.0f}'.format(t['billed_amount'] or 0) }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>Maintenance Breakdown by Category</h3>
+      {% for m in maint_by_category %}
+      <div class="cssbar-row">
+        <div class="cssbar-label">{{ m['category'] }}</div>
+        <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ m['pct'] }}%;background:#e34948;"></div></div>
+        <div class="cssbar-value">₹{{ '{:,.0f}'.format(m['total']) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

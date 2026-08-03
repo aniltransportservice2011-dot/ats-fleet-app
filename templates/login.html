@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Sign In — {{ company_name }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Segoe UI', -apple-system, Arial, sans-serif; min-height:100vh; }
+  .login-shell { display:flex; min-height:100vh; }
+
+  /* ---------- Left brand panel ---------- */
+  .login-left {
+    flex:1 1 46%; min-width:340px; position:relative; overflow:hidden; color:#fff;
+    background: linear-gradient(160deg, #0d1830 0%, #14213d 45%, #1b2c52 100%);
+    padding:44px 48px 36px; display:flex; flex-direction:column;
+  }
+  .brand-row { display:flex; align-items:center; gap:14px; margin-bottom:44px; }
+  .brand-row svg { flex-shrink:0; }
+  .brand-name { font-size:1.5rem; font-weight:800; letter-spacing:0.02em; line-height:1.15; }
+  .brand-name .hl { color:var(--accent); }
+  .brand-sub { font-size:0.72rem; letter-spacing:0.12em; color:rgba(255,255,255,0.6); margin-top:3px; }
+
+  .hero-copy h1 { font-size:2.1rem; line-height:1.25; margin:0 0 4px; font-weight:800; }
+  .hero-copy h1 .accent-line { color:var(--accent); display:block; }
+  .rule { width:56px; height:4px; background:var(--accent); border-radius:2px; margin:16px 0 18px; }
+  .hero-copy p { font-size:0.95rem; line-height:1.6; color:rgba(255,255,255,0.78); max-width:420px; margin:0; }
+
+  .truck-illustration { margin:28px 0 8px; }
+
+  .feature-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:auto; padding-top:20px; }
+  .feature-item .ic {
+    width:38px; height:38px; border-radius:9px; background:rgba(192,86,33,0.18); border:1px solid rgba(192,86,33,0.4);
+    display:flex; align-items:center; justify-content:center; margin-bottom:10px; color:var(--accent);
+  }
+  .feature-item .ttl { font-size:0.8rem; font-weight:700; margin-bottom:3px; }
+  .feature-item .sub { font-size:0.7rem; color:rgba(255,255,255,0.55); line-height:1.35; }
+  .login-left .foot { font-size:0.7rem; color:rgba(255,255,255,0.35); margin-top:28px; }
+
+  /* ---------- Right panel ---------- */
+  .login-right {
+    flex:1 1 54%; display:flex; align-items:center; justify-content:center; padding:40px 24px;
+    background: radial-gradient(circle at 80% 20%, #eef2fb 0%, var(--paper) 55%);
+  }
+  .login-card { background:#fff; width:100%; max-width:440px; border-radius:16px; padding:40px 40px 32px;
+    box-shadow:0 20px 50px rgba(20,33,61,0.14); }
+  .card-icon { width:64px; height:64px; border-radius:50%; background:#eef2fb; display:flex; align-items:center;
+    justify-content:center; margin:0 auto 18px; }
+  .login-card h2 { text-align:center; margin:0 0 4px; color:var(--ink); font-size:1.5rem; }
+  .login-card .sub { text-align:center; color:var(--steel); font-size:0.88rem; margin-bottom:26px; }
+
+  .error-box { background:#fdecea; color:var(--red); padding:10px 14px; border-radius:6px; font-size:0.85rem; margin-bottom:18px; }
+  .notice-box { background:#e8f5ee; color:var(--green); padding:10px 14px; border-radius:6px; font-size:0.85rem; margin-bottom:18px; }
+
+  .input-group { position:relative; margin-bottom:16px; }
+  .input-group .ic-left { position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--steel); pointer-events:none; }
+  .input-group label { position:absolute; left:42px; top:8px; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--steel); font-weight:600; }
+  .input-group input {
+    width:100%; padding:26px 14px 9px 42px; border:1.5px solid var(--line); border-radius:8px; font-size:0.98rem;
+    color:var(--ink); background:#fff;
+  }
+  .input-group input:focus { outline:none; border-color:var(--accent); }
+  .input-group .ic-right { position:absolute; right:14px; top:50%; transform:translateY(-50%); color:var(--steel); cursor:pointer; background:none; border:none; padding:4px; }
+
+  .row-between { display:flex; justify-content:space-between; align-items:center; font-size:0.83rem; margin:2px 0 20px; }
+  .remember { display:flex; align-items:center; gap:7px; color:var(--ink); }
+  .remember input { width:15px; height:15px; accent-color:var(--accent); margin:0; }
+  .row-between a { color:#2a5adb; text-decoration:none; font-size:0.83rem; }
+  .row-between a:hover { text-decoration:underline; }
+
+  .signin-btn {
+    width:100%; padding:14px; border:none; border-radius:8px; cursor:pointer;
+    background:linear-gradient(135deg, var(--accent), #d97a3f); color:#fff; font-size:1rem; font-weight:700;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .signin-btn:hover { opacity:0.94; }
+
+  .divider { display:flex; align-items:center; gap:12px; margin:22px 0; color:var(--steel); font-size:0.75rem; font-weight:600; }
+  .divider::before, .divider::after { content:''; flex:1; height:1px; background:var(--line); }
+
+  .alt-login-btn {
+    width:100%; padding:13px; border:1.5px solid var(--line); border-radius:8px; cursor:pointer; background:#fff;
+    color:var(--ink); font-size:0.92rem; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .alt-login-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+  .login-panel { display:none; }
+  .login-panel.active { display:block; }
+
+  .resend-row { display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:0.82rem; }
+  .resend-row button { background:none; border:none; color:#2a5adb; cursor:pointer; font-size:0.82rem; padding:0; }
+  .otp-phone-chip { background:var(--paper); border-radius:6px; padding:9px 12px; font-size:0.85rem; color:var(--steel); margin-bottom:16px; text-align:center; }
+
+  .secure-note { display:flex; align-items:center; justify-content:center; gap:6px; color:var(--steel); font-size:0.78rem; margin-top:18px; }
+
+  @media (max-width:860px) {
+    .login-shell { flex-direction:column; }
+    .login-left { padding:32px 28px; }
+    .feature-row { grid-template-columns:repeat(2,1fr); }
+    .hero-copy h1 { font-size:1.6rem; }
+  }
+</style>
+</head>
+<body>
+<div class="login-shell">
+
+  <div class="login-left">
+    <div class="brand-row">
+      <svg width="46" height="46" viewBox="0 0 46 46" fill="none">
+        <rect width="46" height="46" rx="10" fill="rgba(255,255,255,0.06)"/>
+        <path d="M6 30h4l2-6h9l2 6h4" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M12 24V16a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M26 20h6l4 4v6h-3" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="17" cy="32" r="2.4" fill="#0d1830" stroke="#fff" stroke-width="1.6"/>
+        <circle cx="33" cy="32" r="2.4" fill="#0d1830" stroke="#fff" stroke-width="1.6"/>
+        <path d="M4 20h5M4 23h7" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="brand-name">ANIL <span class="hl">TRANSPORT</span></div>
+        <div class="brand-sub">FLEET MANAGEMENT SYSTEM</div>
+      </div>
+    </div>
+
+    <div class="hero-copy">
+      <h1>Manage Your Fleet.<span class="accent-line">Drive Your Success.</span></h1>
+      <div class="rule"></div>
+      <p>A complete solution to manage your vehicles, trips, drivers, expenses and grow your transport business efficiently.</p>
+    </div>
+
+    <div class="truck-illustration">
+      <svg width="100%" height="140" viewBox="0 0 460 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="112" width="460" height="2" fill="rgba(255,255,255,0.15)"/>
+        <rect x="20" y="60" width="26" height="52" fill="rgba(255,255,255,0.05)"/>
+        <rect x="54" y="40" width="20" height="72" fill="rgba(255,255,255,0.07)"/>
+        <rect x="382" y="50" width="24" height="62" fill="rgba(255,255,255,0.06)"/>
+        <rect x="414" y="30" width="22" height="82" fill="rgba(255,255,255,0.08)"/>
+        <g transform="translate(120,44)">
+          <path d="M0 58h6l4-12h60l6 12h6" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10 46V16a3 3 0 0 1 3-3h50a3 3 0 0 1 3 3v30" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M66 30h20l14 14v14h-8" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="70" y="34" width="14" height="10" rx="1.5" fill="rgba(255,255,255,0.5)"/>
+          <circle cx="26" cy="60" r="7" fill="#0d1830" stroke="#fff" stroke-width="2"/>
+          <circle cx="86" cy="60" r="7" fill="#0d1830" stroke="#fff" stroke-width="2"/>
+          <path d="M-14 20h10M-14 26h16" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round"/>
+        </g>
+      </svg>
+    </div>
+
+    <div class="feature-row">
+      <div class="feature-item">
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h11l3 5h4v-5l-3-5h-4V6H3z"/><circle cx="7.5" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/></svg></div>
+        <div class="ttl">Fleet Tracking</div><div class="sub">Real-time vehicle monitoring</div>
+      </div>
+      <div class="feature-item">
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v14"/><path d="M4 11h8"/><path d="M14 9h2l3 3v6a1 1 0 0 1-1 1h-1"/><circle cx="17" cy="18" r="1.5"/></svg></div>
+        <div class="ttl">Fuel Management</div><div class="sub">Track fuel expenses and efficiency</div>
+      </div>
+      <div class="feature-item">
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5c0-1.1 1-2 2.5-2s2.5.7 2.5 1.8c0 2.4-5 1.4-5 4 0 1.1 1 1.8 2.5 1.8s2.5-.9 2.5-2"/><path d="M12 6v1.3M12 16.7V18"/></svg></div>
+        <div class="ttl">Expense Control</div><div class="sub">Manage costs and increase profits</div>
+      </div>
+      <div class="feature-item">
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9"/><path d="M11 19V5"/><path d="M18 19v-7"/><path d="M2 19h20"/></svg></div>
+        <div class="ttl">Smart Reports</div><div class="sub">Data-driven insights for growth</div>
+      </div>
+    </div>
+
+    <div class="foot">&copy; {{ current_year or 2026 }} {{ company_name }}. All rights reserved.</div>
+  </div>
+
+  <div class="login-right">
+    <div class="login-card">
+      <div class="card-icon">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M12 2l8 3.5v6c0 5-3.4 8.7-8 10.5-4.6-1.8-8-5.5-8-10.5v-6L12 2z" fill="#14213d" stroke="none"/><path d="M8.5 12.2l2.4 2.4L15.7 10" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <h2>Welcome Back!</h2>
+      <div class="sub">Sign in to access your fleet dashboard</div>
+
+      <div id="password-panel" class="login-panel {{ 'active' if not otp_mode else '' }}">
+        {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+        <form method="POST" action="/login">
+          <div class="input-group">
+            <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+            <label>Username</label>
+            <input type="text" name="username" required autofocus autocomplete="username">
+          </div>
+          <div class="input-group">
+            <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+            <label>Password</label>
+            <input type="password" name="password" id="pwInput" required autocomplete="current-password">
+            <button type="button" class="ic-right" onclick="togglePw()" title="Show/hide password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <div class="row-between">
+            <label class="remember"><input type="checkbox" name="remember_me"> Remember me</label>
+            <a href="#" onclick="alert('Please contact your administrator to reset your password.'); return false;">Forgot Password?</a>
+          </div>
+          <button type="submit" class="signin-btn">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+            Sign In
+          </button>
+        </form>
+        <div class="divider"><span>OR</span></div>
+        <button type="button" class="alt-login-btn" onclick="showPanel('otp')">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+          Login with Mobile OTP
+        </button>
+      </div>
+
+      <div id="otp-panel" class="login-panel {{ 'active' if otp_mode else '' }}">
+        {% if otp_error %}<div class="error-box">{{ otp_error }}</div>{% endif %}
+        {% if not otp_sent %}
+        <form method="POST" action="/login/otp/send">
+          <div class="input-group">
+            <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></span>
+            <label>Mobile Number</label>
+            <input type="tel" name="phone" placeholder="+91XXXXXXXXXX" required autofocus>
+          </div>
+          <button type="submit" class="signin-btn">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            Send OTP
+          </button>
+        </form>
+        {% else %}
+        <div class="otp-phone-chip">OTP sent to <b>{{ otp_phone }}</b></div>
+        <form method="POST" action="/login/otp/verify">
+          <input type="hidden" name="phone" value="{{ otp_phone }}">
+          <div class="input-group">
+            <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+            <label>6-Digit Code</label>
+            <input type="text" name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="••••••" required autofocus>
+          </div>
+          <button type="submit" class="signin-btn">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M20 6L9 17l-5-5"/></svg>
+            Verify &amp; Sign In
+          </button>
+        </form>
+        <div class="resend-row">
+          <span></span>
+          <form method="POST" action="/login/otp/send" style="display:inline;">
+            <input type="hidden" name="phone" value="{{ otp_phone }}">
+            <button type="submit">Resend OTP</button>
+          </form>
+        </div>
+        {% endif %}
+        <div class="divider"><span>OR</span></div>
+        <button type="button" class="alt-login-btn" onclick="showPanel('password')">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Login with Username &amp; Password
+        </button>
+      </div>
+
+      <div class="secure-note">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 3.5v6c0 5-3.4 8.7-8 10.5-4.6-1.8-8-5.5-8-10.5v-6L12 2z"/></svg>
+        Secure login. All data is protected.
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+function showPanel(which) {
+  document.getElementById('password-panel').classList.toggle('active', which === 'password');
+  document.getElementById('otp-panel').classList.toggle('active', which === 'otp');
+}
+function togglePw() {
+  var inp = document.getElementById('pwInput');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+</script>
+</body></html>

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Vehicles{% endblock %}
+{% block extra_head %}
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:460px; max-width:90vw; max-height:85vh; overflow-y:auto; }
+.modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
+.modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
+.modal-box input, .modal-box select, .modal-box textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; }
+.modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
+.section-label { font-size:0.72rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.06em; text-align:center; margin:16px 0 12px; border-top:1px solid var(--line); padding-top:14px; }
+.summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }
+.summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+.summary-card .lbl { font-size:0.78rem; color:var(--steel); }
+.summary-card .val { font-size:1.3rem; font-weight:700; margin-top:2px; }
+.type-pill { display:inline-block; padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Vehicles <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Vehicle</button></h1>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Type</label>
+      <select name="type"><option value="">All</option>
+        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
+        <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/vehicles">Clear</a>
+  </form>
+
+  <div class="summary-cards">
+    <div class="summary-card"><div class="lbl">Total Vehicles</div><div class="val">{{ rows|length }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Trips</div><div class="val">{{ rows|sum(attribute='trip_count') }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(rows|sum(attribute='total_billed')) }}</div></div>
+    <div class="summary-card"><div class="lbl">Avg. Per Vehicle</div><div class="val">₹{{ '{:,.0f}'.format((rows|sum(attribute='total_billed'))/(rows|length) if rows|length > 0 else 0) }}</div></div>
+  </div>
+
+  <table>
+    <tr><th>Vehicle No</th><th>Type</th><th class="num">Trips</th><th class="num">Total Billed</th><th>Insurance Exp.</th><th>Fitness Exp.</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('editModal{{ loop.index }}').classList.add('open')">
+      <td>{{ r['vehicle_no'] }}</td>
+      <td><span class="type-pill" style="background:{% if r['type']=='Line' %}#eaf1fb;color:#2a78d6{% elif r['type']=='Local' %}#e8f5ee;color:#1a9c5b{% else %}#fff6e8;color:#eda100{% endif %};">{{ r['type'] }}</span></td>
+      <td class="num">{{ r['trip_count'] }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['total_billed'] or 0) }}</td>
+      <td>{{ r['insurance_expiry'] or '—' }}</td>
+      <td>{{ r['fitness_expiry'] or '—' }}</td>
+      <td onclick="event.stopPropagation();"><form method="POST" action="/vehicles/delete/{{ r['id'] }}" style="display:inline;" onsubmit="return confirm('Delete this vehicle permanently?');"><button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% for r in rows %}
+<div class="modal-overlay" id="editModal{{ loop.index }}">
+  <div class="modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('editModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>Edit Vehicle</h3>
+    <form method="POST" action="/vehicles/edit/{{ r['id'] }}">
+      <label>Vehicle No</label>
+      <input type="text" name="vehicle_no" value="{{ r['vehicle_no'] }}" required>
+      <label>Type</label>
+      <select name="type">
+        <option value="Line" {% if r['type']=='Line' %}selected{% endif %}>Line</option>
+        <option value="Local" {% if r['type']=='Local' %}selected{% endif %}>Local</option>
+        <option value="Market" {% if r['type']=='Market' %}selected{% endif %}>Market</option>
+      </select>
+      <div class="section-label">Additional Details</div>
+      <label>Registration Date</label>
+      <input type="date" name="registration_date" value="{{ r['registration_date'] or '' }}">
+      <label>Capacity (MT)</label>
+      <input type="number" step="0.01" name="capacity_mt" value="{{ r['capacity_mt'] or '' }}">
+      <label>Insurance Expiry</label>
+      <input type="date" name="insurance_expiry" value="{{ r['insurance_expiry'] or '' }}">
+      <label>Fitness Expiry</label>
+      <input type="date" name="fitness_expiry" value="{{ r['fitness_expiry'] or '' }}">
+      <label>Notes</label>
+      <textarea name="notes" rows="3">{{ r['notes'] or '' }}</textarea>
+      <button type="submit" class="modal-save-btn">Save Changes</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<div class="modal-overlay" id="addModal">
+  <div class="modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addModal').classList.remove('open')">&#10005;</button>
+    <h3>Add Vehicle</h3>
+    <form method="POST" action="/vehicles/add">
+      <label>Vehicle No</label>
+      <input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required>
+      <label>Type</label>
+      <select name="type">
+        <option value="Line">Line</option>
+        <option value="Local">Local</option>
+        <option value="Market">Market</option>
+      </select>
+      <div class="section-label">Additional Details</div>
+      <label>Registration Date</label>
+      <input type="date" name="registration_date">
+      <label>Capacity (MT)</label>
+      <input type="number" step="0.01" name="capacity_mt">
+      <label>Insurance Expiry</label>
+      <input type="date" name="insurance_expiry">
+      <label>Fitness Expiry</label>
+      <input type="date" name="fitness_expiry">
+      <label>Notes</label>
+      <textarea name="notes" rows="3" placeholder="Any notes about this vehicle..."></textarea>
+      <button type="submit" class="modal-save-btn">Save Vehicle</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

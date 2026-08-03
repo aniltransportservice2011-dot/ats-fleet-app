@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — Ledger{% endblock %}
+{% block extra_head %}
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:420px; max-width:90vw; }
+.modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:4px; }
+.modal-close-x:hover { background:var(--paper); color:var(--ink); }
+.modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
+.modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
+.modal-box input { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; }
+.format-choice { display:flex; gap:12px; margin-top:10px; }
+.format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
+.format-choice a:hover { border-color:var(--accent); background:var(--paper); }
+.letterhead { text-align:center; border-bottom:2px solid var(--ink); padding-bottom:14px; margin-bottom:18px; }
+.letterhead h3 { margin:0 0 4px; font-size:1.2rem; }
+.letterhead .addr { font-size:0.78rem; color:var(--steel); }
+.contact-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:18px; margin-bottom:18px; }
+.contact-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:0.88rem; }
+.contact-grid .lbl { color:var(--steel); font-size:0.72rem; text-transform:uppercase; }
+.stat-boxes { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:18px; }
+.stat-box { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px; }
+.stat-box .lbl { font-size:0.75rem; color:var(--steel); }
+.stat-box .val { font-size:1.15rem; font-weight:700; margin-top:2px; }
+.pm-tabs { display:flex; gap:6px; margin-bottom:16px; }
+.pm-tab { padding:8px 14px; border-radius:6px; border:none; background:var(--paper); color:var(--steel); font-weight:600; font-size:0.82rem; cursor:pointer; }
+.pm-tab.active { background:#fff6ee; color:var(--accent); }
+.pm-panel { display:none; }
+.pm-panel.active { display:block; }
+.pm-hint { font-size:0.78rem; color:var(--steel); margin-bottom:12px; line-height:1.5; }
+.pm-row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.alloc-head { display:flex; justify-content:space-between; align-items:baseline; margin:14px 0 6px; }
+.alloc-head .out-amt { font-size:0.82rem; color:var(--steel); }
+.alloc-head .out-amt b { color:var(--red); }
+.alloc-table-wrap { max-height:220px; overflow-y:auto; border:1px solid var(--line); border-radius:4px; }
+.alloc-table-wrap table { width:100%; font-size:0.8rem; margin-bottom:0; }
+.alloc-table-wrap th, .alloc-table-wrap td { padding:6px 8px; }
+.alloc-summary { background:var(--paper); border-radius:6px; padding:14px 16px; margin:14px 0; }
+.alloc-summary .hd { font-weight:600; font-size:0.85rem; margin-bottom:10px; }
+.alloc-summary-grid { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:10px; align-items:center; }
+.alloc-summary-grid .lbl { font-size:0.7rem; color:var(--steel); text-transform:uppercase; margin-bottom:2px; }
+.alloc-summary-grid .val { font-size:1.05rem; font-weight:700; }
+.alloc-badge { padding:5px 12px; border-radius:14px; font-size:0.78rem; font-weight:600; white-space:nowrap; }
+.alloc-badge.full { background:#e8f5ee; color:var(--green); }
+.alloc-badge.partial { background:#fff6e8; color:#b8860b; }
+.alloc-badge.none { background:var(--line); color:var(--steel); }
+.pm-pager { display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:8px; font-size:0.78rem; color:var(--steel); }
+.pm-pager select { padding:4px 6px; border:1px solid var(--line); border-radius:4px; font-size:0.78rem; }
+.pm-pager-btns { display:flex; gap:3px; }
+.pm-pager-btn { min-width:24px; height:24px; border:1px solid var(--line); background:var(--white); border-radius:4px; cursor:pointer; font-size:0.76rem; }
+.pm-pager-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.char-count { text-align:right; font-size:0.7rem; color:var(--steel); margin-top:-10px; margin-bottom:10px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/accounts">&larr; Back to Ledger</a>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <div>
+      <h1 style="margin-bottom:2px;">{{ name }}</h1>
+      <div style="color:var(--accent);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">{{ role }}</div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button type="button" onclick="document.getElementById('paymentModal').classList.add('open')" class="add-btn">+ Add Payment</button>
+      <button onclick="document.getElementById('dlModal').classList.add('open')" class="add-btn" style="background:var(--green);border:none;cursor:pointer;">Download Ledger</button>
+    </div>
+  </div>
+
+  <div class="contact-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="font-weight:600;">Contact Details</div>
+      <button onclick="document.getElementById('editContactModal').classList.add('open')" style="background:none;border:1px solid var(--line);padding:6px 14px;border-radius:4px;cursor:pointer;font-size:0.82rem;">Edit</button>
+    </div>
+    <div class="contact-grid">
+      <div><div class="lbl">Phone</div>{{ contact or '—' }}</div>
+      <div><div class="lbl">Email</div>{{ email or '—' }}</div>
+      <div><div class="lbl">Address</div>{{ address or '—' }}</div>
+      <div><div class="lbl">Since</div>{{ since_date or '—' }}</div>
+      {% if opening_balance %}
+      <div><div class="lbl">Opening Balance</div>
+        <span style="color:{% if opening_balance > 0 %}var(--green){% else %}var(--red){% endif %};font-weight:600;">₹{{ '{:,.0f}'.format(opening_balance|abs) }}{% if opening_balance < 0 %} (payable){% endif %}</span>
+      </div>
+      <div><div class="lbl">Opening Balance Date</div>{{ opening_balance_date or '—' }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="stat-boxes">
+    <div class="stat-box"><div class="lbl">Total Receivable</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(final_balance if final_balance > 0 else 0) }}</div></div>
+    <div class="stat-box"><div class="lbl">Total Payable</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format((final_balance|abs) if final_balance < 0 else 0) }}</div></div>
+    <div class="stat-box"><div class="lbl">Net Balance</div><div class="val">₹{{ '{:,.0f}'.format(final_balance) }}</div></div>
+    <div class="stat-box"><div class="lbl">Credit Limit</div><div class="val">₹{{ '{:,.0f}'.format(credit_limit or 0) }}</div></div>
+  </div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/ledger/{{ entity_type }}/{{ entity_id }}">Clear</a>
+  </form>
+
+  <table>
+    <tr><th>Date</th><th>Detail</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr>
+    {% for e in entries %}
+    <tr>
+      <td>{{ e['date'] }}</td>
+      <td>{{ e['detail'] }}</td>
+      <td class="num">{% if e['debit'] %}₹{{ '{:,.0f}'.format(e['debit']) }}{% endif %}</td>
+      <td class="num">{% if e['credit'] %}₹{{ '{:,.0f}'.format(e['credit']) }}{% endif %}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(e['balance']) }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" style="text-align:center;color:var(--steel);padding:30px;">No transactions found for this {{ role|lower }}.</td></tr>
+    {% endfor %}
+  </table>
+  <div style="margin-top:16px;padding:16px;background:var(--white);border-left:4px solid {% if final_balance >= 0 %}var(--green){% else %}var(--red){% endif %};font-size:1.1rem;border-radius:6px;">
+    <div style="color:var(--steel);font-size:0.85rem;">{% if final_balance >= 0 %}They owe you{% else %}You owe them{% endif %}</div>
+    <div style="font-weight:700;color:{% if final_balance >= 0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(final_balance|abs) }}</div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="paymentModal">
+  <div class="modal-box" style="width:{% if pending_trips %}800px{% else %}420px{% endif %};max-height:88vh;overflow-y:auto;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('paymentModal').classList.remove('open')">&#10005;</button>
+    <h3>Add Payment — {{ name }}</h3>
+    <div class="pm-tabs">
+      <button type="button" class="pm-tab active" onclick="showPmTab('pay', this)">Payment Details</button>
+      <button type="button" class="pm-tab" onclick="showPmTab('ob', this)">Opening Balance</button>
+    </div>
+
+    <form method="POST" action="{{ payment_url }}" id="pm-pay" class="pm-panel active">
+      <div class="pm-row2">
+        <div><label>Payment Date *</label><input type="date" name="date" required></div>
+        <div><label>Payment Amount (₹) *</label><input type="number" step="0.01" name="amount" id="pmTotalAmount" oninput="pmRecalc()" required></div>
+      </div>
+      <div class="pm-row2">
+        <div><label>Payment Mode *</label>
+          <select name="mode" required>
+            <option value="Cash">Cash</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+            <option value="UPI">UPI</option>
+            <option value="Cheque">Cheque</option>
+          </select>
+        </div>
+        <div><label>Reference / Transaction ID</label><input type="text" name="reference_id" placeholder="Enter reference id"></div>
+      </div>
+      <label>Remarks (Optional)</label>
+      <textarea name="remarks" rows="2" maxlength="250" oninput="document.getElementById('pmRemarksCount').textContent=this.value.length" style="width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:3px;font-size:0.9rem;font-family:inherit;margin-bottom:2px;" placeholder="Enter remarks"></textarea>
+      <div class="char-count"><span id="pmRemarksCount">0</span>/250</div>
+
+      {% if pending_trips %}
+      <div class="alloc-head">
+        <label style="margin:0;">Allocate Payment To Trips</label>
+        <span class="out-amt">Outstanding Amount: <b>₹{{ '{:,.0f}'.format(total_pending_trips) }}</b></span>
+      </div>
+      <div class="pm-hint" style="margin-bottom:8px;">Select one or more pending trips to allocate this payment. Amount will be adjusted automatically.</div>
+      <div class="alloc-table-wrap">
+        <table id="pmTripTable">
+          <tr><th style="width:22px;"></th><th>LR Number</th><th>Trip Date</th><th>From</th><th>To</th><th class="num">Trip Amount (₹)</th><th class="num">Paid (₹)</th><th class="num">Balance (₹)</th></tr>
+          {% for pt in pending_trips %}
+          <tr class="pm-trip-row" data-id="{{ pt['id'] }}" data-pending="{{ pt['pending'] }}">
+            <td><input type="checkbox" class="pm-trip-check" name="trip_ids" value="{{ pt['id'] }}" onchange="pmRecalc()"></td>
+            <td>{{ pt['lr_number'] or '—' }}</td>
+            <td>{{ pt['date'] }}</td>
+            <td>{{ pt['from_loc'] }}</td>
+            <td>{{ pt['to_loc'] }}</td>
+            <td class="num">₹{{ '{:,.2f}'.format(pt['billed_amount']) }}</td>
+            <td class="num">₹{{ '{:,.2f}'.format(pt['paid']) }}</td>
+            <td class="num" style="color:var(--red);font-weight:600;">₹{{ '{:,.2f}'.format(pt['pending']) }}</td>
+          </tr>
+          {% endfor %}
+          <tr style="font-weight:600;background:var(--paper);">
+            <td colspan="2" id="pmSelectedLabel">Selected 0 trip(s)</td>
+            <td colspan="3"></td>
+            <td class="num" id="pmSelTripAmt">0.00</td>
+            <td class="num" id="pmSelPaid">0.00</td>
+            <td class="num" id="pmSelBalance">0.00</td>
+          </tr>
+        </table>
+      </div>
+      <div class="pm-pager" id="pmPager"></div>
+
+      <div class="alloc-summary">
+        <div class="hd">Payment Allocation Summary</div>
+        <div class="alloc-summary-grid">
+          <div><div class="lbl">Payment Amount</div><div class="val" id="pmSummaryTotal" style="color:#2a5adb;">₹0.00</div></div>
+          <div><div class="lbl">Allocated to Trips</div><div class="val" id="pmSummaryAllocated" style="color:var(--green);">₹0.00</div></div>
+          <div><div class="lbl">Unallocated Amount</div><div class="val" id="pmSummaryUnallocated" style="color:var(--red);">₹0.00</div></div>
+          <div><span class="alloc-badge none" id="pmAllocBadge">Not Allocated</span></div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
+        <button type="button" onclick="document.getElementById('paymentModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Payment</button>
+      </div>
+    </form>
+
+    <form method="POST" action="/ledger/{{ entity_type }}/{{ entity_id }}/opening-balance" id="pm-ob" class="pm-panel">
+      <div class="pm-hint">Set this once to record the balance this {{ role|lower }} carried over before you started using this system. Positive = they owe you. Negative = you owe them. Saving again replaces the previous value.</div>
+      <label>Opening Balance (₹)</label>
+      <input type="number" step="0.01" name="opening_balance" value="{{ opening_balance or 0 }}" required>
+      <label>As Of Date</label>
+      <input type="date" name="opening_balance_date" value="{{ opening_balance_date or since_date or '' }}">
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
+        <button type="button" onclick="document.getElementById('paymentModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Opening Balance</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editContactModal">
+  <div class="modal-box">
+    <h3>Edit Contact Details — {{ name }}</h3>
+    <form method="POST" action="/ledger/{{ entity_type }}/{{ entity_id }}/contact">
+      <label>Phone</label>
+      <input type="text" name="contact" value="{{ contact or '' }}" placeholder="Phone number">
+      <label>Email</label>
+      <input type="email" name="email" value="{{ email or '' }}" placeholder="Email address">
+      <label>Address</label>
+      <input type="text" name="address" value="{{ address or '' }}" placeholder="Address">
+      <label>Credit Limit</label>
+      <input type="number" step="0.01" name="credit_limit" value="{{ credit_limit or '' }}" placeholder="0">
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
+        <button type="button" onclick="document.getElementById('editContactModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="dlModal">
+  <div class="modal-box">
+    <h3>Download Ledger — {{ name }}</h3>
+    <div style="font-size:0.85rem;color:var(--steel);">Choose a format</div>
+    <div class="format-choice">
+      <a href="{{ export_url }}/pdf?{{ request.query_string.decode() }}">PDF</a>
+      <a href="{{ export_url }}?{{ request.query_string.decode() }}">Excel</a>
+    </div>
+    <div style="margin-top:16px;text-align:right;">
+      <button type="button" onclick="document.getElementById('dlModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:8px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+    </div>
+  </div>
+</div>
+<script>
+function showPmTab(which, btn) {
+  document.querySelectorAll('.pm-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.pm-panel').forEach(function(p) { p.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById('pm-' + which).classList.add('active');
+}
+function inr(n) { return (n || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+
+// Mirrors the server's sequential allocation: walks checked trips in DOM order (oldest first)
+// and fills each one's balance from the payment amount until it runs out — pure preview, the
+// backend re-derives this itself from live data rather than trusting these numbers.
+function pmRecalc() {
+  var totalEl = document.getElementById('pmTotalAmount');
+  if (!totalEl) return;
+  var total = parseFloat(totalEl.value) || 0;
+  var rows = Array.from(document.querySelectorAll('.pm-trip-row'));
+  var checked = rows.filter(function(r) { return r.querySelector('.pm-trip-check').checked; });
+
+  var selTripAmt = 0, selPaid = 0, selBalance = 0, remaining = total, allocated = 0;
+  checked.forEach(function(r) {
+    var cells = r.querySelectorAll('td.num');
+    selTripAmt += parseFloat(cells[0].textContent.replace(/[₹,]/g, '')) || 0;
+    selPaid += parseFloat(cells[1].textContent.replace(/[₹,]/g, '')) || 0;
+    var pending = parseFloat(r.dataset.pending) || 0;
+    selBalance += pending;
+    if (remaining > 0.004 && pending > 0.004) {
+      var alloc = Math.min(pending, remaining);
+      remaining -= alloc;
+      allocated += alloc;
+    }
+  });
+
+  var selLabel = document.getElementById('pmSelectedLabel');
+  if (selLabel) selLabel.textContent = 'Selected ' + checked.length + ' trip(s)';
+  var setText = function(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('pmSelTripAmt', inr(selTripAmt));
+  setText('pmSelPaid', inr(selPaid));
+  setText('pmSelBalance', inr(selBalance));
+
+  var unallocated = Math.max(total - allocated, 0);
+  setText('pmSummaryTotal', '₹' + inr(total));
+  setText('pmSummaryAllocated', '₹' + inr(allocated));
+  setText('pmSummaryUnallocated', '₹' + inr(unallocated));
+
+  var badge = document.getElementById('pmAllocBadge');
+  if (badge) {
+    badge.classList.remove('full', 'partial', 'none');
+    if (allocated <= 0.004) {
+      badge.textContent = 'Not Allocated'; badge.classList.add('none');
+    } else if (unallocated <= 0.004) {
+      badge.textContent = 'Fully Allocated'; badge.classList.add('full');
+    } else {
+      badge.textContent = 'Partially Allocated'; badge.classList.add('partial');
+    }
+  }
+}
+
+// Lightweight client-side pagination for the pending-trips table (mirrors the Fleet Utilization pattern).
+(function() {
+  var table = document.getElementById('pmTripTable');
+  if (!table) return;
+  var allRows = Array.from(table.querySelectorAll('.pm-trip-row'));
+  var pageSize = 5, page = 1;
+
+  function render() {
+    var totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+    page = Math.min(Math.max(1, page), totalPages);
+    allRows.forEach(function(r, i) {
+      r.style.display = (i >= (page - 1) * pageSize && i < page * pageSize) ? '' : 'none';
+    });
+    var pager = document.getElementById('pmPager');
+    if (!pager) return;
+    pager.innerHTML = '';
+    if (allRows.length <= pageSize) return;
+    var sizeSel = document.createElement('select');
+    [5, 10, 25].forEach(function(n) {
+      var o = document.createElement('option'); o.value = n; o.textContent = n + ' / page';
+      if (n === pageSize) o.selected = true;
+      sizeSel.appendChild(o);
+    });
+    sizeSel.onchange = function() { pageSize = parseInt(this.value, 10); page = 1; render(); };
+    pager.appendChild(sizeSel);
+    var btnWrap = document.createElement('div');
+    btnWrap.className = 'pm-pager-btns';
+    var mkBtn = function(label, target, disabled) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'pm-pager-btn' + (target === page ? ' active' : '');
+      b.textContent = label; b.disabled = !!disabled;
+      b.onclick = function() { page = target; render(); };
+      return b;
+    };
+    btnWrap.appendChild(mkBtn('<', page - 1, page <= 1));
+    for (var p = 1; p <= totalPages; p++) btnWrap.appendChild(mkBtn(p, p, false));
+    btnWrap.appendChild(mkBtn('>', page + 1, page >= totalPages));
+    pager.appendChild(btnWrap);
+    pager.appendChild(Object.assign(document.createElement('span'), {textContent: 'Page ' + page + ' of ' + totalPages}));
+  }
+  render();
+})();
+</script>
+{% endblock %}

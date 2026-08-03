@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Invoice Center{% endblock %}
+{% block extra_head %}
+<style>
+  .step-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:20px; margin-bottom:16px; }
+  .step-card h3 { font-size:0.95rem; margin:0 0 14px; }
+  .type-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .type-option { border:1.5px solid var(--line); border-radius:6px; padding:14px; cursor:pointer; text-decoration:none; color:var(--ink); display:block; }
+  .type-option.active { border-color:var(--accent); background:#fff6ee; }
+  .type-option .ttl { font-weight:600; font-size:0.9rem; }
+  .type-option .sub { font-size:0.75rem; color:var(--steel); margin-top:2px; }
+  .trip-check-row { cursor:pointer; }
+  .trip-check-row:hover { background:var(--paper); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Invoice Center <a href="/invoices/generated" class="add-btn" style="background:var(--ink);">View Generated Invoices</a></h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;margin-bottom:14px;">Generate Party Invoices and Market Vehicle Invoices.</div>
+
+  <div class="step-card">
+    <h3>1. Select Invoice Type</h3>
+    <div class="type-options">
+      <a href="/invoice-center?invoice_type=party" class="type-option {{ 'active' if invoice_type=='party' }}">
+        <div class="ttl">Party Invoice</div><div class="sub">Bill to customers</div></a>
+      <a href="/invoice-center?invoice_type=vehicle_owner" class="type-option {{ 'active' if invoice_type=='vehicle_owner' }}">
+        <div class="ttl">Market Vehicle Invoice</div><div class="sub">Bill for vehicle owners</div></a>
+      <a href="/invoice-center?invoice_type=tax" class="type-option {{ 'active' if invoice_type=='tax' }}">
+        <div class="ttl">Tax Invoice</div><div class="sub">With GST details</div></a>
+      <a href="/invoice-center?invoice_type=bill" class="type-option {{ 'active' if invoice_type=='bill' }}">
+        <div class="ttl">Bill Invoice</div><div class="sub">Without GST details</div></a>
+    </div>
+  </div>
+
+  <div class="step-card">
+    <h3>2. Select {{ 'Vehicle Owner' if invoice_type=='vehicle_owner' else 'Party' }}</h3>
+    <form class="filter-bar" method="GET">
+      <input type="hidden" name="invoice_type" value="{{ invoice_type }}">
+      {% if invoice_type == 'vehicle_owner' %}
+      <div class="field" style="flex:1;"><label>Vehicle Owner</label>
+        <select name="vendor_id" onchange="this.form.submit()">
+          <option value="">Select...</option>
+          {% for o in owner_options %}<option value="{{ o['ref'] }}" {% if o['ref']=='v:' ~ f_vendor_id %}selected{% endif %}>{{ o['name'] }}</option>{% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="field" style="flex:1;"><label>Party</label>
+        <select name="party_id" onchange="this.form.submit()">
+          <option value="">Select...</option>
+          {% for p in parties %}<option value="{{ p['id'] }}" {% if f_party_id==p['id']|string %}selected{% endif %}>{{ p['name'] }}</option>{% endfor %}
+        </select>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if selected_party or selected_vendor %}
+  <div class="step-card">
+    <h3>3. Filter Trips</h3>
+    <form class="filter-bar" method="GET">
+      <input type="hidden" name="invoice_type" value="{{ invoice_type }}">
+      <input type="hidden" name="party_id" value="{{ f_party_id }}">
+      <input type="hidden" name="vendor_id" value="{{ f_vendor_id }}">
+      <div class="field"><label>Vehicle</label>
+        <select name="vehicle"><option value="">All Vehicles</option>
+          {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field"><label>LR Number</label><input type="text" name="lr_number" value="{{ f_lr }}"></div>
+      <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+      <button type="submit">Apply Filters</button>
+      <a class="clear" href="/invoice-center?invoice_type={{ invoice_type }}">Clear</a>
+    </form>
+  </div>
+
+  <form method="POST" action="/invoice-center/review">
+    <input type="hidden" name="invoice_type" value="{{ invoice_type }}">
+    <input type="hidden" name="party_id" value="{{ f_party_id }}">
+    <input type="hidden" name="vendor_id" value="{{ f_vendor_id }}">
+    <div class="step-card">
+      <h3>4. Select Trips to Include in Invoice</h3>
+      {% if trips %}
+      <table>
+        <tr><th style="width:30px;"><input type="checkbox" onclick="document.querySelectorAll('.trip-cb').forEach(c=>c.checked=this.checked)"></th>
+          <th>LR Number</th><th>Vehicle</th><th>From &rarr; To</th><th>Date</th><th class="num">Freight (₹)</th></tr>
+        {% for t in trips %}
+        <tr class="trip-check-row" onclick="var c=this.querySelector('.trip-cb'); if(event.target!==c){c.checked=!c.checked;}">
+          <td><input type="checkbox" class="trip-cb" name="trip_ids" value="{{ t['id'] }}" checked></td>
+          <td>{{ t['lr_number'] }}</td><td>{{ t['vehicle_no'] }}</td>
+          <td>{{ t['from_loc'] }} &rarr; {{ t['to_loc'] }}</td><td>{{ t['date'] }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(t['billed_amount'] or 0) }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      <div style="margin-top:16px;">
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Continue to Invoice Summary &rarr;</button>
+      </div>
+      {% else %}
+      <div style="color:var(--steel);padding:20px;text-align:center;">No trips found for this selection.</div>
+      {% endif %}
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

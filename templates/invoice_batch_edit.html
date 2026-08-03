@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Edit Invoice — {{ b['invoice_number'] }}{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/invoices/generated">&larr; Back to Generated Invoices</a>
+  <h1>Edit Invoice — {{ b['invoice_number'] }}</h1>
+  <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">
+    {{ 'Market Vehicle Invoice' if b['invoice_type']=='vehicle_owner' else 'Party Invoice' }} for
+    <b>{{ b['vendor_name'] if b['invoice_type']=='vehicle_owner' else b['party_name'] }}</b>.
+    Changes here are reflected the next time this invoice is downloaded. To change the trips included, generate a new invoice from Invoice Center.
+  </div>
+  <form class="stack" method="POST">
+    <div class="row2">
+      <div><label>Invoice Date</label><input type="date" name="invoice_date" value="{{ b['invoice_date'] }}"></div>
+      <div><label>Due Date</label><input type="date" name="due_date" value="{{ b['due_date'] or '' }}"></div>
+    </div>
+    <div class="row2">
+      <div><label>Payment Terms</label><input type="text" name="payment_terms" value="{{ b['payment_terms'] or '' }}"></div>
+      <div><label>Place of Supply</label><input type="text" name="place_of_supply" value="{{ b['place_of_supply'] or '' }}"></div>
+    </div>
+    <div><label>Payment Status</label>
+      <select name="payment_status">
+        <option value="PENDING" {% if b['payment_status']=='PENDING' %}selected{% endif %}>Pending</option>
+        <option value="PAID" {% if b['payment_status']=='PAID' %}selected{% endif %}>Paid</option>
+      </select>
+    </div>
+    <div><label>Remarks</label><input type="text" name="remarks" value="{{ b['remarks'] or '' }}"></div>
+    <div class="row2">
+      <div><label>Loading / Unloading (₹)</label><input type="number" step="0.01" name="loading_charges" value="{{ b['loading_charges'] or 0 }}"></div>
+      <div><label>Other Charges (₹)</label><input type="number" step="0.01" name="other_charges" value="{{ b['other_charges'] or 0 }}"></div>
+    </div>
+    {% if b['invoice_type'] == 'tax' %}
+    <div class="row2">
+      <div><label>GST Rate (%)</label><input type="number" step="0.01" name="gst_rate" value="{{ b['gst_rate'] or 0 }}"></div>
+      <div><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate" value="{{ b['tds_rate'] or 0 }}"></div>
+    </div>
+    {% else %}
+    <input type="hidden" name="gst_rate" value="{{ b['gst_rate'] or 0 }}">
+    <input type="hidden" name="tds_rate" value="{{ b['tds_rate'] or 0 }}">
+    {% endif %}
+    <button type="submit" class="submit">Save Changes</button>
+  </form>
+</div>
+{% endblock %}

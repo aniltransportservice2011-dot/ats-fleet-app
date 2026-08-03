@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Add Trip — Anil Transport Service{% endblock %}
+{% block extra_head %}
+<style>
+
+  .section { background:var(--white); border:1px solid var(--line); border-radius:6px; margin-bottom:14px; }
+  .section-head { padding:14px 18px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; justify-content:space-between; }
+  .section-body { padding:0 18px 16px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .section-body input, .section-body select { padding:8px 9px; border:1px solid var(--line); border-radius:3px; font-size:0.87rem; }
+  .charges .section-head { background:#eaf6ee; }
+  .deductions .section-head { background:#fdecea; }
+  .expenses .section-head { background:#fff6e8; }
+  .owner .section-head { background:#eaf1fb; }
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/trips">&larr; Back</a>
+  <h1>Add Trip</h1>
+  <form method="POST">
+    <div class="section">
+      <div class="section-head">Trip basics</div>
+      <div class="section-body">
+        <input type="date" name="date" required>
+        <input type="text" name="lr_number" placeholder="LR number">
+        <input type="text" name="vehicle_no" placeholder="Vehicle no" list="vehicle-list" required>
+        <select name="type"><option>Line</option><option>Local</option><option>Market</option></select>
+        <input type="text" name="party_name" placeholder="Party name" list="combined-list" required>
+        <input type="text" name="driver_name" placeholder="Driver name" list="employee-list">
+        <input type="text" name="from_loc" placeholder="From">
+        <input type="text" name="to_loc" placeholder="To">
+        <input type="text" name="material" placeholder="Material">
+        <input type="number" step="0.01" name="quantity" placeholder="Quantity (MT)">
+        <input type="number" step="0.01" name="rate" placeholder="Rate">
+        <select name="rate_type"><option value="PER_MT">Per MT</option><option value="FIXED">Fixed</option></select>
+      </div>
+    </div>
+
+    <div class="section charges">
+      <div class="section-head">Charges (+)</div>
+      <div class="section-body">
+        <input type="number" step="0.01" name="driver_payment" placeholder="Driver payment">
+        <input type="number" step="0.01" name="detention_charges" placeholder="Detention charges">
+        <input type="number" step="0.01" name="gps_cost" placeholder="GPS cost">
+        <input type="number" step="0.01" name="loading_charge" placeholder="Loading charge">
+        <input type="number" step="0.01" name="unloading_charge" placeholder="Unloading charge">
+        <input type="number" step="0.01" name="police_charges" placeholder="Police charges">
+        <input type="number" step="0.01" name="sim_tracking" placeholder="SIM tracking">
+        <input type="number" step="0.01" name="union_charges" placeholder="Union charges">
+        <input type="number" step="0.01" name="weight_charges" placeholder="Weight charges">
+        <input type="number" step="0.01" name="other_charges" placeholder="Other charges">
+      </div>
+    </div>
+
+    <div class="section deductions">
+      <div class="section-head">Deductions (-)</div>
+      <div class="section-body">
+        <input type="number" step="0.01" name="brokerage" placeholder="Brokerage">
+        <input type="number" step="0.01" name="builty_commission" placeholder="Builty commission">
+        <input type="number" step="0.01" name="late_fees" placeholder="Late fees">
+        <input type="number" step="0.01" name="material_damage" placeholder="Material damage">
+        <input type="number" step="0.01" name="shortage_amount" placeholder="Shortage amount">
+        <input type="number" step="0.01" name="shortage_qty" placeholder="Shortage qty (MT)">
+        <input type="number" step="0.01" name="tds" placeholder="TDS">
+        <input type="number" step="0.01" name="other_deductions" placeholder="Other deductions">
+      </div>
+    </div>
+
+    <div class="section expenses">
+      <div class="section-head">Expenses</div>
+      <div class="section-body">
+        <input type="number" step="0.01" name="fuel_amount" placeholder="Fuel">
+        <input type="text" name="fuel_vendor" placeholder="Fuel vendor (blank = paid directly)" list="combined-list">
+        <input type="number" step="0.01" name="driver_adv_amount" placeholder="Driver advance">
+        <input type="text" name="driver_adv_vendor" placeholder="Driver adv. vendor" list="combined-list">
+        <input type="number" step="0.01" name="agent_commission" placeholder="Agent commission">
+        <input type="number" step="0.01" name="builty_expense" placeholder="Builty expense">
+        <input type="number" step="0.01" name="conductor_expense" placeholder="Conductor expense">
+        <input type="number" step="0.01" name="fine" placeholder="Fine">
+        <input type="number" step="0.01" name="labour_charges" placeholder="Labour charges">
+        <input type="number" step="0.01" name="parking" placeholder="Parking">
+        <input type="number" step="0.01" name="puncture" placeholder="Puncture">
+        <input type="number" step="0.01" name="toll" placeholder="Toll">
+        <input type="number" step="0.01" name="urea" placeholder="Urea">
+        <input type="number" step="0.01" name="loading_expense" placeholder="Loading expense">
+        <input type="number" step="0.01" name="unloading_expense" placeholder="Unloading expense">
+        <input type="number" step="0.01" name="wear_tear" placeholder="Wear and tear">
+        <input type="number" step="0.01" name="weighbridge_charges" placeholder="Weighbridge charges">
+        <input type="number" step="0.01" name="other_expense" placeholder="Other expense">
+        <input type="text" name="misc_vendor" placeholder="Misc vendor" list="combined-list">
+      </div>
+    </div>
+
+    <div class="section owner">
+      <div class="section-head">Market vehicle owner (fill only if Type = Market)</div>
+      <div class="section-body">
+        <input type="text" name="owner_name" placeholder="Owner name" list="combined-list">
+        <input type="number" step="0.01" name="fixed_rate_amount" placeholder="Fixed rate amount">
+        <input type="number" step="0.01" name="owner_rate" placeholder="Owner rate (Rs/MT)">
+        <input type="number" step="0.01" name="paid_to_owner" placeholder="Paid to owner">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">Payment tracking</div>
+      <div class="section-body">
+        <input type="number" step="0.01" name="party_advance" placeholder="Party advance (at loading)">
+        <input type="number" step="0.01" name="payment_received" placeholder="Payment received">
+        <select name="lr_received"><option value="">LR Received: No</option><option value="Yes">LR Received: Yes</option></select>
+      </div>
+    </div>
+
+    <button type="submit" class="submit" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:1rem;cursor:pointer;">Save Trip</button>
+    <datalist id="vehicle-list">
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}
+    </datalist>
+    <datalist id="employee-list">
+      {% for e in employees %}<option value="{{ e['name'] }}">{% endfor %}
+    </datalist>
+    <datalist id="combined-list">
+      {% for n in combined_names %}<option value="{{ n }}">{% endfor %}
+    </datalist>
+  </form>
+</div>
+{% endblock %}

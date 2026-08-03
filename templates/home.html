@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Ledger{% endblock %}
+{% block extra_head %}
+<style>
+  .cols { display: grid; grid-template-columns: 1fr; }
+  .summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }
+  .summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .summary-card .lbl { font-size:0.78rem; color:var(--steel); }
+  .summary-card .val { font-size:1.3rem; font-weight:700; margin-top:2px; }
+  .type-pill { display:inline-block; padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Ledger</h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-bottom:16px;">Every party and vendor, with their current balance. Click any row for their full history.</div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Name, phone, email..."></div>
+    <div class="field">
+      <label>Type</label>
+      <select name="role">
+        <option value="">All</option>
+        <option value="Party" {% if f_role=='Party' %}selected{% endif %}>Party</option>
+        <option value="Vendor" {% if f_role=='Vendor' %}selected{% endif %}>Vendor</option>
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/accounts">Clear</a>
+  </form>
+
+  <div class="summary-cards">
+    <div class="summary-card"><div class="lbl">Total Parties</div><div class="val">{{ rows|selectattr('role','equalto','Party')|list|length }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Vendors</div><div class="val">{{ rows|selectattr('role','equalto','Vendor')|list|length }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Receivable</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(rows|selectattr('balance','gt',0)|sum(attribute='balance')) }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Payable</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format((rows|selectattr('balance','lt',0)|sum(attribute='balance'))|abs) }}</div></div>
+  </div>
+
+  <table>
+    <tr><th>Type</th><th>Name</th><th>Phone</th><th>Email</th><th class="num">Balance</th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="goTo('/ledger/{{ 'party' if r['role']=='Party' else 'vendor' }}/{{ r['id'] }}')">
+      <td><span class="type-pill" style="background:{% if r['role']=='Party' %}#eaf1fb;color:#2a78d6{% else %}#e8f5ee;color:#1a9c5b{% endif %};">{{ r['role'] }}</span></td>
+      <td style="color:var(--accent);font-weight:500;">{{ r['name'] }}</td>
+      <td>{{ r['contact'] or '—' }}</td>
+      <td>{{ r['email'] or '—' }}</td>
+      <td class="num" style="font-weight:600;color:{% if r['balance'] > 0 %}var(--green){% elif r['balance'] < 0 %}var(--red){% else %}var(--steel){% endif %};">
+        ₹{{ '{:,.0f}'.format(r['balance']|abs) }}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

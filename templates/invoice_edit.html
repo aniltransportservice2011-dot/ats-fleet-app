@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Edit Invoice{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:650px;">
+  <a class="back" href="/invoices/{{ trip_id }}">&larr; Back to invoice</a>
+  <h1>Edit Invoice — {{ t['lr_number'] }}</h1>
+  <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">Core trip details are edited from Trips. These fields are invoice-specific.</div>
+  <form class="stack" method="POST">
+    <div><label>Invoice Number</label><input type="text" name="invoice_number" value="{{ inv['invoice_number'] if inv else default_invoice_no }}" placeholder="INV-{{ t['lr_number'] }}"></div>
+    <div><label>Due Date</label><input type="date" name="due_date" value="{{ inv['due_date'] if inv else '' }}"></div>
+    <div><label>Notes</label><input type="text" name="notes" value="{{ inv['notes'] if inv else '' }}" placeholder="Payment terms, remarks, etc."></div>
+    <button type="submit" class="submit">Save</button>
+  </form>
+
+  <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--line);">
+    <div style="font-weight:600;margin-bottom:10px;">Extra Charges or Deductions</div>
+    <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">Add anything not covered by the trip's standard fields — a one-off charge, a special deduction, or a missing item.</div>
+
+    {% if extra_items %}
+    <table style="width:100%;margin-bottom:16px;">
+      <tr><th>Description</th><th>Type</th><th class="num">Amount</th><th></th></tr>
+      {% for item in extra_items %}
+      <tr>
+        <td>{{ item['description'] }}</td>
+        <td>{{ 'Charge (+)' if item['item_type']=='charge' else 'Deduction (-)' }}</td>
+        <td class="num">₹{{ '{:,.0f}'.format(item['amount'] or 0) }}</td>
+        <td><form method="POST" action="/invoices/items/{{ item['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Remove this item?');"><button type="submit" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.85rem;">Remove</button></form></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    <form method="POST" action="/invoices/{{ trip_id }}/items/add" class="stack">
+      <div class="row2">
+        <div><label>Description</label><input type="text" name="description" placeholder="e.g. Extra halting charge" required></div>
+        <div><label>Amount</label><input type="number" step="0.01" name="amount" required></div>
+      </div>
+      <div><label>Type</label>
+        <select name="item_type">
+          <option value="charge">Charge (+, adds to total)</option>
+          <option value="deduction">Deduction (-, subtracts from total)</option>
+        </select>
+      </div>
+      <button type="submit" class="submit">Add Item</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

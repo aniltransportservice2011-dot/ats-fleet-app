@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Salaries{% endblock %}
+{% block extra_head %}
+<style>
+  .summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:16px 0; }
+  .summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .summary-card .lbl { font-size:0.76rem; color:var(--steel); }
+  .summary-card .val { font-size:1.25rem; font-weight:700; margin-top:2px; }
+  .summary-card .sub { font-size:0.72rem; color:var(--steel); margin-top:2px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <h1>Salaries <a class="add-btn" href="/employees/add">+ Add Employee</a></h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;margin-bottom:14px;">Manage salaries and outstanding balances.</div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field">
+      <label>Staff or Driver</label>
+      <select name="emp_type">
+        <option value="">All</option>
+        <option value="Staff" {% if f_type=='Staff' %}selected{% endif %}>Staff</option>
+        <option value="Driver" {% if f_type=='Driver' %}selected{% endif %}>Driver</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Employee</label>
+      <select name="employee">
+        <option value="">All</option>
+        {% for e in employees %}<option value="{{ e['name'] }}" {% if f_employee==e['name'] %}selected{% endif %}>{{ e['name'] }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/salaries">Clear</a>
+  </form>
+
+  <div class="summary-cards">
+    <div class="summary-card"><div class="lbl">Total Employees</div><div class="val">{{ total_employees }}</div><div class="sub">Drivers / Staff</div></div>
+    <div class="summary-card"><div class="lbl">Total Outstanding</div><div class="val" style="color:{% if total_outstanding>0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(total_outstanding) }}</div><div class="sub">Outstanding balance</div></div>
+  </div>
+
+  <table>
+    <tr><th>Type</th><th>Employee</th><th class="num">Outstanding Balance</th><th>Action</th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="goTo('/employee/{{ r['name'] }}')">
+      <td>{{ r['type'] or '—' }}</td>
+      <td style="color:var(--accent);font-weight:500;">{{ r['name'] }}</td>
+      <td class="num" style="font-weight:600;color:{% if r['outstanding'] > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(r['outstanding']) }}</td>
+      <td onclick="event.stopPropagation();"><a href="/employee/{{ r['name'] }}" style="color:var(--steel);font-size:1rem;" title="View">&#128065;</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

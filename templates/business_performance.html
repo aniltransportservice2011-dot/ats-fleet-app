@@ -1,0 +1,417 @@
+{% extends "base.html" %}
+{% block title %}Business Performance{% endblock %}
+{% block extra_head %}
+<style>
+  .preview-flag { display:none; }
+  .kpi-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:11px; margin-bottom:11px; }
+  @media (max-width:1500px) { .kpi-grid { grid-template-columns:repeat(4,1fr); } }
+  @media (max-width:820px) { .kpi-grid { grid-template-columns:repeat(2,1fr); } }
+  .kpi { background:var(--white); border:1px solid var(--line); border-radius:12px; padding:13px 14px 10px; box-shadow:0 1px 2px rgba(20,33,61,0.04), 0 6px 16px rgba(20,33,61,0.05); }
+  .kpi-top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:9px; }
+  .kpi-ic { width:32px; height:32px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:0.92rem; flex-shrink:0; }
+  .kpi .lbl { font-size:0.68rem; color:var(--steel); font-weight:600; margin-bottom:5px; }
+  .kpi .val { font-size:1.12rem; font-weight:800; font-variant-numeric:tabular-nums; line-height:1.15; }
+  .kpi .delta { font-size:0.68rem; font-weight:700; margin-top:5px; }
+  .kpi .delta.up { color:var(--green); } .kpi .delta.down { color:var(--red); } .kpi .delta.flat { color:var(--steel); }
+
+  .bp-eyebrow { font-size:0.68rem; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); margin:22px 0 9px; }
+  .bp-panel { background:var(--white); border:1px solid var(--line); border-radius:14px; padding:16px 17px; box-shadow:0 1px 2px rgba(20,33,61,0.04), 0 6px 16px rgba(20,33,61,0.05); }
+  .bp-panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px; flex-wrap:wrap; }
+  .bp-panel-head h3 { font-size:0.86rem; margin:0; }
+  .bp-row-3 { display:grid; grid-template-columns:1.3fr 1fr 1fr; gap:12px; margin-bottom:12px; }
+  .bp-row-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:12px; }
+  @media (max-width:1300px) { .bp-row-3, .bp-row-4 { grid-template-columns:1fr 1fr; } }
+  @media (max-width:760px) { .bp-row-3, .bp-row-4 { grid-template-columns:1fr; } }
+
+  .bp-table { width:100%; border-collapse:collapse; }
+  .bp-table th, .bp-table td { padding:6px 4px; text-align:left; font-size:0.74rem; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  .bp-table th { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.03em; color:var(--steel); font-weight:700; }
+  .bp-table td.num, .bp-table th.num { text-align:right; }
+  .bp-table tr.total td { font-weight:800; border-top:1.5px solid var(--line); border-bottom:none; }
+  .bp-table tr:last-child:not(.total) td { border-bottom:none; }
+
+  .bp-tabs3 { display:flex; gap:4px; background:var(--paper); border-radius:8px; padding:3px; }
+  .bp-tabs3 span { padding:5px 11px; border-radius:6px; font-size:0.72rem; font-weight:700; color:var(--steel); cursor:pointer; }
+  .bp-tabs3 span.active { background:var(--accent); color:#fff; }
+
+  .bp-stat-line { display:flex; justify-content:space-between; font-size:0.79rem; padding:7px 0; border-bottom:1px solid var(--line); }
+  .bp-stat-line:last-child { border-bottom:none; }
+  .bp-stat-line .k { color:var(--steel); }
+  .bp-stat-line .v { font-weight:700; }
+
+  .bp-growth-line { display:flex; align-items:center; gap:9px; padding:6px 0; font-size:0.79rem; }
+  .bp-growth-line .gi { width:24px; height:24px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:0.72rem; flex-shrink:0; }
+  .bp-growth-line .gl { flex:1; color:var(--steel); }
+  .bp-growth-line .gv { font-weight:800; }
+
+  .bp-tile-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .bp-tile { display:flex; gap:9px; align-items:flex-start; }
+  .bp-tile .ti { width:28px; height:28px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:0.8rem; flex-shrink:0; }
+  .bp-tile .tl { font-size:0.68rem; color:var(--steel); font-weight:600; }
+  .bp-tile .tv { font-size:0.84rem; font-weight:800; }
+  .bp-tile .ts { font-size:0.72rem; color:var(--steel); }
+
+  .bp-beta { font-size:0.55rem; background:rgba(74,58,167,0.1); color:#4a3aa7; font-weight:800; padding:2px 6px; border-radius:5px; letter-spacing:0.03em; }
+  .bp-ai-line { display:flex; gap:9px; padding:7px 0; font-size:0.78rem; line-height:1.45; border-bottom:1px solid var(--line); }
+  .bp-ai-line:last-of-type { border-bottom:none; }
+  .bp-ai-ic { width:20px; flex-shrink:0; text-align:center; }
+
+  .bp-stars { display:flex; gap:2px; }
+  .bp-stars span { color:var(--line); font-size:0.85rem; }
+  .bp-stars span.on { color:var(--accent); }
+  .bp-health-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; font-size:0.79rem; }
+  .bp-health-row .hn { color:var(--steel); font-weight:600; }
+  .bp-good-box { background:#e8f5ee; border:1px solid rgba(26,122,76,0.25); border-radius:9px; padding:11px 13px; font-size:0.76rem; margin-top:10px; display:flex; gap:8px; }
+  .bp-tip-box { background:rgba(192,86,33,0.08); border:1px solid rgba(192,86,33,0.25); border-radius:9px; padding:11px 13px; font-size:0.76rem; margin-top:10px; display:flex; gap:8px; }
+  .bp-empty { color:var(--steel); font-size:0.85rem; padding:10px 0; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:none; width:100%;">
+  <h1>Business Performance</h1>
+  <div style="color:var(--steel);font-size:0.9rem;margin-top:-6px;margin-bottom:14px;">Financial and operational performance of your transport business.</div>
+
+  <form class="filter-bar" method="GET">
+    <div class="field"><label>Financial Year</label>
+      <select name="fy" onchange="if(this.value){document.querySelector('[name=date_from]').value=this.value.split('|')[0];document.querySelector('[name=date_to]').value=this.value.split('|')[1];}">
+        <option value="" {% if f_fy=='' %}selected{% endif %}>Custom</option>
+        <option value="2026-04-01|2027-03-31" {% if f_fy=='2026-04-01|2027-03-31' %}selected{% endif %}>FY 2026-27</option>
+        <option value="2025-04-01|2026-03-31" {% if f_fy=='2025-04-01|2026-03-31' %}selected{% endif %}>FY 2025-26</option>
+      </select>
+    </div>
+    <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+    <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    <button type="submit">Apply</button>
+    <a class="clear" href="/business-performance">Clear</a>
+    <a class="clear" href="/export">&#8681; Export Report</a>
+  </form>
+
+  {% macro growth_span(g, invert=False) %}
+    {% if g is none %}<span class="delta flat">&#8226; N/A</span>
+    {% elif (g >= 0 and not invert) or (g < 0 and invert) %}<span class="delta up">&#9650; {{ g|abs }}% vs last period</span>
+    {% else %}<span class="delta down">&#9660; {{ g|abs }}% vs last period</span>
+    {% endif %}
+  {% endmacro %}
+
+  <!-- KPI ROW 1 -->
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Total Revenue</div><div class="val">₹{{ '{:,.0f}'.format(total_revenue) }}</div></div><div class="kpi-ic" style="background:rgba(192,86,33,0.1);color:var(--accent);">&#128176;</div></div>
+      {{ growth_span(revenue_growth) }}
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Net Profit</div><div class="val" style="color:{% if net_profit>=0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(net_profit) }}</div></div><div class="kpi-ic" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128202;</div></div>
+      {{ growth_span(profit_growth) }}
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Profit Margin</div><div class="val">{{ profit_margin }}%</div></div><div class="kpi-ic" style="background:#e8f5ee;color:var(--green);">&#37;</div></div>
+      <div class="delta flat">&#8226; Net profit &divide; revenue</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Outstanding Receivables</div><div class="val">₹{{ '{:,.0f}'.format(total_receivables) }}</div></div><div class="kpi-ic" style="background:rgba(192,86,33,0.1);color:var(--accent);">&#127970;</div></div>
+      <div class="delta flat">&#8226; All-time balance</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Outstanding Payables</div><div class="val">₹{{ '{:,.0f}'.format(total_payables) }}</div></div><div class="kpi-ic" style="background:#fdecea;color:var(--red);">&#127970;</div></div>
+      <div class="delta flat">&#8226; All-time balance</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Cash Collected</div><div class="val">₹{{ '{:,.0f}'.format(cash_collected) }}</div></div><div class="kpi-ic" style="background:#e8f5ee;color:var(--green);">&#128179;</div></div>
+      {{ growth_span(collection_growth) }}
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Cash Paid</div><div class="val">₹{{ '{:,.0f}'.format(cash_paid) }}</div></div><div class="kpi-ic" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div></div>
+      <div class="delta flat">&#8226; This period</div>
+    </div>
+  </div>
+
+  <!-- KPI ROW 2 -->
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Collection Efficiency</div><div class="val">{{ collection_efficiency }}%</div></div><div class="kpi-ic" style="background:#eaf1fb;color:#2a78d6;">&#128280;</div></div>
+      <div class="delta flat">&#8226; Collected &divide; revenue</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Revenue Growth</div><div class="val">{{ revenue_growth if revenue_growth is not none else 'N/A' }}{% if revenue_growth is not none %}%{% endif %}</div></div><div class="kpi-ic" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128202;</div></div>
+      <div class="delta flat">&#8226; vs last period</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Expense Growth</div><div class="val">{{ expense_growth if expense_growth is not none else 'N/A' }}{% if expense_growth is not none %}%{% endif %}</div></div><div class="kpi-ic" style="background:#fdecea;color:var(--red);">&#128101;</div></div>
+      <div class="delta flat">&#8226; vs last period</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Avg. Revenue / Trip</div><div class="val">₹{{ '{:,.0f}'.format(avg_revenue_per_trip) }}</div></div><div class="kpi-ic" style="background:#eaf1fb;color:#2a78d6;">&#128663;</div></div>
+      <div class="delta flat">&#8226; {{ trip_count }} trips</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Avg. Profit / Trip</div><div class="val">₹{{ '{:,.0f}'.format(avg_profit_per_trip) }}</div></div><div class="kpi-ic" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128200;</div></div>
+      <div class="delta flat">&#8226; This period</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">Operating Ratio</div><div class="val">{{ operating_ratio }}%</div></div><div class="kpi-ic" style="background:rgba(192,86,33,0.1);color:var(--accent);">&#128202;</div></div>
+      <div class="delta flat">&#8226; Expenses &divide; revenue</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><div><div class="lbl">EBITDA <span style="font-weight:400;">(est.)</span></div><div class="val">₹{{ '{:,.0f}'.format(ebitda) }}</div></div><div class="kpi-ic" style="background:#e8f5ee;color:var(--green);">&#128200;</div></div>
+      <div class="delta flat">&#8226; No interest/depreciation tracked</div>
+    </div>
+  </div>
+
+  <!-- FINANCIAL OVERVIEW / PROFIT TREND / REVENUE COMPARISON -->
+  <div class="bp-row-3">
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Financial Overview</h3>
+        <div style="font-size:0.68rem;display:flex;gap:10px;color:var(--steel);">
+          <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--green);margin-right:4px;"></span>Revenue</span>
+          <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--red);margin-right:4px;"></span>Expenses</span>
+          <span><span style="display:inline-block;width:8px;height:8px;background:#2a78d6;border-radius:50%;margin-right:4px;"></span>Net Profit</span>
+        </div>
+      </div>
+      {% if monthly_rows %}
+      {% set max_re = (monthly_rows|map(attribute='revenue')|list + monthly_rows|map(attribute='expenses')|list)|max %}
+      {% set max_re = max_re if max_re and max_re > 0 else 1 %}
+      {% set profits = monthly_rows|map(attribute='net_profit')|list %}
+      {% set pmin = profits|min %}{% set pmax = profits|max %}{% set prange = (pmax - pmin) if (pmax - pmin) != 0 else 1 %}
+      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:12px;">
+        <svg viewBox="0 0 320 150" width="100%" style="overflow:visible;">
+          <line x1="10" y1="120" x2="310" y2="120" stroke="var(--line)"/>
+          {% for r in monthly_rows %}
+          {% set gx = 20 + loop.index0 * 45 %}
+          {% set rh = (r.revenue / max_re * 90)|round(1) %}
+          {% set eh = (r.expenses / max_re * 90)|round(1) %}
+          {% set px = gx + 6 %}{% set py = (120 - (r.net_profit - pmin) / prange * 90)|round(1) %}
+          <rect x="{{ gx }}" y="{{ 120 - rh }}" width="12" height="{{ rh }}" fill="var(--green)" rx="2"/>
+          <rect x="{{ gx + 14 }}" y="{{ 120 - eh }}" width="12" height="{{ eh }}" fill="var(--red)" rx="2"/>
+          <circle cx="{{ px }}" cy="{{ py }}" r="3" fill="#2a78d6"/>
+          {% if not loop.first %}<polyline points="{{ prev_px }},{{ prev_py }} {{ px }},{{ py }}" fill="none" stroke="#2a78d6" stroke-width="2"/>{% endif %}
+          {% set prev_px = px %}{% set prev_py = py %}
+          <text x="{{ gx + 13 }}" y="134" font-size="8.5" text-anchor="middle" fill="var(--steel)">{{ r.label }}</text>
+          {% endfor %}
+        </svg>
+        <div>
+          <div class="bp-stat-line"><span class="k">Revenue ({{ monthly_rows[-1].label }})</span><span class="v">₹{{ '{:,.0f}'.format(monthly_rows[-1].revenue) }}</span></div>
+          <div class="bp-stat-line"><span class="k">Expenses ({{ monthly_rows[-1].label }})</span><span class="v">₹{{ '{:,.0f}'.format(monthly_rows[-1].expenses) }}</span></div>
+          <div class="bp-stat-line"><span class="k">Net Profit ({{ monthly_rows[-1].label }})</span><span class="v">₹{{ '{:,.0f}'.format(monthly_rows[-1].net_profit) }}</span></div>
+          <div class="bp-stat-line"><span class="k">Revenue vs last period</span><span class="v">{{ growth_span(revenue_growth) }}</span></div>
+        </div>
+      </div>
+      {% else %}<div class="bp-empty">No trip data for this selection.</div>{% endif %}
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Monthly Profit Trend</h3></div>
+      {% if monthly_rows %}
+      <svg viewBox="0 0 300 130" width="100%" style="overflow:visible;">
+        <line x1="8" y1="105" x2="292" y2="105" stroke="var(--line)"/>
+        {% set profits = monthly_rows|map(attribute='net_profit')|list %}
+        {% set pmin = profits|min %}{% set pmax = profits|max %}{% set prange = (pmax - pmin) if (pmax - pmin) != 0 else 1 %}
+        {% for r in monthly_rows %}
+        {% set px = 25 + loop.index0 * 50 %}{% set py = (95 - (r.net_profit - pmin) / prange * 75)|round(1) %}
+        {% if not loop.first %}<polyline points="{{ prev_px }},{{ prev_py }} {{ px }},{{ py }}" fill="none" stroke="#4a3aa7" stroke-width="2.2"/>{% endif %}
+        <circle cx="{{ px }}" cy="{{ py }}" r="3" fill="#4a3aa7"/>
+        <text x="{{ px }}" y="118" font-size="8.5" text-anchor="middle" fill="var(--steel)">{{ r.label }}</text>
+        {% set prev_px = px %}{% set prev_py = py %}
+        {% endfor %}
+      </svg>
+      {% else %}<div class="bp-empty">No trip data for this selection.</div>{% endif %}
+      <div class="bp-tile-grid" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px;">
+        <div style="background:#e8f5ee;border-radius:8px;padding:8px 9px;"><div style="font-size:0.62rem;color:var(--steel);">Profit Growth (MoM)</div><div style="font-weight:800;font-size:0.82rem;">{{ growth_span(profit_growth_mom) }}</div></div>
+        <div style="background:#e8f5ee;border-radius:8px;padding:8px 9px;"><div style="font-size:0.62rem;color:var(--steel);">Profit Growth (YoY)</div><div style="font-weight:800;font-size:0.82rem;">{{ growth_span(profit_growth_yoy) }}</div></div>
+        <div style="background:#e8f5ee;border-radius:8px;padding:8px 9px;"><div style="font-size:0.62rem;color:var(--steel);">Profit Growth (QoQ)</div><div style="font-weight:800;font-size:0.82rem;">{{ growth_span(profit_growth_qoq) }}</div></div>
+      </div>
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Revenue Comparison</h3>
+        <div class="bp-tabs3">
+          <span class="active" onclick="bpShowCompare('mom', this)">MoM</span>
+          <span onclick="bpShowCompare('yoy', this)">YoY</span>
+          <span onclick="bpShowCompare('q', this)">Quarterly</span>
+        </div>
+      </div>
+      <div id="bpCompareMom">
+        {% set pct = revenue_growth_mom %}
+        <div style="display:flex;justify-content:center;margin:4px 0 8px;">
+          <svg viewBox="0 0 160 160" width="140" height="140">
+            <circle cx="80" cy="80" r="62" fill="none" stroke="var(--paper)" stroke-width="16"/>
+            {% set frac = ([[(pct or 0)|abs, 100]|min, 0]|max) / 100 %}
+            <circle cx="80" cy="80" r="62" fill="none" stroke="{% if pct is not none and pct >= 0 %}var(--green){% else %}var(--red){% endif %}" stroke-width="16" stroke-linecap="round"
+                    stroke-dasharray="{{ (389.6*frac)|round(1) }} 389.6" transform="rotate(-90 80 80)"/>
+            <text x="80" y="76" font-size="19" font-weight="800" text-anchor="middle" fill="var(--ink)">{{ pct if pct is not none else 'N/A' }}{% if pct is not none %}%{% endif %}</text>
+            <text x="80" y="94" font-size="9" text-anchor="middle" fill="var(--steel)">Revenue Growth</text>
+            <text x="80" y="106" font-size="9" text-anchor="middle" fill="var(--steel)">vs last month</text>
+          </svg>
+        </div>
+        <div class="bp-stat-line"><span class="k">This period</span><span class="v">₹{{ '{:,.0f}'.format(curr_revenue) }}</span></div>
+        <div class="bp-stat-line"><span class="k">Last month</span><span class="v">₹{{ '{:,.0f}'.format(prev_revenue) }}</span></div>
+        <div class="bp-stat-line"><span class="k">Difference</span><span class="v">₹{{ '{:,.0f}'.format(revenue_diff) }}</span></div>
+      </div>
+      <div id="bpCompareYoy" style="display:none;">
+        {% set pct = revenue_growth_yoy %}
+        <div style="display:flex;justify-content:center;margin:4px 0 8px;">
+          <svg viewBox="0 0 160 160" width="140" height="140">
+            <circle cx="80" cy="80" r="62" fill="none" stroke="var(--paper)" stroke-width="16"/>
+            {% set frac = ([[(pct or 0)|abs, 100]|min, 0]|max) / 100 %}
+            <circle cx="80" cy="80" r="62" fill="none" stroke="{% if pct is not none and pct >= 0 %}var(--green){% else %}var(--red){% endif %}" stroke-width="16" stroke-linecap="round"
+                    stroke-dasharray="{{ (389.6*frac)|round(1) }} 389.6" transform="rotate(-90 80 80)"/>
+            <text x="80" y="76" font-size="19" font-weight="800" text-anchor="middle" fill="var(--ink)">{{ pct if pct is not none else 'N/A' }}{% if pct is not none %}%{% endif %}</text>
+            <text x="80" y="94" font-size="9" text-anchor="middle" fill="var(--steel)">Revenue Growth</text>
+            <text x="80" y="106" font-size="9" text-anchor="middle" fill="var(--steel)">vs same period last year</text>
+          </svg>
+        </div>
+        <div class="bp-stat-line"><span class="k">This period</span><span class="v">₹{{ '{:,.0f}'.format(curr_revenue) }}</span></div>
+        <div class="bp-stat-line"><span class="k">Same period last year</span><span class="v">₹{{ '{:,.0f}'.format(curr_y_revenue) }}</span></div>
+        <div class="bp-stat-line"><span class="k">Difference</span><span class="v">₹{{ '{:,.0f}'.format(curr_revenue - curr_y_revenue) }}</span></div>
+      </div>
+      <div id="bpCompareQ" style="display:none;">
+        {% set pct = revenue_growth_qoq %}
+        <div style="display:flex;justify-content:center;margin:4px 0 8px;">
+          <svg viewBox="0 0 160 160" width="140" height="140">
+            <circle cx="80" cy="80" r="62" fill="none" stroke="var(--paper)" stroke-width="16"/>
+            {% set frac = ([[(pct or 0)|abs, 100]|min, 0]|max) / 100 %}
+            <circle cx="80" cy="80" r="62" fill="none" stroke="{% if pct is not none and pct >= 0 %}var(--green){% else %}var(--red){% endif %}" stroke-width="16" stroke-linecap="round"
+                    stroke-dasharray="{{ (389.6*frac)|round(1) }} 389.6" transform="rotate(-90 80 80)"/>
+            <text x="80" y="76" font-size="19" font-weight="800" text-anchor="middle" fill="var(--ink)">{{ pct if pct is not none else 'N/A' }}{% if pct is not none %}%{% endif %}</text>
+            <text x="80" y="94" font-size="9" text-anchor="middle" fill="var(--steel)">Revenue Growth</text>
+            <text x="80" y="106" font-size="9" text-anchor="middle" fill="var(--steel)">vs last quarter</text>
+          </svg>
+        </div>
+        <div class="bp-stat-line"><span class="k">This quarter</span><span class="v">₹{{ '{:,.0f}'.format(curr_q_revenue) }}</span></div>
+        <div class="bp-stat-line"><span class="k">Last quarter</span><span class="v">₹{{ '{:,.0f}'.format(prev_q_revenue) }}</span></div>
+        <div class="bp-stat-line"><span class="k">Difference</span><span class="v">₹{{ '{:,.0f}'.format(curr_q_revenue - prev_q_revenue) }}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP CUSTOMERS / EXPENSE BREAKDOWN / COLLECTIONS / GROWTH -->
+  <div class="bp-row-4">
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Top Customers by Revenue</h3><a href="/accounts?role=Party" style="font-size:0.72rem;color:var(--accent);font-weight:700;text-decoration:none;">View All</a></div>
+      {% if top_customers %}
+      <table class="bp-table">
+        <tr><th>Customer</th><th class="num">Revenue</th><th class="num">%</th><th class="num">Profit</th></tr>
+        {% for c in top_customers %}
+        <tr><td>{{ c.name }}</td><td class="num">₹{{ '{:,.0f}'.format(c.revenue) }}</td><td class="num">{{ c.pct }}%</td><td class="num">₹{{ '{:,.0f}'.format(c.profit) }}</td></tr>
+        {% endfor %}
+        {% if customers_other_revenue > 0.5 %}
+        <tr><td>Others</td><td class="num">₹{{ '{:,.0f}'.format(customers_other_revenue) }}</td><td class="num">{{ ((customers_other_revenue/total_revenue*100)|round(2)) if total_revenue else 0 }}%</td><td class="num">—</td></tr>
+        {% endif %}
+        <tr class="total"><td>Total</td><td class="num">₹{{ '{:,.0f}'.format(total_revenue) }}</td><td class="num">100%</td><td class="num">₹{{ '{:,.0f}'.format(net_profit) }}</td></tr>
+      </table>
+      {% else %}<div class="bp-empty">No billed trips in this period.</div>{% endif %}
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Expense Breakdown</h3><a href="/overheads" style="font-size:0.72rem;color:var(--accent);font-weight:700;text-decoration:none;">View All</a></div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <svg viewBox="0 0 120 120" width="110" height="110" style="flex-shrink:0;">
+          {% set circ = 289.0 %}{% set offset = 0 %}
+          {% for e in expense_breakdown %}
+          {% set seg = circ * e.amount / exp_total %}
+          <circle cx="60" cy="60" r="46" fill="none" stroke="{{ e.color }}" stroke-width="20" stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset|round(1) }}" transform="rotate(-90 60 60)"/>
+          {% set offset = offset + seg %}
+          {% endfor %}
+          <text x="60" y="57" font-size="11" font-weight="800" text-anchor="middle" fill="var(--ink)">₹{{ '{:,.0f}'.format(exp_total) }}</text>
+          <text x="60" y="70" font-size="7.5" text-anchor="middle" fill="var(--steel)">Total Expenses</text>
+        </svg>
+        <div style="flex:1;font-size:0.71rem;">
+          {% for e in expense_breakdown %}
+          <div class="bp-stat-line"><span class="k"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:{{ e.color }};margin-right:5px;"></span>{{ e.label }}</span><span class="v">₹{{ '{:,.0f}'.format(e.amount) }} ({{ e.pct }}%)</span></div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Collections Overview</h3><a href="/accounts" style="font-size:0.72rem;color:var(--accent);font-weight:700;text-decoration:none;">View All</a></div>
+      <div class="bp-stat-line"><span class="k">Total Receivable</span><span class="v">₹{{ '{:,.0f}'.format(total_receivables) }}</span></div>
+      <div class="bp-stat-line"><span class="k">Collected This Period</span><span class="v" style="color:var(--green);">₹{{ '{:,.0f}'.format(cash_collected) }}</span></div>
+      <div class="bp-stat-line"><span class="k">Overdue Collection (&gt;30 Days)</span><span class="v" style="color:var(--red);">₹{{ '{:,.0f}'.format(overdue_total) }}</span></div>
+      <div class="bp-stat-line"><span class="k">Average Collection Days</span><span class="v">{{ avg_collection_days if avg_collection_days is not none else 'N/A' }}{% if avg_collection_days is not none %} Days{% endif %}</span></div>
+      <div class="bp-stat-line"><span class="k">Collection Success Rate</span><span class="v">{{ collection_efficiency }}%</span></div>
+      <div class="bp-stat-line"><span class="k">Oldest Outstanding Invoice</span>
+        <span class="v" style="color:var(--red);">{% if oldest_outstanding %}{{ oldest_outstanding.lr }} ({{ oldest_outstanding.age }} days){% else %}None{% endif %}</span>
+      </div>
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Business Growth Overview</h3></div>
+      <div class="bp-growth-line"><div class="gi" style="background:#e8f5ee;color:var(--green);">&#128200;</div><div class="gl">Revenue Growth</div><div class="gv">{{ growth_span(revenue_growth) }}</div></div>
+      <div class="bp-growth-line"><div class="gi" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128176;</div><div class="gl">Profit Growth</div><div class="gv">{{ growth_span(profit_growth) }}</div></div>
+      <div class="bp-growth-line"><div class="gi" style="background:#eaf1fb;color:#2a78d6;">&#128101;</div><div class="gl">Customer Growth</div><div class="gv">{{ growth_span(customer_growth) }}</div></div>
+      <div class="bp-growth-line"><div class="gi" style="background:rgba(192,86,33,0.1);color:var(--accent);">&#128666;</div><div class="gl">Trip Growth</div><div class="gv">{{ growth_span(trip_growth) }}</div></div>
+      <div class="bp-growth-line"><div class="gi" style="background:#eaf1fb;color:#2a78d6;">&#129534;</div><div class="gl">Invoice Growth</div><div class="gv">{{ growth_span(invoice_growth) }}</div></div>
+      <div class="bp-growth-line"><div class="gi" style="background:#e8f5ee;color:var(--green);">&#128179;</div><div class="gl">Collection Growth</div><div class="gv">{{ growth_span(collection_growth) }}</div></div>
+      <div class="bp-growth-line"><div class="gi" style="background:#fdecea;color:var(--red);">&#128202;</div><div class="gl">Expense Growth</div><div class="gv">{{ growth_span(expense_growth, invert=True) }}</div></div>
+    </div>
+  </div>
+
+  <!-- KEY INSIGHTS / AI INSIGHTS / HEALTH SCORE -->
+  <div class="bp-row-3">
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Key Business Insights</h3></div>
+      <div class="bp-tile-grid">
+        <div class="bp-tile"><div class="ti" style="background:#e8f5ee;color:var(--green);">&#128200;</div><div><div class="tl">Highest Revenue Month</div><div class="tv">{{ highest_revenue_month.label if highest_revenue_month else '—' }}</div>{% if highest_revenue_month %}<div class="ts">₹{{ '{:,.0f}'.format(highest_revenue_month.revenue) }}</div>{% endif %}</div></div>
+        <div class="bp-tile"><div class="ti" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128176;</div><div><div class="tl">Highest Profit Month</div><div class="tv">{{ highest_profit_month.label if highest_profit_month else '—' }}</div>{% if highest_profit_month %}<div class="ts">₹{{ '{:,.0f}'.format(highest_profit_month.net_profit) }}</div>{% endif %}</div></div>
+        <div class="bp-tile"><div class="ti" style="background:#fdecea;color:var(--red);">&#128202;</div><div><div class="tl">Lowest Profit Month</div><div class="tv">{{ lowest_profit_month.label if lowest_profit_month else '—' }}</div>{% if lowest_profit_month %}<div class="ts">₹{{ '{:,.0f}'.format(lowest_profit_month.net_profit) }}</div>{% endif %}</div></div>
+        <div class="bp-tile"><div class="ti" style="background:#eaf1fb;color:#2a78d6;">&#128666;</div><div><div class="tl">Highest Collection Day</div><div class="tv">{{ highest_collection_day[0] if highest_collection_day else '—' }}</div>{% if highest_collection_day %}<div class="ts">₹{{ '{:,.0f}'.format(highest_collection_day[1]) }}</div>{% endif %}</div></div>
+        <div class="bp-tile"><div class="ti" style="background:rgba(192,86,33,0.1);color:var(--accent);">&#9888;&#65039;</div><div><div class="tl">Highest Expense Day</div><div class="tv">{{ highest_expense_day[0] if highest_expense_day else '—' }}</div>{% if highest_expense_day %}<div class="ts">₹{{ '{:,.0f}'.format(highest_expense_day[1]) }}</div>{% endif %}</div></div>
+        <div class="bp-tile"><div class="ti" style="background:#eaf1fb;color:#2a78d6;">&#128666;</div><div><div class="tl">Avg. Daily Revenue</div><div class="tv">₹{{ '{:,.0f}'.format(avg_daily_revenue) }}</div></div></div>
+        <div class="bp-tile"><div class="ti" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128200;</div><div><div class="tl">Avg. Daily Profit</div><div class="tv">₹{{ '{:,.0f}'.format(avg_daily_profit) }}</div></div></div>
+        <div class="bp-tile"><div class="ti" style="background:#e8f5ee;color:var(--green);">&#37;</div><div><div class="tl">Avg. Invoice Value</div><div class="tv">₹{{ '{:,.0f}'.format(avg_invoice_value) }}</div></div></div>
+        <div class="bp-tile"><div class="ti" style="background:#eaf1fb;color:#2a78d6;">&#128667;</div><div><div class="tl">Avg. Revenue / Vehicle</div><div class="tv">₹{{ '{:,.0f}'.format(avg_revenue_per_vehicle) }}</div></div></div>
+        <div class="bp-tile"><div class="ti" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128101;</div><div><div class="tl">Avg. Revenue / Employee</div><div class="tv">₹{{ '{:,.0f}'.format(avg_revenue_per_employee) }}</div></div></div>
+        <div class="bp-tile"><div class="ti" style="background:#e8f5ee;color:var(--green);">&#37;</div><div><div class="tl">Profit per ₹100 Revenue</div><div class="tv">₹{{ profit_margin }}</div></div></div>
+        <div class="bp-tile"><div class="ti" style="background:rgba(192,86,33,0.1);color:var(--accent);">&#128202;</div><div><div class="tl">Operating Margin</div><div class="tv">{{ profit_margin }}%</div></div></div>
+      </div>
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>AI Business Insights <span class="bp-beta">BETA</span></h3></div>
+      {% if insights %}
+      {% for i in insights %}
+      <div class="bp-ai-line">
+        <div class="bp-ai-ic" style="color:{% if i.kind=='good' %}var(--green){% elif i.kind=='bad' %}var(--red){% elif i.kind=='warn' %}var(--accent){% else %}#2a78d6{% endif %};">
+          {% if i.kind=='good' %}&#9650;{% elif i.kind=='bad' %}&#9660;{% elif i.kind=='warn' %}&#9888;&#65039;{% else %}&#8505;&#65039;{% endif %}
+        </div>
+        <div>{{ i.text }}</div>
+      </div>
+      {% endfor %}
+      {% else %}<div class="bp-empty">Not enough data yet to generate insights for this period.</div>{% endif %}
+    </div>
+
+    <div class="bp-panel">
+      <div class="bp-panel-head"><h3>Business Health Score</h3></div>
+      <div style="text-align:center;margin-bottom:8px;">
+        <svg viewBox="0 0 160 160" width="130" height="130">
+          <circle cx="80" cy="80" r="62" fill="none" stroke="var(--paper)" stroke-width="14"/>
+          {% set frac = overall_score / 100 %}
+          <circle cx="80" cy="80" r="62" fill="none" stroke="{% if health_kind=='good' %}var(--green){% elif health_kind=='bad' %}var(--red){% elif health_kind=='warn' %}var(--accent){% else %}#2a78d6{% endif %}" stroke-width="14" stroke-linecap="round" stroke-dasharray="{{ (389.6*frac)|round(1) }} 389.6" transform="rotate(-90 80 80)"/>
+          <text x="80" y="78" font-size="30" font-weight="800" text-anchor="middle" fill="var(--ink)">{{ overall_score }}</text>
+          <text x="80" y="96" font-size="9.5" text-anchor="middle" fill="var(--steel)">/100</text>
+        </svg>
+        <div style="color:{% if health_kind=='good' %}var(--green){% elif health_kind=='bad' %}var(--red){% elif health_kind=='warn' %}var(--accent){% else %}#2a78d6{% endif %};font-weight:800;font-size:0.82rem;">{% if health_kind=='good' %}&#128994;{% elif health_kind=='bad' %}&#128308;{% elif health_kind=='warn' %}&#128992;{% else %}&#128309;{% endif %} {{ health_label }}</div>
+      </div>
+      {% for s in sub_scores %}
+      <div class="bp-health-row"><span class="hn">{{ s.label }}</span><span class="bp-stars">
+        {% set full = (s.score / 20)|round(0, 'floor')|int %}
+        {% for i in range(5) %}<span class="{% if i < full %}on{% endif %}">&#9733;</span>{% endfor %}
+      </span></div>
+      {% endfor %}
+      {% for sug in suggestions %}
+      {% set is_great = 'Great job' in sug %}
+      <div class="{% if is_great %}bp-good-box{% else %}bp-tip-box{% endif %}"><span>{% if is_great %}&#9989;{% else %}&#128161;{% endif %}</span><span>{{ sug }}</span></div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+<script>
+function bpShowCompare(which, el) {
+  document.getElementById('bpCompareMom').style.display = which === 'mom' ? '' : 'none';
+  document.getElementById('bpCompareYoy').style.display = which === 'yoy' ? '' : 'none';
+  document.getElementById('bpCompareQ').style.display = which === 'q' ? '' : 'none';
+  el.parentNode.querySelectorAll('span').forEach(function(s) { s.classList.remove('active'); });
+  el.classList.add('active');
+}
+</script>
+{% endblock %}

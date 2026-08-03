@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Invoice — {{ t['lr_number'] }}{% endblock %}
+{% block extra_head %}
+<style>
+  .inv-box { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:36px; max-width:850px; margin:0 auto; }
+  .inv-letterhead { text-align:center; border-bottom:2px solid var(--ink); padding-bottom:16px; margin-bottom:20px; }
+  .inv-letterhead h2 { margin:0 0 4px; color:var(--ink); font-size:1.5rem; }
+  .inv-letterhead .addr { font-size:0.82rem; color:var(--steel); }
+  .inv-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 24px; margin-bottom:20px; font-size:0.9rem; }
+  .inv-grid .lbl { color:var(--steel); font-size:0.75rem; text-transform:uppercase; }
+  .inv-table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+  .inv-table th { background:var(--ink); color:#fff; padding:8px 12px; text-align:left; font-size:0.8rem; }
+  .inv-table td { padding:8px 12px; border-bottom:1px solid var(--line); font-size:0.88rem; }
+  .inv-total { text-align:right; font-size:1.2rem; font-weight:700; padding:12px; background:var(--paper); border-radius:6px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:none; width:96%;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <a href="/invoices" style="color:var(--steel);text-decoration:none;font-size:0.85rem;">&larr; Back to search</a>
+    <div style="display:flex;gap:10px;">
+      <a href="/invoices/{{ t['id'] }}/edit" class="add-btn" style="background:var(--accent);">Edit Invoice</a>
+      <a href="/invoices/{{ t['id'] }}/pdf" class="add-btn" style="background:var(--green);">Download PDF</a>
+    </div>
+  </div>
+
+  <div class="inv-box">
+    <div class="inv-letterhead">
+      <h2>ANIL TRANSPORT SERVICE</h2>
+      <div class="addr">Head Off.: Shop No. D/8, Nirmal Market Power House Road, Rourkela - 769001</div>
+      <div class="addr">GSTIN No.: 21ABDPL6110E1ZG &nbsp;|&nbsp; Mob. +91 9437246272 &nbsp;|&nbsp; Ph./Fax: 0661-2501272</div>
+    </div>
+
+    <div class="inv-grid">
+      <div><div class="lbl">Invoice No.</div>{{ inv['invoice_number'] if inv and inv['invoice_number'] else 'INV-' + t['lr_number'] }}</div>
+      <div><div class="lbl">LR Number</div>{{ t['lr_number'] }}</div>
+      <div><div class="lbl">Date</div>{{ t['date'] }}</div>
+      <div><div class="lbl">Due Date</div>{{ inv['due_date'] if inv and inv['due_date'] else '—' }}</div>
+      <div><div class="lbl">Bill To</div>{{ t['party_name'] }}</div>
+      <div><div class="lbl">Vehicle No</div>{{ t['vehicle_no'] }}</div>
+      <div><div class="lbl">From</div>{{ t['from_loc'] }}</div>
+      <div><div class="lbl">To</div>{{ t['to_loc'] }}</div>
+      <div><div class="lbl">Material</div>{{ t['material'] or '—' }}</div>
+      <div><div class="lbl">Quantity (MT)</div>{{ t['quantity'] }}</div>
+    </div>
+
+    <table class="inv-table">
+      <tr><th>Description</th><th style="text-align:right;">Amount (₹)</th></tr>
+      <tr>
+        <td>Freight {% if t['rate_type']=='FIXED' %}(Fixed Rate){% else %}({{ t['quantity'] }} MT &times; ₹{{ t['rate'] }}){% endif %}</td>
+        <td style="text-align:right;">₹{{ '{:,.0f}'.format(freight) }}</td>
+      </tr>
+      {% if charges %}
+      {% for label, amt in charges %}
+      <tr><td>{{ label }} (+)</td><td style="text-align:right;">₹{{ '{:,.0f}'.format(amt) }}</td></tr>
+      {% endfor %}
+      {% endif %}
+      {% if deductions %}
+      {% for label, amt in deductions %}
+      <tr><td>{{ label }} (-)</td><td style="text-align:right;color:var(--red);">-₹{{ '{:,.0f}'.format(amt) }}</td></tr>
+      {% endfor %}
+      {% endif %}
+    </table>
+
+    <div class="inv-total">TOTAL BILLED: ₹{{ '{:,.0f}'.format(invoice_total) }}</div>
+    {% if amount_paid > 0 %}
+    <div style="display:flex;justify-content:space-between;padding:10px 12px;font-size:0.95rem;">
+      <span style="color:var(--steel);">Amount Already Paid (Advance/Received)</span>
+      <span style="color:var(--green);font-weight:600;">-₹{{ '{:,.0f}'.format(amount_paid) }}</span>
+    </div>
+    <div class="inv-total" style="background:{% if balance_due > 0 %}#fdecea{% else %}#e8f5ee{% endif %};color:{% if balance_due > 0 %}var(--red){% else %}var(--green){% endif %};">
+      BALANCE DUE: ₹{{ '{:,.0f}'.format(balance_due) }}
+    </div>
+    {% endif %}
+
+    {% if inv and inv['notes'] %}
+    <div style="margin-top:16px;font-size:0.85rem;color:var(--steel);"><b>Notes:</b> {{ inv['notes'] }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

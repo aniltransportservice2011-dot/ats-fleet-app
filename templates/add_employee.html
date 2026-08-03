@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Add Employee{% endblock %}
+{% block content %}
+<div class="wrap" style="max-width:480px;">
+  <a class="back" href="/salaries">&larr; Back</a>
+  <h1>Add Employee</h1>
+  <form class="stack" method="POST">
+    <div><label>Name</label><input type="text" name="name" required></div>
+    <div><label>Staff or Driver</label>
+      <select name="type">
+        <option value="Staff">Staff</option>
+        <option value="Driver">Driver</option>
+      </select>
+    </div>
+    <button type="submit" class="submit">Save &amp; Open Ledger</button>
+  </form>
+</div>
+{% endblock %}

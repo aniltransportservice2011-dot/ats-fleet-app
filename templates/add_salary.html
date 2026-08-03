@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Add Salary{% endblock %}
+{% block extra_head %}
+<style>
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/salaries">&larr; Back</a>
+  
+  <h1>Add Salary Entry</h1>
+  <form class="stack" method="POST">
+    <div><label>Employee</label><input type="text" name="employee" list="emp-list" required></div>
+    <datalist id="emp-list">{% for e in employees %}<option value="{{ e['name'] }}">{% endfor %}</datalist>
+    <div><label>Staff or Driver</label>
+      <select name="employee_type">
+        <option value="Staff">Staff</option>
+        <option value="Driver">Driver</option>
+      </select>
+    </div>
+    <div><label>Date</label><input type="date" name="date" required></div>
+    <div><label>Amount</label><input type="number" step="0.01" name="amount" required></div>
+    <button type="submit" class="submit">Save</button>
+  </form>
+</div>
+{% endblock %}

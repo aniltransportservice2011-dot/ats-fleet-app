@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Edit Trip — Anil Transport Service{% endblock %}
+{% block extra_head %}
+<style>
+
+  .section { background:var(--white); border:1px solid var(--line); border-radius:6px; margin-bottom:14px; }
+  .section-head { padding:14px 18px; font-size:0.85rem; font-weight:600; }
+  .section-body { padding:0 18px 16px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .section-body input, .section-body select { padding:8px 9px; border:1px solid var(--line); border-radius:3px; font-size:0.87rem; width:100%; box-sizing:border-box; }
+  .charges .section-head { background:#eaf6ee; }
+  .deductions .section-head { background:#fdecea; }
+  .expenses .section-head { background:#fff6e8; }
+  .owner .section-head { background:#eaf1fb; }
+  .fld label { display:block; font-size:0.72rem; color:var(--steel); margin-bottom:4px; font-weight:600; text-transform:uppercase; letter-spacing:0.02em; }
+  .edit-actions { display:flex; gap:10px; margin-top:16px; max-width:300px; margin-left:auto; }
+  .edit-actions button, .edit-actions a { flex:1; text-align:center; padding:12px; border-radius:4px; font-size:0.92rem; cursor:pointer; text-decoration:none; }
+
+</style>
+{% endblock %}
+{% block content %}
+<div class="wrap">
+  <a class="back" href="/trips">&larr; Back</a>
+  
+  <h1>Edit Trip</h1>
+  <form method="POST">
+    <div class="section">
+      <div class="section-head">Trip basics</div>
+      <div class="section-body">
+        <div class="fld"><label>Date</label><input type="date" name="date" value="{{ t['date'] }}" required></div>
+        <div class="fld"><label>LR Number</label><input type="text" name="lr_number" value="{{ t['lr_number'] or '' }}"></div>
+        <div class="fld"><label>Vehicle No</label><input type="text" name="vehicle_no" value="{{ t['vehicle_no'] or '' }}" required></div>
+        <div class="fld"><label>Type</label><select name="type">
+          <option value="Line" {% if t['type']=='Line' %}selected{% endif %}>Line</option>
+          <option value="Local" {% if t['type']=='Local' %}selected{% endif %}>Local</option>
+          <option value="Market" {% if t['type']=='Market' %}selected{% endif %}>Market</option>
+        </select></div>
+        <div class="fld"><label>Party Name</label><input type="text" name="party_name" value="{{ t['party_name'] or '' }}" list="combined-list" required></div>
+        <div class="fld"><label>Driver Name</label><input type="text" name="driver_name" value="{{ t['driver_name'] or '' }}" list="employee-list"></div>
+        <div class="fld"><label>From</label><input type="text" name="from_loc" value="{{ t['from_loc'] or '' }}"></div>
+        <div class="fld"><label>To</label><input type="text" name="to_loc" value="{{ t['to_loc'] or '' }}"></div>
+        <div class="fld"><label>Material</label><input type="text" name="material" value="{{ t['material'] or '' }}"></div>
+        <div class="fld"><label>Quantity (MT)</label><input type="number" step="0.01" name="quantity" value="{{ t['quantity'] or 0 }}"></div>
+        <div class="fld"><label>Rate</label><input type="number" step="0.01" name="rate" value="{{ t['rate'] or 0 }}"></div>
+        <div class="fld"><label>Rate Type</label><select name="rate_type">
+          <option value="PER_MT" {% if t['rate_type']=='PER_MT' %}selected{% endif %}>Per MT</option>
+          <option value="FIXED" {% if t['rate_type']=='FIXED' %}selected{% endif %}>Fixed</option>
+        </select></div>
+      </div>
+    </div>
+
+    <div class="section charges">
+      <div class="section-head">Charges (+)</div>
+      <div class="section-body">
+        <div class="fld"><label>Driver payment</label><input type="number" step="0.01" name="driver_payment" value="{{ t['driver_payment'] or 0 }}"></div>
+        <div class="fld"><label>Detention charges</label><input type="number" step="0.01" name="detention_charges" value="{{ t['detention_charges'] or 0 }}"></div>
+        <div class="fld"><label>GPS cost</label><input type="number" step="0.01" name="gps_cost" value="{{ t['gps_cost'] or 0 }}"></div>
+        <div class="fld"><label>Loading charge</label><input type="number" step="0.01" name="loading_charge" value="{{ t['loading_charge'] or 0 }}"></div>
+        <div class="fld"><label>Unloading charge</label><input type="number" step="0.01" name="unloading_charge" value="{{ t['unloading_charge'] or 0 }}"></div>
+        <div class="fld"><label>Police charges</label><input type="number" step="0.01" name="police_charges" value="{{ t['police_charges'] or 0 }}"></div>
+        <div class="fld"><label>SIM tracking</label><input type="number" step="0.01" name="sim_tracking" value="{{ t['sim_tracking'] or 0 }}"></div>
+        <div class="fld"><label>Union charges</label><input type="number" step="0.01" name="union_charges" value="{{ t['union_charges'] or 0 }}"></div>
+        <div class="fld"><label>Weight charges</label><input type="number" step="0.01" name="weight_charges" value="{{ t['weight_charges'] or 0 }}"></div>
+        <div class="fld"><label>Other charges</label><input type="number" step="0.01" name="other_charges" value="{{ t['other_charges'] or 0 }}"></div>
+      </div>
+    </div>
+
+    <div class="section deductions">
+      <div class="section-head">Deductions (-)</div>
+      <div class="section-body">
+        <div class="fld"><label>Brokerage</label><input type="number" step="0.01" name="brokerage" value="{{ t['brokerage'] or 0 }}"></div>
+        <div class="fld"><label>Builty commission</label><input type="number" step="0.01" name="builty_commission" value="{{ t['builty_commission'] or 0 }}"></div>
+        <div class="fld"><label>Late fees</label><input type="number" step="0.01" name="late_fees" value="{{ t['late_fees'] or 0 }}"></div>
+        <div class="fld"><label>Material damage</label><input type="number" step="0.01" name="material_damage" value="{{ t['material_damage'] or 0 }}"></div>
+        <div class="fld"><label>Shortage amount</label><input type="number" step="0.01" name="shortage_amount" value="{{ t['shortage_amount'] or 0 }}"></div>
+        <div class="fld"><label>Shortage qty (MT)</label><input type="number" step="0.01" name="shortage_qty" value="{{ t['shortage_qty'] or 0 }}"></div>
+        <div class="fld"><label>TDS</label><input type="number" step="0.01" name="tds" value="{{ t['tds'] or 0 }}"></div>
+        <div class="fld"><label>Other deductions</label><input type="number" step="0.01" name="other_deductions" value="{{ t['other_deductions'] or 0 }}"></div>
+      </div>
+    </div>
+
+    <div class="section expenses">
+      <div class="section-head">Expenses</div>
+      <div class="section-body">
+        <div class="fld"><label>Fuel</label><input type="number" step="0.01" name="fuel_amount" value="{{ t['fuel_amount'] or 0 }}"></div>
+        <div class="fld"><label>Fuel Vendor</label><input type="text" name="fuel_vendor" value="{{ t['fuel_vendor_name'] or '' }}" list="combined-list" placeholder="Blank = paid directly"></div>
+        <div class="fld"><label>Driver advance</label><input type="number" step="0.01" name="driver_adv_amount" value="{{ t['driver_adv_amount'] or 0 }}"></div>
+        <div class="fld"><label>Driver Adv. Vendor</label><input type="text" name="driver_adv_vendor" value="{{ t['driveradv_vendor_name'] or '' }}" list="combined-list"></div>
+        <div class="fld"><label>Agent commission</label><input type="number" step="0.01" name="agent_commission" value="{{ t['agent_commission'] or 0 }}"></div>
+        <div class="fld"><label>Builty expense</label><input type="number" step="0.01" name="builty_expense" value="{{ t['builty_expense'] or 0 }}"></div>
+        <div class="fld"><label>Conductor expense</label><input type="number" step="0.01" name="conductor_expense" value="{{ t['conductor_expense'] or 0 }}"></div>
+        <div class="fld"><label>Fine</label><input type="number" step="0.01" name="fine" value="{{ t['fine'] or 0 }}"></div>
+        <div class="fld"><label>Labour charges</label><input type="number" step="0.01" name="labour_charges" value="{{ t['labour_charges'] or 0 }}"></div>
+        <div class="fld"><label>Parking</label><input type="number" step="0.01" name="parking" value="{{ t['parking'] or 0 }}"></div>
+        <div class="fld"><label>Puncture</label><input type="number" step="0.01" name="puncture" value="{{ t['puncture'] or 0 }}"></div>
+        <div class="fld"><label>Toll</label><input type="number" step="0.01" name="toll" value="{{ t['toll'] or 0 }}"></div>
+        <div class="fld"><label>Urea</label><input type="number" step="0.01" name="urea" value="{{ t['urea'] or 0 }}"></div>
+        <div class="fld"><label>Loading expense</label><input type="number" step="0.01" name="loading_expense" value="{{ t['loading_expense'] or 0 }}"></div>
+        <div class="fld"><label>Unloading expense</label><input type="number" step="0.01" name="unloading_expense" value="{{ t['unloading_expense'] or 0 }}"></div>
+        <div class="fld"><label>Wear and tear</label><input type="number" step="0.01" name="wear_tear" value="{{ t['wear_tear'] or 0 }}"></div>
+        <div class="fld"><label>Weighbridge charges</label><input type="number" step="0.01" name="weighbridge_charges" value="{{ t['weighbridge_charges'] or 0 }}"></div>
+        <div class="fld"><label>Other expense</label><input type="number" step="0.01" name="other_expense" value="{{ t['other_expense'] or 0 }}"></div>
+      </div>
+    </div>
+
+    <div class="section owner">
+      <div class="section-head">Market vehicle owner</div>
+      <div class="section-body">
+        <div class="fld"><label>Owner name</label><input type="text" name="owner_name" value="{{ t['owner_name'] or '' }}" list="combined-list"></div>
+        <div class="fld"><label>Fixed rate amount</label><input type="number" step="0.01" name="fixed_rate_amount" value="{{ t['fixed_rate_amount'] or 0 }}"></div>
+        <div class="fld"><label>Owner rate (Rs/MT)</label><input type="number" step="0.01" name="owner_rate" value="{{ t['owner_rate'] or 0 }}"></div>
+        <div class="fld"><label>Paid to owner</label><input type="number" step="0.01" name="paid_to_owner" value="{{ t['paid_to_owner'] or 0 }}"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">Payment tracking</div>
+      <div class="section-body">
+        <div class="fld"><label>Party advance</label><input type="number" step="0.01" name="party_advance" value="{{ t['party_advance'] or 0 }}"></div>
+        <div class="fld"><label>Payment received</label><input type="number" step="0.01" name="payment_received" value="{{ t['payment_received'] or 0 }}"></div>
+        <div class="fld"><label>LR Received</label><select name="lr_received">
+          <option value="" {% if t['lr_received']!='Yes' %}selected{% endif %}>No</option>
+          <option value="Yes" {% if t['lr_received']=='Yes' %}selected{% endif %}>Yes</option>
+        </select></div>
+      </div>
+    </div>
+
+    <div class="edit-actions">
+      <a href="/trips" style="background:none;border:1px solid var(--line);color:var(--ink);">Cancel</a>
+      <button type="submit" style="background:var(--accent);color:#fff;border:none;">Update Trip</button>
+    </div>
+  <datalist id="employee-list">
+      {% for e in employees %}<option value="{{ e['name'] }}">{% endfor %}
+    </datalist>
+    <datalist id="combined-list">
+      {% for n in combined_names %}<option value="{{ n }}">{% endfor %}
+    </datalist>
+  </form>
+</div>
+{% endblock %}
