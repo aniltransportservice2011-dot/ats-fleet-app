@@ -1,0 +1,94 @@
+{% set status_style = {'Active': ('#e8f5ee', 'var(--green)'), 'Expiring Soon': ('#fff3e8', 'var(--accent)'), 'Expired': ('#fdecea', 'var(--red)'), 'Cancelled': ('var(--paper)', 'var(--steel)'), 'Not Tracked': ('var(--paper)', 'var(--steel)')} %}
+
+<div class="mt-kpi-row" style="grid-template-columns:repeat(4,1fr);">
+  <div class="mt-kpi"><div><div class="lbl">Total Policies</div><div class="val">{{ total_policies }}</div><div class="sub">All vehicles</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128737;&#65039;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Active Policies</div><div class="val" style="color:var(--green);">{{ active_count }}</div><div class="sub">{{ active_pct }}%</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Expiring in 30 Days</div><div class="val" style="color:{% if expiring_count %}var(--accent){% endif %};">{{ expiring_count }}</div><div class="sub">Needs attention</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#8986;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Expired Policies</div><div class="val" style="color:{% if expired_count %}var(--red){% endif %};">{{ expired_count }}</div><div class="sub">Immediate action</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#10060;</div></div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="insurance">
+  <div class="field"><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Status</label>
+    <select name="status"><option value="">All Status</option>
+      {% for st in ['Active','Expiring Soon','Expired','Cancelled'] %}<option value="{{ st }}" {% if f_status==st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Policy Type</label>
+    <select name="type"><option value="">All Types</option>
+      {% for t in insurance_types %}<option value="{{ t }}" {% if f_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Insurance Company</label>
+    <select name="insurer"><option value="">All Companies</option>
+      {% for i in insurers %}<option value="{{ i['name'] }}" {% if f_insurer==i['name'] %}selected{% endif %}>{{ i['name'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/maintenance?tab=insurance">Clear</a>
+</form>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head">
+    <div class="ttl">Insurance Policies ({{ total_count }})</div>
+  </div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Vehicle</th><th>Policy Number</th><th>Insurer</th><th>Type</th><th>Status</th><th>Policy Period</th><th class="num">Premium</th><th></th></tr>
+    {% for r in rows %}
+    {% if r['is_legacy'] %}
+    <tr class="clickable-row" title="Logged before this tab existed — click to fill in its policy number, dates and documents." onclick="document.getElementById('convertInsuranceModal{{ loop.index }}').classList.add('open')">
+      <td><b>{{ r['vehicle_no'] or '—' }}</b></td>
+      <td>—</td>
+      <td>{{ r['insurer_name'] or '—' }}</td>
+      <td><span class="mt-type-badge" style="background:var(--paper);color:var(--steel);">Legacy entry</span></td>
+      <td><span class="mt-status-badge" style="background:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[0] }};color:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[1] }};">{{ r['status'] }}</span></td>
+      <td style="white-space:nowrap;font-size:0.8rem;">{{ r['start_date'] or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['premium_amount'] or 0) }}</td>
+      <td onclick="event.stopPropagation();">
+        <form method="POST" action="/maintenance/delete/{{ r['maintenance_id'] }}?tab=insurance" style="display:inline;" onsubmit="return confirm('Delete this entry permanently?');">
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:0.8rem;">&#128465;</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr class="clickable-row" onclick="document.getElementById('viewInsuranceModal{{ loop.index }}').classList.add('open')">
+      <td><b>{{ r['vehicle_no'] or '—' }}</b></td>
+      <td>{{ r['policy_number'] or '—' }}</td>
+      <td>{{ r['insurer_name'] or '—' }}</td>
+      <td><span class="mt-type-badge" style="background:#eaf1fb;color:#2a78d6;">{{ r['insurance_type'] or '—' }}</span></td>
+      <td><span class="mt-status-badge" style="background:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[0] }};color:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[1] }};">{{ r['status'] }}</span></td>
+      <td style="white-space:nowrap;font-size:0.8rem;">{{ r['start_date'] or '—' }} to {{ r['expiry_date'] or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['premium_amount'] or 0) }}</td>
+      <td onclick="event.stopPropagation();">
+        <form method="POST" action="/maintenance/insurance/{{ r['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Delete this insurance policy permanently?');">
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:0.8rem;">&#128465;</button>
+        </form>
+      </td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No insurance policies recorded for this selection.</div>
+  {% endif %}
+</div>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-kpi-row" style="grid-template-columns:repeat(4,1fr);">
+    <div class="mt-kpi"><div><div class="lbl">Total Premium Paid</div><div class="val">₹{{ '{:,.0f}'.format(total_premium_year) }}</div><div class="sub">This Financial Year</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128179;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">Average Premium</div><div class="val">₹{{ '{:,.0f}'.format(avg_premium) }}</div><div class="sub">Per Policy</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#9989;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">Coverage (Active Vehicles)</div><div class="val">{{ coverage_pct }}%</div><div class="sub">{{ active_vehicle_count }} of {{ own_fleet_count }} Vehicles</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128737;&#65039;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">Total IDV Covered</div><div class="val">₹{{ '{:,.0f}'.format(total_idv) }}</div><div class="sub">Across active policies</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128202;</div></div>
+  </div>
+</div>

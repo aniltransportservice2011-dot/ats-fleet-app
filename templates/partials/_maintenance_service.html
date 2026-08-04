@@ -7,36 +7,34 @@
   <div class="mt-kpi"><div><div class="lbl">Completed</div><div class="val" style="color:var(--green);">{{ completed_jobs }}</div><div class="sub">This selection</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
 </div>
 
-<form class="mt-filters" method="GET">
+<form class="filter-bar" method="GET">
   <input type="hidden" name="tab" value="service">
-  <div><label>Vehicle</label>
+  <div class="field"><label>Vehicle</label>
     <select name="vehicle"><option value="">All Vehicles</option>
       {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
     </select>
   </div>
-  <div><label>Workshop</label>
+  <div class="field"><label>Workshop</label>
     <select name="workshop"><option value="">All Workshops</option>
       {% for w in workshops %}<option value="{{ w['name'] }}" {% if f_workshop==w['name'] %}selected{% endif %}>{{ w['name'] }}</option>{% endfor %}
     </select>
   </div>
-  <div><label>Service Type</label>
+  <div class="field"><label>Service Type</label>
     <select name="service_type"><option value="">All Types</option>
       {% for st in service_types %}<option value="{{ st }}" {% if f_service_type==st %}selected{% endif %}>{{ st }}</option>{% endfor %}
     </select>
   </div>
-  <div><label>Status</label>
+  <div class="field"><label>Status</label>
     <select name="status"><option value="">All Status</option>
       <option value="Open" {% if f_status=='Open' %}selected{% endif %}>Open</option>
       <option value="Completed" {% if f_status=='Completed' %}selected{% endif %}>Completed</option>
     </select>
   </div>
-  <div><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-  <div><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
-  <div><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Vehicle, type, invoice..."></div>
-  <div style="display:flex;gap:8px;">
-    <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Filter</button>
-    <a class="clear" href="/maintenance?tab=service">Reset</a>
-  </div>
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Vehicle, type, invoice..."></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/maintenance?tab=service">Clear</a>
 </form>
 
 <div class="mt-panel" style="margin-bottom:18px;">

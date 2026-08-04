@@ -2,11 +2,15 @@ from flask import Flask, render_template, request, redirect, url_for, session
 import sqlite3
 import datetime
 import calendar
+import os
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
 app.permanent_session_lifetime = datetime.timedelta(days=30)
 DB = 'fleet.db'
+INSURANCE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'insurance')
+os.makedirs(INSURANCE_UPLOAD_DIR, exist_ok=True)
 
 def get_db():
     conn = sqlite3.connect(DB)
@@ -855,6 +859,8 @@ def maintenance_list():
         return _maintenance_tyres_tab(conn)
     if tab == 'battery':
         return _maintenance_battery_tab(conn)
+    if tab == 'insurance':
+        return _maintenance_insurance_tab(conn)
     if tab in MAINTENANCE_TAB_LABELS:
         return _maintenance_category_tab(conn, tab)
     return _maintenance_overview_tab(conn)
@@ -1332,6 +1338,140 @@ def _maintenance_battery_tab(conn):
         checks_by_battery=checks_by_battery,
         f_vehicle=vehicle_f, f_brand=brand_f, f_status=status_f, f_battery_type=type_f,
         f_date_from=date_from, f_date_to=date_to, f_search=search_f, active='maintenance')
+
+INSURANCE_TYPES = ['Comprehensive', 'Third Party', 'Transit Insurance']
+
+def _insurance_status(p):
+    """Active/Expiring Soon/Expired are always date-derived so they can't go stale; 'Cancelled'
+    is the one real-world fact that has to be asserted rather than computed, so it wins outright."""
+    if p['status_override'] == 'Cancelled':
+        return 'Cancelled'
+    if not p['expiry_date']:
+        return 'Active'
+    try:
+        exp = datetime.datetime.strptime(p['expiry_date'], '%Y-%m-%d').date()
+    except ValueError:
+        return 'Active'
+    today = datetime.date.today()
+    if exp < today:
+        return 'Expired'
+    if (exp - today).days <= 30:
+        return 'Expiring Soon'
+    return 'Active'
+
+def _insurance_enrich(p):
+    d = dict(p)
+    d['status'] = _insurance_status(p)
+    d['days_to_expiry'] = None
+    if p['expiry_date']:
+        try:
+            exp = datetime.datetime.strptime(p['expiry_date'], '%Y-%m-%d').date()
+            d['days_to_expiry'] = (exp - datetime.date.today()).days
+        except ValueError:
+            pass
+    return d
+
+def _save_insurance_doc(file_storage, prefix):
+    if not file_storage or not file_storage.filename:
+        return None
+    filename = secure_filename(file_storage.filename)
+    if not filename:
+        return None
+    unique = f"{prefix}_{int(datetime.datetime.now().timestamp() * 1000)}_{filename}"
+    file_storage.save(os.path.join(INSURANCE_UPLOAD_DIR, unique))
+    return f"uploads/insurance/{unique}"
+
+def _maintenance_insurance_tab(conn):
+    vehicle_f = request.args.get('vehicle', '')
+    status_f = request.args.get('status', '')
+    type_f = request.args.get('type', '')
+    insurer_f = request.args.get('insurer', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+
+    raw_rows = conn.execute("""SELECT ip.*, v.vehicle_no, ve.name as insurer_name FROM insurance_policies ip
+                               LEFT JOIN vehicles v ON ip.vehicle_id=v.id LEFT JOIN vendors ve ON ip.insurer_id=ve.id
+                               ORDER BY ip.id DESC""").fetchall()
+    all_rows = [_insurance_enrich(r) for r in raw_rows]
+
+    # Insurance entries logged the old free-text way (before this tab existed) live only in
+    # `maintenance`, with no policy_number/expiry/etc — surface them too so this list's totals
+    # never disagree with Overview's, which reads `maintenance` directly. They're shown honestly
+    # as "Not Tracked" (no expiry date exists to derive a real status from) and are read-only here.
+    legacy_maint = conn.execute("""SELECT m.id, m.date, m.category, m.service_type, m.amount, m.paid_amount, m.notes,
+                                   m.vendor_id, v.vehicle_no, v.id as veh_id, ve.name as insurer_name
+                                   FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                                   LEFT JOIN vendors ve ON m.vendor_id=ve.id
+                                   WHERE m.id NOT IN (SELECT maintenance_id FROM insurance_policies WHERE maintenance_id IS NOT NULL)
+                                   """).fetchall()
+    for m in legacy_maint:
+        if _maintenance_classify(m['category'], m['service_type']) != 'Insurance':
+            continue
+        all_rows.append({
+            'id': None, 'vehicle_id': m['veh_id'], 'vehicle_no': m['vehicle_no'],
+            'insurance_type': None, 'insurer_id': m['vendor_id'], 'insurer_name': m['insurer_name'],
+            'policy_number': None, 'start_date': m['date'], 'expiry_date': None,
+            'premium_amount': m['amount'], 'idv': None, 'ncb_pct': None, 'gst_included': None,
+            'agent_name': None, 'agent_contact': None, 'agent_email': None, 'reminder_days': None,
+            'notes': m['notes'], 'status_override': None, 'policy_doc_path': None, 'invoice_doc_path': None,
+            'rc_doc_path': None, 'maintenance_id': m['id'], 'is_legacy': True,
+            'status': 'Not Tracked', 'days_to_expiry': None,
+        })
+
+    rows = all_rows
+    if vehicle_f:
+        rows = [r for r in rows if r['vehicle_no'] == vehicle_f]
+    if status_f:
+        rows = [r for r in rows if r['status'] == status_f]
+    if type_f:
+        rows = [r for r in rows if (r['insurance_type'] or '') == type_f]
+    if insurer_f:
+        rows = [r for r in rows if (r['insurer_name'] or '') == insurer_f]
+    if date_from:
+        rows = [r for r in rows if (r['start_date'] or '') >= date_from]
+    if date_to:
+        rows = [r for r in rows if (r['start_date'] or '') <= date_to]
+
+    total_policies = len(all_rows)
+    active_count = sum(1 for r in all_rows if r['status'] == 'Active')
+    expiring_count = sum(1 for r in all_rows if r['status'] == 'Expiring Soon')
+    expired_count = sum(1 for r in all_rows if r['status'] == 'Expired')
+    active_pct = round(active_count / total_policies * 100, 1) if total_policies else 0
+
+    today = datetime.date.today()
+    this_year = str(today.year)
+    total_premium_year = sum(r['premium_amount'] or 0 for r in all_rows if (r['start_date'] or '').startswith(this_year))
+    avg_premium = round(sum(r['premium_amount'] or 0 for r in all_rows) / total_policies) if total_policies else 0
+
+    own_fleet_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type IN ('Line','Local')").fetchone()[0]
+    active_vehicle_ids = set(r['vehicle_id'] for r in all_rows if r['status'] == 'Active' and r['vehicle_id'])
+    coverage_pct = round(len(active_vehicle_ids) / own_fleet_count * 100) if own_fleet_count else 0
+    total_idv = sum(r['idv'] or 0 for r in all_rows if r['status'] == 'Active')
+
+    total_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=8)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    insurers = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    conn.close()
+
+    return render_template('maintenance.html', tab='insurance',
+        rows=page_rows, total_count=total_count, total_policies=total_policies,
+        active_count=active_count, expiring_count=expiring_count, expired_count=expired_count, active_pct=active_pct,
+        total_premium_year=total_premium_year, avg_premium=avg_premium, coverage_pct=coverage_pct,
+        active_vehicle_count=len(active_vehicle_ids), own_fleet_count=own_fleet_count, total_idv=total_idv,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=vehicles, insurers=insurers, combined_names=combined_names, insurance_types=INSURANCE_TYPES,
+        f_vehicle=vehicle_f, f_status=status_f, f_type=type_f, f_insurer=insurer_f,
+        f_date_from=date_from, f_date_to=date_to, active='maintenance')
 
 def _maintenance_service_tab(conn):
     vehicle_f = request.args.get('vehicle', '')
@@ -1827,6 +1967,166 @@ def delete_battery(battery_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
 
+@app.route('/maintenance/insurance/add', methods=['POST'])
+def add_insurance():
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    # Insurers are companies we pay premiums to, same as any other vendor — reusing the vendor
+    # table means the premium lands straight in that insurer's ledger, same as every other cost.
+    insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
+    premium = float(f.get('premium_amount') or 0)
+
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, status)
+                          VALUES (?,?,?,?,?,?,?,?)""",
+        (f.get('start_date'), vehicle_id, 'Insurance', premium, premium, insurer_id, f.get('notes') or None, 'Completed'))
+    maintenance_id = cur.lastrowid
+
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy')
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice')
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc')
+    status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
+
+    conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
+                    expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
+                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date'),
+         f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
+         f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
+         f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or None, status_override,
+         policy_doc, invoice_doc, rc_doc, maintenance_id))
+
+    # Keep the vehicle's own insurance_expiry (shown on the Vehicles page) in sync with this policy.
+    if vehicle_id and f.get('expiry_date'):
+        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='insurance'))
+
+@app.route('/maintenance/insurance/<int:policy_id>/edit', methods=['POST'])
+def edit_insurance(policy_id):
+    conn = get_db()
+    f = request.form
+    policy = conn.execute("SELECT * FROM insurance_policies WHERE id=?", (policy_id,)).fetchone()
+    if not policy:
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='insurance'))
+
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
+    premium = float(f.get('premium_amount') or 0)
+
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy') or policy['policy_doc_path']
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice') or policy['invoice_doc_path']
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc') or policy['rc_doc_path']
+    status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
+
+    conn.execute("""UPDATE insurance_policies SET vehicle_id=?, insurance_type=?, insurer_id=?, policy_number=?,
+                    start_date=?, expiry_date=?, premium_amount=?, idv=?, ncb_pct=?, gst_included=?, agent_name=?,
+                    agent_contact=?, agent_email=?, reminder_days=?, notes=?, status_override=?, policy_doc_path=?,
+                    invoice_doc_path=?, rc_doc_path=? WHERE id=?""",
+        (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date'),
+         f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
+         f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
+         f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or None, status_override,
+         policy_doc, invoice_doc, rc_doc, policy_id))
+
+    if policy['maintenance_id']:
+        conn.execute("UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=? WHERE id=?",
+            (f.get('start_date'), vehicle_id, premium, premium, insurer_id, f.get('notes') or None, policy['maintenance_id']))
+    if vehicle_id and f.get('expiry_date'):
+        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='insurance'))
+
+@app.route('/maintenance/insurance/<int:policy_id>/delete', methods=['POST'])
+def delete_insurance(policy_id):
+    conn = get_db()
+    policy = conn.execute("SELECT * FROM insurance_policies WHERE id=?", (policy_id,)).fetchone()
+    if policy:
+        if policy['maintenance_id']:
+            conn.execute("DELETE FROM maintenance WHERE id=?", (policy['maintenance_id'],))
+        conn.execute("DELETE FROM insurance_policies WHERE id=?", (policy_id,))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='insurance'))
+
+@app.route('/maintenance/insurance/legacy/<int:maintenance_id>/convert', methods=['POST'])
+def convert_legacy_insurance(maintenance_id):
+    """Fills in the missing policy number/dates/etc. on an old free-text Insurance entry —
+    reuses that same maintenance/ledger row (so the cost isn't billed twice) and just attaches
+    the new structured insurance_policies record to it, same as every other 'add' flow here."""
+    conn = get_db()
+    f = request.form
+    existing = conn.execute("SELECT id FROM insurance_policies WHERE maintenance_id=?", (maintenance_id,)).fetchone()
+    if existing:
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='insurance'))
+
+    m = conn.execute("SELECT * FROM maintenance WHERE id=?", (maintenance_id,)).fetchone()
+    if not m:
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='insurance'))
+
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) or m['vehicle_id']
+    insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
+    premium = float(f.get('premium_amount') or 0)
+    status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
+
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy')
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice')
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc')
+
+    conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
+                    expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
+                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date') or m['date'],
+         f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
+         f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
+         f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or m['notes'], status_override,
+         policy_doc, invoice_doc, rc_doc, maintenance_id))
+
+    conn.execute("UPDATE maintenance SET vehicle_id=?, date=?, vendor_id=?, amount=?, paid_amount=? WHERE id=?",
+        (vehicle_id, f.get('start_date') or m['date'], insurer_id, premium, premium, maintenance_id))
+    if vehicle_id and f.get('expiry_date'):
+        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='insurance'))
+
 def _filter_entries_by_date(entries, date_from, date_to):
     if date_from:
         entries = [e for e in entries if (e['date'] or '') >= date_from]
@@ -2057,9 +2357,10 @@ def _get_vendor_ledger_entries(vendor_id):
     conn = get_db()
     vendor = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM vendors WHERE id=?", (vendor_id,)).fetchone()
     maint = conn.execute("""SELECT m.date, m.category, m.service_type, m.tyre_action, m.tyre_id, m.invoice_no,
-                             m.amount, m.paid_amount, v.vehicle_no, b.battery_no
+                             m.amount, m.paid_amount, v.vehicle_no, b.battery_no, ip.policy_number
                              FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
                              LEFT JOIN batteries b ON b.maintenance_id=m.id
+                             LEFT JOIN insurance_policies ip ON ip.maintenance_id=m.id
                              WHERE m.vendor_id=? ORDER BY m.date""", (vendor_id,)).fetchall()
     fuel = conn.execute("""SELECT date, fuel_amount, type FROM trips WHERE fuel_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
     adv = conn.execute("""SELECT date, driver_adv_amount, type FROM trips WHERE driver_adv_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
@@ -2084,6 +2385,8 @@ def _get_vendor_ledger_entries(vendor_id):
             detail += f" (Tyre {m['tyre_id']})"
         if m['battery_no']:
             detail += f" ({m['battery_no']})"
+        if m['policy_number']:
+            detail += f" (Policy {m['policy_number']})"
         if m['invoice_no']:
             detail += f" [Inv #{m['invoice_no']}]"
         entries.append({'date': m['date'], 'detail': detail,
@@ -3944,13 +4247,22 @@ def login():
         f = request.form
         conn = get_db()
         user = conn.execute("SELECT * FROM users WHERE username=?", (f.get('username'),)).fetchone()
-        conn.close()
         if user and check_password_hash(user['password_hash'], f.get('password') or ''):
+            if (user['status'] or 'Active') == 'Inactive':
+                conn.close()
+                return render_template('login.html', error='This account has been deactivated. Contact an administrator.',
+                                        company_name=get_company_name())
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
             session['is_admin'] = user['is_admin']
+            now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user['id']))
+            conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login', now))
+            conn.commit()
+            conn.close()
             return redirect(url_for('dashboard'))
+        conn.close()
         error = 'Invalid username or password.'
     return render_template('login.html', error=error, company_name=get_company_name())
 
@@ -4020,14 +4332,23 @@ def verify_login_otp():
 
     conn = get_db()
     user = conn.execute("SELECT * FROM users WHERE id=?", (session['otp_user_id'],)).fetchone()
-    conn.close()
     for key in ('otp_user_id', 'otp_phone', 'otp_hash', 'otp_expires'):
         session.pop(key, None)
     if not user:
+        conn.close()
         return redirect(url_for('login'))
+    if (user['status'] or 'Active') == 'Inactive':
+        conn.close()
+        return render_template('login.html', company_name=get_company_name(),
+                                error='This account has been deactivated. Contact an administrator.')
     session['user_id'] = user['id']
     session['username'] = user['username']
     session['is_admin'] = user['is_admin']
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user['id']))
+    conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login (OTP)', now))
+    conn.commit()
+    conn.close()
     return redirect(url_for('dashboard'))
 
 ALL_SETTING_KEYS = [
@@ -4040,6 +4361,22 @@ ALL_SETTING_KEYS = [
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
     'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'
 ]
+
+MODULE_LIST = ['Dashboard', 'Trips', 'Maintenance', 'Vehicles', 'Invoices', 'Payments',
+               'Ledger', 'Reports', 'Settings', 'User Management', 'Expenses', 'Salaries']
+ROLE_SUGGESTIONS = ['Administrator', 'Manager', 'Operations Head', 'Accountant', 'Supervisor', 'Driver']
+
+def _users_with_stats(conn):
+    rows = conn.execute("""SELECT * FROM users ORDER BY
+                           CASE access_level WHEN 'Full Access' THEN 0 WHEN 'Read Only' THEN 1 ELSE 2 END,
+                           username""").fetchall()
+    users = [dict(r) for r in rows]
+    total = len(users)
+    admin_n = sum(1 for u in users if u['access_level'] == 'Full Access')
+    readonly_n = sum(1 for u in users if u['access_level'] == 'Read Only')
+    limited_n = sum(1 for u in users if u['access_level'] == 'Limited Access')
+    inactive_n = sum(1 for u in users if u['status'] == 'Inactive')
+    return users, total, admin_n, readonly_n, limited_n, inactive_n
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_page():
@@ -4067,14 +4404,23 @@ def settings_page():
                 conn.execute("UPDATE settings SET value=? WHERE key=?", (val, key))
             conn.commit()
 
-    users = conn.execute("SELECT id, username, role, is_admin, phone FROM users ORDER BY username").fetchall()
+    users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
+    role_counts = {}
+    for u in users:
+        r = u['role'] or 'Unassigned'
+        role_counts[r] = role_counts.get(r, 0) + 1
+    access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
+                                  LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
     s = _get_all_settings(conn)
     conn.close()
 
-    fy_from = '2026-04-01'
+    active_settings_tab = request.args.get('tab', 'company')
     invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
     return render_template('settings.html', company_name=s.get('company_name') or get_company_name(),
-                            users=users, s=s, invoice_example=invoice_example, active='settings')
+                            users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
+                            limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
+                            access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
+                            s=s, invoice_example=invoice_example, active='settings', active_settings_tab=active_settings_tab)
 
 def _get_all_settings(conn):
     s = {}
@@ -4086,25 +4432,63 @@ def _get_all_settings(conn):
 @app.route('/settings/users/add', methods=['POST'])
 def add_user():
     from werkzeug.security import generate_password_hash
-    import datetime, sqlite3
+    import datetime, sqlite3, secrets
     f = request.form
     conn = get_db()
+    access_level = f.get('access_level') or 'Read Only'
+    modules = ','.join(request.form.getlist('modules')) if access_level == 'Limited Access' else None
+    # A password is optional — leave it blank and the user signs in with mobile OTP only;
+    # set one here and they can also sign in the normal username+password way.
+    pw = f.get('password') or ''
+    pw_hash = generate_password_hash(pw) if pw else generate_password_hash(secrets.token_hex(16))
     try:
-        conn.execute("INSERT INTO users (username, password_hash, role, is_admin, phone, created_at) VALUES (?,?,?,?,?,?)",
-                     (f.get('username'), generate_password_hash(f.get('password') or ''), f.get('role'),
-                      1 if f.get('is_admin')=='on' else 0, (f.get('phone') or '').strip() or None,
-                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone, full_name, email,
+                        access_level, module_access, status, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                     (f.get('username'), pw_hash, f.get('role'),
+                      1 if access_level == 'Full Access' else 0, (f.get('phone') or '').strip() or None,
+                      f.get('full_name') or None, f.get('email') or None, access_level, modules,
+                      f.get('status') or 'Active', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         conn.commit()
+        conn.close()
     except sqlite3.IntegrityError:
-        users = conn.execute("SELECT id, username, role, is_admin, phone FROM users ORDER BY username").fetchall()
+        users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
+        role_counts = {}
+        for u in users:
+            r = u['role'] or 'Unassigned'
+            role_counts[r] = role_counts.get(r, 0) + 1
+        access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
+                                      LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
         s = _get_all_settings(conn)
         invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
         conn.close()
         return render_template('settings.html', company_name=s.get('company_name') or get_company_name(),
-                                users=users, s=s, invoice_example=invoice_example, active='settings',
-                                user_error=f"Username \"{f.get('username')}\" is already taken.")
+                                users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
+                                limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
+                                access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
+                                s=s, invoice_example=invoice_example, active='settings', active_settings_tab='users',
+                                user_error=f"Username \"{f.get('username')}\" is already taken.", reopen_add_user=True)
+    return redirect(url_for('settings_page', tab='users'))
+
+@app.route('/settings/users/<int:user_id>/edit', methods=['POST'])
+def edit_user(user_id):
+    from werkzeug.security import generate_password_hash
+    f = request.form
+    conn = get_db()
+    access_level = f.get('access_level') or 'Read Only'
+    modules = ','.join(request.form.getlist('modules')) if access_level == 'Limited Access' else None
+    conn.execute("""UPDATE users SET full_name=?, role=?, phone=?, email=?, access_level=?, module_access=?,
+                    status=?, is_admin=? WHERE id=?""",
+                 (f.get('full_name') or None, f.get('role'), (f.get('phone') or '').strip() or None,
+                  f.get('email') or None, access_level, modules, f.get('status') or 'Active',
+                  1 if access_level == 'Full Access' else 0, user_id))
+    # Leave the password untouched unless a new one was actually typed in.
+    new_pw = f.get('password') or ''
+    if new_pw:
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(new_pw), user_id))
+    conn.commit()
     conn.close()
-    return redirect(url_for('settings_page'))
+    return redirect(url_for('settings_page', tab='users'))
 
 @app.route('/settings/users/<int:user_id>/phone', methods=['POST'])
 def update_user_phone(user_id):
@@ -4112,15 +4496,35 @@ def update_user_phone(user_id):
     conn.execute("UPDATE users SET phone=? WHERE id=?", ((request.form.get('phone') or '').strip() or None, user_id))
     conn.commit()
     conn.close()
-    return redirect(url_for('settings_page'))
+    return redirect(url_for('settings_page', tab='users'))
 
 @app.route('/settings/users/<int:user_id>/delete', methods=['POST'])
 def delete_user(user_id):
     conn = get_db()
     conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.execute("DELETE FROM access_logs WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
-    return redirect(url_for('settings_page'))
+    return redirect(url_for('settings_page', tab='users'))
+
+@app.route('/settings/users/export')
+def export_users():
+    import openpyxl, io
+    from flask import send_file
+    conn = get_db()
+    users, *_ = _users_with_stats(conn)
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Users'
+    ws.append(['Full Name', 'Username', 'Role', 'Access Level', 'Mobile', 'Email', 'Status', 'Last Login'])
+    for u in users:
+        ws.append([u['full_name'] or '', u['username'], u['role'] or '', u['access_level'] or '',
+                   u['phone'] or '', u['email'] or '', u['status'] or '', u['last_login'] or ''])
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='users.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/route-analytics')
 def route_analytics():

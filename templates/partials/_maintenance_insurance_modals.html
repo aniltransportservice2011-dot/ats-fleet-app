@@ -1,0 +1,260 @@
+{% set status_style = {'Active': ('#e8f5ee', 'var(--green)'), 'Expiring Soon': ('#fff3e8', 'var(--accent)'), 'Expired': ('#fdecea', 'var(--red)'), 'Cancelled': ('var(--paper)', 'var(--steel)')} %}
+
+<!-- ADD INSURANCE -->
+<div class="modal-overlay" id="addInsuranceModal">
+  <div class="modal-box mt-modal-box" style="display:flex;flex-direction:column;padding:0;max-height:88vh;">
+    <div class="ins-modal-hd">
+      <button type="button" class="modal-close-x" onclick="document.getElementById('addInsuranceModal').classList.remove('open')">&#10005;</button>
+      <h3>&#128737;&#65039; Add Insurance</h3>
+      <div class="sub">Add a new insurance policy for vehicle</div>
+    </div>
+    <form method="POST" action="/maintenance/insurance/add" enctype="multipart/form-data" id="addInsuranceForm" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+      <div class="ins-modal-body">
+        <div class="ins-section-num"><span class="n">1</span> Vehicle &amp; Policy Details</div>
+        <div class="mt-fld" style="margin-bottom:10px;"><label>Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
+        <label style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;">Insurance Type *</label>
+        <div class="ins-radio-row">
+          {% for t in insurance_types %}
+          <label><input type="radio" name="insurance_type" value="{{ t }}" {% if loop.first %}checked{% endif %} required>{{ t }}</label>
+          {% endfor %}
+        </div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px;">
+          <div class="mt-fld"><label>Insurance Company *</label><input type="text" name="insurer_name" list="combined-list" required></div>
+          <div class="mt-fld"><label>Policy Number *</label><input type="text" name="policy_number" required placeholder="e.g. PL-2026-458214"></div>
+        </div>
+        <div class="mt-fld" style="max-width:200px;margin-top:10px;"><label>Policy Status *</label>
+          <select name="policy_status" required>
+            <option value="Active">Active</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+
+        <div class="ins-section-num"><span class="n">2</span> Policy Period</div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mt-fld"><label>Policy Start Date *</label><input type="date" name="start_date" required></div>
+          <div class="mt-fld"><label>Policy Expiry Date *</label><input type="date" name="expiry_date" required></div>
+        </div>
+
+        <div class="ins-section-num"><span class="n">3</span> Premium Details</div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mt-fld"><label>Premium Amount (₹) *</label><input type="number" step="0.01" name="premium_amount" required></div>
+          <div class="mt-fld"><label>Insured Declared Value (₹)</label><input type="number" step="0.01" name="idv"></div>
+          <div class="mt-fld"><label>NCB (%)</label><input type="number" step="0.1" name="ncb_pct"></div>
+          <div class="mt-fld"><label>GST Included</label>
+            <select name="gst_included"><option value="Yes">Yes</option><option value="No">No</option></select>
+          </div>
+        </div>
+
+        <div class="ins-section-num"><span class="n">4</span> Agent / Broker Details</div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mt-fld"><label>Agent / Broker Name</label><input type="text" name="agent_name"></div>
+          <div class="mt-fld"><label>Contact Number</label><input type="text" name="agent_contact"></div>
+        </div>
+        <div class="mt-fld" style="margin-top:10px;"><label>Email (Optional)</label><input type="email" name="agent_email"></div>
+
+        <div class="ins-section-num"><span class="n">5</span> Documents</div>
+        <div class="ins-doc-row">
+          <label class="ins-doc-box">
+            <input type="file" name="policy_doc" accept=".pdf,.jpg,.jpeg,.png" onchange="insShowFileName(this,'pdName')">
+            <div class="lbl">Policy Document</div>
+            <div class="sub" id="pdName">Upload PDF · Max 5MB</div>
+          </label>
+          <label class="ins-doc-box">
+            <input type="file" name="invoice_doc" accept=".pdf,.jpg,.jpeg,.png" onchange="insShowFileName(this,'inName')">
+            <div class="lbl">Invoice / Receipt</div>
+            <div class="sub" id="inName">Upload PDF · Max 5MB</div>
+          </label>
+          <label class="ins-doc-box">
+            <input type="file" name="rc_doc" accept=".pdf,.jpg,.jpeg,.png" onchange="insShowFileName(this,'rcName')">
+            <div class="lbl">RC Copy (Optional)</div>
+            <div class="sub" id="rcName">Upload Image · Max 5MB</div>
+          </label>
+        </div>
+
+        <div class="ins-section-num"><span class="n">6</span> Notes (Optional)</div>
+        <div class="mt-fld"><textarea name="notes" rows="2" placeholder="Enter any special conditions or notes..."></textarea></div>
+      </div>
+      <div class="ins-modal-ftr">
+        <button type="button" onclick="document.getElementById('addInsuranceModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Insurance</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}</datalist>
+<datalist id="combined-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+
+<script>
+function insShowFileName(input, id) {
+  var el = document.getElementById(id);
+  if (input.files && input.files[0]) { el.textContent = input.files[0].name; el.className = 'fname'; }
+}
+</script>
+
+{% for r in rows %}
+{% if r['is_legacy'] %}
+<!-- COMPLETE LEGACY POLICY: row {{ loop.index }} -->
+<div class="modal-overlay" id="convertInsuranceModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box" style="display:flex;flex-direction:column;padding:0;max-height:88vh;">
+    <div class="ins-modal-hd">
+      <button type="button" class="modal-close-x" onclick="document.getElementById('convertInsuranceModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+      <h3>&#128737;&#65039; Complete Policy Details — {{ r['vehicle_no'] or '—' }}</h3>
+      <div class="sub">Logged {{ r['start_date'] }} for ₹{{ '{:,.0f}'.format(r['premium_amount'] or 0) }} — fill in what's missing.</div>
+    </div>
+    <form method="POST" action="/maintenance/insurance/legacy/{{ r['maintenance_id'] }}/convert" enctype="multipart/form-data" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+      <div class="ins-modal-body">
+        <div class="ins-section-num"><span class="n">1</span> Vehicle &amp; Policy Details</div>
+        <div class="mt-fld" style="margin-bottom:10px;"><label>Vehicle *</label><input type="text" name="vehicle_no" value="{{ r['vehicle_no'] or '' }}" list="vehicle-list" required></div>
+        <label style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;">Insurance Type *</label>
+        <div class="ins-radio-row">
+          {% for t in insurance_types %}
+          <label><input type="radio" name="insurance_type" value="{{ t }}" {% if loop.first %}checked{% endif %} required>{{ t }}</label>
+          {% endfor %}
+        </div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px;">
+          <div class="mt-fld"><label>Insurance Company *</label><input type="text" name="insurer_name" value="{{ r['insurer_name'] or '' }}" list="combined-list" required></div>
+          <div class="mt-fld"><label>Policy Number *</label><input type="text" name="policy_number" required placeholder="e.g. PL-2026-458214"></div>
+        </div>
+        <div class="mt-fld" style="max-width:200px;margin-top:10px;"><label>Policy Status *</label>
+          <select name="policy_status" required><option value="Active">Active</option><option value="Cancelled">Cancelled</option></select>
+        </div>
+
+        <div class="ins-section-num"><span class="n">2</span> Policy Period</div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mt-fld"><label>Policy Start Date *</label><input type="date" name="start_date" value="{{ r['start_date'] or '' }}" required></div>
+          <div class="mt-fld"><label>Policy Expiry Date *</label><input type="date" name="expiry_date" required></div>
+        </div>
+
+        <div class="ins-section-num"><span class="n">3</span> Premium Details</div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mt-fld"><label>Premium Amount (₹) *</label><input type="number" step="0.01" name="premium_amount" value="{{ r['premium_amount'] or '' }}" required></div>
+          <div class="mt-fld"><label>Insured Declared Value (₹)</label><input type="number" step="0.01" name="idv"></div>
+          <div class="mt-fld"><label>NCB (%)</label><input type="number" step="0.1" name="ncb_pct"></div>
+          <div class="mt-fld"><label>GST Included</label><select name="gst_included"><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        </div>
+
+        <div class="ins-section-num"><span class="n">4</span> Agent / Broker Details</div>
+        <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="mt-fld"><label>Agent / Broker Name</label><input type="text" name="agent_name"></div>
+          <div class="mt-fld"><label>Contact Number</label><input type="text" name="agent_contact"></div>
+        </div>
+        <div class="mt-fld" style="margin-top:10px;"><label>Email (Optional)</label><input type="email" name="agent_email"></div>
+
+        <div class="ins-section-num"><span class="n">5</span> Documents</div>
+        <div class="ins-doc-row">
+          <label class="ins-doc-box">
+            <input type="file" name="policy_doc" accept=".pdf,.jpg,.jpeg,.png" onchange="insShowFileName(this,'cpdName{{ loop.index }}')">
+            <div class="lbl">Policy Document</div><div class="sub" id="cpdName{{ loop.index }}">Upload PDF · Max 5MB</div>
+          </label>
+          <label class="ins-doc-box">
+            <input type="file" name="invoice_doc" accept=".pdf,.jpg,.jpeg,.png" onchange="insShowFileName(this,'cinName{{ loop.index }}')">
+            <div class="lbl">Invoice / Receipt</div><div class="sub" id="cinName{{ loop.index }}">Upload PDF · Max 5MB</div>
+          </label>
+          <label class="ins-doc-box">
+            <input type="file" name="rc_doc" accept=".pdf,.jpg,.jpeg,.png" onchange="insShowFileName(this,'crcName{{ loop.index }}')">
+            <div class="lbl">RC Copy (Optional)</div><div class="sub" id="crcName{{ loop.index }}">Upload Image · Max 5MB</div>
+          </label>
+        </div>
+
+        <div class="ins-section-num"><span class="n">6</span> Notes (Optional)</div>
+        <div class="mt-fld"><textarea name="notes" rows="2">{{ r['notes'] or '' }}</textarea></div>
+      </div>
+      <div class="ins-modal-ftr">
+        <button type="button" onclick="document.getElementById('convertInsuranceModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Policy Details</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% else %}
+<!-- VIEW INSURANCE: row {{ loop.index }} -->
+<div class="modal-overlay" id="viewInsuranceModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('viewInsuranceModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#128737;&#65039; {{ r['insurance_type'] or 'Policy' }} — {{ r['vehicle_no'] or '—' }}
+      <span class="mt-status-badge" style="background:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[0] }};color:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[1] }};">{{ r['status'] }}</span>
+    </h3>
+    <div class="mt-detail-grid">
+      <div><div class="lbl">Insurer</div>{{ r['insurer_name'] or '—' }}</div>
+      <div><div class="lbl">Policy Number</div>{{ r['policy_number'] or '—' }}</div>
+      <div><div class="lbl">Policy Period</div>{{ r['start_date'] }} to {{ r['expiry_date'] }}</div>
+      <div><div class="lbl">Days to Expiry</div>{% if r['days_to_expiry'] is not none %}{{ r['days_to_expiry'] }} days{% else %}—{% endif %}</div>
+      <div><div class="lbl">Premium</div>₹{{ '{:,.0f}'.format(r['premium_amount'] or 0) }}</div>
+      <div><div class="lbl">IDV</div>{% if r['idv'] %}₹{{ '{:,.0f}'.format(r['idv']) }}{% else %}—{% endif %}</div>
+      <div><div class="lbl">NCB</div>{% if r['ncb_pct'] %}{{ r['ncb_pct'] }}%{% else %}—{% endif %}</div>
+      <div><div class="lbl">GST Included</div>{{ r['gst_included'] or '—' }}</div>
+      <div><div class="lbl">Agent / Broker</div>{{ r['agent_name'] or '—' }}</div>
+      <div><div class="lbl">Agent Contact</div>{{ r['agent_contact'] or r['agent_email'] or '—' }}</div>
+    </div>
+    <div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:6px;">Documents</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+      {% if r['policy_doc_path'] %}<a href="/static/{{ r['policy_doc_path'] }}" target="_blank" style="font-size:0.8rem;">&#128196; Policy Document</a>{% endif %}
+      {% if r['invoice_doc_path'] %}<a href="/static/{{ r['invoice_doc_path'] }}" target="_blank" style="font-size:0.8rem;">&#128196; Invoice / Receipt</a>{% endif %}
+      {% if r['rc_doc_path'] %}<a href="/static/{{ r['rc_doc_path'] }}" target="_blank" style="font-size:0.8rem;">&#128196; RC Copy</a>{% endif %}
+      {% if not r['policy_doc_path'] and not r['invoice_doc_path'] and not r['rc_doc_path'] %}<span style="color:var(--steel);font-size:0.82rem;">No documents uploaded.</span>{% endif %}
+    </div>
+    {% if r['notes'] %}
+    <div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:4px;">Notes</div>
+    <div style="font-size:0.85rem;color:var(--ink);margin-bottom:16px;">{{ r['notes'] }}</div>
+    {% endif %}
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <button type="button" onclick="document.getElementById('viewInsuranceModal{{ loop.index }}').classList.remove('open');document.getElementById('editInsuranceModal{{ loop.index }}').classList.add('open');" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">&#9998; Edit</button>
+      <form method="POST" action="/maintenance/insurance/{{ r['id'] }}/delete" onsubmit="return confirm('Delete this insurance policy permanently?');">
+        <button type="submit" style="background:var(--red);color:#fff;border:none;padding:9px 16px;border-radius:3px;cursor:pointer;">&#128465; Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT INSURANCE: row {{ loop.index }} -->
+<div class="modal-overlay" id="editInsuranceModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('editInsuranceModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#9998; Edit Policy — {{ r['vehicle_no'] }}</h3>
+    <form method="POST" action="/maintenance/insurance/{{ r['id'] }}/edit" enctype="multipart/form-data">
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" value="{{ r['vehicle_no'] or '' }}" list="vehicle-list" required></div>
+        <div class="mt-fld"><label>Insurance Type *</label>
+          <select name="insurance_type" required>
+            {% for t in insurance_types %}<option value="{{ t }}" {% if r['insurance_type']==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld"><label>Insurance Company *</label><input type="text" name="insurer_name" value="{{ r['insurer_name'] or '' }}" list="combined-list" required></div>
+        <div class="mt-fld"><label>Policy Number *</label><input type="text" name="policy_number" value="{{ r['policy_number'] or '' }}" required></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Start Date *</label><input type="date" name="start_date" value="{{ r['start_date'] or '' }}" required></div>
+        <div class="mt-fld"><label>Expiry Date *</label><input type="date" name="expiry_date" value="{{ r['expiry_date'] or '' }}" required></div>
+        <div class="mt-fld"><label>Premium (₹) *</label><input type="number" step="0.01" name="premium_amount" value="{{ r['premium_amount'] or 0 }}" required></div>
+        <div class="mt-fld"><label>IDV (₹)</label><input type="number" step="0.01" name="idv" value="{{ r['idv'] or '' }}"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>NCB (%)</label><input type="number" step="0.1" name="ncb_pct" value="{{ r['ncb_pct'] or '' }}"></div>
+        <div class="mt-fld"><label>GST Included</label>
+          <select name="gst_included"><option value="Yes" {% if r['gst_included']=='Yes' %}selected{% endif %}>Yes</option><option value="No" {% if r['gst_included']=='No' %}selected{% endif %}>No</option></select>
+        </div>
+        <div class="mt-fld"><label>Policy Status *</label>
+          <select name="policy_status" required>
+            <option value="Active" {% if r['status_override']!='Cancelled' %}selected{% endif %}>Active</option>
+            <option value="Cancelled" {% if r['status_override']=='Cancelled' %}selected{% endif %}>Cancelled</option>
+          </select>
+        </div>
+        <div class="mt-fld"><label>Agent Name</label><input type="text" name="agent_name" value="{{ r['agent_name'] or '' }}"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Agent Contact</label><input type="text" name="agent_contact" value="{{ r['agent_contact'] or '' }}"></div>
+        <div class="mt-fld"><label>Agent Email</label><input type="email" name="agent_email" value="{{ r['agent_email'] or '' }}"></div>
+      </div>
+      <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2">{{ r['notes'] or '' }}</textarea></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('editInsuranceModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endfor %}

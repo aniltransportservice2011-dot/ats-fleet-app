@@ -1,12 +1,10 @@
 {% set band_colors = {'Excellent':'#0ca30c','Good':'#1baf7a','Average':'#eda100','Poor':'#eb6834','Critical':'#d03b3b'} %}
-<form class="mt-filters" method="GET" style="grid-template-columns:1fr 1fr auto;">
+<form class="filter-bar" method="GET">
   <input type="hidden" name="tab" value="overview">
-  <div><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-  <div><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
-  <div style="display:flex;gap:8px;">
-    <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Apply</button>
-    <a class="clear" href="/maintenance?tab=overview">Clear</a>
-  </div>
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/maintenance?tab=overview">Clear</a>
 </form>
 
 <div class="mt-kpi-row">
