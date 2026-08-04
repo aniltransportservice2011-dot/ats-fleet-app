@@ -1,0 +1,142 @@
+{% set battery_icon %}<svg viewBox="0 0 24 24" width="18" height="18" fill="none" style="vertical-align:-4px;" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="7" width="16" height="11" rx="2" stroke="currentColor" stroke-width="2"/><rect x="19.5" y="10" width="2.5" height="5" rx="1" fill="currentColor"/><line x1="6.5" y1="7" x2="6.5" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="13.5" y1="7" x2="13.5" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>{% endset %}
+
+<!-- ADD BATTERY -->
+<div class="modal-overlay" id="addBatteryModal">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addBatteryModal').classList.remove('open')">&#10005;</button>
+    <h3>{{ battery_icon }} Add New Battery</h3>
+    <form method="POST" action="/maintenance/battery/add">
+      <input type="hidden" name="mode" id="batModeField" value="install">
+      <div class="bat-mode-tabs">
+        <div class="bat-mode-tab active" id="batModeInstallTab" onclick="batSetMode('install')">
+          <div class="ic">&#128667;</div>
+          <div><div class="lbl">Install to Vehicle</div><div class="sub">Battery will be installed now</div></div>
+        </div>
+        <div class="bat-mode-tab" id="batModeStockTab" onclick="batSetMode('stock')">
+          <div class="ic">&#128230;</div>
+          <div><div class="lbl">Add to Stock</div><div class="sub">Keep in inventory</div></div>
+        </div>
+      </div>
+
+      <label style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;display:block;margin-bottom:6px;">Battery Information</label>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Brand *</label><input type="text" name="brand" list="battery-brand-list" required placeholder="e.g. Exide"></div>
+        <div class="mt-fld"><label>Model</label><input type="text" name="model" placeholder="e.g. N180"></div>
+        <div class="mt-fld"><label>Capacity (AH) *</label><input type="number" step="1" name="capacity_ah" required placeholder="e.g. 180"></div>
+        <div class="mt-fld"><label>Battery Type *</label><input type="text" name="battery_type" list="battery-type-list" required placeholder="e.g. Tubular"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Voltage Rating</label><input type="text" name="voltage_rating" placeholder="e.g. 12V"></div>
+        <div class="mt-fld"><label>Serial / Code</label><input type="text" name="serial_no"></div>
+        <div class="mt-fld" id="batVehicleFld"><label>Install in Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
+        <div class="mt-fld" id="batInstallDateFld"><label>Installation Date *</label><input type="date" name="install_date" required></div>
+      </div>
+      <div class="mt-form-grid" id="batLocationRow">
+        <div class="mt-fld"><label>Installed Location</label>
+          <select name="installed_location">
+            <option value="Engine Compartment">Engine Compartment</option>
+            <option value="Under Seat">Under Seat</option>
+            <option value="Chassis Mounted">Chassis Mounted</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+
+      <label style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;display:block;margin:12px 0 6px;">Warranty &amp; Purchase</label>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Purchase Date *</label><input type="date" name="purchase_date" required></div>
+        <div class="mt-fld"><label>Warranty (Months) *</label><input type="number" step="1" name="warranty_months" required placeholder="e.g. 15"></div>
+        <div class="mt-fld"><label>Purchase Price (₹) *</label><input type="number" step="0.01" name="purchase_price" required></div>
+        <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Vendor / Dealer *</label><input type="text" name="vendor_name" list="combined-list" required></div>
+        <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
+      </div>
+
+      <label style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;display:block;margin:12px 0 6px;">Initial Check</label>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Initial Voltage</label><input type="number" step="0.1" name="voltage" placeholder="e.g. 12.6"></div>
+        <div class="mt-fld"><label>Temp (&deg;C)</label><input type="number" step="0.1" name="temp_c" placeholder="e.g. 32"></div>
+        <div class="mt-fld"><label>Battery Health (%)</label><input type="number" step="1" name="health_pct" placeholder="e.g. 100"></div>
+      </div>
+      <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Any additional detail..."></textarea></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('addBatteryModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Battery</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<datalist id="battery-brand-list">{% for b in battery_brands %}<option value="{{ b }}">{% endfor %}</datalist>
+<datalist id="battery-type-list">{% for t in battery_types %}<option value="{{ t }}">{% endfor %}</datalist>
+<datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}</datalist>
+<datalist id="combined-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+
+<script>
+function batSetMode(mode) {
+  document.getElementById('batModeField').value = mode;
+  document.getElementById('batModeInstallTab').classList.toggle('active', mode === 'install');
+  document.getElementById('batModeStockTab').classList.toggle('active', mode === 'stock');
+  var show = (mode === 'install');
+  document.getElementById('batVehicleFld').style.display = show ? '' : 'none';
+  document.getElementById('batInstallDateFld').style.display = show ? '' : 'none';
+  document.getElementById('batLocationRow').style.display = show ? '' : 'none';
+  document.querySelector('#batVehicleFld input').required = show;
+  document.querySelector('#batInstallDateFld input').required = show;
+}
+</script>
+
+{% for r in rows %}
+{% if r['status']=='In Stock' %}
+<!-- INSTALL BATTERY: row {{ loop.index }} -->
+<div class="modal-overlay" id="installBatteryModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box" style="width:480px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('installBatteryModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>{{ battery_icon }} Install Battery — {{ r['battery_no'] }}</h3>
+    <div style="font-size:0.78rem;color:var(--steel);margin:-8px 0 14px;">{{ r['brand'] or 'Brand n/a' }}{% if r['model'] %} {{ r['model'] }}{% endif %} &middot; bought {{ r['purchase_date'] }} for ₹{{ '{:,.0f}'.format(r['purchase_price'] or 0) }}</div>
+    <form method="POST" action="/maintenance/battery/{{ r['id'] }}/install">
+      <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
+        <div class="mt-fld"><label>Install Date *</label><input type="date" name="install_date" required></div>
+        <div class="mt-fld" style="grid-column:span 2;"><label>Installed Location</label>
+          <select name="installed_location">
+            <option value="Engine Compartment">Engine Compartment</option>
+            <option value="Under Seat">Under Seat</option>
+            <option value="Chassis Mounted">Chassis Mounted</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('installBatteryModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Install</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% else %}
+<!-- HEALTH CHECK: row {{ loop.index }} -->
+<div class="modal-overlay" id="checkBatteryModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box" style="width:480px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('checkBatteryModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#128202; Log Health Check — {{ r['battery_no'] }}</h3>
+    <form method="POST" action="/maintenance/battery/{{ r['id'] }}/check">
+      <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="mt-fld"><label>Date *</label><input type="date" name="date" required></div>
+        <div class="mt-fld"><label>Battery Health (%) *</label><input type="number" step="1" min="0" max="100" name="health_pct" required></div>
+        <div class="mt-fld"><label>Voltage</label><input type="number" step="0.1" name="voltage" placeholder="e.g. 12.4"></div>
+        <div class="mt-fld"><label>Temp (&deg;C)</label><input type="number" step="0.1" name="temp_c" placeholder="e.g. 31"></div>
+      </div>
+      <div class="mt-fld" style="margin-bottom:6px;"><label>Remarks</label><textarea name="remarks" rows="2" placeholder="Any observation..."></textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('checkBatteryModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Check</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endfor %}

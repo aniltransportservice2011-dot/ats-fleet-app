@@ -1,0 +1,224 @@
+{% set battery_icon %}<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="7" width="16" height="11" rx="2" stroke="currentColor" stroke-width="2"/><rect x="19.5" y="10" width="2.5" height="5" rx="1" fill="currentColor"/><line x1="6.5" y1="7" x2="6.5" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="13.5" y1="7" x2="13.5" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>{% endset %}
+{% set status_style = {'Good': ('#e8f5ee', 'var(--green)'), 'Weak': ('#fff7e6', '#b8860b'), 'Replace Soon': ('#fff3e8', 'var(--accent)'), 'Dead': ('#fdecea', 'var(--red)'), 'In Stock': ('#eaf1fb', '#2a78d6')} %}
+{% set health_color = {'Good': 'var(--green)', 'Weak': '#eda100', 'Replace Soon': 'var(--accent)', 'Dead': 'var(--red)', 'In Stock': 'var(--steel)'} %}
+
+<div class="mt-kpi-row">
+  <div class="mt-kpi"><div><div class="lbl">Total Batteries</div><div class="val">{{ total_batteries }}</div><div class="sub">All vehicles</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">{{ battery_icon }}</div></div>
+  <div class="mt-kpi"><div><div class="lbl">In Use</div><div class="val" style="color:var(--green);">{{ in_use }}</div><div class="sub">Installed &amp; healthy</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">In Stock</div><div class="val">{{ in_stock }}</div><div class="sub">Available stock</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128230;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Weak / Replace Soon</div><div class="val" style="color:{% if weak_soon %}#b8860b{% endif %};">{{ weak_soon }}</div><div class="sub">Attention needed</div></div><div class="mt-kpi-icon" style="background:#fff7e6;color:#b8860b;">&#9888;&#65039;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Dead</div><div class="val" style="color:{% if dead_count %}var(--red){% endif %};">{{ dead_count }}</div><div class="sub">Not usable</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#10060;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Avg Battery Life</div><div class="val">{% if avg_life_months is not none %}{{ avg_life_months }} Months{% else %}—{% endif %}</div><div class="sub">Across all batteries</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128200;</div></div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="battery">
+  <div class="field"><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Brand</label>
+    <select name="brand"><option value="">All Brands</option>
+      {% for b in battery_brands %}<option value="{{ b }}" {% if f_brand==b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Status</label>
+    <select name="status"><option value="">All Status</option>
+      {% for st in ['Good','Weak','Replace Soon','Dead','In Stock'] %}<option value="{{ st }}" {% if f_status==st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Battery Type</label>
+    <select name="battery_type"><option value="">All Types</option>
+      {% for t in battery_types %}<option value="{{ t }}" {% if f_battery_type==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Battery ID, brand, serial..."></div>
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/maintenance?tab=battery">Clear</a>
+</form>
+
+{% set default_idx = namespace(val=none) %}
+{% for r in rows %}{% if loop.first and not default_idx.val %}{% set default_idx.val = loop.index %}{% endif %}{% endfor %}
+
+<div class="bat-layout">
+  <div class="mt-panel">
+    <div class="mt-panel-head">
+      <div class="ttl">Battery Inventory</div>
+      <span style="color:var(--steel);font-size:0.8rem;">Showing {{ rows|length }} of {{ total_count }} entries</span>
+    </div>
+    <div style="font-size:0.72rem;color:var(--steel);margin:-8px 0 12px;">Track all batteries across your fleet — click a row to view its full record.</div>
+    {% if rows %}
+    <div style="overflow-x:auto;">
+    <table>
+      <tr><th>Battery ID</th><th>Vehicle</th><th>Brand</th><th>Type / Capacity</th><th>Install Date</th><th>Warranty Upto</th><th>Health</th><th>Status</th><th></th></tr>
+      {% for r in rows %}
+      <tr class="bat-row {{ 'selected' if loop.index==default_idx.val }}" onclick="batShowRow({{ loop.index }})">
+        <td><b>{{ r['battery_no'] }}</b></td>
+        <td>{{ r['vehicle_no'] or '—' }}</td>
+        <td>{{ r['brand'] or '—' }}</td>
+        <td>{{ r['model'] or '' }}{% if r['capacity_ah'] %} / {{ r['capacity_ah']|round(0)|int }}AH{% endif %}</td>
+        <td style="white-space:nowrap;">{{ r['install_date'] or '—' }}</td>
+        <td style="white-space:nowrap;">{{ r['warranty_upto'] or '—' }}</td>
+        <td>{% if r['health_pct'] is not none %}<span class="bat-health-track"><span class="bat-health-fill" style="width:{{ r['health_pct']|round(0)|int }}%;background:{{ health_color.get(r['status'],'var(--steel)') }};"></span></span>{{ r['health_pct']|round(0)|int }}%{% else %}—{% endif %}</td>
+        <td><span class="mt-status-badge" style="background:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[0] }};color:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[1] }};">{{ r['status'] }}</span></td>
+        <td onclick="event.stopPropagation();">
+          {% if r['status']=='In Stock' %}
+          <button type="button" onclick="document.getElementById('installBatteryModal{{ loop.index }}').classList.add('open')" style="background:var(--accent);color:#fff;border:none;padding:5px 9px;border-radius:4px;font-size:0.7rem;font-weight:700;cursor:pointer;">Install</button>
+          <form method="POST" action="/maintenance/battery/{{ r['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Delete this battery stock entry permanently?');">
+            <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:5px;font-size:0.75rem;">&#128465;</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+    {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+    {% else %}
+    <div class="bat-empty">No batteries recorded for this selection.</div>
+    {% endif %}
+  </div>
+
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Battery Details</div></div>
+    {% if rows %}
+    {% for r in rows %}
+    <div class="bat-side-panel {{ 'active' if loop.index==default_idx.val }}" id="batteryDetail{{ loop.index }}">
+      <div class="bat-detail-hd">
+        <div class="ic-lg">{{ battery_icon }}</div>
+        <div class="info">
+          <div class="title">{{ r['battery_no'] }} <span class="mt-status-badge" style="background:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[0] }};color:{{ status_style.get(r['status'], ('var(--paper)','var(--steel)'))[1] }};">{{ r['status'] }}</span></div>
+          <div class="sub">{{ r['brand'] or 'Brand not recorded' }}{% if r['model'] %} {{ r['model'] }}{% endif %}{% if r['capacity_ah'] %} &middot; {{ r['capacity_ah']|round(0)|int }}AH{% endif %}{% if r['battery_type'] %} &middot; {{ r['battery_type'] }}{% endif %}</div>
+        </div>
+      </div>
+      <div class="mt-detail-grid">
+        <div><div class="lbl">Vehicle</div>{{ r['vehicle_no'] or '—' }}</div>
+        <div><div class="lbl">Location</div>{{ r['installed_location'] or '—' }}</div>
+        <div><div class="lbl">Install Date</div>{{ r['install_date'] or '—' }}</div>
+        <div><div class="lbl">Warranty Upto</div>{{ r['warranty_upto'] or '—' }}{% if r['warranty_days_left'] is not none and r['warranty_days_left']>=0 %} <span style="color:var(--green);font-size:0.72rem;">({{ (r['warranty_days_left']/30.44)|round(0)|int }}M left)</span>{% endif %}</div>
+        <div><div class="lbl">Health</div>{% if r['health_pct'] is not none %}{{ r['health_pct']|round(0)|int }}%{% else %}Not checked{% endif %}</div>
+        <div><div class="lbl">Last Checked</div>{{ r['last_checked_date'] or '—' }}</div>
+        <div><div class="lbl">Voltage</div>{% if r['voltage'] %}{{ r['voltage'] }}V{% else %}—{% endif %}</div>
+        <div><div class="lbl">Temperature</div>{% if r['temp_c'] %}{{ r['temp_c'] }}&deg;C{% else %}—{% endif %}</div>
+        <div><div class="lbl">Purchase Date</div>{{ r['purchase_date'] or '—' }}</div>
+        <div><div class="lbl">Cost</div>₹{{ '{:,.0f}'.format(r['purchase_price'] or 0) }}</div>
+        <div><div class="lbl">Supplier</div>{{ r['vendor_name'] or '—' }}</div>
+        <div><div class="lbl">Invoice No.</div>{{ r['invoice_no'] or '—' }}</div>
+      </div>
+
+      <div style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin:14px 0 8px;">Timeline</div>
+      {% set checks = checks_by_battery.get(r['id'], []) %}
+      {% if checks %}
+      <ul class="bat-timeline">
+        {% for c in checks %}
+        <li>
+          <span class="dot"></span>
+          <div style="flex:1;">
+            <div>{{ c['event'] }}{% if c['health_pct'] is not none %} — {{ c['health_pct']|round(0)|int }}%{% endif %}</div>
+            {% if c['remarks'] %}<div style="color:var(--steel);font-size:0.76rem;">{{ c['remarks'] }}</div>{% endif %}
+          </div>
+          <div class="date">{{ c['date'] }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div style="color:var(--steel);font-size:0.8rem;">No history recorded yet.</div>
+      {% endif %}
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap;">
+        {% if r['vehicle_id'] and r['status'] not in ('Dead','Scrapped') %}
+        <button type="button" onclick="document.getElementById('checkBatteryModal{{ loop.index }}').classList.add('open')" style="background:none;border:1px solid var(--line);padding:8px 14px;border-radius:3px;cursor:pointer;font-size:0.82rem;">&#128202; Log Health Check</button>
+        <form method="POST" action="/maintenance/battery/{{ r['id'] }}/dead" onsubmit="return confirm('Mark {{ r['battery_no'] }} as dead? This cannot be undone.');">
+          <button type="submit" style="background:var(--red);color:#fff;border:none;padding:8px 14px;border-radius:3px;cursor:pointer;font-size:0.82rem;">Mark as Dead</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="bat-empty">Select a battery to view its details.</div>
+    {% endif %}
+  </div>
+</div>
+<script>
+function batShowRow(idx) {
+  document.querySelectorAll('.bat-side-panel').forEach(function(p){p.classList.remove('active');});
+  var panel = document.getElementById('batteryDetail' + idx);
+  if (panel) panel.classList.add('active');
+  document.querySelectorAll('.bat-row').forEach(function(b){b.classList.remove('selected');});
+  var rowEls = document.querySelectorAll('.bat-row');
+  if (rowEls[idx-1]) rowEls[idx-1].classList.add('selected');
+}
+</script>
+
+<div class="mt-row-3">
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Battery Status Overview</div></div>
+    {% set total_st = status_counts.values()|sum %}
+    {% if total_st %}
+    {% set band_order = ['Good','Weak','Replace Soon','Dead','In Stock'] %}
+    <div style="display:flex;align-items:center;gap:16px;">
+      <svg viewBox="0 0 120 120" width="110" height="110" style="flex-shrink:0;">
+        {% set circ = 289.0 %}{% set offset = 0 %}
+        {% for band in band_order %}
+        {% set seg = circ * status_counts[band] / total_st %}
+        <circle cx="60" cy="60" r="46" fill="none" stroke="{{ health_color.get(band,'var(--steel)') }}" stroke-width="20" stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset|round(1) }}" transform="rotate(-90 60 60)"/>
+        {% set offset = offset + seg %}
+        {% endfor %}
+        <text x="60" y="64" font-size="14" font-weight="800" text-anchor="middle" fill="var(--ink)">{{ total_st }}</text>
+      </svg>
+      <div style="font-size:0.76rem;flex:1;">
+        {% for band in band_order %}
+        <div style="display:flex;justify-content:space-between;padding:3px 0;">
+          <span><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:{{ health_color.get(band,'var(--steel)') }};margin-right:6px;"></span>{{ band }}</span>
+          <span>{{ status_counts[band] }} ({{ (status_counts[band]/total_st*100)|round(0)|int }}%)</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="bat-empty">No batteries yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Expiring Warranty</div></div>
+    {% if warranty_list %}
+    <table>
+      <tr><th>Battery</th><th>Vehicle</th><th>Upto</th><th>Left</th></tr>
+      {% for r in warranty_list %}
+      <tr><td>{{ r['battery_no'] }}</td><td>{{ r['vehicle_no'] or '—' }}</td><td style="white-space:nowrap;">{{ r['warranty_upto'] }}</td><td>{{ (r['warranty_days_left']/30.44)|round(0)|int }}M</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <div class="bat-empty">No warranties tracked yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Low Health Batteries</div></div>
+    {% if low_health %}
+    <table>
+      <tr><th>Battery</th><th>Vehicle</th><th class="num">Health</th></tr>
+      {% for r in low_health %}
+      <tr><td>{{ r['battery_no'] }}</td><td>{{ r['vehicle_no'] or '—' }}</td><td class="num" style="color:{{ health_color.get(r['status'],'var(--steel)') }};font-weight:700;">{{ r['health_pct']|round(0)|int }}%</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <div class="bat-empty">No low-health batteries — good sign.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Battery Analytics (This Year)</div></div>
+  <div class="mt-kpi-row" style="grid-template-columns:repeat(4,1fr);">
+    <div class="mt-kpi"><div><div class="lbl">Total Cost (This Year)</div><div class="val">₹{{ '{:,.0f}'.format(total_cost_year) }}</div></div></div>
+    <div class="mt-kpi"><div><div class="lbl">Cost / Battery (Avg)</div><div class="val">₹{{ '{:,.0f}'.format(cost_per_battery) }}</div></div></div>
+    <div class="mt-kpi"><div><div class="lbl">Replacements (This Year)</div><div class="val">{{ replaced_year }}</div></div></div>
+    <div class="mt-kpi"><div><div class="lbl">Avg Battery Life</div><div class="val">{% if avg_life_months is not none %}{{ avg_life_months }} Months{% else %}—{% endif %}</div></div></div>
+  </div>
+</div>

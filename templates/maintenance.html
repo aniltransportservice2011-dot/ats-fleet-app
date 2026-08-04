@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
+{% block title %}Maintenance{% endblock %}
+{% block extra_head %}
+<style>
+  .mt-crumb { font-size:0.8rem; color:var(--steel); margin-bottom:6px; }
+  .mt-crumb a { color:var(--steel); text-decoration:none; }
+  .mt-crumb a:hover { color:var(--accent); }
+  .mt-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; flex-wrap:wrap; }
+  .mt-head h1 { margin:0 0 2px; font-size:1.5rem; }
+  .mt-head .sub { color:var(--steel); font-size:0.88rem; }
+
+  .mt-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:10px; padding:6px; margin-bottom:18px; overflow-x:auto; }
+  .mt-tab { display:flex; align-items:center; gap:7px; padding:9px 15px; border-radius:7px; font-size:0.84rem; font-weight:600; color:var(--steel); white-space:nowrap; text-decoration:none; }
+  .mt-tab.active { background:var(--accent); color:#fff; }
+  .mt-tab:hover:not(.active) { background:var(--paper); }
+
+  .mt-kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:1300px) { .mt-kpi-row { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px) { .mt-kpi-row { grid-template-columns:repeat(2,1fr); } }
+  .mt-kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:15px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .mt-kpi .lbl { font-size:0.76rem; color:var(--steel); margin-bottom:5px; }
+  .mt-kpi .val { font-size:1.35rem; font-weight:800; line-height:1; }
+  .mt-kpi .sub { font-size:0.7rem; color:var(--steel); margin-top:5px; }
+  .mt-kpi-icon { width:36px; height:36px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1rem; }
+
+  .mt-panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .mt-panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .mt-panel-head .ttl { font-weight:700; font-size:0.92rem; }
+  .mt-row-2 { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; margin-bottom:18px; }
+  @media (max-width:1000px) { .mt-row-2 { grid-template-columns:1fr; } }
+  .mt-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:18px; }
+  @media (max-width:1100px) { .mt-row-3 { grid-template-columns:1fr; } }
+
+  .mt-donut-wrap { display:flex; align-items:center; gap:20px; }
+  .mt-donut { width:130px; height:130px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .mt-donut-inner { width:88px; height:88px; background:var(--white); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .mt-donut-inner .num { font-size:1.3rem; font-weight:800; }
+  .mt-donut-inner .lbl { font-size:0.65rem; color:var(--steel); }
+  .mt-band-table { width:100%; font-size:0.8rem; }
+  .mt-band-table td { padding:5px 0; }
+  .mt-band-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:7px; }
+  .mt-band-track { width:70px; height:6px; background:var(--paper); border-radius:3px; overflow:hidden; display:inline-block; margin:0 8px; vertical-align:middle; }
+  .mt-band-fill { height:100%; border-radius:3px; }
+
+  .mt-action-item { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:0.83rem; }
+  .mt-action-item:last-child { border-bottom:none; }
+  .mt-action-ic { width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .mt-action-item .lbl { font-weight:600; }
+  .mt-action-item .veh { color:var(--steel); font-size:0.76rem; }
+  .mt-action-item .detail { margin-left:auto; font-size:0.78rem; font-weight:700; white-space:nowrap; }
+
+  .mt-cat-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:1300px) { .mt-cat-row { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px) { .mt-cat-row { grid-template-columns:1fr 1fr; } }
+  .mt-cat-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .mt-cat-card .hd { display:flex; align-items:center; gap:10px; }
+  .mt-cat-card .hd .ic { width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:0.95rem; flex-shrink:0; }
+  .mt-cat-card .hd .ttl { font-weight:700; font-size:0.85rem; }
+  .mt-cat-card .stat-line { display:flex; justify-content:space-between; font-size:0.78rem; color:var(--steel); }
+  .mt-cat-card .go-btn { margin-top:2px; text-align:center; background:var(--paper); border:none; border-radius:6px; padding:8px; font-size:0.8rem; font-weight:600; color:var(--ink); text-decoration:none; }
+  .mt-cat-card .go-btn:hover { background:var(--accent); color:#fff; }
+
+  .mt-filters { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; display:grid; grid-template-columns:repeat(6,1fr); gap:12px; align-items:end; }
+  @media (max-width:1200px) { .mt-filters { grid-template-columns:repeat(3,1fr); } }
+  .mt-filters label { display:block; font-size:0.7rem; font-weight:700; color:var(--ink); margin-bottom:5px; }
+  .mt-filters input, .mt-filters select { width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:6px; font-size:0.82rem; box-sizing:border-box; }
+
+  .mt-type-badge { display:inline-block; padding:3px 10px; border-radius:8px; font-size:0.72rem; font-weight:700; }
+  .mt-status-badge { display:inline-block; padding:3px 10px; border-radius:8px; font-size:0.72rem; font-weight:700; }
+
+  .mt-modal-box { width:720px; max-width:92vw; max-height:88vh; overflow-y:auto; }
+  .mt-modal-box h3 { margin:0 0 16px; font-size:1.05rem; display:flex; align-items:center; gap:8px; }
+  .mt-form-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:6px; }
+  @media (max-width:900px) { .mt-form-grid { grid-template-columns:1fr 1fr; } }
+  .mt-form-grid.cols3 { grid-template-columns:repeat(3,1fr); }
+  .mt-fld label { display:block; font-size:0.7rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:4px; }
+  .mt-fld input, .mt-fld select, .mt-fld textarea { width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:6px; font-size:0.85rem; box-sizing:border-box; font-family:inherit; }
+  .mt-checklist { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:10px 0 16px; }
+  .mt-checklist label { display:flex; align-items:center; gap:7px; font-size:0.82rem; font-weight:400; text-transform:none; color:var(--ink); }
+  .mt-items-table { width:100%; border-collapse:collapse; margin-bottom:8px; }
+  .mt-items-table th { font-size:0.66rem; text-transform:uppercase; color:var(--steel); text-align:left; padding:5px 6px; }
+  .mt-items-table td { padding:4px 6px; }
+  .mt-items-table input, .mt-items-table select { padding:6px 7px; font-size:0.8rem; }
+  .mt-add-item-btn { background:none; border:none; color:var(--accent); font-weight:700; font-size:0.82rem; cursor:pointer; padding:6px 0; }
+  .mt-remove-item { background:none; border:none; color:var(--red); cursor:pointer; }
+
+  .mt-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; font-size:0.85rem; margin-bottom:16px; }
+  .mt-detail-grid .lbl { font-size:0.7rem; color:var(--steel); text-transform:uppercase; margin-bottom:2px; }
+  .mt-detail-tabs { display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid var(--line); }
+  .mt-detail-tab { padding:8px 4px; margin-right:20px; font-size:0.82rem; font-weight:600; color:var(--steel); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; }
+  .mt-detail-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .mt-detail-panel { display:none; }
+  .mt-detail-panel.active { display:block; }
+  .mt-check-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:0.82rem; }
+  .mt-check-grid .ck { display:flex; align-items:center; gap:6px; }
+  .mt-check-grid .ck.done { color:var(--green); }
+  .mt-check-grid .ck.pending { color:var(--line); }
+
+  .mt-tyre-layout { display:grid; grid-template-columns:1fr 1.1fr; gap:16px; margin-bottom:18px; align-items:start; }
+  .mt-tyre-right-col { display:flex; flex-direction:column; gap:16px; }
+  .mt-tyre-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .mt-tyre-summary .cell { text-align:center; }
+  .mt-tyre-summary .cell .lbl { font-size:0.62rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:4px; }
+  .mt-tyre-summary .cell .v { font-size:1rem; font-weight:800; }
+  @media (max-width:1000px) { .mt-tyre-layout { grid-template-columns:1fr; } }
+  .mt-tyre-veh-pick { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+  .mt-tyre-veh-pick select { padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:0.85rem; font-weight:700; }
+  .mt-tyre-grid { display:grid; grid-template-columns:1fr 76px 1fr; column-gap:10px; row-gap:10px; max-width:340px; margin:0 auto; align-items:stretch; }
+  .mt-tyre-vehicle { grid-column:2; grid-row:1 / span 3; display:flex; align-items:center; justify-content:center; }
+  .mt-tyre-box { border:1.5px solid var(--line); border-radius:8px; padding:10px 8px; cursor:pointer; background:var(--white); transition:border-color .15s; display:flex; flex-direction:column; align-items:center; text-align:center; gap:3px; }
+  .mt-tyre-box:hover { border-color:var(--accent); }
+  .mt-tyre-box.selected { border-width:2px; box-shadow:0 0 0 2px rgba(235,104,52,0.12); }
+  .mt-tyre-box .tyre-ic { width:24px; height:24px; color:var(--line); }
+  .mt-tyre-box .tyre-ic svg { width:100%; height:100%; display:block; }
+  .mt-tyre-box .pos { font-size:0.68rem; font-weight:700; color:var(--steel); text-transform:uppercase; }
+  .mt-tyre-box .tid { font-size:0.78rem; font-weight:700; margin:1px 0; word-break:break-word; }
+  .mt-tyre-box .st { display:inline-block; font-size:0.62rem; font-weight:700; padding:2px 6px; border-radius:6px; }
+  .mt-tyre-box.state-fitted { border-color:rgba(26,122,76,0.4); } .mt-tyre-box.state-fitted .tyre-ic { color:var(--green); } .mt-tyre-box.state-fitted .st { background:#e8f5ee; color:var(--green); }
+  .mt-tyre-box.state-resoled { border-color:rgba(74,58,167,0.4); } .mt-tyre-box.state-resoled .tyre-ic { color:#4a3aa7; } .mt-tyre-box.state-resoled .st { background:rgba(74,58,167,0.1); color:#4a3aa7; }
+  .mt-tyre-box.state-repaired { border-color:rgba(192,86,33,0.4); } .mt-tyre-box.state-repaired .tyre-ic { color:var(--accent); } .mt-tyre-box.state-repaired .st { background:#fff3e8; color:var(--accent); }
+  .mt-tyre-box.state-none { border-style:dashed; opacity:0.65; } .mt-tyre-box.state-none .st { background:var(--paper); color:var(--steel); }
+  .mt-tyre-box.spare { grid-column:1 / span 3; max-width:150px; margin:2px auto 0; }
+  .mt-tyre-detail-panel { display:none; }
+  .mt-tyre-detail-panel.active { display:block; }
+  .mt-tyre-detail-hd2 { display:flex; align-items:flex-start; gap:14px; margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+  .mt-tyre-detail-hd2 .tyre-ic-lg { width:52px; height:52px; border-radius:12px; background:var(--paper); display:flex; align-items:center; justify-content:center; color:var(--accent); flex-shrink:0; }
+  .mt-tyre-detail-hd2 .tyre-ic-lg svg { width:30px; height:30px; }
+  .mt-tyre-detail-hd2 .tyre-hd-info { flex:1; min-width:0; }
+  .mt-tyre-detail-hd2 .tyre-hd-title { font-size:1.08rem; font-weight:800; }
+  .mt-tyre-detail-hd2 .tyre-hd-sub { font-size:0.8rem; color:var(--steel); margin-top:2px; }
+  .mt-tyre-detail-hd2 .tyre-hd-meta { display:flex; gap:18px; text-align:right; flex-shrink:0; }
+  .mt-tyre-detail-hd2 .tyre-hd-meta .lbl { display:block; font-size:0.63rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:3px; }
+  .mt-tyre-detail-hd2 .tyre-hd-meta .v { font-size:0.85rem; font-weight:700; }
+  .mt-tyre-detail-empty { text-align:center; color:var(--steel); padding:40px 20px; font-size:0.85rem; }
+
+  .bat-layout { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; margin-bottom:18px; align-items:start; }
+  @media (max-width:1100px) { .bat-layout { grid-template-columns:1fr; } }
+  .bat-health-track { width:80px; height:6px; background:var(--paper); border-radius:3px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:6px; }
+  .bat-health-fill { height:100%; border-radius:3px; }
+  .bat-row { cursor:pointer; }
+  .bat-row.selected { background:#fff3e8; }
+  .bat-side-panel { display:none; }
+  .bat-side-panel.active { display:block; }
+  .bat-detail-hd { display:flex; align-items:flex-start; gap:14px; margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+  .bat-detail-hd .ic-lg { width:52px; height:52px; border-radius:12px; background:var(--paper); display:flex; align-items:center; justify-content:center; color:var(--accent); flex-shrink:0; }
+  .bat-detail-hd .ic-lg svg { width:30px; height:30px; }
+  .bat-detail-hd .info { flex:1; min-width:0; }
+  .bat-detail-hd .title { font-size:1.08rem; font-weight:800; }
+  .bat-detail-hd .sub { font-size:0.8rem; color:var(--steel); margin-top:2px; }
+  .bat-timeline { list-style:none; margin:0; padding:0; }
+  .bat-timeline li { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:0.82rem; }
+  .bat-timeline li:last-child { border-bottom:none; }
+  .bat-timeline .dot { width:8px; height:8px; border-radius:50%; background:var(--green); margin-top:5px; flex-shrink:0; }
+  .bat-timeline .date { color:var(--steel); font-size:0.72rem; white-space:nowrap; }
+  .bat-empty { text-align:center; color:var(--steel); padding:40px 20px; font-size:0.85rem; }
+  .bat-mode-tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .bat-mode-tab { flex:1; border:1.5px solid var(--line); border-radius:8px; padding:12px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; }
+  .bat-mode-tab.active { border-color:var(--accent); background:#fff3e8; }
+  .bat-mode-tab .ic { width:32px; height:32px; border-radius:8px; background:var(--paper); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .bat-mode-tab .lbl { font-weight:700; font-size:0.85rem; }
+  .bat-mode-tab .sub { font-size:0.72rem; color:var(--steel); }
+</style>
+{% endblock %}
+{% block content %}
+{% set tab_titles = {'overview':'Overview','service':'Service','tyres':'Tyres','battery':'Battery','insurance':'Insurance','permit':'Permit & Fitness','urea':'Urea'} %}
+<div class="wrap" style="max-width:1500px;">
+  <div class="mt-crumb"><a href="/maintenance">Maintenance</a> &nbsp;&rsaquo;&nbsp; {{ tab_titles.get(tab, 'Overview') }}</div>
+  <div class="mt-head">
+    <div>
+      <h1>Maintenance</h1>
+      <div class="sub">{{ tab_titles.get(tab, 'Overview') }} — track fleet upkeep, costs and vendor activity.</div>
+    </div>
+    {% if tab == 'service' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addServiceModal').classList.add('open')">+ New Service</button>
+    {% elif tab == 'tyres' %}
+    <div style="display:flex;gap:8px;">
+      <button type="button" class="add-btn" style="background:none;border:1px solid var(--line);color:var(--ink);" onclick="document.getElementById('addTyreStockModal').classList.add('open')">+ Add Tyre Stock</button>
+      <button type="button" class="add-btn" onclick="document.getElementById('addTyreModal').classList.add('open')">+ Add Tyre Entry</button>
+    </div>
+    {% elif tab == 'battery' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addBatteryModal').classList.add('open')">+ Add New Battery</button>
+    {% endif %}
+  </div>
+
+  <div class="mt-tabs">
+    <a class="mt-tab {{ 'active' if tab=='overview' }}" href="/maintenance?tab=overview">&#128202; Overview</a>
+    <a class="mt-tab {{ 'active' if tab=='service' }}" href="/maintenance?tab=service">&#128295; Service</a>
+    <a class="mt-tab {{ 'active' if tab=='tyres' }}" href="/maintenance?tab=tyres"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" style="vertical-align:-2px;" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6"/><path d="M12 3V6.5M12 17.5V21M3 12H6.5M17.5 12H21M5.6 5.6L8 8M16 16L18.4 18.4M18.4 5.6L16 8M8 16L5.6 18.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg> Tyres</a>
+    <a class="mt-tab {{ 'active' if tab=='battery' }}" href="/maintenance?tab=battery">&#128267; Battery</a>
+    <a class="mt-tab {{ 'active' if tab=='insurance' }}" href="/maintenance?tab=insurance">&#128737;&#65039; Insurance</a>
+    <a class="mt-tab {{ 'active' if tab=='permit' }}" href="/maintenance?tab=permit">&#128196; Permit &amp; Fitness</a>
+    <a class="mt-tab {{ 'active' if tab=='urea' }}" href="/maintenance?tab=urea">&#128167; Urea</a>
+  </div>
+
+  {% if tab == 'overview' %}
+    {% include 'partials/_maintenance_overview.html' %}
+  {% elif tab == 'service' %}
+    {% include 'partials/_maintenance_service.html' %}
+  {% elif tab == 'tyres' %}
+    {% include 'partials/_maintenance_tyres.html' %}
+  {% elif tab == 'battery' %}
+    {% include 'partials/_maintenance_battery.html' %}
+  {% else %}
+    {% include 'partials/_maintenance_category.html' %}
+  {% endif %}
+</div>
+{% if tab == 'service' %}{% include 'partials/_maintenance_service_modals.html' %}{% endif %}
+{% if tab == 'tyres' %}{% include 'partials/_maintenance_tyre_modals.html' %}{% endif %}
+{% if tab == 'battery' %}{% include 'partials/_maintenance_battery_modals.html' %}{% endif %}
+{% endblock %}

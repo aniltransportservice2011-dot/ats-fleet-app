@@ -1,0 +1,45 @@
+<div style="background:#fff3e8;border:1px solid rgba(192,86,33,0.25);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+  &#128161; This shows real {{ tab_label }} entries logged under Maintenance. A dedicated {{ tab_label }} tracking design (like Service) is coming — for now this is a read-only view of what's already recorded.
+</div>
+
+<form class="mt-filters" method="GET" style="grid-template-columns:1fr 1fr 1fr auto;">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <div><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <div style="display:flex;gap:8px;">
+    <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Apply</button>
+    <a class="clear" href="/maintenance?tab={{ tab }}">Clear</a>
+  </div>
+</form>
+
+<div class="mt-kpi-row" style="grid-template-columns:repeat(4,1fr);">
+  <div class="mt-kpi"><div><div class="lbl">Total Entries</div><div class="val">{{ total_count }}</div></div></div>
+  <div class="mt-kpi"><div><div class="lbl">Vehicles Involved</div><div class="val">{{ vehicles_involved }}</div></div></div>
+  <div class="mt-kpi"><div><div class="lbl">Total Cost</div><div class="val">₹{{ '{:,.0f}'.format(total_amount) }}</div></div></div>
+  <div class="mt-kpi"><div><div class="lbl">Unpaid</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(unpaid_total) }}</div></div></div>
+</div>
+
+<div class="mt-panel">
+  <div class="mt-panel-head"><div class="ttl">{{ tab_label }} Entries</div><span style="color:var(--steel);font-size:0.8rem;">Showing {{ rows|length }} of {{ total_count }}</span></div>
+  {% if rows %}
+  <table>
+    <tr><th>Date</th><th>Vehicle</th><th>Category</th><th>Vendor</th><th class="num">Amount</th><th>Status</th></tr>
+    {% for r in rows %}
+    {% set is_paid = (r['paid_amount'] or 0) >= (r['amount'] or 0) and (r['amount'] or 0) > 0 %}
+    <tr>
+      <td>{{ r['date'] }}</td><td>{{ r['vehicle_no'] or '—' }}</td><td>{{ r['category'] or '—' }}</td>
+      <td>{{ r['vendor_name'] or '—' }}</td><td class="num">₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</td>
+      <td><span class="mt-status-badge" style="background:{% if is_paid %}#e8f5ee;color:var(--green){% else %}#fdecea;color:var(--red){% endif %};">{{ 'Paid' if is_paid else 'Unpaid' }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No {{ tab_label|lower }} entries found for this selection.</div>
+  {% endif %}
+</div>
