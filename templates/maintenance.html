@@ -160,6 +160,24 @@
   .bat-mode-tab .ic { width:32px; height:32px; border-radius:8px; background:var(--paper); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
   .bat-mode-tab .lbl { font-weight:700; font-size:0.85rem; }
   .bat-mode-tab .sub { font-size:0.72rem; color:var(--steel); }
+
+  .ins-modal-hd { padding:22px 24px 4px; flex-shrink:0; position:relative; }
+  .ins-modal-hd h3 { margin:0 0 2px; font-size:1.08rem; }
+  .ins-modal-hd .sub { font-size:0.78rem; color:var(--steel); }
+  .ins-modal-body { padding:14px 24px 4px; flex:1; min-height:0; overflow-y:auto; }
+  .ins-modal-ftr { padding:14px 24px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:10px; flex-shrink:0; background:var(--white); border-radius:0 0 8px 8px; }
+  .ins-section-num { display:flex; align-items:center; gap:8px; font-size:0.76rem; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.02em; margin:18px 0 10px; }
+  .ins-section-num:first-child { margin-top:0; }
+  .ins-section-num .n { width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.66rem; flex-shrink:0; }
+  .ins-radio-row { display:flex; gap:16px; margin:2px 0 4px; }
+  .ins-radio-row label { display:flex; align-items:center; gap:5px; font-size:0.82rem; font-weight:400; text-transform:none; color:var(--ink); }
+  .ins-doc-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .ins-doc-box { border:1.5px dashed var(--line); border-radius:8px; padding:14px 8px; text-align:center; cursor:pointer; position:relative; }
+  .ins-doc-box:hover { border-color:var(--accent); }
+  .ins-doc-box input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+  .ins-doc-box .lbl { font-size:0.74rem; font-weight:700; margin-bottom:2px; }
+  .ins-doc-box .sub { font-size:0.66rem; color:var(--steel); }
+  .ins-doc-box .fname { font-size:0.68rem; color:var(--green); font-weight:700; margin-top:4px; word-break:break-all; }
 </style>
 {% endblock %}
 {% block content %}
@@ -174,12 +192,11 @@
     {% if tab == 'service' %}
     <button type="button" class="add-btn" onclick="document.getElementById('addServiceModal').classList.add('open')">+ New Service</button>
     {% elif tab == 'tyres' %}
-    <div style="display:flex;gap:8px;">
-      <button type="button" class="add-btn" style="background:none;border:1px solid var(--line);color:var(--ink);" onclick="document.getElementById('addTyreStockModal').classList.add('open')">+ Add Tyre Stock</button>
-      <button type="button" class="add-btn" onclick="document.getElementById('addTyreModal').classList.add('open')">+ Add Tyre Entry</button>
-    </div>
+    <button type="button" class="add-btn" onclick="document.getElementById('addTyreModal').classList.add('open'); tySetMode('new');">+ Add Tyre</button>
     {% elif tab == 'battery' %}
     <button type="button" class="add-btn" onclick="document.getElementById('addBatteryModal').classList.add('open')">+ Add New Battery</button>
+    {% elif tab == 'insurance' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addInsuranceModal').classList.add('open')">+ Add Insurance</button>
     {% endif %}
   </div>
 
@@ -201,6 +218,8 @@
     {% include 'partials/_maintenance_tyres.html' %}
   {% elif tab == 'battery' %}
     {% include 'partials/_maintenance_battery.html' %}
+  {% elif tab == 'insurance' %}
+    {% include 'partials/_maintenance_insurance.html' %}
   {% else %}
     {% include 'partials/_maintenance_category.html' %}
   {% endif %}
@@ -208,4 +227,5 @@
 {% if tab == 'service' %}{% include 'partials/_maintenance_service_modals.html' %}{% endif %}
 {% if tab == 'tyres' %}{% include 'partials/_maintenance_tyre_modals.html' %}{% endif %}
 {% if tab == 'battery' %}{% include 'partials/_maintenance_battery_modals.html' %}{% endif %}
+{% if tab == 'insurance' %}{% include 'partials/_maintenance_insurance_modals.html' %}{% endif %}
 {% endblock %}

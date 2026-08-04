@@ -1,112 +1,168 @@
 {% set tyre_icon %}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" style="vertical-align:-3px;" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6"/><path d="M12 3V6.5M12 17.5V21M3 12H6.5M17.5 12H21M5.6 5.6L8 8M16 16L18.4 18.4M18.4 5.6L16 8M8 16L5.6 18.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>{% endset %}
-<!-- ADD TYRE -->
+<!-- ADD TYRE (New / Stock / Install-from-Stock) -->
 <div class="modal-overlay" id="addTyreModal">
   <div class="modal-box mt-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('addTyreModal').classList.remove('open')">&#10005;</button>
-    <h3>{{ tyre_icon }} Add / Install Tyre</h3>
+    <h3 id="tyModalTitle">{{ tyre_icon }} Add Tyre</h3>
+
+    <div class="bat-mode-tabs">
+      <div class="bat-mode-tab active" id="tyModeNewTab" onclick="tySetMode('new')">
+        <div class="ic">{{ tyre_icon }}</div>
+        <div><div class="lbl">New Tyre</div><div class="sub">Already fitted, log it now</div></div>
+      </div>
+      <div class="bat-mode-tab" id="tyModeStockTab" onclick="tySetMode('stock')">
+        <div class="ic">&#128230;</div>
+        <div><div class="lbl">Add to Stock</div><div class="sub">Bought ahead of use</div></div>
+      </div>
+      <div class="bat-mode-tab" id="tyModeInstallTab" onclick="tySetMode('install')">
+        <div class="ic">&#128295;</div>
+        <div><div class="lbl">Install from Stock</div><div class="sub">Use a tyre already in stock</div></div>
+      </div>
+    </div>
+
     <form method="POST" action="/maintenance/tyre/add" id="addTyreForm">
       <input type="hidden" name="stock_id" id="tyStockIdField" value="">
-      <div class="mt-fld" style="margin-bottom:12px;">
-        <label>Use From Stock (optional)</label>
-        <select id="tyStockSelect" onchange="tyApplyStock(this)">
-          <option value="">— New tyre, not from stock —</option>
-          {% for s in stock_rows if s['status']=='In Stock' %}
-          <option value="{{ s['id'] }}" data-tid="{{ s['tyre_id'] or '' }}" data-brand="{{ s['brand'] or '' }}" data-type="{{ s['tyre_type'] or '' }}" data-cost="{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}" data-supplier="{{ s['vendor_name'] or '' }}">{{ s['tyre_id'] or ('Stock #' ~ s['id']) }} — {{ s['brand'] or 'Brand n/a' }} ({{ s['tyre_type'] or 'New' }}) — ₹{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div id="tyStockSummary" style="display:none;background:var(--paper);border-radius:6px;padding:8px 12px;font-size:0.78rem;color:var(--steel);margin-bottom:12px;"></div>
 
-      <div class="mt-form-grid">
-        <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
-        <div class="mt-fld"><label>Action *</label><input type="text" name="tyre_action" id="tyActionField" list="tyre-action-list" required placeholder="e.g. Tyre Replacement"></div>
-        <div class="mt-fld"><label>Position</label><input type="text" name="tyre_position" list="tyre-position-list" placeholder="e.g. FL"></div>
-        <div class="mt-fld"><label id="tyDateLabel">Date *</label><input type="date" name="date" required></div>
-      </div>
-      <div class="mt-fld" style="max-width:200px;margin-bottom:6px;"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 52420"></div>
-
+      <!-- NEW TYRE fields -->
       <div id="tyNewFieldsWrap">
         <div class="mt-form-grid">
-          <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" name="vendor_name" id="tyVendorField" list="combined-list" required></div>
-          <div class="mt-fld"><label>Tyre ID</label><input type="text" name="tyre_id" id="tyIdField" placeholder="e.g. TY-000145"></div>
-          <div class="mt-fld"><label>Brand</label><input type="text" name="tyre_brand" id="tyBrandField" list="tyre-brand-list" placeholder="e.g. JK Tyre"></div>
+          <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" class="ty-req-new" list="vehicle-list"></div>
+          <div class="mt-fld"><label>Action *</label><input type="text" name="tyre_action" class="ty-req-new" list="tyre-action-list" placeholder="e.g. Tyre Replacement"></div>
+          <div class="mt-fld"><label>Position</label><input type="text" name="tyre_position" list="tyre-position-list" placeholder="e.g. FL"></div>
+          <div class="mt-fld"><label>Date *</label><input type="date" name="date" class="ty-req-new"></div>
+        </div>
+        <div class="mt-fld" style="max-width:200px;margin-bottom:6px;"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 52420"></div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" name="vendor_name" class="ty-req-new" list="combined-list"></div>
+          <div class="mt-fld"><label>Tyre ID</label><input type="text" name="tyre_id" placeholder="e.g. TY-000145"></div>
+          <div class="mt-fld"><label>Brand</label><input type="text" name="tyre_brand" list="tyre-brand-list" placeholder="e.g. JK Tyre"></div>
           <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
         </div>
         <div class="mt-form-grid">
           <div class="mt-fld"><label>Invoice Date</label><input type="date" name="invoice_date"></div>
-          <div class="mt-fld"><label>Cost (₹) *</label><input type="number" step="0.01" name="amount" id="tyAmountField" required></div>
+          <div class="mt-fld"><label>Cost (₹) *</label><input type="number" step="0.01" name="amount" class="ty-req-new" id="tyAmountField"></div>
           <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
         </div>
       </div>
+
+      <!-- ADD TO STOCK fields -->
+      <div id="tyStockFieldsWrap" style="display:none;">
+        <div style="font-size:0.78rem;color:var(--steel);margin:-2px 0 12px;">Log a tyre bought ahead of use — it'll sit in stock until you install it. The cost still posts to the supplier's ledger now.</div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Tyre ID</label><input type="text" id="tySTyreId" name="s_tyre_id" placeholder="e.g. TY-000145"></div>
+          <div class="mt-fld"><label>Brand</label><input type="text" id="tySBrand" name="s_brand" list="tyre-brand-list" placeholder="e.g. JK Tyre"></div>
+          <div class="mt-fld"><label>Type *</label><select id="tySTyreType" name="s_tyre_type"><option value="New">New</option><option value="Resole">Resole / Reshuttered</option></select></div>
+          <div class="mt-fld"><label>Purchase Date *</label><input type="date" id="tySPurchaseDate" name="s_purchase_date" class="ty-req-stock"></div>
+        </div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" id="tySVendorName" name="s_vendor_name" class="ty-req-stock" list="combined-list"></div>
+          <div class="mt-fld"><label>Invoice No.</label><input type="text" id="tySInvoiceNo" name="s_invoice_no"></div>
+          <div class="mt-fld"><label>Purchase Cost (₹) *</label><input type="number" step="0.01" id="tySPurchaseCost" name="s_purchase_cost" class="ty-req-stock"></div>
+          <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" id="tySPaidAmount" name="s_paid_amount" placeholder="0 if unpaid so far"></div>
+        </div>
+      </div>
+
+      <!-- INSTALL FROM STOCK fields -->
+      <div id="tyInstallFieldsWrap" style="display:none;">
+        <div class="mt-fld" style="margin-bottom:12px;">
+          <label>Tyre From Stock *</label>
+          <select id="tyStockSelect" onchange="tyPickStock(this)">
+            <option value="">— Select a tyre in stock —</option>
+            {% for s in stock_rows if s['status']=='In Stock' %}
+            <option value="{{ s['id'] }}" data-tid="{{ s['tyre_id'] or '' }}" data-brand="{{ s['brand'] or '' }}" data-type="{{ s['tyre_type'] or '' }}" data-cost="{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}" data-supplier="{{ s['vendor_name'] or '' }}">{{ s['tyre_id'] or ('Stock #' ~ s['id']) }} — {{ s['brand'] or 'Brand n/a' }} ({{ s['tyre_type'] or 'New' }}) — ₹{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id="tyStockSummary" style="display:none;background:var(--paper);border-radius:6px;padding:8px 12px;font-size:0.78rem;color:var(--steel);margin-bottom:12px;"></div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Vehicle *</label><input type="text" id="tyIVehicleNo" name="i_vehicle_no" class="ty-req-install" list="vehicle-list"></div>
+          <div class="mt-fld"><label>Position *</label><input type="text" id="tyIPosition" name="i_position" class="ty-req-install" list="tyre-position-list" placeholder="e.g. FL"></div>
+          <div class="mt-fld"><label>Install Date *</label><input type="date" id="tyIInstallDate" name="i_install_date" class="ty-req-install"></div>
+          <div class="mt-fld"><label>KM Reading</label><input type="number" step="1" id="tyIKmReading" name="i_km_reading" placeholder="e.g. 52420"></div>
+        </div>
+      </div>
+
       <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Any additional detail..."></textarea></div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
         <button type="button" onclick="document.getElementById('addTyreModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Tyre</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" id="tySubmitBtn">Save Tyre</button>
       </div>
     </form>
   </div>
 </div>
 <script>
-function tyApplyStock(sel) {
+var tyMode = 'new';
+function tySetMode(mode) {
+  tyMode = mode;
+  document.getElementById('tyModeNewTab').classList.toggle('active', mode === 'new');
+  document.getElementById('tyModeStockTab').classList.toggle('active', mode === 'stock');
+  document.getElementById('tyModeInstallTab').classList.toggle('active', mode === 'install');
+  document.getElementById('tyNewFieldsWrap').style.display = (mode === 'new') ? '' : 'none';
+  document.getElementById('tyStockFieldsWrap').style.display = (mode === 'stock') ? '' : 'none';
+  document.getElementById('tyInstallFieldsWrap').style.display = (mode === 'install') ? '' : 'none';
+
+  // The "New Tyre" fields keep their plain names (vehicle_no, date, ...) permanently — the same
+  // names the install fields get renamed to below — so disable whichever wrap is inactive. A
+  // disabled field is excluded from form submission entirely, which is what actually prevents
+  // the duplicate-name collision (renaming alone still leaves two same-named fields in the DOM).
+  ['tyNewFieldsWrap', 'tyStockFieldsWrap', 'tyInstallFieldsWrap'].forEach(function(wrapId) {
+    var active = (wrapId === 'ty' + mode.charAt(0).toUpperCase() + mode.slice(1) + 'FieldsWrap');
+    document.querySelectorAll('#' + wrapId + ' input, #' + wrapId + ' select, #' + wrapId + ' textarea').forEach(function(el) {
+      el.disabled = !active;
+    });
+  });
+
+  var form = document.getElementById('addTyreForm');
+  var titles = {new: 'Add Tyre', stock: 'Add Tyre Stock', install: 'Install Tyre from Stock'};
+  var btnLabels = {new: 'Save Tyre', stock: 'Save to Stock', install: 'Install'};
+  document.getElementById('tyModalTitle').innerHTML = '{{ tyre_icon }} ' + titles[mode];
+  document.getElementById('tySubmitBtn').textContent = btnLabels[mode];
+  form.action = (mode === 'stock') ? '/maintenance/tyre/stock/add' : '/maintenance/tyre/add';
+
+  document.querySelectorAll('.ty-req-new').forEach(function(el) { el.required = (mode === 'new'); });
+  document.querySelectorAll('.ty-req-stock').forEach(function(el) { el.required = (mode === 'stock'); });
+  document.querySelectorAll('.ty-req-install').forEach(function(el) { el.required = (mode === 'install'); });
+
+  // Field names differ per mode (so stock/install fields don't collide with new-tyre fields
+  // that already use the same target names, e.g. "vehicle_no") — rename on the fly to what the
+  // target route expects, looked up by element id so there's no ambiguity with same-named fields.
+  var renameMap = {
+    stock: {tySTyreId:['s_tyre_id','tyre_id'], tySBrand:['s_brand','brand'], tySTyreType:['s_tyre_type','tyre_type'],
+            tySPurchaseDate:['s_purchase_date','purchase_date'], tySVendorName:['s_vendor_name','vendor_name'],
+            tySInvoiceNo:['s_invoice_no','invoice_no'], tySPurchaseCost:['s_purchase_cost','purchase_cost'],
+            tySPaidAmount:['s_paid_amount','paid_amount']},
+    install: {tyIVehicleNo:['i_vehicle_no','vehicle_no'], tyIPosition:['i_position','tyre_position'],
+              tyIInstallDate:['i_install_date','date'], tyIKmReading:['i_km_reading','km_reading']}
+  };
+  ['stock', 'install'].forEach(function(m) {
+    Object.keys(renameMap[m]).forEach(function(elId) {
+      var el = document.getElementById(elId);
+      if (!el) return;
+      var pair = renameMap[m][elId];
+      el.name = (mode === m) ? pair[1] : pair[0];
+    });
+  });
+  if (mode === 'install') {
+    document.getElementById('tyStockIdField').value = document.getElementById('tyStockSelect').value || '';
+  } else {
+    document.getElementById('tyStockIdField').value = '';
+  }
+}
+function tyPickStock(sel) {
   var opt = sel.options[sel.selectedIndex];
-  var wrap = document.getElementById('tyNewFieldsWrap');
   var summary = document.getElementById('tyStockSummary');
-  var stockIdField = document.getElementById('tyStockIdField');
-  var vendorField = document.getElementById('tyVendorField');
-  var amountField = document.getElementById('tyAmountField');
-  var actionField = document.getElementById('tyActionField');
-  var dateLabel = document.getElementById('tyDateLabel');
+  document.getElementById('tyStockIdField').value = sel.value;
   if (sel.value) {
-    stockIdField.value = sel.value;
-    wrap.style.display = 'none';
-    vendorField.required = false;
-    amountField.required = false;
-    actionField.value = 'New Tyre Fitted';
-    dateLabel.textContent = 'Install Date *';
     summary.style.display = 'block';
     summary.innerHTML = '<b>' + (opt.dataset.tid || 'This tyre') + '</b> &middot; ' + (opt.dataset.brand || 'Brand n/a') +
       ' &middot; ' + (opt.dataset.type || 'New') + ' &middot; bought from ' + (opt.dataset.supplier || '—') +
       ' for &#8377;' + opt.dataset.cost;
   } else {
-    stockIdField.value = '';
-    wrap.style.display = '';
-    vendorField.required = true;
-    amountField.required = true;
-    dateLabel.textContent = 'Date *';
     summary.style.display = 'none';
   }
 }
 </script>
-
-<!-- ADD TYRE STOCK -->
-<div class="modal-overlay" id="addTyreStockModal">
-  <div class="modal-box mt-modal-box">
-    <button type="button" class="modal-close-x" onclick="document.getElementById('addTyreStockModal').classList.remove('open')">&#10005;</button>
-    <h3>&#128230; Add Tyre Stock</h3>
-    <div style="font-size:0.78rem;color:var(--steel);margin:-8px 0 14px;">Log a tyre bought ahead of use. It'll sit in stock until you install it on a vehicle — the cost still posts to the supplier's ledger now.</div>
-    <form method="POST" action="/maintenance/tyre/stock/add">
-      <div class="mt-form-grid">
-        <div class="mt-fld"><label>Tyre ID</label><input type="text" name="tyre_id" placeholder="e.g. TY-000145"></div>
-        <div class="mt-fld"><label>Brand</label><input type="text" name="brand" list="tyre-brand-list" placeholder="e.g. JK Tyre"></div>
-        <div class="mt-fld"><label>Type *</label><select name="tyre_type" required><option value="New">New</option><option value="Resole">Resole / Reshuttered</option></select></div>
-        <div class="mt-fld"><label>Purchase Date *</label><input type="date" name="purchase_date" required></div>
-      </div>
-      <div class="mt-form-grid">
-        <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" name="vendor_name" list="combined-list" required></div>
-        <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
-        <div class="mt-fld"><label>Purchase Cost (₹) *</label><input type="number" step="0.01" name="purchase_cost" required></div>
-        <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
-      </div>
-      <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Any additional detail..."></textarea></div>
-
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
-        <button type="button" onclick="document.getElementById('addTyreStockModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save to Stock</button>
-      </div>
-    </form>
-  </div>
-</div>
 
 {% for s in stock_rows %}
 {% if s['status']=='In Stock' %}
