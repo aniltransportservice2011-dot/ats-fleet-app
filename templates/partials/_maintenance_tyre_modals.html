@@ -1,0 +1,208 @@
+{% set tyre_icon %}<svg viewBox="0 0 24 24" width="16" height="16" fill="none" style="vertical-align:-3px;" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6"/><path d="M12 3V6.5M12 17.5V21M3 12H6.5M17.5 12H21M5.6 5.6L8 8M16 16L18.4 18.4M18.4 5.6L16 8M8 16L5.6 18.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>{% endset %}
+<!-- ADD TYRE -->
+<div class="modal-overlay" id="addTyreModal">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addTyreModal').classList.remove('open')">&#10005;</button>
+    <h3>{{ tyre_icon }} Add / Install Tyre</h3>
+    <form method="POST" action="/maintenance/tyre/add" id="addTyreForm">
+      <input type="hidden" name="stock_id" id="tyStockIdField" value="">
+      <div class="mt-fld" style="margin-bottom:12px;">
+        <label>Use From Stock (optional)</label>
+        <select id="tyStockSelect" onchange="tyApplyStock(this)">
+          <option value="">— New tyre, not from stock —</option>
+          {% for s in stock_rows if s['status']=='In Stock' %}
+          <option value="{{ s['id'] }}" data-tid="{{ s['tyre_id'] or '' }}" data-brand="{{ s['brand'] or '' }}" data-type="{{ s['tyre_type'] or '' }}" data-cost="{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}" data-supplier="{{ s['vendor_name'] or '' }}">{{ s['tyre_id'] or ('Stock #' ~ s['id']) }} — {{ s['brand'] or 'Brand n/a' }} ({{ s['tyre_type'] or 'New' }}) — ₹{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div id="tyStockSummary" style="display:none;background:var(--paper);border-radius:6px;padding:8px 12px;font-size:0.78rem;color:var(--steel);margin-bottom:12px;"></div>
+
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
+        <div class="mt-fld"><label>Action *</label><input type="text" name="tyre_action" id="tyActionField" list="tyre-action-list" required placeholder="e.g. Tyre Replacement"></div>
+        <div class="mt-fld"><label>Position</label><input type="text" name="tyre_position" list="tyre-position-list" placeholder="e.g. FL"></div>
+        <div class="mt-fld"><label id="tyDateLabel">Date *</label><input type="date" name="date" required></div>
+      </div>
+      <div class="mt-fld" style="max-width:200px;margin-bottom:6px;"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 52420"></div>
+
+      <div id="tyNewFieldsWrap">
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" name="vendor_name" id="tyVendorField" list="combined-list" required></div>
+          <div class="mt-fld"><label>Tyre ID</label><input type="text" name="tyre_id" id="tyIdField" placeholder="e.g. TY-000145"></div>
+          <div class="mt-fld"><label>Brand</label><input type="text" name="tyre_brand" id="tyBrandField" list="tyre-brand-list" placeholder="e.g. JK Tyre"></div>
+          <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
+        </div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Invoice Date</label><input type="date" name="invoice_date"></div>
+          <div class="mt-fld"><label>Cost (₹) *</label><input type="number" step="0.01" name="amount" id="tyAmountField" required></div>
+          <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
+        </div>
+      </div>
+      <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Any additional detail..."></textarea></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('addTyreModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Tyre</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+function tyApplyStock(sel) {
+  var opt = sel.options[sel.selectedIndex];
+  var wrap = document.getElementById('tyNewFieldsWrap');
+  var summary = document.getElementById('tyStockSummary');
+  var stockIdField = document.getElementById('tyStockIdField');
+  var vendorField = document.getElementById('tyVendorField');
+  var amountField = document.getElementById('tyAmountField');
+  var actionField = document.getElementById('tyActionField');
+  var dateLabel = document.getElementById('tyDateLabel');
+  if (sel.value) {
+    stockIdField.value = sel.value;
+    wrap.style.display = 'none';
+    vendorField.required = false;
+    amountField.required = false;
+    actionField.value = 'New Tyre Fitted';
+    dateLabel.textContent = 'Install Date *';
+    summary.style.display = 'block';
+    summary.innerHTML = '<b>' + (opt.dataset.tid || 'This tyre') + '</b> &middot; ' + (opt.dataset.brand || 'Brand n/a') +
+      ' &middot; ' + (opt.dataset.type || 'New') + ' &middot; bought from ' + (opt.dataset.supplier || '—') +
+      ' for &#8377;' + opt.dataset.cost;
+  } else {
+    stockIdField.value = '';
+    wrap.style.display = '';
+    vendorField.required = true;
+    amountField.required = true;
+    dateLabel.textContent = 'Date *';
+    summary.style.display = 'none';
+  }
+}
+</script>
+
+<!-- ADD TYRE STOCK -->
+<div class="modal-overlay" id="addTyreStockModal">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addTyreStockModal').classList.remove('open')">&#10005;</button>
+    <h3>&#128230; Add Tyre Stock</h3>
+    <div style="font-size:0.78rem;color:var(--steel);margin:-8px 0 14px;">Log a tyre bought ahead of use. It'll sit in stock until you install it on a vehicle — the cost still posts to the supplier's ledger now.</div>
+    <form method="POST" action="/maintenance/tyre/stock/add">
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Tyre ID</label><input type="text" name="tyre_id" placeholder="e.g. TY-000145"></div>
+        <div class="mt-fld"><label>Brand</label><input type="text" name="brand" list="tyre-brand-list" placeholder="e.g. JK Tyre"></div>
+        <div class="mt-fld"><label>Type *</label><select name="tyre_type" required><option value="New">New</option><option value="Resole">Resole / Reshuttered</option></select></div>
+        <div class="mt-fld"><label>Purchase Date *</label><input type="date" name="purchase_date" required></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" name="vendor_name" list="combined-list" required></div>
+        <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
+        <div class="mt-fld"><label>Purchase Cost (₹) *</label><input type="number" step="0.01" name="purchase_cost" required></div>
+        <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
+      </div>
+      <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Any additional detail..."></textarea></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('addTyreStockModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save to Stock</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for s in stock_rows %}
+{% if s['status']=='In Stock' %}
+<!-- INSTALL STOCK: row {{ s['id'] }} -->
+<div class="modal-overlay" id="installStockModal{{ s['id'] }}">
+  <div class="modal-box mt-modal-box" style="width:480px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('installStockModal{{ s['id'] }}').classList.remove('open')">&#10005;</button>
+    <h3>{{ tyre_icon }} Install Tyre — {{ s['tyre_id'] or (s['brand'] or 'Stock Tyre') }}</h3>
+    <div style="font-size:0.78rem;color:var(--steel);margin:-8px 0 14px;">{{ s['brand'] or 'Brand not recorded' }} &middot; {{ s['tyre_type'] or 'New' }} &middot; bought {{ s['purchase_date'] }} for ₹{{ '{:,.0f}'.format(s['purchase_cost'] or 0) }}</div>
+    <form method="POST" action="/maintenance/tyre/stock/{{ s['id'] }}/install">
+      <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
+        <div class="mt-fld"><label>Position *</label><input type="text" name="position" list="tyre-position-list" required placeholder="e.g. FL"></div>
+        <div class="mt-fld"><label>Install Date *</label><input type="date" name="install_date" required></div>
+        <div class="mt-fld"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 52420"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('installStockModal{{ s['id'] }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Install</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}</datalist>
+<datalist id="combined-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+<datalist id="tyre-action-list">{% for a in tyre_actions %}<option value="{{ a }}">{% endfor %}</datalist>
+<datalist id="tyre-position-list">{% for p in tyre_positions %}<option value="{{ p }}">{% endfor %}</datalist>
+<datalist id="tyre-brand-list">{% for b in tyre_brands %}<option value="{{ b }}">{% endfor %}</datalist>
+
+{% for r in rows %}
+<!-- VIEW TYRE: row {{ loop.index }} -->
+<div class="modal-overlay" id="viewTyreModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('viewTyreModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>{{ tyre_icon }} {{ r['tyre_action'] or r['category'] or 'Tyre Entry' }}
+      {% set is_paid = (r['paid_amount'] or 0) >= (r['amount'] or 0) and (r['amount'] or 0) > 0 %}
+      <span class="mt-status-badge" style="{% if is_paid %}background:#e8f5ee;color:var(--green);{% else %}background:#fdecea;color:var(--red);{% endif %}">{{ 'Paid' if is_paid else 'Unpaid' }}</span>
+    </h3>
+    <div class="mt-detail-grid">
+      <div><div class="lbl">Vehicle</div>{{ r['vehicle_no'] or '—' }}</div>
+      <div><div class="lbl">Position</div>{{ r['tyre_position'] or '—' }}</div>
+      <div><div class="lbl">Tyre ID</div>{{ r['tyre_id'] or '—' }}</div>
+      <div><div class="lbl">Brand</div>{{ r['tyre_brand'] or '—' }}</div>
+      <div><div class="lbl">Supplier</div>{{ r['vendor_name'] or '—' }}</div>
+      <div><div class="lbl">Invoice No.</div>{{ r['invoice_no'] or '—' }}</div>
+      <div><div class="lbl">Date</div>{{ r['date'] }}</div>
+      <div><div class="lbl">KM Reading</div>{% if r['km_reading'] %}{{ '{:,.0f}'.format(r['km_reading']) }} KM{% else %}—{% endif %}</div>
+      <div><div class="lbl">Cost</div>₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</div>
+      <div><div class="lbl">Paid</div>₹{{ '{:,.0f}'.format(r['paid_amount'] or 0) }}</div>
+    </div>
+    <div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:2px;">Notes</div>
+    <div style="font-size:0.85rem;color:var(--ink);margin-bottom:16px;">{{ r['notes'] or 'No notes recorded.' }}</div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <button type="button" onclick="document.getElementById('viewTyreModal{{ loop.index }}').classList.remove('open');document.getElementById('editTyreModal{{ loop.index }}').classList.add('open');" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">&#9998; Edit</button>
+      <form method="POST" action="/maintenance/delete/{{ r['id'] }}?tab=tyres" onsubmit="return confirm('Delete this tyre record permanently?');">
+        <button type="submit" style="background:var(--red);color:#fff;border:none;padding:9px 16px;border-radius:3px;cursor:pointer;">&#128465; Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT TYRE: row {{ loop.index }} -->
+<div class="modal-overlay" id="editTyreModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('editTyreModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#9998; Edit Tyre Entry — {{ r['vehicle_no'] }}</h3>
+    <form method="POST" action="/maintenance/tyre/edit/{{ r['id'] }}">
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" value="{{ r['vehicle_no'] or '' }}" list="vehicle-list" required></div>
+        <div class="mt-fld"><label>Action *</label><input type="text" name="tyre_action" value="{{ r['tyre_action'] or r['category'] or '' }}" list="tyre-action-list" required></div>
+        <div class="mt-fld"><label>Position</label><input type="text" name="tyre_position" value="{{ r['tyre_position'] or '' }}" list="tyre-position-list"></div>
+        <div class="mt-fld"><label>Date *</label><input type="date" name="date" value="{{ r['date'] }}" required></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Supplier / Vendor *</label><input type="text" name="vendor_name" value="{{ r['vendor_name'] or '' }}" list="combined-list" required></div>
+        <div class="mt-fld"><label>Tyre ID</label><input type="text" name="tyre_id" value="{{ r['tyre_id'] or '' }}"></div>
+        <div class="mt-fld"><label>Brand</label><input type="text" name="tyre_brand" value="{{ r['tyre_brand'] or '' }}" list="tyre-brand-list"></div>
+        <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no" value="{{ r['invoice_no'] or '' }}"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Invoice Date</label><input type="date" name="invoice_date" value="{{ r['invoice_date'] or '' }}"></div>
+        <div class="mt-fld"><label>KM Reading</label><input type="number" step="1" name="km_reading" value="{{ r['km_reading'] or '' }}"></div>
+        <div class="mt-fld"><label>Cost (₹) *</label><input type="number" step="0.01" name="amount" value="{{ r['amount'] or 0 }}" required></div>
+        <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" value="{{ r['paid_amount'] or 0 }}"></div>
+      </div>
+      <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2">{{ r['notes'] or '' }}</textarea></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('editTyreModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}

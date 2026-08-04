@@ -1,0 +1,133 @@
+<div class="mt-kpi-row">
+  <div class="mt-kpi"><div><div class="lbl">Open Jobs</div><div class="val" style="color:var(--accent);">{{ open_jobs }}</div><div class="sub">In progress</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128295;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Due Service</div><div class="val" style="color:{% if due_soon %}var(--red){% endif %};">{{ due_soon }}</div><div class="sub">Due in next 7 days</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#128197;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Breakdown</div><div class="val" style="color:{% if breakdown_count %}var(--red){% endif %};">{{ breakdown_count }}</div><div class="sub">This selection</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#128667;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Total Cost</div><div class="val">₹{{ '{:,.0f}'.format(total_cost) }}</div><div class="sub">This selection</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#8377;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Avg Cost / Service</div><div class="val">₹{{ '{:,.0f}'.format(avg_cost) }}</div><div class="sub">All time average</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128200;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Completed</div><div class="val" style="color:var(--green);">{{ completed_jobs }}</div><div class="sub">This selection</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+</div>
+
+<form class="mt-filters" method="GET">
+  <input type="hidden" name="tab" value="service">
+  <div><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div><label>Workshop</label>
+    <select name="workshop"><option value="">All Workshops</option>
+      {% for w in workshops %}<option value="{{ w['name'] }}" {% if f_workshop==w['name'] %}selected{% endif %}>{{ w['name'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div><label>Service Type</label>
+    <select name="service_type"><option value="">All Types</option>
+      {% for st in service_types %}<option value="{{ st }}" {% if f_service_type==st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+    </select>
+  </div>
+  <div><label>Status</label>
+    <select name="status"><option value="">All Status</option>
+      <option value="Open" {% if f_status=='Open' %}selected{% endif %}>Open</option>
+      <option value="Completed" {% if f_status=='Completed' %}selected{% endif %}>Completed</option>
+    </select>
+  </div>
+  <div><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <div><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Vehicle, type, invoice..."></div>
+  <div style="display:flex;gap:8px;">
+    <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Filter</button>
+    <a class="clear" href="/maintenance?tab=service">Reset</a>
+  </div>
+</form>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head">
+    <div class="ttl">Service Records</div>
+    <span style="color:var(--steel);font-size:0.8rem;">Showing {{ rows|length }} of {{ total_count }} entries</span>
+  </div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Date</th><th>Vehicle</th><th>Service Type</th><th class="num">KM Reading</th><th>Workshop</th><th class="num">Cost</th><th>Status</th><th>Next Due</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('viewModal{{ loop.index }}').classList.add('open')">
+      <td style="white-space:nowrap;">{{ r['date'] }}</td>
+      <td>{{ r['vehicle_no'] or '—' }}</td>
+      <td>{{ r['service_type'] or r['category'] or '—' }}</td>
+      <td class="num">{% if r['km_reading'] %}{{ '{:,.0f}'.format(r['km_reading']) }} KM{% else %}—{% endif %}</td>
+      <td>{{ r['vendor_name'] or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</td>
+      <td><span class="mt-status-badge" style="{% if (r['status'] or 'Completed')=='Completed' %}background:#e8f5ee;color:var(--green);{% else %}background:#fff3e8;color:var(--accent);{% endif %}">{{ r['status'] or 'Completed' }}</span></td>
+      <td>{% if r['next_due_km'] %}{{ '{:,.0f}'.format(r['next_due_km']) }} KM{% elif r['next_service_date'] %}{{ r['next_service_date'] }}{% else %}—{% endif %}</td>
+      <td onclick="event.stopPropagation();">
+        <form method="POST" action="/maintenance/delete/{{ r['id'] }}?tab=service" style="display:inline;" onsubmit="return confirm('Delete this service record permanently?');">
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No service records found for this selection.</div>
+  {% endif %}
+</div>
+
+<div class="mt-row-3">
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Service by Type</div></div>
+    {% if type_breakdown %}
+    {% set cat_palette = ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300'] %}
+    {% set tsum = type_breakdown|sum(attribute=1) %}
+    <div style="display:flex;align-items:center;gap:16px;">
+      <svg viewBox="0 0 120 120" width="110" height="110" style="flex-shrink:0;">
+        {% set circ = 289.0 %}{% set offset = 0 %}
+        {% for label, count in type_breakdown %}
+        {% set seg = circ * count / tsum if tsum else 0 %}
+        <circle cx="60" cy="60" r="46" fill="none" stroke="{{ cat_palette[loop.index0 % 6] }}" stroke-width="20" stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset|round(1) }}" transform="rotate(-90 60 60)"/>
+        {% set offset = offset + seg %}
+        {% endfor %}
+        <text x="60" y="64" font-size="14" font-weight="800" text-anchor="middle" fill="var(--ink)">{{ tsum }}</text>
+      </svg>
+      <div style="font-size:0.76rem;flex:1;">
+        {% for label, count in type_breakdown %}
+        <div style="display:flex;justify-content:space-between;padding:3px 0;">
+          <span><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:{{ cat_palette[loop.index0 % 6] }};margin-right:6px;"></span>{{ label }}</span>
+          <span>{{ count }} ({{ (count/tsum*100)|round(1) if tsum else 0 }}%)</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:20px;font-size:0.85rem;">No data yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Monthly Service Trend</div></div>
+    <svg viewBox="0 0 {{ chart_w }} {{ chart_h }}" width="100%" style="overflow:visible;max-height:170px;">
+      <line x1="0" y1="{{ chart_h-10 }}" x2="{{ chart_w }}" y2="{{ chart_h-10 }}" stroke="var(--line)"/>
+      {% if trend %}
+      <polyline points="{% for t in trend %}{{ t.x }},{{ t.y }} {% endfor %}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
+      {% for t in trend %}
+      <circle cx="{{ t.x }}" cy="{{ t.y }}" r="3" fill="var(--accent)"/>
+      <text x="{{ t.x }}" y="{{ chart_h+2 }}" font-size="8.5" text-anchor="middle" fill="var(--steel)">{{ t.label }}</text>
+      {% endfor %}
+      {% endif %}
+    </svg>
+  </div>
+
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Top Costly Vehicles</div></div>
+    {% if top_costly %}
+    <table>
+      <tr><th>Vehicle</th><th class="num">Cost</th></tr>
+      {% for vno, cost in top_costly %}
+      <tr><td>{{ vno }}</td><td class="num">₹{{ '{:,.0f}'.format(cost) }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:20px;font-size:0.85rem;">No data yet.</div>
+    {% endif %}
+  </div>
+</div>

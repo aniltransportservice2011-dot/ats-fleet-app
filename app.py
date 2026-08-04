@@ -812,66 +812,643 @@ def _get_autocomplete_lists():
     conn.close()
     return vehicles, parties, vendors, combined_names
 
+MAINTENANCE_CHECKLIST = ['Engine Oil', 'Oil Filter', 'Air Filter', 'Diesel Filter', 'Greasing',
+    'Brake Adjustment', 'Clutch Adjustment', 'Air Leak Fixed', 'Electrical Check', 'Suspension Check',
+    'Wheel Alignment', 'Coolant Change', 'Battery Check', 'Lights Check', 'Road Test']
+
+MAINTENANCE_TAB_LABELS = {'tyres': 'Tyres', 'battery': 'Battery', 'insurance': 'Insurance',
+                           'permit': 'Permit & Fitness', 'urea': 'Urea'}
+BATTERY_TYPES = ['Tubular', 'Flat Plate', 'Maintenance Free', 'SMF']
+
+def _maintenance_classify(category, service_type=None):
+    """Which Maintenance tab an entry belongs on. Entries created through the new Add Service form
+    always carry service_type, so those are unambiguous; older free-text entries fall back to
+    keyword-matching their category — this is the one place that logic lives, reused everywhere
+    (Overview cards, category tabs, the Service tab itself) so they never disagree with each other."""
+    if service_type:
+        return 'Service'
+    c = (category or '').lower()
+    if 'tyre' in c or 'tire' in c or 'punt' in c or 'punc' in c:
+        return 'Tyres'
+    if 'battery' in c:
+        return 'Battery'
+    if 'insur' in c:
+        return 'Insurance'
+    if 'fitness' in c or 'permit' in c or 'pollution' in c or 'puc' in c:
+        return 'Permit & Fitness'
+    if 'urea' in c or 'adblue' in c or 'def' in c:
+        return 'Urea'
+    if 'service' in c:
+        return 'Service'
+    return 'Other'
+
+TYRE_ACTIONS = ['New Tyre Fitted', 'Tyre Replacement', 'Tyre Resole', 'Puncture Repair']
+TYRE_POSITIONS = ['FL', 'FR', 'RL1', 'RR1', 'RL2', 'RR2', 'Spare']
+
 @app.route('/maintenance')
 def maintenance_list():
     conn = get_db()
-    vehicle_f = request.args.get('vehicle', '')
-    vendor_f = request.args.get('vendor', '')
-    category_f = request.args.get('category', '')
+    tab = request.args.get('tab', 'overview')
+    if tab == 'service':
+        return _maintenance_service_tab(conn)
+    if tab == 'tyres':
+        return _maintenance_tyres_tab(conn)
+    if tab == 'battery':
+        return _maintenance_battery_tab(conn)
+    if tab in MAINTENANCE_TAB_LABELS:
+        return _maintenance_category_tab(conn, tab)
+    return _maintenance_overview_tab(conn)
+
+def _maintenance_overview_tab(conn):
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    default_from, default_to = _month_bounds(last_month_end.year, last_month_end.month)
+    date_from = request.args.get('date_from') or default_from
+    date_to = request.args.get('date_to') or default_to
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    own_vehicles = conn.execute("SELECT id, vehicle_no, registration_date FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    total_fleet = len(own_vehicles)
+
+    period_entries = conn.execute("""SELECT m.id, m.date, m.vehicle_id, m.category, m.service_type, m.amount, m.paid_amount, v.vehicle_no
+                                     FROM maintenance m JOIN vehicles v ON m.vehicle_id=v.id
+                                     WHERE v.type IN ('Line','Local') AND m.date>=? AND m.date<=?
+                                     ORDER BY m.date DESC""", (date_from, date_to)).fetchall()
+    total_cost = sum(e['amount'] or 0 for e in period_entries)
+    total_paid = sum(e['paid_amount'] or 0 for e in period_entries)
+    total_unpaid = total_cost - total_paid
+    vehicles_serviced = len(set(e['vehicle_id'] for e in period_entries))
+
+    cat_labels = ['Service', 'Tyres', 'Battery', 'Insurance', 'Permit & Fitness', 'Urea']
+    cat_slugs = {'Service': 'service', 'Tyres': 'tyres', 'Battery': 'battery', 'Insurance': 'insurance',
+                 'Permit & Fitness': 'permit', 'Urea': 'urea'}
+    cat_data = {k: {'vehicles': set(), 'count': 0, 'cost': 0} for k in cat_labels}
+    for e in period_entries:
+        k = _maintenance_classify(e['category'], e['service_type'])
+        if k in cat_data:
+            cat_data[k]['vehicles'].add(e['vehicle_id'])
+            cat_data[k]['count'] += 1
+            cat_data[k]['cost'] += e['amount'] or 0
+    category_cards = [{'label': k, 'slug': cat_slugs[k], 'vehicles_done': len(cat_data[k]['vehicles']),
+                        'count': cat_data[k]['count'], 'cost': cat_data[k]['cost']} for k in cat_labels]
+
+    km_row = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) as km FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
+                             WHERE v.type IN ('Line','Local') AND t.date>=? AND t.date<=? AND t.actual_km IS NOT NULL""",
+                           (date_from, date_to)).fetchone()
+    total_km = km_row['km'] or 0
+    avg_cost_km = round(total_cost / total_km, 2) if total_km > 0 else None
+
+    active_count = 0
+    for v in own_vehicles:
+        active_days, idle_days, _ = _vehicle_active_idle_days(conn, v['id'], v['registration_date'], date_from, date_to)
+        if active_days > 0:
+            active_count += 1
+    fleet_availability = round(active_count / total_fleet * 100, 1) if total_fleet else 0
+
+    pending_by_vehicle = {}
+    for e in period_entries:
+        pend = (e['amount'] or 0) - (e['paid_amount'] or 0)
+        if pend > 0.01:
+            pending_by_vehicle[e['vehicle_no']] = pending_by_vehicle.get(e['vehicle_no'], 0) + pend
+    pending_count = len(pending_by_vehicle)
+
+    # Fleet health bands — derived from each vehicle's period maintenance spend relative to the
+    # fleet average (no mechanical condition data exists to score against, so this is explicitly
+    # a spend-based proxy: heavier-than-average repair spend this period = worse band).
+    fleet_avg_cost = (total_cost / total_fleet) if total_fleet else 0
+    health_bands = {'Excellent': 0, 'Good': 0, 'Average': 0, 'Poor': 0, 'Critical': 0}
+    for v in own_vehicles:
+        v_cost = sum(e['amount'] or 0 for e in period_entries if e['vehicle_id'] == v['id'])
+        if v_cost <= 0:
+            band = 'Excellent'
+        else:
+            ratio = v_cost / fleet_avg_cost if fleet_avg_cost else 0
+            if ratio < 0.5: band = 'Good'
+            elif ratio < 1.0: band = 'Average'
+            elif ratio < 2.0: band = 'Poor'
+            else: band = 'Critical'
+        health_bands[band] += 1
+
+    actions = []
+    for vno, amt in sorted(pending_by_vehicle.items(), key=lambda x: -x[1])[:4]:
+        actions.append({'icon': '\U0001F4B0', 'label': 'Pending Payment', 'vehicle': vno, 'detail': f"₹{amt:,.0f} unpaid", 'kind': 'bad'})
+    last_maint = {}
+    for row in conn.execute("SELECT vehicle_id, MAX(date) as last_date FROM maintenance WHERE vehicle_id IS NOT NULL GROUP BY vehicle_id").fetchall():
+        last_maint[row['vehicle_id']] = row['last_date']
+    d2 = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+    stale = []
+    for v in own_vehicles:
+        last_date = last_maint.get(v['id'])
+        if last_date:
+            days_since = (d2 - datetime.datetime.strptime(last_date, '%Y-%m-%d').date()).days
+            if days_since > 90:
+                stale.append((v['vehicle_no'], days_since))
+        else:
+            stale.append((v['vehicle_no'], None))
+    stale.sort(key=lambda x: (x[1] is None, -(x[1] or 0)))
+    for vno, days in stale[:max(0, 6 - len(actions))]:
+        if days is None:
+            actions.append({'icon': '⚠️', 'label': 'No Maintenance History', 'vehicle': vno, 'detail': 'No records yet', 'kind': 'warn'})
+        else:
+            actions.append({'icon': '⏱', 'label': 'No Recent Maintenance', 'vehicle': vno, 'detail': f"{days} days since last entry", 'kind': 'warn'})
+
+    recent_entries = period_entries[:8]
+    spend_by_vehicle = {}
+    for e in period_entries:
+        if e['vehicle_no']:
+            spend_by_vehicle[e['vehicle_no']] = spend_by_vehicle.get(e['vehicle_no'], 0) + (e['amount'] or 0)
+    top_spend = sorted(spend_by_vehicle.items(), key=lambda x: -x[1])[:5]
+
+    trend = []
+    end_d = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+    y_, m_ = end_d.year, end_d.month
+    for i in range(5, -1, -1):
+        mm = m_ - i
+        yy = y_
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        cost = conn.execute("""SELECT COALESCE(SUM(m.amount),0) FROM maintenance m JOIN vehicles v ON m.vehicle_id=v.id
+                               WHERE v.type IN ('Line','Local') AND m.date>=? AND m.date<=?""", (mf, mt)).fetchone()[0]
+        trend.append({'label': calendar.month_abbr[mm], 'cost': cost})
+    trend_max = max([t['cost'] for t in trend], default=1) or 1
+    chart_w, chart_h = 640, 150
+    n = len(trend)
+    for i, t in enumerate(trend):
+        t['x'] = round((i / (n - 1) * (chart_w - 40) + 30) if n > 1 else chart_w / 2, 1)
+        t['y'] = round(chart_h - (t['cost'] / trend_max * (chart_h - 30)) - 15, 1)
+
+    conn.close()
+    return render_template('maintenance.html', tab='overview',
+        total_fleet=total_fleet, vehicles_serviced=vehicles_serviced, pending_count=pending_count,
+        total_cost=total_cost, total_unpaid=total_unpaid, avg_cost_km=avg_cost_km, fleet_availability=fleet_availability,
+        category_cards=category_cards, health_bands=health_bands, actions=actions,
+        recent_entries=recent_entries, top_spend=top_spend, trend=trend, trend_max=trend_max, chart_w=chart_w, chart_h=chart_h,
+        f_date_from=date_from, f_date_to=date_to, active='maintenance')
+
+def _maintenance_category_tab(conn, tab_slug):
+    label = MAINTENANCE_TAB_LABELS[tab_slug]
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    vehicle_f = request.args.get('vehicle', '')
 
-    query = """SELECT m.id, m.date, v.vehicle_no, m.category, m.amount, m.paid_amount, m.notes, ve.name as vendor_name
-               FROM maintenance m
-               LEFT JOIN vehicles v ON m.vehicle_id = v.id
-               LEFT JOIN vendors ve ON m.vendor_id = ve.id
+    query = """SELECT m.id, m.date, v.vehicle_no, m.category, m.service_type, m.amount, m.paid_amount, ve.name as vendor_name
+               FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id
                WHERE 1=1"""
     params = []
-    if vehicle_f:
-        query += " AND v.vehicle_no LIKE ?"
-        params.append(f"%{vehicle_f}%")
-    if vendor_f:
-        query += " AND ve.name LIKE ?"
-        params.append(f"%{vendor_f}%")
-    if category_f:
-        query += " AND m.category = ?"
-        params.append(category_f)
     if date_from:
-        query += " AND m.date >= ?"
-        params.append(date_from)
+        query += " AND m.date>=?"; params.append(date_from)
     if date_to:
-        query += " AND m.date <= ?"
-        params.append(date_to)
-    where_clause = query[query.find("WHERE"):]
-    total_shown = conn.execute(f"SELECT COALESCE(SUM(m.amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id {where_clause}", params).fetchone()[0]
-    total_count = conn.execute(f"SELECT COUNT(*) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id {where_clause}", params).fetchone()[0]
-    paid_total = conn.execute(f"SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id {where_clause}", params).fetchone()[0]
-    unpaid_total = total_shown - paid_total
+        query += " AND m.date<=?"; params.append(date_to)
+    if vehicle_f:
+        query += " AND v.vehicle_no=?"; params.append(vehicle_f)
+    query += " ORDER BY m.date DESC"
+    all_rows = conn.execute(query, params).fetchall()
+    rows = [r for r in all_rows if _maintenance_classify(r['category'], r['service_type']) == label]
+
+    total_count = len(rows)
+    total_amount = sum(r['amount'] or 0 for r in rows)
+    paid_total = sum(r['paid_amount'] or 0 for r in rows)
+    unpaid_total = total_amount - paid_total
+    vehicles_involved = len(set(r['vehicle_no'] for r in rows if r['vehicle_no']))
 
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
-                                             per_page_options=(10, 25, 50, 100), default_per_page=50)
-    offset = (page - 1) * per_page
-    query += f" ORDER BY m.date DESC LIMIT {per_page} OFFSET {offset}"
-
-    rows = conn.execute(query, params).fetchall()
-    vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
-    vendors = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
-    categories = conn.execute("SELECT DISTINCT category FROM maintenance WHERE category IS NOT NULL ORDER BY category").fetchall()
-    conn.close()
-
+                                             per_page_options=(10, 25, 50, 100), default_per_page=25)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
     from urllib.parse import urlencode
     base_params = request.args.to_dict()
     base_params.pop('page', None)
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
-    page_tokens = _page_tokens(page, total_pages)
 
-    return render_template('maintenance_list.html', rows=rows, total_shown=total_shown, total_count=total_count,
-                            paid_total=paid_total, unpaid_total=unpaid_total,
-                            page=page, total_pages=total_pages, per_page=per_page, base_qs=base_qs, page_tokens=page_tokens,
-                            vehicles=vehicles, vendors=vendors, categories=categories,
-                            f_vehicle=vehicle_f, f_vendor=vendor_f, f_category=category_f,
-                            f_date_from=date_from, f_date_to=date_to, active='maintenance')
+    all_vehicles = conn.execute("SELECT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+    conn.close()
+    return render_template('maintenance.html', tab=tab_slug, tab_label=label,
+                            rows=page_rows, total_count=total_count, total_amount=total_amount,
+                            paid_total=paid_total, unpaid_total=unpaid_total, vehicles_involved=vehicles_involved,
+                            page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+                            f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, vehicles=all_vehicles,
+                            active='maintenance')
+
+def _maintenance_tyres_tab(conn):
+    vehicle_f = request.args.get('vehicle', '')
+    action_f = request.args.get('action', '')
+    position_f = request.args.get('position', '')
+    vendor_f = request.args.get('vendor', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    search_f = request.args.get('search', '')
+
+    query = """SELECT m.*, v.vehicle_no, ve.name as vendor_name FROM maintenance m
+               LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id
+               WHERE 1=1"""
+    params = []
+    if vehicle_f:
+        query += " AND v.vehicle_no=?"; params.append(vehicle_f)
+    if vendor_f:
+        query += " AND ve.name=?"; params.append(vendor_f)
+    if date_from:
+        query += " AND m.date>=?"; params.append(date_from)
+    if date_to:
+        query += " AND m.date<=?"; params.append(date_to)
+    query += " ORDER BY m.date DESC"
+    all_rows = conn.execute(query, params).fetchall()
+
+    rows = [r for r in all_rows if _maintenance_classify(r['category'], r['service_type']) == 'Tyres']
+    if action_f:
+        rows = [r for r in rows if (r['tyre_action'] or r['category'] or '') == action_f]
+    if position_f:
+        rows = [r for r in rows if (r['tyre_position'] or '') == position_f]
+    if search_f:
+        s = search_f.lower()
+        rows = [r for r in rows if s in (r['vehicle_no'] or '').lower() or s in (r['tyre_id'] or '').lower()
+                or s in (r['tyre_brand'] or '').lower() or s in (r['invoice_no'] or '').lower() or s in (r['vendor_name'] or '').lower()]
+
+    total_count = len(rows)
+    total_cost = sum(r['amount'] or 0 for r in rows)
+    paid_total = sum(r['paid_amount'] or 0 for r in rows)
+    unpaid_total = total_cost - paid_total
+    vehicles_covered = len(set(r['vehicle_no'] for r in rows if r['vehicle_no']))
+    puncture_count = sum(1 for r in rows if any(k in (r['tyre_action'] or r['category'] or '').lower() for k in ('punt', 'punc')))
+    avg_cost = round(total_cost / total_count, 0) if total_count else 0
+
+    action_totals = {}
+    for r in rows:
+        a = r['tyre_action'] or r['category'] or 'Other'
+        action_totals[a] = action_totals.get(a, 0) + 1
+    action_breakdown = sorted(action_totals.items(), key=lambda x: -x[1])[:6]
+
+    today = datetime.date.today()
+    trend = []
+    end_ref = datetime.datetime.strptime(date_to, '%Y-%m-%d').date() if date_to else today
+    y_, m_ = end_ref.year, end_ref.month
+    for i in range(5, -1, -1):
+        mm = m_ - i
+        yy = y_
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        month_rows = [r for r in all_rows if _maintenance_classify(r['category'], r['service_type']) == 'Tyres'
+                      and r['date'] and mf <= r['date'] <= mt]
+        trend.append({'label': calendar.month_abbr[mm], 'cost': sum(r['amount'] or 0 for r in month_rows)})
+    trend_max = max([t['cost'] for t in trend], default=1) or 1
+    chart_w, chart_h = 400, 140
+    n = len(trend)
+    for i, t in enumerate(trend):
+        t['x'] = round((i / (n - 1) * chart_w) if n > 1 else chart_w / 2, 1)
+        t['y'] = round(chart_h - (t['cost'] / trend_max * (chart_h - 20)) - 10, 1)
+
+    cost_by_vehicle = {}
+    for r in rows:
+        if r['vehicle_no']:
+            cost_by_vehicle[r['vehicle_no']] = cost_by_vehicle.get(r['vehicle_no'], 0) + (r['amount'] or 0)
+    top_costly = sorted(cost_by_vehicle.items(), key=lambda x: -x[1])[:5]
+
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    tyre_vendors = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    tyre_brands = sorted(set(r['tyre_brand'] for r in all_rows if r['tyre_brand']))
+
+    # Vehicle Tyre Layout: for the picked vehicle, the latest real entry logged against each
+    # position — no fabricated fitment/stock data, just "what does the record actually say".
+    global_rows = conn.execute("""SELECT m.category, m.service_type, m.date, m.id, v.vehicle_no
+                                   FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                                   WHERE v.vehicle_no IS NOT NULL""").fetchall()
+    tyre_last_by_vehicle = {}
+    for r in global_rows:
+        if _maintenance_classify(r['category'], r['service_type']) == 'Tyres':
+            key = (r['date'] or '', r['id'])
+            if r['vehicle_no'] not in tyre_last_by_vehicle or key > tyre_last_by_vehicle[r['vehicle_no']]:
+                tyre_last_by_vehicle[r['vehicle_no']] = key
+    default_lv = max(tyre_last_by_vehicle, key=lambda vn: tyre_last_by_vehicle[vn]) if tyre_last_by_vehicle \
+        else (vehicles[0]['vehicle_no'] if vehicles else '')
+    lv = request.args.get('lv') or default_lv
+
+    layout_rows = conn.execute("""SELECT m.*, v.vehicle_no, ve.name as vendor_name, ts.tyre_type FROM maintenance m
+                                   LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id
+                                   LEFT JOIN tyre_stock ts ON ts.maintenance_id=m.id
+                                   WHERE v.vehicle_no=? ORDER BY m.date, m.id""", (lv,)).fetchall() if lv else []
+    layout_tyre_rows = [r for r in layout_rows if _maintenance_classify(r['category'], r['service_type']) == 'Tyres']
+    layout_positions = {}
+    for pos in TYRE_POSITIONS:
+        matches = [r for r in layout_tyre_rows if (r['tyre_position'] or '') == pos]
+        layout_positions[pos] = matches[-1] if matches else None
+    positions_recorded = sum(1 for pos in TYRE_POSITIONS if layout_positions[pos])
+    vehicle_tyre_spend = sum(r['amount'] or 0 for r in layout_tyre_rows)
+    vehicle_last_updated = max((r['date'] for r in layout_tyre_rows if r['date']), default=None)
+
+    # Tyre Stock: tyres bought ahead of use. Installing one links its existing purchase
+    # record to a vehicle/position instead of billing the vendor a second time.
+    stock_rows = conn.execute("""SELECT ts.*, ve.name as vendor_name, iv.vehicle_no as installed_vehicle_no
+                                  FROM tyre_stock ts LEFT JOIN vendors ve ON ts.vendor_id=ve.id
+                                  LEFT JOIN vehicles iv ON ts.installed_vehicle_id=iv.id
+                                  ORDER BY (ts.status='In Stock') DESC, ts.purchase_date DESC, ts.id DESC""").fetchall()
+    stock_in_count = sum(1 for s in stock_rows if s['status'] == 'In Stock')
+    stock_new_count = sum(1 for s in stock_rows if s['status'] == 'In Stock' and (s['tyre_type'] or '') == 'New')
+    stock_resole_count = sum(1 for s in stock_rows if s['status'] == 'In Stock' and (s['tyre_type'] or '') == 'Resole')
+    stock_value = sum(s['purchase_cost'] or 0 for s in stock_rows if s['status'] == 'In Stock')
+    conn.close()
+
+    return render_template('maintenance.html', tab='tyres',
+        rows=page_rows, total_count=total_count, total_cost=total_cost, unpaid_total=unpaid_total,
+        vehicles_covered=vehicles_covered, puncture_count=puncture_count, avg_cost=avg_cost,
+        action_breakdown=action_breakdown, trend=trend, trend_max=trend_max, chart_w=chart_w, chart_h=chart_h, top_costly=top_costly,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=vehicles, tyre_vendors=tyre_vendors, combined_names=combined_names,
+        tyre_actions=TYRE_ACTIONS, tyre_positions=TYRE_POSITIONS, tyre_brands=tyre_brands,
+        lv=lv, layout_positions=layout_positions, positions_recorded=positions_recorded,
+        vehicle_tyre_spend=vehicle_tyre_spend, vehicle_last_updated=vehicle_last_updated,
+        stock_rows=stock_rows, stock_in_count=stock_in_count, stock_new_count=stock_new_count,
+        stock_resole_count=stock_resole_count, stock_value=stock_value,
+        f_vehicle=vehicle_f, f_action=action_f, f_position=position_f, f_vendor=vendor_f,
+        f_date_from=date_from, f_date_to=date_to, f_search=search_f, active='maintenance')
+
+def _battery_status(b):
+    """Good/Weak/Replace Soon/Dead bands off the latest logged health% — the same honest,
+    threshold-based approach used for Fleet Health on Overview. status_override lets a real
+    'Mark as Dead' action win outright, since that's an asserted fact, not a derived one."""
+    if b['status_override']:
+        return b['status_override']
+    if not b['vehicle_id']:
+        return 'In Stock'
+    h = b['health_pct']
+    if h is None:
+        return 'Good'
+    if h >= 70:
+        return 'Good'
+    if h >= 40:
+        return 'Weak'
+    if h >= 20:
+        return 'Replace Soon'
+    return 'Dead'
+
+def _battery_warranty_upto(b):
+    base = b['install_date'] or b['purchase_date']
+    if not base or not b['warranty_months']:
+        return None
+    try:
+        d = datetime.datetime.strptime(base, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+    total_month = d.month - 1 + int(b['warranty_months'])
+    year = d.year + total_month // 12
+    month = total_month % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return datetime.date(year, month, day).isoformat()
+
+def _battery_enrich(r):
+    d = dict(r)
+    d['status'] = _battery_status(r)
+    wu = _battery_warranty_upto(r)
+    d['warranty_upto'] = wu
+    d['warranty_days_left'] = None
+    if wu:
+        try:
+            d['warranty_days_left'] = (datetime.datetime.strptime(wu, '%Y-%m-%d').date() - datetime.date.today()).days
+        except ValueError:
+            pass
+    return d
+
+def _next_battery_no(conn):
+    row = conn.execute("SELECT battery_no FROM batteries WHERE battery_no LIKE 'BAT-%' ORDER BY id DESC LIMIT 1").fetchone()
+    n = 0
+    if row and row['battery_no']:
+        try:
+            n = int(row['battery_no'].split('-')[-1])
+        except ValueError:
+            n = 0
+    return f"BAT-{n + 1:05d}"
+
+def _maintenance_battery_tab(conn):
+    vehicle_f = request.args.get('vehicle', '')
+    brand_f = request.args.get('brand', '')
+    status_f = request.args.get('status', '')
+    type_f = request.args.get('battery_type', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    search_f = request.args.get('search', '')
+
+    raw_rows = conn.execute("""SELECT b.*, v.vehicle_no, ve.name as vendor_name FROM batteries b
+                               LEFT JOIN vehicles v ON b.vehicle_id=v.id LEFT JOIN vendors ve ON b.vendor_id=ve.id
+                               ORDER BY b.id DESC""").fetchall()
+    all_rows = [_battery_enrich(r) for r in raw_rows]
+
+    rows = all_rows
+    if vehicle_f:
+        rows = [r for r in rows if r['vehicle_no'] == vehicle_f]
+    if brand_f:
+        rows = [r for r in rows if (r['brand'] or '') == brand_f]
+    if type_f:
+        rows = [r for r in rows if (r['battery_type'] or '') == type_f]
+    if status_f:
+        rows = [r for r in rows if r['status'] == status_f]
+    if date_from:
+        rows = [r for r in rows if (r['install_date'] or r['purchase_date'] or '') >= date_from]
+    if date_to:
+        rows = [r for r in rows if (r['install_date'] or r['purchase_date'] or '') <= date_to]
+    if search_f:
+        s = search_f.lower()
+        rows = [r for r in rows if s in (r['battery_no'] or '').lower() or s in (r['brand'] or '').lower()
+                or s in (r['vehicle_no'] or '').lower() or s in (r['serial_no'] or '').lower()]
+
+    total_batteries = len(all_rows)
+    in_use = sum(1 for r in all_rows if r['vehicle_id'] and r['status'] == 'Good')
+    in_stock = sum(1 for r in all_rows if not r['vehicle_id'] and r['status'] == 'In Stock')
+    weak_soon = sum(1 for r in all_rows if r['vehicle_id'] and r['status'] in ('Weak', 'Replace Soon'))
+    dead_count = sum(1 for r in all_rows if r['status'] in ('Dead', 'Scrapped'))
+
+    today = datetime.date.today()
+    ages = []
+    for r in all_rows:
+        if r['install_date']:
+            try:
+                d = datetime.datetime.strptime(r['install_date'], '%Y-%m-%d').date()
+                ages.append((today - d).days / 30.44)
+            except ValueError:
+                pass
+    avg_life_months = round(sum(ages) / len(ages)) if ages else None
+
+    status_counts = {'Good': 0, 'Weak': 0, 'Replace Soon': 0, 'Dead': 0, 'In Stock': 0}
+    for r in all_rows:
+        status_counts[r['status']] = status_counts.get(r['status'], 0) + 1
+
+    warranty_list = [r for r in all_rows if r['warranty_upto'] and r['warranty_days_left'] is not None
+                      and r['warranty_days_left'] >= 0 and r['status'] not in ('Dead', 'Scrapped')]
+    warranty_list.sort(key=lambda r: r['warranty_upto'])
+    warranty_list = warranty_list[:6]
+
+    low_health = sorted([r for r in all_rows if r['health_pct'] is not None and r['health_pct'] < 70 and r['vehicle_id']],
+                         key=lambda r: r['health_pct'])[:6]
+
+    this_year = str(today.year)
+    total_cost_year = sum(r['purchase_price'] or 0 for r in all_rows if (r['purchase_date'] or '').startswith(this_year))
+    replaced_year = sum(1 for r in all_rows if r['status'] == 'Dead' and (r['last_checked_date'] or r['install_date'] or '').startswith(this_year))
+    cost_per_battery = round(total_cost_year / total_batteries) if total_batteries else 0
+
+    total_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    battery_vendors = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    battery_brands = sorted(set(r['brand'] for r in all_rows if r['brand']))
+    stock_batteries = [r for r in all_rows if not r['vehicle_id'] and r['status'] == 'In Stock']
+
+    checks_by_battery = {}
+    if page_rows:
+        ids = [r['id'] for r in page_rows]
+        placeholders = ','.join('?' * len(ids))
+        for c in conn.execute(f"SELECT * FROM battery_checks WHERE battery_id IN ({placeholders}) ORDER BY date DESC, id DESC", ids).fetchall():
+            checks_by_battery.setdefault(c['battery_id'], []).append(c)
+    conn.close()
+
+    return render_template('maintenance.html', tab='battery',
+        rows=page_rows, total_count=total_count,
+        total_batteries=total_batteries, in_use=in_use, in_stock=in_stock, weak_soon=weak_soon, dead_count=dead_count,
+        avg_life_months=avg_life_months, status_counts=status_counts, warranty_list=warranty_list, low_health=low_health,
+        total_cost_year=total_cost_year, replaced_year=replaced_year, cost_per_battery=cost_per_battery,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=vehicles, battery_vendors=battery_vendors, combined_names=combined_names,
+        battery_brands=battery_brands, battery_types=BATTERY_TYPES, stock_batteries=stock_batteries,
+        checks_by_battery=checks_by_battery,
+        f_vehicle=vehicle_f, f_brand=brand_f, f_status=status_f, f_battery_type=type_f,
+        f_date_from=date_from, f_date_to=date_to, f_search=search_f, active='maintenance')
+
+def _maintenance_service_tab(conn):
+    vehicle_f = request.args.get('vehicle', '')
+    workshop_f = request.args.get('workshop', '')
+    stype_f = request.args.get('service_type', '')
+    status_f = request.args.get('status', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    search_f = request.args.get('search', '')
+
+    query = """SELECT m.*, v.vehicle_no, ve.name as vendor_name FROM maintenance m
+               LEFT JOIN vehicles v ON m.vehicle_id=v.id LEFT JOIN vendors ve ON m.vendor_id=ve.id
+               WHERE 1=1"""
+    params = []
+    if vehicle_f:
+        query += " AND v.vehicle_no=?"; params.append(vehicle_f)
+    if workshop_f:
+        query += " AND ve.name=?"; params.append(workshop_f)
+    if date_from:
+        query += " AND m.date>=?"; params.append(date_from)
+    if date_to:
+        query += " AND m.date<=?"; params.append(date_to)
+    query += " ORDER BY m.date DESC"
+    all_rows = conn.execute(query, params).fetchall()
+
+    rows = [r for r in all_rows if _maintenance_classify(r['category'], r['service_type']) == 'Service']
+    if stype_f:
+        rows = [r for r in rows if (r['service_type'] or r['category'] or '') == stype_f]
+    if status_f:
+        rows = [r for r in rows if (r['status'] or 'Completed') == status_f]
+    if search_f:
+        s = search_f.lower()
+        rows = [r for r in rows if s in (r['vehicle_no'] or '').lower() or s in (r['service_type'] or r['category'] or '').lower()
+                or s in (r['invoice_no'] or '').lower() or s in (r['vendor_name'] or '').lower()]
+
+    total_count = len(rows)
+    total_cost = sum(r['amount'] or 0 for r in rows)
+    open_jobs = sum(1 for r in rows if (r['status'] or 'Completed') == 'Open')
+    completed_jobs = sum(1 for r in rows if (r['status'] or 'Completed') == 'Completed')
+    breakdown_count = sum(1 for r in rows if 'breakdown' in (r['service_type'] or r['category'] or '').lower())
+    avg_cost = round(total_cost / total_count, 0) if total_count else 0
+
+    today = datetime.date.today()
+    due_soon = 0
+    for r in rows:
+        if r['next_service_date']:
+            try:
+                nd = datetime.datetime.strptime(r['next_service_date'], '%Y-%m-%d').date()
+                if today <= nd <= today + datetime.timedelta(days=7):
+                    due_soon += 1
+            except ValueError:
+                pass
+
+    ids = [r['id'] for r in rows]
+    items_by_id = {}
+    if ids:
+        placeholders = ','.join('?' * len(ids))
+        for it in conn.execute(f"SELECT * FROM maintenance_items WHERE maintenance_id IN ({placeholders})", ids).fetchall():
+            items_by_id.setdefault(it['maintenance_id'], []).append(it)
+
+    type_totals = {}
+    for r in rows:
+        t = r['service_type'] or r['category'] or 'Other'
+        type_totals[t] = type_totals.get(t, 0) + 1
+    type_breakdown = sorted(type_totals.items(), key=lambda x: -x[1])[:6]
+
+    trend = []
+    end_ref = datetime.datetime.strptime(date_to, '%Y-%m-%d').date() if date_to else today
+    y_, m_ = end_ref.year, end_ref.month
+    for i in range(5, -1, -1):
+        mm = m_ - i
+        yy = y_
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        month_rows = [r for r in all_rows if _maintenance_classify(r['category'], r['service_type']) == 'Service'
+                      and r['date'] and mf <= r['date'] <= mt]
+        trend.append({'label': calendar.month_abbr[mm], 'cost': sum(r['amount'] or 0 for r in month_rows)})
+    trend_max = max([t['cost'] for t in trend], default=1) or 1
+    chart_w, chart_h = 400, 140
+    n = len(trend)
+    for i, t in enumerate(trend):
+        t['x'] = round((i / (n - 1) * chart_w) if n > 1 else chart_w / 2, 1)
+        t['y'] = round(chart_h - (t['cost'] / trend_max * (chart_h - 20)) - 10, 1)
+
+    cost_by_vehicle = {}
+    for r in rows:
+        if r['vehicle_no']:
+            cost_by_vehicle[r['vehicle_no']] = cost_by_vehicle.get(r['vehicle_no'], 0) + (r['amount'] or 0)
+    top_costly = sorted(cost_by_vehicle.items(), key=lambda x: -x[1])[:5]
+
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    workshops = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    service_types = sorted(set((r['service_type'] or r['category'] or '') for r in all_rows
+                                if _maintenance_classify(r['category'], r['service_type']) == 'Service' and (r['service_type'] or r['category'])))
+    conn.close()
+
+    return render_template('maintenance.html', tab='service',
+        rows=page_rows, items_by_id=items_by_id, total_count=total_count, total_cost=total_cost,
+        open_jobs=open_jobs, completed_jobs=completed_jobs, breakdown_count=breakdown_count, due_soon=due_soon, avg_cost=avg_cost,
+        type_breakdown=type_breakdown, trend=trend, trend_max=trend_max, chart_w=chart_w, chart_h=chart_h, top_costly=top_costly,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=vehicles, workshops=workshops, combined_names=combined_names, service_types=service_types,
+        checklist_items=MAINTENANCE_CHECKLIST,
+        f_vehicle=vehicle_f, f_workshop=workshop_f, f_service_type=stype_f, f_status=status_f,
+        f_date_from=date_from, f_date_to=date_to, f_search=search_f, active='maintenance')
 
 @app.route('/maintenance/add', methods=['GET', 'POST'])
 def add_maintenance():
@@ -899,6 +1476,356 @@ def add_maintenance():
     conn.close()
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
     return render_template('add_maintenance.html', vehicles=vehicles, vendors=vendors, combined_names=combined_names, active='maintenance')
+
+def _save_service_items(conn, service_id, form):
+    conn.execute("DELETE FROM maintenance_items WHERE maintenance_id=?", (service_id,))
+    names = form.getlist('item_name')
+    cats = form.getlist('item_category')
+    qtys = form.getlist('item_qty')
+    units = form.getlist('item_unit')
+    rates = form.getlist('item_rate')
+    for i, name in enumerate(names):
+        name = (name or '').strip()
+        if not name:
+            continue
+        qty = float(qtys[i]) if i < len(qtys) and qtys[i] else 0
+        rate = float(rates[i]) if i < len(rates) and rates[i] else 0
+        cat = cats[i] if i < len(cats) else ''
+        unit = units[i] if i < len(units) else ''
+        conn.execute("""INSERT INTO maintenance_items (maintenance_id, item_name, category, qty, unit, rate, amount)
+                        VALUES (?,?,?,?,?,?,?)""", (service_id, name, cat, qty, unit, rate, qty * rate))
+
+@app.route('/maintenance/service/add', methods=['POST'])
+def add_service():
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    # Workshop/Vendor uses the exact same combined party+vendor lookup as every other vendor field
+    # in the app, so a workshop typed here links up with that same organization's ledger elsewhere.
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    amount = float(f.get('amount') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
+    checklist = ','.join(request.form.getlist('checklist'))
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, service_type, amount, paid_amount, vendor_id, notes,
+                          km_reading, next_due_km, next_service_date, invoice_no, invoice_date, status, checklist_done)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (f.get('date'), vehicle_id, f.get('service_type'), f.get('service_type'), amount, paid_amount, vendor_id,
+         f.get('notes') or None, float(f.get('km_reading') or 0) or None, float(f.get('next_due_km') or 0) or None,
+         f.get('next_service_date') or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
+         f.get('status') or 'Completed', checklist or None))
+    service_id = cur.lastrowid
+    _save_service_items(conn, service_id, request.form)
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='service'))
+
+@app.route('/maintenance/service/edit/<int:m_id>', methods=['POST'])
+def edit_service(m_id):
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    amount = float(f.get('amount') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
+    checklist = ','.join(request.form.getlist('checklist'))
+    conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, category=?, service_type=?, amount=?, paid_amount=?, vendor_id=?,
+                    notes=?, km_reading=?, next_due_km=?, next_service_date=?, invoice_no=?, invoice_date=?, status=?, checklist_done=?
+                    WHERE id=?""",
+        (f.get('date'), vehicle_id, f.get('service_type'), f.get('service_type'), amount, paid_amount, vendor_id,
+         f.get('notes') or None, float(f.get('km_reading') or 0) or None, float(f.get('next_due_km') or 0) or None,
+         f.get('next_service_date') or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
+         f.get('status') or 'Completed', checklist or None, m_id))
+    _save_service_items(conn, m_id, request.form)
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='service'))
+
+@app.route('/maintenance/tyre/add', methods=['POST'])
+def add_tyre():
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+
+    stock_id = f.get('stock_id')
+    if stock_id:
+        # Reusing a tyre already bought into stock — update its existing purchase/ledger
+        # row in place rather than billing the supplier a second time for the same tyre.
+        stock = conn.execute("SELECT * FROM tyre_stock WHERE id=? AND status='In Stock'", (stock_id,)).fetchone()
+        if stock:
+            # The ledger date stays the purchase date — the cost was incurred then, not now —
+            # matching the Tyre Stock table's own Install action.
+            km_reading = float(f.get('km_reading') or 0) or None
+            conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=? WHERE id=?",
+                (vehicle_id, f.get('tyre_position') or None, f.get('tyre_action') or 'New Tyre Fitted',
+                 km_reading, stock['maintenance_id']))
+            conn.execute("""UPDATE tyre_stock SET status='Installed', installed_vehicle_id=?, installed_position=?,
+                            installed_date=? WHERE id=?""", (vehicle_id, f.get('tyre_position') or None, f.get('date'), stock['id']))
+            conn.commit()
+            conn.close()
+            return redirect(url_for('maintenance_list', tab='tyres'))
+
+    # Same combined party+vendor lookup used everywhere else — a tyre supplier typed here
+    # links up with that same organization's ledger, so the cost flows straight into it.
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    amount = float(f.get('amount') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
+    conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes,
+                    km_reading, invoice_no, invoice_date, tyre_action, tyre_id, tyre_brand, tyre_position, status)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (f.get('date'), vehicle_id, 'Tyres', amount, paid_amount, vendor_id, f.get('notes') or None,
+         float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
+         f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
+         f.get('tyre_position') or None, 'Completed'))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='tyres'))
+
+@app.route('/maintenance/tyre/edit/<int:m_id>', methods=['POST'])
+def edit_tyre(m_id):
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    amount = float(f.get('amount') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
+    conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=?,
+                    km_reading=?, invoice_no=?, invoice_date=?, tyre_action=?, tyre_id=?, tyre_brand=?, tyre_position=?
+                    WHERE id=?""",
+        (f.get('date'), vehicle_id, amount, paid_amount, vendor_id, f.get('notes') or None,
+         float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
+         f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
+         f.get('tyre_position') or None, m_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='tyres'))
+
+@app.route('/maintenance/tyre/stock/add', methods=['POST'])
+def add_tyre_stock():
+    conn = get_db()
+    f = request.form
+    # A stock purchase is its own maintenance/ledger entry (no vehicle yet) — installing it later
+    # updates this same row instead of billing the supplier a second time for the same tyre.
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    cost = float(f.get('purchase_cost') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes,
+                          invoice_no, tyre_action, tyre_id, tyre_brand, status)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (f.get('purchase_date'), None, 'Tyres', cost, paid_amount, vendor_id, f.get('notes') or None,
+         f.get('invoice_no') or None, 'Stock Purchase', f.get('tyre_id') or None, f.get('brand') or None, 'Completed'))
+    maintenance_id = cur.lastrowid
+    conn.execute("""INSERT INTO tyre_stock (maintenance_id, tyre_id, brand, tyre_type, purchase_date, purchase_cost,
+                    vendor_id, invoice_no, status, notes) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (maintenance_id, f.get('tyre_id') or None, f.get('brand') or None, f.get('tyre_type') or 'New',
+         f.get('purchase_date'), cost, vendor_id, f.get('invoice_no') or None, 'In Stock', f.get('notes') or None))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='tyres'))
+
+@app.route('/maintenance/tyre/stock/<int:stock_id>/install', methods=['POST'])
+def install_tyre_stock(stock_id):
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    stock = conn.execute("SELECT * FROM tyre_stock WHERE id=?", (stock_id,)).fetchone()
+    if stock and stock['status'] == 'In Stock':
+        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        install_date = f.get('install_date') or stock['purchase_date']
+        km_reading = float(f.get('km_reading') or 0) or None
+        conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=? WHERE id=?",
+            (vehicle_id, f.get('position'), 'New Tyre Fitted', km_reading, stock['maintenance_id']))
+        conn.execute("""UPDATE tyre_stock SET status='Installed', installed_vehicle_id=?, installed_position=?,
+                        installed_date=? WHERE id=?""", (vehicle_id, f.get('position'), install_date, stock_id))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='tyres'))
+
+@app.route('/maintenance/tyre/stock/<int:stock_id>/scrap', methods=['POST'])
+def scrap_tyre_stock(stock_id):
+    conn = get_db()
+    conn.execute("UPDATE tyre_stock SET status='Scrapped' WHERE id=? AND status='In Stock'", (stock_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='tyres'))
+
+@app.route('/maintenance/tyre/stock/<int:stock_id>/delete', methods=['POST'])
+def delete_tyre_stock(stock_id):
+    conn = get_db()
+    stock = conn.execute("SELECT * FROM tyre_stock WHERE id=?", (stock_id,)).fetchone()
+    if stock and stock['status'] == 'In Stock':
+        conn.execute("DELETE FROM maintenance WHERE id=?", (stock['maintenance_id'],))
+        conn.execute("DELETE FROM tyre_stock WHERE id=?", (stock_id,))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='tyres'))
+
+@app.route('/maintenance/battery/add', methods=['POST'])
+def add_battery():
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    mode = f.get('mode', 'install')
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) if mode == 'install' else None
+    # Same purchase-record-becomes-ledger-entry pattern as Tyres: the cost posts once, here,
+    # whether the battery goes straight onto a vehicle or sits in stock first.
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    price = float(f.get('purchase_price') or 0)
+    battery_no = _next_battery_no(conn)
+    health = float(f.get('health_pct') or 0) or None
+    voltage = float(f.get('voltage') or 0) or None
+    temp_c = float(f.get('temp_c') or 0) or None
+
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, invoice_no, status)
+                          VALUES (?,?,?,?,?,?,?,?,?)""",
+        (f.get('purchase_date'), vehicle_id, 'Battery', price, float(f.get('paid_amount') or 0), vendor_id,
+         f.get('notes') or None, f.get('invoice_no') or None, 'Completed'))
+    maintenance_id = cur.lastrowid
+
+    install_date = f.get('install_date') if mode == 'install' else None
+    cur2 = conn.execute("""INSERT INTO batteries (battery_no, brand, model, capacity_ah, battery_type, voltage_rating, serial_no,
+                           vehicle_id, installed_location, install_date, purchase_date, purchase_price, vendor_id, invoice_no,
+                           warranty_months, maintenance_id, health_pct, voltage, temp_c, last_checked_date, notes)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (battery_no, f.get('brand') or None, f.get('model') or None, float(f.get('capacity_ah') or 0) or None,
+         f.get('battery_type') or None, f.get('voltage_rating') or None, f.get('serial_no') or None,
+         vehicle_id, f.get('installed_location') or None, install_date, f.get('purchase_date'), price, vendor_id,
+         f.get('invoice_no') or None, int(f.get('warranty_months') or 0) or None, maintenance_id,
+         health, voltage, temp_c, install_date or f.get('purchase_date'), f.get('notes') or None))
+    battery_id = cur2.lastrowid
+
+    conn.execute("INSERT INTO battery_checks (battery_id, date, event) VALUES (?,?,?)",
+                 (battery_id, f.get('purchase_date'), 'Purchased'))
+    if mode == 'install' and install_date:
+        conn.execute("INSERT INTO battery_checks (battery_id, date, event, health_pct, voltage, temp_c) VALUES (?,?,?,?,?,?)",
+                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", health, voltage, temp_c))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='battery'))
+
+@app.route('/maintenance/battery/<int:battery_id>/install', methods=['POST'])
+def install_battery(battery_id):
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    battery = conn.execute("SELECT * FROM batteries WHERE id=?", (battery_id,)).fetchone()
+    if battery and not battery['vehicle_id']:
+        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        install_date = f.get('install_date')
+        conn.execute("UPDATE batteries SET vehicle_id=?, installed_location=?, install_date=?, last_checked_date=? WHERE id=?",
+                     (vehicle_id, f.get('installed_location') or None, install_date, install_date, battery_id))
+        if battery['maintenance_id']:
+            conn.execute("UPDATE maintenance SET vehicle_id=? WHERE id=?", (vehicle_id, battery['maintenance_id']))
+        conn.execute("INSERT INTO battery_checks (battery_id, date, event) VALUES (?,?,?)",
+                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}"))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='battery'))
+
+@app.route('/maintenance/battery/<int:battery_id>/check', methods=['POST'])
+def check_battery(battery_id):
+    conn = get_db()
+    f = request.form
+    health = float(f.get('health_pct') or 0) or None
+    voltage = float(f.get('voltage') or 0) or None
+    temp_c = float(f.get('temp_c') or 0) or None
+    date = f.get('date') or datetime.date.today().isoformat()
+    conn.execute("UPDATE batteries SET health_pct=?, voltage=?, temp_c=?, last_checked_date=? WHERE id=?",
+                 (health, voltage, temp_c, date, battery_id))
+    conn.execute("INSERT INTO battery_checks (battery_id, date, event, health_pct, voltage, temp_c, remarks) VALUES (?,?,?,?,?,?,?)",
+                 (battery_id, date, 'Health Check', health, voltage, temp_c, f.get('remarks') or None))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='battery'))
+
+@app.route('/maintenance/battery/<int:battery_id>/dead', methods=['POST'])
+def mark_battery_dead(battery_id):
+    conn = get_db()
+    today = datetime.date.today().isoformat()
+    conn.execute("UPDATE batteries SET status_override='Dead' WHERE id=?", (battery_id,))
+    conn.execute("INSERT INTO battery_checks (battery_id, date, event) VALUES (?,?,?)", (battery_id, today, 'Marked Dead'))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='battery'))
+
+@app.route('/maintenance/battery/<int:battery_id>/delete', methods=['POST'])
+def delete_battery(battery_id):
+    conn = get_db()
+    battery = conn.execute("SELECT * FROM batteries WHERE id=?", (battery_id,)).fetchone()
+    if battery and not battery['vehicle_id']:
+        if battery['maintenance_id']:
+            conn.execute("DELETE FROM maintenance WHERE id=?", (battery['maintenance_id'],))
+        conn.execute("DELETE FROM battery_checks WHERE battery_id=?", (battery_id,))
+        conn.execute("DELETE FROM batteries WHERE id=?", (battery_id,))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='battery'))
 
 def _filter_entries_by_date(entries, date_from, date_to):
     if date_from:
@@ -1129,8 +2056,11 @@ def _get_party_ledger_entries(party_id):
 def _get_vendor_ledger_entries(vendor_id):
     conn = get_db()
     vendor = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM vendors WHERE id=?", (vendor_id,)).fetchone()
-    maint = conn.execute("""SELECT date, category, amount, paid_amount FROM maintenance
-                             WHERE vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
+    maint = conn.execute("""SELECT m.date, m.category, m.service_type, m.tyre_action, m.tyre_id, m.invoice_no,
+                             m.amount, m.paid_amount, v.vehicle_no, b.battery_no
+                             FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                             LEFT JOIN batteries b ON b.maintenance_id=m.id
+                             WHERE m.vendor_id=? ORDER BY m.date""", (vendor_id,)).fetchall()
     fuel = conn.execute("""SELECT date, fuel_amount, type FROM trips WHERE fuel_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
     adv = conn.execute("""SELECT date, driver_adv_amount, type FROM trips WHERE driver_adv_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
     owner_trips = conn.execute("""SELECT id, date, lr_number, rate_type, fixed_rate_amount, owner_rate, quantity, paid_to_owner, type
@@ -1148,7 +2078,15 @@ def _get_vendor_ledger_entries(vendor_id):
         entries.append({'date': vendor['opening_balance_date'] or vendor['since_date'] or '', 'detail': 'Opening Balance',
                          'debit': max(ob, 0), 'credit': max(-ob, 0), 'kind': 'Opening Balance', 'ref': '', 'vehicle_type': ''})
     for m in maint:
-        entries.append({'date': m['date'], 'detail': f"Maintenance: {m['category']}",
+        label = m['service_type'] or m['tyre_action'] or m['category'] or 'Maintenance'
+        detail = f"Maintenance: {label}" + (f" — {m['vehicle_no']}" if m['vehicle_no'] else '')
+        if m['tyre_id']:
+            detail += f" (Tyre {m['tyre_id']})"
+        if m['battery_no']:
+            detail += f" ({m['battery_no']})"
+        if m['invoice_no']:
+            detail += f" [Inv #{m['invoice_no']}]"
+        entries.append({'date': m['date'], 'detail': detail,
                          'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': ''})
     for f in fuel:
@@ -1430,9 +2368,11 @@ def end_trip(trip_id):
 def delete_maintenance(m_id):
     conn = get_db()
     conn.execute("DELETE FROM maintenance WHERE id=?", (m_id,))
+    conn.execute("DELETE FROM maintenance_items WHERE maintenance_id=?", (m_id,))
     conn.commit()
     conn.close()
-    return redirect(url_for('maintenance_list'))
+    tab = request.args.get('tab') or request.form.get('tab') or 'service'
+    return redirect(url_for('maintenance_list', tab=tab))
 
 @app.route('/maintenance/edit/<int:m_id>', methods=['GET', 'POST'])
 def edit_maintenance(m_id):
