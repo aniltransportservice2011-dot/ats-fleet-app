@@ -22,8 +22,6 @@
   .toggle-badge { padding:2px 10px; border-radius:10px; font-size:0.72rem; font-weight:600; }
   .toggle-badge.on { background:#e8f5ee; color:var(--green); }
   .toggle-badge.off { background:#fdecea; color:var(--red); }
-  .settings-form { display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
-  .settings-form.open { display:block; }
   @media (max-width:900px) { .grid-2card { grid-template-columns:1fr; } }
 
   .ur-kpi-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
@@ -58,7 +56,7 @@
   .ur-guide-card ul { margin:0; padding-left:18px; font-size:0.78rem; color:var(--steel); }
   .ur-guide-card ul li { margin-bottom:3px; }
 
-  .ur-modal-box { width:640px; max-width:92vw; max-height:88vh; overflow-y:auto; }
+  .ur-modal-box { width:720px; max-width:92vw; max-height:88vh; overflow-y:auto; }
   label.ur-section-lbl { font-size:0.7rem; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:0; }
   .ur-access-tiles { display:flex; gap:10px; margin-bottom:4px; }
   .ur-access-tile { flex:1; border:1.5px solid var(--line); border-radius:8px; padding:12px 10px; cursor:pointer; text-align:center; }
@@ -88,7 +86,7 @@
       <div class="card">
         <div class="card-head">
           <div><h3>Company Details</h3><div class="sub">Update your company information and contact details.</div></div>
-          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('companyView','companyForm',this)">Edit</button>
+          <button type="button" class="edit-toggle-btn" onclick="document.getElementById('companyEditModal').classList.add('open')">Edit</button>
         </div>
         <div class="kv-grid" id="companyView">
           <div><div class="lbl">Company Name</div>{{ s['company_name'] }}</div>
@@ -102,26 +100,32 @@
           <div><div class="lbl">Email</div>{{ s['email'] }}</div>
           <div><div class="lbl">Currency</div>{{ s['currency'] }}</div>
         </div>
-        <form method="POST" action="/settings?tab=company" class="settings-form" id="companyForm">
-          <input type="hidden" name="form_type" value="company">
-          <div class="row2"><div><label>Company Name</label><input type="text" name="company_name" value="{{ s['company_name'] }}"></div>
-            <div><label>GSTIN</label><input type="text" name="gstin" value="{{ s['gstin'] }}"></div></div>
-          <div><label>Address</label><input type="text" name="address" value="{{ s['address'] }}"></div>
-          <div class="row2"><div><label>State</label><input type="text" name="state" value="{{ s['state'] }}"></div>
-            <div><label>PAN</label><input type="text" name="pan" value="{{ s['pan'] }}"></div></div>
-          <div class="row2"><div><label>Business Type</label><input type="text" name="business_type" value="{{ s['business_type'] }}"></div>
-            <div><label>Company Since</label><input type="date" name="company_since" value="{{ s['company_since'] }}"></div></div>
-          <div class="row2"><div><label>Phone</label><input type="text" name="phone" value="{{ s['phone'] }}"></div>
-            <div><label>Email</label><input type="email" name="email" value="{{ s['email'] }}"></div></div>
-          <div><label>Currency</label><input type="text" name="currency" value="{{ s['currency'] }}"></div>
-          <button type="submit" class="modal-save-btn">Update Company Details</button>
-        </form>
+        <div class="modal-overlay" id="companyEditModal">
+          <div class="modal-box ur-modal-box">
+            <button type="button" class="modal-close-x" onclick="document.getElementById('companyEditModal').classList.remove('open')">&#10005;</button>
+            <h3>Edit Company Details</h3>
+            <form method="POST" action="/settings?tab=company">
+              <input type="hidden" name="form_type" value="company">
+              <div class="row2"><div><label>Company Name</label><input type="text" name="company_name" value="{{ s['company_name'] }}"></div>
+                <div><label>GSTIN</label><input type="text" name="gstin" value="{{ s['gstin'] }}"></div></div>
+              <div><label>Address</label><input type="text" name="address" value="{{ s['address'] }}"></div>
+              <div class="row2"><div><label>State</label><input type="text" name="state" value="{{ s['state'] }}"></div>
+                <div><label>PAN</label><input type="text" name="pan" value="{{ s['pan'] }}"></div></div>
+              <div class="row2"><div><label>Business Type</label><input type="text" name="business_type" value="{{ s['business_type'] }}"></div>
+                <div><label>Company Since</label><input type="date" name="company_since" value="{{ s['company_since'] }}"></div></div>
+              <div class="row2"><div><label>Phone</label><input type="text" name="phone" value="{{ s['phone'] }}"></div>
+                <div><label>Email</label><input type="email" name="email" value="{{ s['email'] }}"></div></div>
+              <div><label>Currency</label><input type="text" name="currency" value="{{ s['currency'] }}"></div>
+              <button type="submit" class="modal-save-btn">Update Company Details</button>
+            </form>
+          </div>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-head">
           <div><h3>Banking Details</h3><div class="sub">Manage bank accounts used for transactions.</div></div>
-          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('bankView','bankForm',this)">Edit</button>
+          <button type="button" class="edit-toggle-btn" onclick="document.getElementById('bankEditModal').classList.add('open')">Edit</button>
         </div>
         <div class="kv-grid" id="bankView">
           <div><div class="lbl">Bank Name</div>{{ s['bank_name'] or '—' }}</div>
@@ -132,16 +136,22 @@
           <div><div class="lbl">Account Type</div>{{ s['account_type'] or '—' }}</div>
         </div>
         <div style="font-size:11px;color:var(--steel);margin-top:10px;">Shown only on Tax Invoices.</div>
-        <form method="POST" action="/settings?tab=company" class="settings-form" id="bankForm">
-          <input type="hidden" name="form_type" value="banking">
-          <div class="row2"><div><label>Bank Name</label><input type="text" name="bank_name" value="{{ s['bank_name'] }}"></div>
-            <div><label>Account Holder</label><input type="text" name="account_holder" value="{{ s['account_holder'] }}"></div></div>
-          <div class="row2"><div><label>Account Number</label><input type="text" name="account_number" value="{{ s['account_number'] }}"></div>
-            <div><label>IFSC Code</label><input type="text" name="ifsc_code" value="{{ s['ifsc_code'] }}"></div></div>
-          <div class="row2"><div><label>Branch</label><input type="text" name="branch" value="{{ s['branch'] }}"></div>
-            <div><label>Account Type</label><input type="text" name="account_type" value="{{ s['account_type'] }}"></div></div>
-          <button type="submit" class="modal-save-btn">Update Banking Details</button>
-        </form>
+        <div class="modal-overlay" id="bankEditModal">
+          <div class="modal-box ur-modal-box">
+            <button type="button" class="modal-close-x" onclick="document.getElementById('bankEditModal').classList.remove('open')">&#10005;</button>
+            <h3>Edit Banking Details</h3>
+            <form method="POST" action="/settings?tab=company">
+              <input type="hidden" name="form_type" value="banking">
+              <div class="row2"><div><label>Bank Name</label><input type="text" name="bank_name" value="{{ s['bank_name'] }}"></div>
+                <div><label>Account Holder</label><input type="text" name="account_holder" value="{{ s['account_holder'] }}"></div></div>
+              <div class="row2"><div><label>Account Number</label><input type="text" name="account_number" value="{{ s['account_number'] }}"></div>
+                <div><label>IFSC Code</label><input type="text" name="ifsc_code" value="{{ s['ifsc_code'] }}"></div></div>
+              <div class="row2"><div><label>Branch</label><input type="text" name="branch" value="{{ s['branch'] }}"></div>
+                <div><label>Account Type</label><input type="text" name="account_type" value="{{ s['account_type'] }}"></div></div>
+              <button type="submit" class="modal-save-btn">Update Banking Details</button>
+            </form>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -151,7 +161,7 @@
       <div class="card">
         <div class="card-head">
           <div><h3>Invoice Preferences</h3><div class="sub">Set default preferences for invoice generation.</div></div>
-          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('prefsView','prefsForm',this)">Edit</button>
+          <button type="button" class="edit-toggle-btn" onclick="document.getElementById('prefsEditModal').classList.add('open')">Edit</button>
         </div>
         <div class="kv-grid" id="prefsView">
           <div><div class="lbl">Default Invoice Type</div>{{ {'party':'Party Invoice','vehicle_owner':'Market Vehicle Invoice','tax':'Tax Invoice (With GST)','bill':'Bill Invoice'}[s['default_invoice_type']] if s['default_invoice_type'] else '—' }}</div>
@@ -163,43 +173,55 @@
           <div><div class="lbl">Default Due Days</div>{{ s['default_due_days'] or '—' }} Days</div>
           <div><div class="lbl">Print Amount in Words</div><span class="toggle-badge {{ 'on' if s['print_amount_words']=='1' else 'off' }}">{{ 'Enabled' if s['print_amount_words']=='1' else 'Disabled' }}</span></div>
         </div>
-        <form method="POST" action="/settings?tab=invoice" class="settings-form" id="prefsForm">
-          <input type="hidden" name="form_type" value="invoice_prefs">
-          <div><label>Default Invoice Type</label>
-            <select name="default_invoice_type">
-              <option value="party" {% if s['default_invoice_type']=='party' %}selected{% endif %}>Party Invoice</option>
-              <option value="vehicle_owner" {% if s['default_invoice_type']=='vehicle_owner' %}selected{% endif %}>Market Vehicle Invoice</option>
-              <option value="tax" {% if s['default_invoice_type']=='tax' %}selected{% endif %}>Tax Invoice (With GST)</option>
-              <option value="bill" {% if s['default_invoice_type']=='bill' %}selected{% endif %}>Bill Invoice</option>
-            </select>
+        <div class="modal-overlay" id="prefsEditModal">
+          <div class="modal-box ur-modal-box">
+            <button type="button" class="modal-close-x" onclick="document.getElementById('prefsEditModal').classList.remove('open')">&#10005;</button>
+            <h3>Edit Invoice Preferences</h3>
+            <form method="POST" action="/settings?tab=invoice">
+              <input type="hidden" name="form_type" value="invoice_prefs">
+              <div><label>Default Invoice Type</label>
+                <select name="default_invoice_type">
+                  <option value="party" {% if s['default_invoice_type']=='party' %}selected{% endif %}>Party Invoice</option>
+                  <option value="vehicle_owner" {% if s['default_invoice_type']=='vehicle_owner' %}selected{% endif %}>Market Vehicle Invoice</option>
+                  <option value="tax" {% if s['default_invoice_type']=='tax' %}selected{% endif %}>Tax Invoice (With GST)</option>
+                  <option value="bill" {% if s['default_invoice_type']=='bill' %}selected{% endif %}>Bill Invoice</option>
+                </select>
+              </div>
+              <div class="row2"><div><label>Payment Terms</label><input type="text" name="default_payment_terms" value="{{ s['default_payment_terms'] }}"></div>
+                <div><label>Place of Supply</label><input type="text" name="default_place_of_supply" value="{{ s['default_place_of_supply'] }}"></div></div>
+              <div><label>Default Due Days</label><input type="number" name="default_due_days" value="{{ s['default_due_days'] }}"></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_company_logo" {% if s['show_company_logo']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Company Logo</label></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_bank_details" {% if s['show_bank_details']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Bank Details</label></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_signatory" {% if s['show_signatory']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Authorised Signatory</label></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><input type="checkbox" name="print_amount_words" {% if s['print_amount_words']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Print Amount in Words</label></div>
+              <button type="submit" class="modal-save-btn">Update Preferences</button>
+            </form>
           </div>
-          <div class="row2"><div><label>Payment Terms</label><input type="text" name="default_payment_terms" value="{{ s['default_payment_terms'] }}"></div>
-            <div><label>Place of Supply</label><input type="text" name="default_place_of_supply" value="{{ s['default_place_of_supply'] }}"></div></div>
-          <div><label>Default Due Days</label><input type="number" name="default_due_days" value="{{ s['default_due_days'] }}"></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_company_logo" {% if s['show_company_logo']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Company Logo</label></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_bank_details" {% if s['show_bank_details']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Bank Details</label></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="show_signatory" {% if s['show_signatory']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Show Authorised Signatory</label></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><input type="checkbox" name="print_amount_words" {% if s['print_amount_words']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Print Amount in Words</label></div>
-          <button type="submit" class="modal-save-btn">Update Preferences</button>
-        </form>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-head">
           <div><h3>Invoice Numbering</h3><div class="sub">Configure invoice number series and formats.</div></div>
-          <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('numberingView','numForm',this)">Edit</button>
+          <button type="button" class="edit-toggle-btn" onclick="document.getElementById('numEditModal').classList.add('open')">Edit</button>
         </div>
         <div class="kv-grid" id="numberingView">
           <div><div class="lbl">Invoice Prefix</div>{{ s['invoice_prefix'] }}</div>
           <div><div class="lbl">Next Invoice Number</div>{{ s['next_invoice_number'] }}</div>
           <div style="grid-column:span 2;"><div class="lbl">Example</div><span style="background:#fff6ee;color:var(--accent);padding:3px 10px;border-radius:4px;font-weight:600;">{{ invoice_example }}</span></div>
         </div>
-        <form method="POST" action="/settings?tab=invoice" class="settings-form" id="numForm">
-          <input type="hidden" name="form_type" value="invoice_numbering">
-          <div class="row2"><div><label>Invoice Prefix</label><input type="text" name="invoice_prefix" value="{{ s['invoice_prefix'] }}"></div>
-            <div><label>Next Invoice Number</label><input type="number" name="next_invoice_number" value="{{ s['next_invoice_number'] }}"></div></div>
-          <button type="submit" class="modal-save-btn">Update Numbering</button>
-        </form>
+        <div class="modal-overlay" id="numEditModal">
+          <div class="modal-box ur-modal-box">
+            <button type="button" class="modal-close-x" onclick="document.getElementById('numEditModal').classList.remove('open')">&#10005;</button>
+            <h3>Edit Invoice Numbering</h3>
+            <form method="POST" action="/settings?tab=invoice">
+              <input type="hidden" name="form_type" value="invoice_numbering">
+              <div class="row2"><div><label>Invoice Prefix</label><input type="text" name="invoice_prefix" value="{{ s['invoice_prefix'] }}"></div>
+                <div><label>Next Invoice Number</label><input type="number" name="next_invoice_number" value="{{ s['next_invoice_number'] }}"></div></div>
+              <button type="submit" class="modal-save-btn">Update Numbering</button>
+            </form>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -208,7 +230,7 @@
     <div class="card">
       <div class="card-head">
         <div><h3>GST &amp; Tax Settings</h3><div class="sub">Configure GST rates, reverse charge and other tax related settings.</div></div>
-        <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('taxView','taxForm',this)">Edit</button>
+        <button type="button" class="edit-toggle-btn" onclick="document.getElementById('taxEditModal').classList.add('open')">Edit</button>
       </div>
       <div class="grid-2card" id="taxView" style="grid-template-columns:repeat(4,1fr);">
         <div>
@@ -235,19 +257,25 @@
           <div style="display:flex;justify-content:space-between;"><span>Round Off Limit</span><b>₹{{ s['round_off_limit'] }}</b></div>
         </div>
       </div>
-      <form method="POST" action="/settings?tab=tax" class="settings-form" id="taxForm">
-        <input type="hidden" name="form_type" value="tax">
-        <div class="row2"><div><label>CGST Rate (%)</label><input type="number" step="0.01" name="cgst_rate" value="{{ s['cgst_rate'] }}"></div>
-          <div><label>SGST Rate (%)</label><input type="number" step="0.01" name="sgst_rate" value="{{ s['sgst_rate'] }}"></div></div>
-        <div><label>IGST Rate (%)</label><input type="number" step="0.01" name="igst_rate" value="{{ s['igst_rate'] }}"></div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="reverse_charge_applicable" {% if s['reverse_charge_applicable']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Reverse Charge Applicable</label></div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="rcm_on_transport" {% if s['rcm_on_transport']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">RCM on Transport (Goods)</label></div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="tds_applicable" {% if s['tds_applicable']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">TDS Applicable</label></div>
-        <div><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate_default" value="{{ s['tds_rate_default'] }}"></div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="eway_bill_mandatory" {% if s['eway_bill_mandatory']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">E-Way Bill Mandatory</label></div>
-        <div><label>Round Off Limit (₹)</label><input type="number" step="0.01" name="round_off_limit" value="{{ s['round_off_limit'] }}"></div>
-        <button type="submit" class="modal-save-btn">Update Tax Settings</button>
-      </form>
+      <div class="modal-overlay" id="taxEditModal">
+        <div class="modal-box ur-modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('taxEditModal').classList.remove('open')">&#10005;</button>
+          <h3>Edit GST &amp; Tax Settings</h3>
+          <form method="POST" action="/settings?tab=tax">
+            <input type="hidden" name="form_type" value="tax">
+            <div class="row2"><div><label>CGST Rate (%)</label><input type="number" step="0.01" name="cgst_rate" value="{{ s['cgst_rate'] }}"></div>
+              <div><label>SGST Rate (%)</label><input type="number" step="0.01" name="sgst_rate" value="{{ s['sgst_rate'] }}"></div></div>
+            <div><label>IGST Rate (%)</label><input type="number" step="0.01" name="igst_rate" value="{{ s['igst_rate'] }}"></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="reverse_charge_applicable" {% if s['reverse_charge_applicable']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">Reverse Charge Applicable</label></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="rcm_on_transport" {% if s['rcm_on_transport']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">RCM on Transport (Goods)</label></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="tds_applicable" {% if s['tds_applicable']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">TDS Applicable</label></div>
+            <div><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate_default" value="{{ s['tds_rate_default'] }}"></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><input type="checkbox" name="eway_bill_mandatory" {% if s['eway_bill_mandatory']=='1' %}checked{% endif %} style="width:auto;margin:0;"><label style="margin:0;text-transform:none;font-weight:400;">E-Way Bill Mandatory</label></div>
+            <div><label>Round Off Limit (₹)</label><input type="number" step="0.01" name="round_off_limit" value="{{ s['round_off_limit'] }}"></div>
+            <button type="submit" class="modal-save-btn">Update Tax Settings</button>
+          </form>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -298,7 +326,7 @@
         <table id="urTable">
           <tr><th>User</th><th>Role</th><th>Access Level</th><th>Mobile / Email</th><th>Status</th><th>Last Login</th><th></th></tr>
           {% for u in users %}
-          <tr data-role="{{ u['role'] or '' }}" data-access="{{ u['access_level'] or '' }}" data-status="{{ u['status'] or 'Active' }}" data-search="{{ ((u['full_name'] or '') ~ ' ' ~ u['username'] ~ ' ' ~ (u['phone'] or ''))|lower }}">
+          <tr class="clickable-row" onclick="document.getElementById('editUserModal{{ u['id'] }}').classList.add('open')" data-role="{{ u['role'] or '' }}" data-access="{{ u['access_level'] or '' }}" data-status="{{ u['status'] or 'Active' }}" data-search="{{ ((u['full_name'] or '') ~ ' ' ~ u['username'] ~ ' ' ~ (u['phone'] or ''))|lower }}">
             <td>
               <div class="ur-user-cell">
                 <div class="ur-avatar">{{ (u['full_name'] or u['username'])[:2]|upper }}</div>
@@ -317,8 +345,7 @@
             <td>{{ u['phone'] or '—' }}{% if u['email'] %}<div style="color:var(--steel);font-size:0.76rem;">{{ u['email'] }}</div>{% endif %}</td>
             <td><span class="ur-badge" style="{% if (u['status'] or 'Active')=='Active' %}background:#e8f5ee;color:var(--green);{% else %}background:#fdecea;color:var(--red);{% endif %}">{{ u['status'] or 'Active' }}</span></td>
             <td style="font-size:0.8rem;white-space:nowrap;">{{ u['last_login'] or 'Never' }}</td>
-            <td onclick="event.stopPropagation();white-space:nowrap;">
-              <button type="button" title="Edit" onclick="document.getElementById('editUserModal{{ u['id'] }}').classList.add('open')" style="background:none;border:none;color:var(--steel);cursor:pointer;padding:4px;font-size:0.9rem;">&#9998;</button>
+            <td onclick="event.stopPropagation();">
               <form method="POST" action="/settings/users/{{ u['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Remove {{ u['username'] }}\'s access? This cannot be undone.');">
                 <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:4px;font-size:0.9rem;">&#128465;</button>
               </form>
@@ -405,7 +432,7 @@
     <div class="card">
       <div class="card-head">
         <div><h3>Mobile OTP Login (SMS via Twilio)</h3><div class="sub">Lets staff sign in with just their phone number and a one-time code. Requires a Twilio account.</div></div>
-        <button type="button" class="edit-toggle-btn" onclick="toggleEditMode('smsView','smsForm',this)">Edit</button>
+        <button type="button" class="edit-toggle-btn" onclick="document.getElementById('smsEditModal').classList.add('open')">Edit</button>
       </div>
       <div class="kv-grid" id="smsView">
         <div><div class="lbl">Account SID</div>{{ s['twilio_account_sid'] or '—' }}</div>
@@ -418,13 +445,19 @@
         </div>
       </div>
       <div style="font-size:11px;color:var(--steel);margin-top:10px;">Get these from your Twilio Console (twilio.com/console). Each OTP sent is billed by Twilio.</div>
-      <form method="POST" action="/settings?tab=users" class="settings-form" id="smsForm">
-        <input type="hidden" name="form_type" value="sms">
-        <div><label>Account SID</label><input type="text" name="twilio_account_sid" value="{{ s['twilio_account_sid'] }}" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></div>
-        <div><label>Auth Token</label><input type="password" name="twilio_auth_token" value="{{ s['twilio_auth_token'] }}"></div>
-        <div><label>From Number (Twilio number)</label><input type="text" name="twilio_from_number" value="{{ s['twilio_from_number'] }}" placeholder="+1XXXXXXXXXX"></div>
-        <button type="submit" class="modal-save-btn">Save SMS Settings</button>
-      </form>
+      <div class="modal-overlay" id="smsEditModal">
+        <div class="modal-box ur-modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('smsEditModal').classList.remove('open')">&#10005;</button>
+          <h3>Edit Mobile OTP Login (SMS)</h3>
+          <form method="POST" action="/settings?tab=users">
+            <input type="hidden" name="form_type" value="sms">
+            <div><label>Account SID</label><input type="text" name="twilio_account_sid" value="{{ s['twilio_account_sid'] }}" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></div>
+            <div><label>Auth Token</label><input type="password" name="twilio_auth_token" value="{{ s['twilio_auth_token'] }}"></div>
+            <div><label>From Number (Twilio number)</label><input type="text" name="twilio_from_number" value="{{ s['twilio_from_number'] }}" placeholder="+1XXXXXXXXXX"></div>
+            <button type="submit" class="modal-save-btn">Save SMS Settings</button>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -543,14 +576,6 @@ function showSTab(id, btn) {
   document.querySelectorAll('.settings-tab').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById(id).classList.add('active');
   btn.classList.add('active');
-}
-function toggleEditMode(viewId, formId, btn) {
-  var view = document.getElementById(viewId);
-  var form = document.getElementById(formId);
-  var opening = !form.classList.contains('open');
-  form.classList.toggle('open', opening);
-  view.style.display = opening ? 'none' : '';
-  if (btn) btn.textContent = opening ? 'Cancel' : 'Edit';
 }
 function urShowSub(id, btn) {
   document.querySelectorAll('.ur-subpanel').forEach(function(p) { p.classList.remove('active'); });
