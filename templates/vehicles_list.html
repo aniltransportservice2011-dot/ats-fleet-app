@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
 {% block title %}Vehicles{% endblock %}
 {% block extra_head %}
 <style>
@@ -6,113 +7,297 @@
 .modal-overlay.open { display:flex; }
 .modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:460px; max-width:90vw; max-height:85vh; overflow-y:auto; }
 .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
-.modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
-.modal-box input, .modal-box select, .modal-box textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; }
+/* Scoped to :not(.mt-modal-box) so these don't leak into the reused Insurance modal
+   (which is .modal-box.mt-modal-box, styled by its own global .mt-fld/.ins-* rules) —
+   without this, equal-specificity + later source order let these silently win there too. */
+.modal-box:not(.mt-modal-box) label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
+.modal-box:not(.mt-modal-box) input:not([type=file]), .modal-box:not(.mt-modal-box) select, .modal-box:not(.mt-modal-box) textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; }
 .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
 .section-label { font-size:0.72rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.06em; text-align:center; margin:16px 0 12px; border-top:1px solid var(--line); padding-top:14px; }
-.summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }
-.summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
-.summary-card .lbl { font-size:0.78rem; color:var(--steel); }
-.summary-card .val { font-size:1.3rem; font-weight:700; margin-top:2px; }
-.type-pill { display:inline-block; padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+.type-pill, .status-pill { display:inline-block; padding:2px 10px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+.veh-modal-box { width:720px; max-width:92vw; max-height:88vh; padding:28px 30px; }
+.veh-modal-box h3 { margin-bottom:20px; }
+.veh-modal-box .mt-form-grid { grid-template-columns:1fr 1fr; gap:18px 20px; margin-bottom:18px; }
+.veh-modal-box .mt-fld { margin-bottom:0; }
+.veh-modal-box .mt-fld label { margin-bottom:6px; }
+.veh-modal-box .mt-fld input, .veh-modal-box .mt-fld select, .veh-modal-box .mt-fld textarea { margin-bottom:0; padding:10px 12px; font-size:0.92rem; }
+.veh-modal-box textarea { min-height:70px; }
+
+.veh-layout { display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start; }
+@media (max-width:1100px) { .veh-layout { grid-template-columns:1fr; } }
+.veh-side { display:flex; flex-direction:column; gap:16px; }
+.veh-comp-row { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:0.82rem; }
+.veh-comp-row:last-child { border-bottom:none; }
+.veh-comp-row .lbl { flex:1; font-weight:600; }
+.veh-comp-row .track { flex:1.3; height:6px; background:var(--paper); border-radius:3px; overflow:hidden; display:flex; }
+.veh-comp-row .track .exp { background:var(--red); height:100%; }
+.veh-comp-row .track .soon { background:var(--accent); height:100%; }
+.veh-comp-row .nums { font-size:0.72rem; color:var(--steel); white-space:nowrap; min-width:112px; text-align:right; }
+.veh-donut-row { display:flex; align-items:center; gap:16px; }
+.veh-donut-legend { flex:1; font-size:0.78rem; }
+.veh-donut-legend .item { display:flex; align-items:center; gap:7px; padding:4px 0; }
+.veh-donut-legend .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.veh-donut-legend .n { margin-left:auto; font-weight:700; }
+.veh-qa { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.veh-qa a, .veh-qa button { display:flex; flex-direction:column; align-items:center; gap:4px; padding:12px 6px; border:1px solid var(--line); border-radius:8px; background:var(--white); font-size:0.76rem; font-weight:600; color:var(--ink); text-decoration:none; cursor:pointer; }
+.veh-qa a:hover, .veh-qa button:hover { border-color:var(--accent); background:#fff3e8; }
+.veh-qa .ic { font-size:1.15rem; }
 </style>
 {% endblock %}
 {% block content %}
-<div class="wrap">
-  <h1>Vehicles <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Vehicle</button></h1>
-
-  <form class="filter-bar" method="GET">
-    <div class="field"><label>Type</label>
-      <select name="type"><option value="">All</option>
-        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
-        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
-        <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
-      </select>
+{% set tab_titles = {'all':'All Vehicles','insurance':'Insurance','permit':'Permit & Fitness'} %}
+{% set body_colors = ['#2a78d6','#1a9c5b','#eda100','#4a3aa7','#c05621','#8a8f98'] %}
+<div class="wrap" style="max-width:1500px;">
+  <div class="mt-crumb"><a href="/vehicles">Vehicles</a> &nbsp;&rsaquo;&nbsp; {{ tab_titles.get(tab, 'All Vehicles') }}</div>
+  <div class="mt-head">
+    <div>
+      <h1>Vehicles</h1>
+      <div class="sub">{{ tab_titles.get(tab, 'All Vehicles') }} — fleet roster, insurance and compliance in one place.</div>
     </div>
-    <button type="submit">Apply</button>
-    <a class="clear" href="/vehicles">Clear</a>
-  </form>
-
-  <div class="summary-cards">
-    <div class="summary-card"><div class="lbl">Total Vehicles</div><div class="val">{{ rows|length }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Trips</div><div class="val">{{ rows|sum(attribute='trip_count') }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(rows|sum(attribute='total_billed')) }}</div></div>
-    <div class="summary-card"><div class="lbl">Avg. Per Vehicle</div><div class="val">₹{{ '{:,.0f}'.format((rows|sum(attribute='total_billed'))/(rows|length) if rows|length > 0 else 0) }}</div></div>
+    {% if tab == 'all' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addModal').classList.add('open')">+ Add Vehicle</button>
+    {% elif tab == 'insurance' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addInsuranceModal').classList.add('open')">+ Add Insurance</button>
+    {% endif %}
   </div>
 
-  <table>
-    <tr><th>Vehicle No</th><th>Type</th><th class="num">Trips</th><th class="num">Total Billed</th><th>Insurance Exp.</th><th>Fitness Exp.</th><th></th></tr>
-    {% for r in rows %}
-    <tr class="clickable-row" onclick="document.getElementById('editModal{{ loop.index }}').classList.add('open')">
-      <td>{{ r['vehicle_no'] }}</td>
-      <td><span class="type-pill" style="background:{% if r['type']=='Line' %}#eaf1fb;color:#2a78d6{% elif r['type']=='Local' %}#e8f5ee;color:#1a9c5b{% else %}#fff6e8;color:#eda100{% endif %};">{{ r['type'] }}</span></td>
-      <td class="num">{{ r['trip_count'] }}</td>
-      <td class="num">₹{{ '{:,.0f}'.format(r['total_billed'] or 0) }}</td>
-      <td>{{ r['insurance_expiry'] or '—' }}</td>
-      <td>{{ r['fitness_expiry'] or '—' }}</td>
-      <td onclick="event.stopPropagation();"><form method="POST" action="/vehicles/delete/{{ r['id'] }}" style="display:inline;" onsubmit="return confirm('Delete this vehicle permanently?');"><button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button></form></td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="mt-tabs">
+    <a class="mt-tab {{ 'active' if tab=='all' }}" href="/vehicles?tab=all">&#128667; All Vehicles</a>
+    <a class="mt-tab {{ 'active' if tab=='insurance' }}" href="/vehicles?tab=insurance">&#128737;&#65039; Insurance</a>
+    <a class="mt-tab {{ 'active' if tab=='permit' }}" href="/vehicles?tab=permit">&#128196; Permit &amp; Fitness</a>
+  </div>
+
+  {% if tab == 'insurance' %}
+    {% include 'partials/_maintenance_insurance.html' %}
+  {% elif tab == 'permit' %}
+    {% include 'partials/_maintenance_category.html' %}
+  {% else %}
+
+  <div class="mt-kpi-row" style="grid-template-columns:repeat(6,1fr);">
+    <div class="mt-kpi"><div><div class="lbl">Total Vehicles</div><div class="val">{{ total_vehicles }}</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128667;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">Active</div><div class="val" style="color:var(--green);">{{ active_count }}</div><div class="sub">{{ (active_count/total_vehicles*100)|round(1) if total_vehicles else 0 }}%</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">In Maintenance</div><div class="val">{{ maint_count }}</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128295;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">Insurance Expiring</div><div class="val" style="color:{% if ins_expiring %}var(--accent){% endif %};">{{ ins_expiring }}</div><div class="sub">In 30 days</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128737;&#65039;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">PUC Expiring</div><div class="val" style="color:{% if puc_expiring %}var(--accent){% endif %};">{{ puc_expiring }}</div><div class="sub">In 30 days</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128203;</div></div>
+    <div class="mt-kpi"><div><div class="lbl">Permit Expiring</div><div class="val" style="color:{% if permit_expiring %}var(--accent){% endif %};">{{ permit_expiring }}</div><div class="sub">In 30 days</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#128196;</div></div>
+  </div>
+
+  <div class="veh-layout">
+    <div>
+      <form class="filter-bar" method="GET">
+        <input type="hidden" name="tab" value="all">
+        <div class="field"><label>Vehicle</label>
+          <select name="vehicle"><option value="">All Vehicles</option>
+            {% for v in all_vehicle_nos %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field"><label>Type</label>
+          <select name="type"><option value="">All</option>
+            <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
+            <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
+            <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
+          </select>
+        </div>
+        <div class="field"><label>Status</label>
+          <select name="status"><option value="">All</option>
+            <option value="Active" {% if f_status=='Active' %}selected{% endif %}>Active</option>
+            <option value="In Maintenance" {% if f_status=='In Maintenance' %}selected{% endif %}>In Maintenance</option>
+            <option value="Inactive" {% if f_status=='Inactive' %}selected{% endif %}>Inactive</option>
+          </select>
+        </div>
+        <button type="submit">Apply</button>
+        <a class="clear" href="/vehicles?tab=all">Clear</a>
+      </form>
+
+      <div class="mt-panel">
+        <div style="overflow-x:auto;">
+        <table>
+          <tr><th>Vehicle No</th><th>Type</th><th class="num">Trips</th><th class="num">Total Billed</th><th>Insurance Exp.</th><th>PUC Exp.</th><th>Permit Exp.</th><th>Fitness Exp.</th><th>Status</th></tr>
+          {% for r in rows %}
+          {% set st = r['status'] or 'Active' %}
+          {% set next_st = 'Inactive' if st=='Active' else 'Active' %}
+          <tr class="clickable-row" onclick="document.getElementById('editModal{{ loop.index }}').classList.add('open')">
+            <td>{{ r['vehicle_no'] }}</td>
+            <td><span class="type-pill" style="background:{% if r['type']=='Line' %}#eaf1fb;color:#2a78d6{% elif r['type']=='Local' %}#e8f5ee;color:#1a9c5b{% else %}#fff6e8;color:#eda100{% endif %};">{{ r['type'] }}</span></td>
+            <td class="num">{{ r['trip_count'] }}</td>
+            <td class="num">₹{{ '{:,.0f}'.format(r['total_billed'] or 0) }}</td>
+            <td>{{ r['insurance_expiry'] or '—' }}</td>
+            <td>{{ r['puc_valid_upto'] or '—' }}</td>
+            <td>{{ r['permit_valid_upto'] or '—' }}</td>
+            <td>{{ r['fitness_expiry'] or '—' }}</td>
+            <td onclick="event.stopPropagation();">
+              {% if st == 'In Maintenance' %}
+              <span class="status-pill" style="background:#fff3e8;color:var(--accent);">In Maintenance</span>
+              {% else %}
+              <form method="POST" action="/vehicles/toggle_status/{{ r['id'] }}?tab=all" style="display:inline;" onsubmit="return confirm('Mark {{ r['vehicle_no'] }} as {{ next_st }}?');">
+                <button type="submit" class="status-pill" title="Click to mark {{ next_st }}" style="border:none;cursor:pointer;background:{% if st=='Active' %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{{ st }}</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+        </div>
+      </div>
+    </div>
+
+    <div class="veh-side">
+      <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Compliance Overview</div></div>
+        {% for c in compliance_overview %}
+        {% set tot = (c.expired + c.expiring) if (c.expired + c.expiring) > 0 else 1 %}
+        <div class="veh-comp-row">
+          <div class="lbl">{{ c.label }}</div>
+          <div class="track"><div class="exp" style="width:{{ (c.expired/tot*100)|round(0) }}%;"></div><div class="soon" style="width:{{ (c.expiring/tot*100)|round(0) }}%;"></div></div>
+          <div class="nums">{{ c.expired }} Expired / {{ c.expiring }} Expiring</div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Vehicle Type Distribution</div></div>
+        {% if body_type_dist %}
+        <div class="veh-donut-row">
+          {% set circ = 175.9 %}
+          <svg viewBox="0 0 60 60" width="72" height="72">
+            {% set offset = 0 %}
+            {% for label, count in body_type_dist %}
+            {% set seg = circ * count / total_vehicles if total_vehicles else 0 %}
+            <circle cx="30" cy="30" r="28" fill="none" stroke="{{ body_colors[loop.index0 % body_colors|length] }}" stroke-width="10" stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset|round(1) }}" transform="rotate(-90 30 30)"/>
+            {% set offset = offset + seg %}
+            {% endfor %}
+          </svg>
+          <div class="veh-donut-legend">
+            {% for label, count in body_type_dist %}
+            <div class="item"><span class="dot" style="background:{{ body_colors[loop.index0 % body_colors|length] }};"></span>{{ label }}<span class="n">{{ count }}</span></div>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:16px;font-size:0.82rem;">No vehicles yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Quick Actions</div></div>
+        <div class="veh-qa">
+          <button type="button" onclick="document.getElementById('addModal').classList.add('open')"><span class="ic">&#128667;</span>Add Vehicle</button>
+          <a href="/vehicles?tab=insurance"><span class="ic">&#128737;&#65039;</span>Insurance</a>
+          <a href="/vehicles?tab=permit"><span class="ic">&#128196;</span>Permit &amp; Fitness</a>
+          <a href="/maintenance?tab=overview"><span class="ic">&#128295;</span>Maintenance</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% endif %}
 </div>
 
+{% if tab == 'insurance' %}{% include 'partials/_maintenance_insurance_modals.html' %}{% endif %}
+
+{% if tab == 'all' %}
 {% for r in rows %}
 <div class="modal-overlay" id="editModal{{ loop.index }}">
-  <div class="modal-box">
+  <div class="modal-box veh-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('editModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
-    <h3>Edit Vehicle</h3>
+    <h3>Edit Vehicle — {{ r['vehicle_no'] }}</h3>
     <form method="POST" action="/vehicles/edit/{{ r['id'] }}">
-      <label>Vehicle No</label>
-      <input type="text" name="vehicle_no" value="{{ r['vehicle_no'] }}" required>
-      <label>Type</label>
-      <select name="type">
-        <option value="Line" {% if r['type']=='Line' %}selected{% endif %}>Line</option>
-        <option value="Local" {% if r['type']=='Local' %}selected{% endif %}>Local</option>
-        <option value="Market" {% if r['type']=='Market' %}selected{% endif %}>Market</option>
-      </select>
-      <div class="section-label">Additional Details</div>
-      <label>Registration Date</label>
-      <input type="date" name="registration_date" value="{{ r['registration_date'] or '' }}">
-      <label>Capacity (MT)</label>
-      <input type="number" step="0.01" name="capacity_mt" value="{{ r['capacity_mt'] or '' }}">
-      <label>Insurance Expiry</label>
-      <input type="date" name="insurance_expiry" value="{{ r['insurance_expiry'] or '' }}">
-      <label>Fitness Expiry</label>
-      <input type="date" name="fitness_expiry" value="{{ r['fitness_expiry'] or '' }}">
-      <label>Notes</label>
-      <textarea name="notes" rows="3">{{ r['notes'] or '' }}</textarea>
-      <button type="submit" class="modal-save-btn">Save Changes</button>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Vehicle No</label><input type="text" name="vehicle_no" value="{{ r['vehicle_no'] }}" required></div>
+        <div class="mt-fld"><label>Route Type</label>
+          <select name="type">
+            <option value="Line" {% if r['type']=='Line' %}selected{% endif %}>Line</option>
+            <option value="Local" {% if r['type']=='Local' %}selected{% endif %}>Local</option>
+            <option value="Market" {% if r['type']=='Market' %}selected{% endif %}>Market</option>
+          </select>
+        </div>
+        <div class="mt-fld"><label>Body Type</label>
+          <select name="body_type">
+            <option value="">Unspecified</option>
+            {% for bt in ['Truck','Trailer','Tanker','Pickup','Other'] %}
+            <option value="{{ bt }}" {% if r['body_type']==bt %}selected{% endif %}>{{ bt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld"><label>Status</label>
+          <select name="status">
+            {% for st in ['Active','In Maintenance','Inactive'] %}
+            <option value="{{ st }}" {% if (r['status'] or 'Active')==st %}selected{% endif %}>{{ st }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Registration Date</label><input type="date" name="registration_date" value="{{ r['registration_date'] or '' }}"></div>
+        <div class="mt-fld"><label>Capacity (MT)</label><input type="number" step="0.01" name="capacity_mt" value="{{ r['capacity_mt'] or '' }}"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Insurance Expiry</label><input type="date" name="insurance_expiry" value="{{ r['insurance_expiry'] or '' }}"></div>
+        <div class="mt-fld"><label>Fitness Expiry</label><input type="date" name="fitness_expiry" value="{{ r['fitness_expiry'] or '' }}"></div>
+        <div class="mt-fld"><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto" value="{{ r['puc_valid_upto'] or '' }}"></div>
+        <div class="mt-fld"><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto" value="{{ r['permit_valid_upto'] or '' }}"></div>
+      </div>
+      <div class="mt-fld"><label>Notes</label><textarea name="notes" rows="3">{{ r['notes'] or '' }}</textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
+        <button type="button" onclick="document.getElementById('editModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
+      </div>
+    </form>
+    <form method="POST" action="/vehicles/delete/{{ r['id'] }}" style="margin-top:10px;" onsubmit="return confirm('Delete {{ r['vehicle_no'] }} permanently? This cannot be undone.');">
+      <button type="submit" style="background:none;border:none;color:var(--red);font-size:0.78rem;cursor:pointer;padding:4px 0;">&#128465; Delete this vehicle permanently</button>
     </form>
   </div>
 </div>
 {% endfor %}
 
 <div class="modal-overlay" id="addModal">
-  <div class="modal-box">
+  <div class="modal-box veh-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('addModal').classList.remove('open')">&#10005;</button>
     <h3>Add Vehicle</h3>
     <form method="POST" action="/vehicles/add">
-      <label>Vehicle No</label>
-      <input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required>
-      <label>Type</label>
-      <select name="type">
-        <option value="Line">Line</option>
-        <option value="Local">Local</option>
-        <option value="Market">Market</option>
-      </select>
-      <div class="section-label">Additional Details</div>
-      <label>Registration Date</label>
-      <input type="date" name="registration_date">
-      <label>Capacity (MT)</label>
-      <input type="number" step="0.01" name="capacity_mt">
-      <label>Insurance Expiry</label>
-      <input type="date" name="insurance_expiry">
-      <label>Fitness Expiry</label>
-      <input type="date" name="fitness_expiry">
-      <label>Notes</label>
-      <textarea name="notes" rows="3" placeholder="Any notes about this vehicle..."></textarea>
-      <button type="submit" class="modal-save-btn">Save Vehicle</button>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Vehicle No</label><input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required></div>
+        <div class="mt-fld"><label>Route Type</label>
+          <select name="type">
+            <option value="Line">Line</option>
+            <option value="Local">Local</option>
+            <option value="Market">Market</option>
+          </select>
+        </div>
+        <div class="mt-fld"><label>Body Type</label>
+          <select name="body_type">
+            <option value="">Unspecified</option>
+            {% for bt in ['Truck','Trailer','Tanker','Pickup','Other'] %}
+            <option value="{{ bt }}">{{ bt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld"><label>Status</label>
+          <select name="status">
+            <option value="Active">Active</option>
+            <option value="In Maintenance">In Maintenance</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Registration Date</label><input type="date" name="registration_date"></div>
+        <div class="mt-fld"><label>Capacity (MT)</label><input type="number" step="0.01" name="capacity_mt"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Insurance Expiry</label><input type="date" name="insurance_expiry"></div>
+        <div class="mt-fld"><label>Fitness Expiry</label><input type="date" name="fitness_expiry"></div>
+        <div class="mt-fld"><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto"></div>
+        <div class="mt-fld"><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto"></div>
+      </div>
+      <div class="mt-fld"><label>Notes</label><textarea name="notes" rows="3" placeholder="Any notes about this vehicle..."></textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
+        <button type="button" onclick="document.getElementById('addModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Vehicle</button>
+      </div>
     </form>
   </div>
 </div>
+{% endif %}
 {% endblock %}
