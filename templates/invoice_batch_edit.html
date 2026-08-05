@@ -40,5 +40,37 @@
     {% endif %}
     <button type="submit" class="submit">Save Changes</button>
   </form>
+
+  <div style="margin-top:24px;">
+    <h3 style="font-size:0.95rem;margin-bottom:4px;">Additional Line Items</h3>
+    <div style="font-size:0.78rem;color:var(--steel);margin-bottom:12px;">Add extra charges or deductions to this invoice — folded into Other Charges the next time this PDF is viewed or regenerated.</div>
+    {% if batch_items %}
+    <table style="margin-bottom:14px;">
+      <tr><th>Description</th><th>Type</th><th class="num">Amount (₹)</th><th></th></tr>
+      {% for it in batch_items %}
+      <tr>
+        <td>{{ it['description'] }}</td>
+        <td>{{ 'Charge' if it['item_type']=='charge' else 'Deduction' }}</td>
+        <td class="num" style="color:{% if it['item_type']=='deduction' %}var(--red){% else %}var(--ink){% endif %};">{% if it['item_type']=='deduction' %}&minus;{% endif %}₹{{ '{:,.2f}'.format(it['amount'] or 0) }}</td>
+        <td>
+          <form method="POST" action="/invoices/generated/items/{{ it['id'] }}/delete" onsubmit="return confirm('Remove this item?');">
+            <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+    <form method="POST" action="/invoices/generated/{{ b['id'] }}/items/add" class="row2" style="align-items:end;">
+      <div><label>Description</label><input type="text" name="description" required placeholder="e.g. Route deviation charge"></div>
+      <div style="display:flex;gap:10px;">
+        <div style="flex:1;"><label>Amount (₹)</label><input type="number" step="0.01" name="amount" required></div>
+        <div style="flex:1;"><label>Type</label>
+          <select name="item_type"><option value="charge">Charge</option><option value="deduction">Deduction</option></select>
+        </div>
+      </div>
+      <button type="submit" class="submit" style="margin-top:0;grid-column:1/-1;width:auto;padding:9px 18px;">+ Add Item</button>
+    </form>
+  </div>
 </div>
 {% endblock %}

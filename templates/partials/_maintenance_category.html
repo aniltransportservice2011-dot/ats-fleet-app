@@ -1,5 +1,5 @@
 <div style="background:#fff3e8;border:1px solid rgba(192,86,33,0.25);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
-  &#128161; This shows real {{ tab_label }} entries logged under Maintenance. A dedicated {{ tab_label }} tracking design (like Service) is coming — for now this is a read-only view of what's already recorded.
+  &#128161; This shows real {{ tab_label }} entries recorded in the system. A dedicated {{ tab_label }} tracking design (like Service) is coming — for now this is a read-only view of what's already recorded.
 </div>
 
 <form class="mt-filters" method="GET" style="grid-template-columns:1fr 1fr 1fr auto;">
@@ -13,7 +13,7 @@
   <div><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
   <div style="display:flex;gap:8px;">
     <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Apply</button>
-    <a class="clear" href="/maintenance?tab={{ tab }}">Clear</a>
+    <a class="clear" href="{{ base_path|default('/maintenance') }}?tab={{ tab }}">Clear</a>
   </div>
 </form>
 

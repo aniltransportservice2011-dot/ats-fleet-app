@@ -260,10 +260,11 @@
       <div class="pm-hint" style="margin-bottom:8px;">Select one or more pending trips to allocate this payment. Amount will be adjusted automatically.</div>
       <div class="alloc-table-wrap">
         <table id="pmTripTable">
-          <tr><th style="width:22px;"></th><th>LR Number</th><th>Trip Date</th><th>From</th><th>To</th><th class="num">Trip Amount (₹)</th><th class="num">Paid (₹)</th><th class="num">Balance (₹)</th></tr>
+          <tr><th style="width:22px;"></th><th>Vehicle</th><th>LR Number</th><th>Trip Date</th><th>From</th><th>To</th><th class="num">Trip Amount (₹)</th><th class="num">Paid (₹)</th><th class="num">Balance (₹)</th></tr>
           {% for pt in pending_trips %}
           <tr class="pm-trip-row" data-id="{{ pt['id'] }}" data-pending="{{ pt['pending'] }}">
             <td><input type="checkbox" class="pm-trip-check" name="trip_ids" value="{{ pt['id'] }}" onchange="pmRecalc()"></td>
+            <td>{{ pt['vehicle_no'] or '—' }}</td>
             <td>{{ pt['lr_number'] or '—' }}</td>
             <td>{{ pt['date'] }}</td>
             <td>{{ pt['from_loc'] }}</td>
@@ -274,7 +275,7 @@
           </tr>
           {% endfor %}
           <tr style="font-weight:600;background:var(--paper);">
-            <td colspan="2" id="pmSelectedLabel">Selected 0 trip(s)</td>
+            <td colspan="3" id="pmSelectedLabel">Selected 0 trip(s)</td>
             <td colspan="3"></td>
             <td class="num" id="pmSelTripAmt">0.00</td>
             <td class="num" id="pmSelPaid">0.00</td>

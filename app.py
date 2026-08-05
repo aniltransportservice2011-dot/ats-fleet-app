@@ -535,9 +535,17 @@ def dashboard():
 @app.route('/vehicles')
 def vehicles_list():
     conn = get_db()
+    tab = request.args.get('tab', 'all')
+    if tab == 'insurance':
+        return _maintenance_insurance_tab(conn, template='vehicles_list.html', active='vehicles', base_path='/vehicles')
+    if tab == 'permit':
+        return _maintenance_category_tab(conn, 'permit', template='vehicles_list.html', active='vehicles', base_path='/vehicles')
     type_f = request.args.get('type', '')
+    status_f = request.args.get('status', '')
+    vehicle_f = request.args.get('vehicle', '')
     query = """SELECT v.id, v.vehicle_no, v.type, v.registration_date, v.capacity_mt,
-               v.insurance_expiry, v.fitness_expiry, v.notes,
+               v.insurance_expiry, v.fitness_expiry, v.puc_valid_upto, v.permit_valid_upto,
+               v.status, v.body_type, v.notes,
                (SELECT COUNT(*) FROM trips WHERE vehicle_id=v.id) as trip_count,
                (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE vehicle_id=v.id) as total_billed
                FROM vehicles v WHERE v.type IS NOT NULL"""
@@ -545,10 +553,70 @@ def vehicles_list():
     if type_f:
         query += " AND v.type = ?"
         params.append(type_f)
+    if status_f:
+        query += " AND COALESCE(v.status,'Active') = ?"
+        params.append(status_f)
+    if vehicle_f:
+        query += " AND v.vehicle_no = ?"
+        params.append(vehicle_f)
     query += " ORDER BY v.type, v.vehicle_no"
-    rows = conn.execute(query, params).fetchall()
+    all_rows = conn.execute(query, params).fetchall()
+
+    # Real, vehicle-level compliance snapshot for the overview cards + sidebar — every count
+    # below is derived straight from the (filtered) vehicles table, never fabricated.
+    total_vehicles = len(all_rows)
+    active_count = sum(1 for r in all_rows if (r['status'] or 'Active') == 'Active')
+    maint_count = sum(1 for r in all_rows if r['status'] == 'In Maintenance')
+    inactive_count = sum(1 for r in all_rows if r['status'] == 'Inactive')
+
+    def _bucket_counts(field):
+        expired = expiring = 0
+        for r in all_rows:
+            b = _expiry_bucket(r[field])
+            if b == 'expired':
+                expired += 1
+            elif b == 'expiring':
+                expiring += 1
+        return expired, expiring
+
+    ins_expired, ins_expiring = _bucket_counts('insurance_expiry')
+    puc_expired, puc_expiring = _bucket_counts('puc_valid_upto')
+    permit_expired, permit_expiring = _bucket_counts('permit_valid_upto')
+    fit_expired, fit_expiring = _bucket_counts('fitness_expiry')
+    compliance_overview = [
+        {'label': 'Insurance', 'expired': ins_expired, 'expiring': ins_expiring},
+        {'label': 'PUC', 'expired': puc_expired, 'expiring': puc_expiring},
+        {'label': 'Fitness', 'expired': fit_expired, 'expiring': fit_expiring},
+        {'label': 'Permits', 'expired': permit_expired, 'expiring': permit_expiring},
+    ]
+
+    body_type_counts = {}
+    for r in all_rows:
+        bt = r['body_type'] or 'Unspecified'
+        body_type_counts[bt] = body_type_counts.get(bt, 0) + 1
+    body_type_dist = sorted(body_type_counts.items(), key=lambda kv: -kv[1])
+
+    total_count = len(all_rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = all_rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+
     conn.close()
-    return render_template('vehicles_list.html', rows=rows, f_type=type_f, active='vehicles')
+    return render_template('vehicles_list.html', tab='all', rows=page_rows, f_type=type_f, f_status=status_f,
+                            f_vehicle=vehicle_f, all_vehicle_nos=all_vehicle_nos, active='vehicles',
+                            total_vehicles=total_vehicles, active_count=active_count, maint_count=maint_count,
+                            inactive_count=inactive_count, ins_expiring=ins_expiring, puc_expiring=puc_expiring,
+                            permit_expiring=permit_expiring, fit_expiring=fit_expiring,
+                            compliance_overview=compliance_overview, body_type_dist=body_type_dist,
+                            page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs)
 
 @app.route('/salaries')
 def salaries_list():
@@ -754,7 +822,7 @@ def add_trip():
                 'owner_name','fixed_rate_amount','owner_rate','paid_to_owner','owner_vendor_id',
                 'agent_commission','builty_expense','conductor_expense','fine','labour_charges','parking','puncture',
                 'toll','urea','loading_expense','unloading_expense','wear_tear','weighbridge_charges','other_expense','misc_vendor_id',
-                'lr_received']
+                'lr_received','is_empty']
         vals = [f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
                 quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
                 n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
@@ -766,7 +834,7 @@ def add_trip():
                 n('agent_commission'), n('builty_expense'), n('conductor_expense'), n('fine'), n('labour_charges'),
                 n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
                 n('wear_tear'), n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
-                f.get('lr_received') or None]
+                f.get('lr_received') or None, 1 if f.get('is_empty') else 0]
         placeholders = ','.join('?' * len(cols))
         cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
         _save_trip_custom_items(conn, cur.lastrowid, f)
@@ -853,14 +921,17 @@ TYRE_POSITIONS = ['FL', 'FR', 'RL1', 'RR1', 'RL2', 'RR2', 'Spare']
 def maintenance_list():
     conn = get_db()
     tab = request.args.get('tab', 'overview')
+    # Insurance and Permit & Fitness now live on the Vehicles page — send old links there
+    # instead of rendering them here, so nothing bookmarked to /maintenance?tab=insurance breaks.
+    if tab in ('insurance', 'permit'):
+        conn.close()
+        return redirect(url_for('vehicles_list', tab=tab))
     if tab == 'service':
         return _maintenance_service_tab(conn)
     if tab == 'tyres':
         return _maintenance_tyres_tab(conn)
     if tab == 'battery':
         return _maintenance_battery_tab(conn)
-    if tab == 'insurance':
-        return _maintenance_insurance_tab(conn)
     if tab in MAINTENANCE_TAB_LABELS:
         return _maintenance_category_tab(conn, tab)
     return _maintenance_overview_tab(conn)
@@ -993,7 +1064,7 @@ def _maintenance_overview_tab(conn):
         recent_entries=recent_entries, top_spend=top_spend, trend=trend, trend_max=trend_max, chart_w=chart_w, chart_h=chart_h,
         f_date_from=date_from, f_date_to=date_to, active='maintenance')
 
-def _maintenance_category_tab(conn, tab_slug):
+def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', active='maintenance', base_path='/maintenance'):
     label = MAINTENANCE_TAB_LABELS[tab_slug]
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
@@ -1031,12 +1102,12 @@ def _maintenance_category_tab(conn, tab_slug):
 
     all_vehicles = conn.execute("SELECT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
     conn.close()
-    return render_template('maintenance.html', tab=tab_slug, tab_label=label,
+    return render_template(template, tab=tab_slug, tab_label=label,
                             rows=page_rows, total_count=total_count, total_amount=total_amount,
                             paid_total=paid_total, unpaid_total=unpaid_total, vehicles_involved=vehicles_involved,
                             page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
                             f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, vehicles=all_vehicles,
-                            active='maintenance')
+                            base_path=base_path, active=active)
 
 def _maintenance_tyres_tab(conn):
     vehicle_f = request.args.get('vehicle', '')
@@ -1341,6 +1412,23 @@ def _maintenance_battery_tab(conn):
 
 INSURANCE_TYPES = ['Comprehensive', 'Third Party', 'Transit Insurance']
 
+def _expiry_bucket(date_str):
+    """'expired' / 'expiring' (within 30 days) / 'ok' / None for any yyyy-mm-dd expiry-style date
+    field — the same 30-day window used for insurance policies, applied to vehicle-level dates
+    (insurance_expiry, puc_valid_upto, permit_valid_upto, fitness_expiry) for the Vehicles overview."""
+    if not date_str:
+        return None
+    try:
+        d = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+    today = datetime.date.today()
+    if d < today:
+        return 'expired'
+    if (d - today).days <= 30:
+        return 'expiring'
+    return 'ok'
+
 def _insurance_status(p):
     """Active/Expiring Soon/Expired are always date-derived so they can't go stale; 'Cancelled'
     is the one real-world fact that has to be asserted rather than computed, so it wins outright."""
@@ -1381,7 +1469,7 @@ def _save_insurance_doc(file_storage, prefix):
     file_storage.save(os.path.join(INSURANCE_UPLOAD_DIR, unique))
     return f"uploads/insurance/{unique}"
 
-def _maintenance_insurance_tab(conn):
+def _maintenance_insurance_tab(conn, template='maintenance.html', active='maintenance', base_path='/maintenance'):
     vehicle_f = request.args.get('vehicle', '')
     status_f = request.args.get('status', '')
     type_f = request.args.get('type', '')
@@ -1463,7 +1551,7 @@ def _maintenance_insurance_tab(conn):
     insurers = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
     conn.close()
 
-    return render_template('maintenance.html', tab='insurance',
+    return render_template(template, tab='insurance',
         rows=page_rows, total_count=total_count, total_policies=total_policies,
         active_count=active_count, expiring_count=expiring_count, expired_count=expired_count, active_pct=active_pct,
         total_premium_year=total_premium_year, avg_premium=avg_premium, coverage_pct=coverage_pct,
@@ -1471,7 +1559,7 @@ def _maintenance_insurance_tab(conn):
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         vehicles=vehicles, insurers=insurers, combined_names=combined_names, insurance_types=INSURANCE_TYPES,
         f_vehicle=vehicle_f, f_status=status_f, f_type=type_f, f_insurer=insurer_f,
-        f_date_from=date_from, f_date_to=date_to, active='maintenance')
+        f_date_from=date_from, f_date_to=date_to, base_path=base_path, active=active)
 
 def _maintenance_service_tab(conn):
     vehicle_f = request.args.get('vehicle', '')
@@ -2012,7 +2100,7 @@ def add_insurance():
         conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
     conn.commit()
     conn.close()
-    return redirect(url_for('maintenance_list', tab='insurance'))
+    return redirect(url_for('vehicles_list', tab='insurance'))
 
 @app.route('/maintenance/insurance/<int:policy_id>/edit', methods=['POST'])
 def edit_insurance(policy_id):
@@ -2021,7 +2109,7 @@ def edit_insurance(policy_id):
     policy = conn.execute("SELECT * FROM insurance_policies WHERE id=?", (policy_id,)).fetchone()
     if not policy:
         conn.close()
-        return redirect(url_for('maintenance_list', tab='insurance'))
+        return redirect(url_for('vehicles_list', tab='insurance'))
 
     def get_or_create_vehicle(vno):
         if not vno or not vno.strip():
@@ -2059,7 +2147,7 @@ def edit_insurance(policy_id):
         conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
     conn.commit()
     conn.close()
-    return redirect(url_for('maintenance_list', tab='insurance'))
+    return redirect(url_for('vehicles_list', tab='insurance'))
 
 @app.route('/maintenance/insurance/<int:policy_id>/delete', methods=['POST'])
 def delete_insurance(policy_id):
@@ -2071,7 +2159,7 @@ def delete_insurance(policy_id):
         conn.execute("DELETE FROM insurance_policies WHERE id=?", (policy_id,))
         conn.commit()
     conn.close()
-    return redirect(url_for('maintenance_list', tab='insurance'))
+    return redirect(url_for('vehicles_list', tab='insurance'))
 
 @app.route('/maintenance/insurance/legacy/<int:maintenance_id>/convert', methods=['POST'])
 def convert_legacy_insurance(maintenance_id):
@@ -2083,12 +2171,12 @@ def convert_legacy_insurance(maintenance_id):
     existing = conn.execute("SELECT id FROM insurance_policies WHERE maintenance_id=?", (maintenance_id,)).fetchone()
     if existing:
         conn.close()
-        return redirect(url_for('maintenance_list', tab='insurance'))
+        return redirect(url_for('vehicles_list', tab='insurance'))
 
     m = conn.execute("SELECT * FROM maintenance WHERE id=?", (maintenance_id,)).fetchone()
     if not m:
         conn.close()
-        return redirect(url_for('maintenance_list', tab='insurance'))
+        return redirect(url_for('vehicles_list', tab='insurance'))
 
     def get_or_create_vehicle(vno):
         if not vno or not vno.strip():
@@ -2125,7 +2213,7 @@ def convert_legacy_insurance(maintenance_id):
         conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
     conn.commit()
     conn.close()
-    return redirect(url_for('maintenance_list', tab='insurance'))
+    return redirect(url_for('vehicles_list', tab='insurance'))
 
 def _filter_entries_by_date(entries, date_from, date_to):
     if date_from:
@@ -2227,16 +2315,16 @@ def vendor_ledger(vendor_id):
     if vendor and vendor['linked_party_id']:
         conn.close()
         return redirect(url_for('party_ledger', party_id=vendor['linked_party_id']))
-    pending_trips_raw = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc,
-                                    (CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END) as billed_amount,
-                                    (CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END - COALESCE(paid_to_owner,0)) as pending
-                                    FROM trips WHERE owner_vendor_id=?
-                                    AND (CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END - COALESCE(paid_to_owner,0)) > 0.01
-                                    ORDER BY date""", (vendor_id,)).fetchall()
+    pending_trips_raw = conn.execute("""SELECT t.id, t.date, t.lr_number, t.from_loc, t.to_loc, v.vehicle_no,
+                                    (CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END) as billed_amount,
+                                    (CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) as pending
+                                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.owner_vendor_id=?
+                                    AND (CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) > 0.01
+                                    ORDER BY t.date""", (vendor_id,)).fetchall()
     conn.close()
     pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
-                       'to_loc': t['to_loc'], 'billed_amount': t['billed_amount'] or 0, 'pending': t['pending'],
-                       'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
+                       'to_loc': t['to_loc'], 'vehicle_no': t['vehicle_no'], 'billed_amount': t['billed_amount'] or 0,
+                       'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
     total_pending_trips = sum(t['pending'] for t in pending_trips)
     all_entries = _get_vendor_ledger_entries(vendor_id)
     final_balance = all_entries[0]['balance'] if all_entries else 0
@@ -2364,8 +2452,10 @@ def _get_vendor_ledger_entries(vendor_id):
                              WHERE m.vendor_id=? ORDER BY m.date""", (vendor_id,)).fetchall()
     fuel = conn.execute("""SELECT date, fuel_amount, type FROM trips WHERE fuel_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
     adv = conn.execute("""SELECT date, driver_adv_amount, type FROM trips WHERE driver_adv_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
-    owner_trips = conn.execute("""SELECT id, date, lr_number, rate_type, fixed_rate_amount, owner_rate, quantity, paid_to_owner, type
-                                  FROM trips WHERE owner_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
+    owner_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.rate_type, t.fixed_rate_amount, t.owner_rate,
+                                  t.quantity, t.paid_to_owner, t.type, v.vehicle_no
+                                  FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                                  WHERE t.owner_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
     # Ledger-allocated portion of each owner-hire trip's paid_to_owner (see party-side comment above).
     trip_alloc = {}
     for row in conn.execute("""SELECT pa.trip_id, SUM(pa.amount) as amt FROM payment_allocations pa
@@ -2402,7 +2492,10 @@ def _get_vendor_ledger_entries(vendor_id):
         owed = o['fixed_rate_amount'] if o['rate_type']=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
             original_paid = (o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0)
-            entries.append({'date': o['date'], 'detail': f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire",
+            detail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire"
+            if o['vehicle_no']:
+                detail += f" ({o['vehicle_no']})"
+            entries.append({'date': o['date'], 'detail': detail,
                              'debit': original_paid, 'credit': owed,
                              'kind': 'Trip Bill', 'ref': o['lr_number'] or '', 'vehicle_type': o['type'] or ''})
     for p in payments:
@@ -2675,6 +2768,8 @@ def delete_maintenance(m_id):
     conn.commit()
     conn.close()
     tab = request.args.get('tab') or request.form.get('tab') or 'service'
+    if tab in ('insurance', 'permit'):
+        return redirect(url_for('vehicles_list', tab=tab))
     return redirect(url_for('maintenance_list', tab=tab))
 
 @app.route('/maintenance/edit/<int:m_id>', methods=['GET', 'POST'])
@@ -2734,14 +2829,20 @@ def add_vehicle():
         existing = conn.execute("SELECT id FROM vehicles WHERE vehicle_no=?", (vno,)).fetchone()
         if existing:
             conn.execute("""UPDATE vehicles SET type=?, registration_date=?, capacity_mt=?,
-                            insurance_expiry=?, fitness_expiry=?, notes=? WHERE id=?""",
+                            insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
+                            status=?, body_type=?, notes=? WHERE id=?""",
                          (vtype, f.get('registration_date'), f.get('capacity_mt') or None,
-                          f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('notes'), existing[0]))
+                          f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                          f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                          f.get('notes'), existing[0]))
         else:
             conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
-                            insurance_expiry, fitness_expiry, notes) VALUES (?,?,?,?,?,?,?)""",
+                            insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
+                            status, body_type, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                          (vno, vtype, f.get('registration_date'), f.get('capacity_mt') or None,
-                          f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('notes')))
+                          f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                          f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                          f.get('notes')))
         conn.commit()
         conn.close()
         return redirect(url_for('vehicles_list'))
@@ -2994,15 +3095,32 @@ def edit_vehicle(vehicle_id):
     if request.method == 'POST':
         f = request.form
         conn.execute("""UPDATE vehicles SET vehicle_no=?, type=?, registration_date=?, capacity_mt=?,
-                        insurance_expiry=?, fitness_expiry=?, notes=? WHERE id=?""",
+                        insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
+                        status=?, body_type=?, notes=? WHERE id=?""",
                      (f.get('vehicle_no'), f.get('type'), f.get('registration_date'), f.get('capacity_mt') or None,
-                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('notes'), vehicle_id))
+                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                      f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                      f.get('notes'), vehicle_id))
         conn.commit()
         conn.close()
         return redirect(url_for('vehicles_list'))
     vehicle = conn.execute("SELECT * FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     conn.close()
     return render_template('edit_vehicle.html', v=vehicle, active='vehicles')
+
+@app.route('/vehicles/toggle_status/<int:vehicle_id>', methods=['POST'])
+def toggle_vehicle_status(vehicle_id):
+    """Quick Active/Inactive flip from the vehicle list row — a safer everyday action than
+    deleting a vehicle outright, which would also wipe its trip/maintenance history."""
+    conn = get_db()
+    v = conn.execute("SELECT status FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
+    if v:
+        new_status = 'Inactive' if (v['status'] or 'Active') == 'Active' else 'Active'
+        conn.execute("UPDATE vehicles SET status=? WHERE id=?", (new_status, vehicle_id))
+        conn.commit()
+    conn.close()
+    tab = request.args.get('tab') or 'all'
+    return redirect(url_for('vehicles_list', tab=tab))
 
 @app.route('/vehicles/delete/<int:vehicle_id>', methods=['POST'])
 def delete_vehicle(vehicle_id):
@@ -3346,6 +3464,22 @@ def add_employee():
     conn.close()
     return render_template('add_employee.html', active='salaries')
 
+# Standard GST state-code prefix (first 2 digits of a GSTIN) → state name. Public, fixed mapping —
+# used only to derive a "State" display from a real GSTIN already on file, never fabricated data.
+GST_STATE_CODES = {
+    '01':'Jammu & Kashmir','02':'Himachal Pradesh','03':'Punjab','04':'Chandigarh','05':'Uttarakhand',
+    '06':'Haryana','07':'Delhi','08':'Rajasthan','09':'Uttar Pradesh','10':'Bihar','11':'Sikkim',
+    '12':'Arunachal Pradesh','13':'Nagaland','14':'Manipur','15':'Mizoram','16':'Tripura','17':'Meghalaya',
+    '18':'Assam','19':'West Bengal','20':'Jharkhand','21':'Odisha','22':'Chhattisgarh','23':'Madhya Pradesh',
+    '24':'Gujarat','25':'Daman & Diu','26':'Dadra & Nagar Haveli','27':'Maharashtra','28':'Andhra Pradesh (Old)',
+    '29':'Karnataka','30':'Goa','31':'Lakshadweep','32':'Kerala','33':'Tamil Nadu','34':'Puducherry',
+    '35':'Andaman & Nicobar','36':'Telangana','37':'Andhra Pradesh','38':'Ladakh',
+}
+def _gstin_state(gstin):
+    if not gstin or len(gstin) < 2:
+        return ''
+    return GST_STATE_CODES.get(gstin[:2], '')
+
 @app.route('/invoice-center')
 def invoice_center():
     conn = get_db()
@@ -3356,9 +3490,10 @@ def invoice_center():
     lr_f = request.args.get('lr_number', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    status_f = request.args.get('invoice_status', '')
 
-    parties = conn.execute("SELECT id, name, contact FROM parties ORDER BY name").fetchall()
-    vendors = conn.execute("SELECT id, name, contact, linked_party_id FROM vendors ORDER BY name").fetchall()
+    parties = conn.execute("SELECT id, name, contact, gstin FROM parties ORDER BY name").fetchall()
+    vendors = conn.execute("SELECT id, name, contact, linked_party_id, gstin FROM vendors ORDER BY name").fetchall()
 
     # Combined owner picker for Market Vehicle Invoices: every vendor, plus every party not already
     # linked to a vendor — so any organization can be picked as an owner regardless of which
@@ -3381,6 +3516,10 @@ def invoice_center():
     selected_party = None
     selected_vendor = None
     trips = []
+    # Which trips already sit in some previously-generated invoice batch — real, derived from
+    # invoice_batch_trips, used for the Invoice Status filter/badge (not a stored flag on trips).
+    invoiced_trip_ids = {r['trip_id'] for r in conn.execute("SELECT DISTINCT trip_id FROM invoice_batch_trips").fetchall()}
+
     if invoice_type in ('party', 'tax', 'bill') and party_id:
         selected_party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
         query = """SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date, t.billed_amount
@@ -3415,13 +3554,33 @@ def invoice_center():
         query += " ORDER BY t.date DESC LIMIT 200"
         trips = conn.execute(query, params).fetchall()
 
+    # Attach each trip's own real "Others" line items (charges/deductions logged on the trip
+    # itself) so they can be shown — and individually excluded — while building this invoice.
+    trip_rows = []
+    for t in trips:
+        is_invoiced = t['id'] in invoiced_trip_ids
+        if status_f == 'invoiced' and not is_invoiced:
+            continue
+        if status_f == 'not_invoiced' and is_invoiced:
+            continue
+        items = conn.execute("SELECT id, description, amount, item_type FROM invoice_items WHERE trip_id=?", (t['id'],)).fetchall()
+        trip_rows.append({'t': t, 'is_invoiced': is_invoiced, 'trip_items': [dict(i) for i in items]})
+
+    entity_gstin = (selected_vendor['gstin'] if selected_vendor else (selected_party['gstin'] if selected_party else '')) or ''
+    entity_state = _gstin_state(entity_gstin)
+    invoice_settings = _get_invoice_settings(conn)
+
     vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
     conn.close()
+    import datetime as _dt
+    today_str = _dt.date.today().strftime('%Y-%m-%d')
     return render_template('invoice_center.html', invoice_type=invoice_type, parties=parties, vendors=vendors,
                             owner_options=owner_options,
-                            selected_party=selected_party, selected_vendor=selected_vendor, trips=trips, vehicles=vehicles,
+                            selected_party=selected_party, selected_vendor=selected_vendor, trip_rows=trip_rows,
+                            vehicles=vehicles, entity_gstin=entity_gstin, entity_state=entity_state,
+                            invoice_settings=invoice_settings, today=today_str,
                             f_party_id=party_id, f_vendor_id=vendor_id, f_vehicle=vehicle_f, f_lr=lr_f,
-                            f_date_from=date_from, f_date_to=date_to, active='invoices')
+                            f_date_from=date_from, f_date_to=date_to, f_status=status_f, active='invoices')
 
 @app.route('/invoice-center/review', methods=['POST'])
 def invoice_center_review():
@@ -3507,7 +3666,7 @@ def _get_invoice_settings(conn):
     return s
 
 def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
-                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0):
+                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0):
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -3548,7 +3707,11 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
 
     cgst_amount = round(sub_total * cgst_rate / 100, 2)
     sgst_amount = round(sub_total * sgst_rate / 100, 2)
-    pre_round = sub_total + cgst_amount + sgst_amount
+    # TDS was previously recorded on every invoice batch (tds_rate) but never actually applied to
+    # the printed total — this makes it real. Gated on tds_rate>0 (and passed 0 by any caller that
+    # doesn't set it) so an un-set TDS rate changes nothing about the total or the layout below.
+    tds_amount = round(sub_total * tds_rate / 100, 2) if tds_rate else 0
+    pre_round = sub_total + cgst_amount + sgst_amount - tds_amount
     grand_total = round(pre_round)
     round_off = round(grand_total - pre_round, 2)
 
@@ -3720,6 +3883,9 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             if invoice_type == 'tax':
                 sub_total_lines.append([f'CGST ({cgst_rate:g}%)', f"Rs. {cgst_amount:,.2f}"])
                 sub_total_lines.append([f'SGST ({sgst_rate:g}%)', f"Rs. {sgst_amount:,.2f}"])
+            if tds_rate:
+                sub_total_lines.append([f'TDS ({tds_rate:g}%)', f"- Rs. {tds_amount:,.2f}"])
+            if invoice_type == 'tax' or tds_rate:
                 sub_total_lines.append(['Round Off', f"Rs. {round_off:,.2f}"])
             sub_totals_table = Table(sub_total_lines, colWidths=[1.6*inch, 1.1*inch])
             sub_totals_table.setStyle(TableStyle([('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'),
@@ -3739,6 +3905,9 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             if invoice_type == 'tax':
                 sub_total_lines.append([f'CGST ({cgst_rate:g}%)', f"Rs. {cgst_amount:,.2f}"])
                 sub_total_lines.append([f'SGST ({sgst_rate:g}%)', f"Rs. {sgst_amount:,.2f}"])
+            if tds_rate:
+                sub_total_lines.append([f'TDS ({tds_rate:g}%)', f"- Rs. {tds_amount:,.2f}"])
+            if invoice_type == 'tax' or tds_rate:
                 sub_total_lines.append(['Round Off', f"Rs. {round_off:,.2f}"])
             sub_total_lines.append(['GRAND TOTAL (Rs.)', f"{grand_total:,.2f}"])
             tt = Table(sub_total_lines, colWidths=[4.7*inch, 1.8*inch])
@@ -3796,6 +3965,9 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         if invoice_type == 'tax':
             r_rows.append([f'CGST ({cgst_rate:g}%)', f"Rs. {cgst_amount:,.2f}"])
             r_rows.append([f'SGST ({sgst_rate:g}%)', f"Rs. {sgst_amount:,.2f}"])
+        if tds_rate:
+            r_rows.append([f'TDS ({tds_rate:g}%)', f"- Rs. {tds_amount:,.2f}"])
+        if invoice_type == 'tax' or tds_rate:
             r_rows.append(['Round Off', f"Rs. {round_off:,.2f}"])
         r_table = Table(r_rows, colWidths=[1.7*inch, 1.1*inch])
         r_table.setStyle(TableStyle([('FONTSIZE',(0,0),(-1,-1),8.3), ('ALIGN',(1,0),(1,-1),'RIGHT'),
@@ -3869,6 +4041,7 @@ def invoice_center_generate():
     import datetime
 
     f = request.form
+    mode = f.get('mode') or 'generate'  # 'generate' | 'draft' | 'preview'
     trip_ids = f.getlist('trip_ids')
     invoice_type = f.get('invoice_type')
     party_id = f.get('party_id') or None
@@ -3889,6 +4062,36 @@ def invoice_center_generate():
     trips = conn.execute(f"""SELECT t.*, v.vehicle_no FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                              WHERE t.id IN ({placeholders})""", trip_ids).fetchall() if trip_ids else []
 
+    # Each selected trip's own "Others" line items (real per-trip charges/deductions) — every item
+    # checkbox is checked (included) by default in the UI, so a plain form submit with JS disabled
+    # still includes everything; unchecking one removes it from included_item_ids and its amount is
+    # left out. Their net folds into Other Charges rather than being fabricated or silently dropped.
+    included_item_ids = {int(x) for x in f.getlist('included_item_ids') if x}
+    if trip_ids:
+        for it in conn.execute(f"""SELECT id, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})""", trip_ids).fetchall():
+            if it['id'] not in included_item_ids:
+                continue
+            extra_other += (it['amount'] or 0) if it['item_type'] == 'charge' else -(it['amount'] or 0)
+
+    # Ad-hoc charges/deductions typed directly into Invoice Center at generation time — folded into
+    # Other Charges for the total, and (once the batch exists) saved as real invoice_batch_items so
+    # they're visible and still editable from Generated Invoices afterwards, same as items added there.
+    extra_descs = f.getlist('extra_item_desc')
+    extra_amounts = f.getlist('extra_item_amount')
+    extra_types = f.getlist('extra_item_type')
+    new_items = []
+    for i, desc in enumerate(extra_descs):
+        desc = (desc or '').strip()
+        if not desc:
+            continue
+        try:
+            amt = float(extra_amounts[i]) if i < len(extra_amounts) and extra_amounts[i] else 0
+        except ValueError:
+            amt = 0
+        item_type = extra_types[i] if i < len(extra_types) and extra_types[i] in ('charge', 'deduction') else 'charge'
+        new_items.append((desc, amt, item_type))
+        extra_other += amt if item_type == 'charge' else -amt
+
     entity = None
     if invoice_type == 'vehicle_owner' and vendor_id:
         entity = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
@@ -3906,23 +4109,38 @@ def invoice_center_generate():
     next_num = int(s['next_invoice_number'] or 1)
     invoice_number = f"{s['invoice_prefix'] or 'ATS/INV'}/{datetime.datetime.now().year}/{next_num:04d}"
 
-    buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
-                              cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other)
+    if mode == 'preview':
+        # Preview never touches the DB or the invoice-number counter — it's just a look at the PDF.
+        buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
+                                  cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
+                                  tds_rate=tds_rate)
+        conn.close()
+        return send_file(buf, download_name=f'preview-{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
     now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    status = 'draft' if mode == 'draft' else 'generated'
     cur = conn.execute("""INSERT INTO invoice_batches (invoice_number, invoice_type, party_id, vendor_id, invoice_date, due_date,
                           payment_terms, place_of_supply, remarks, gst_rate, tds_rate, loading_charges, other_charges, status, payment_status, created_at)
                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                  (invoice_number, invoice_type, party_id, vendor_id, invoice_date, due_date, payment_terms,
                   place_of_supply, remarks, cgst_rate+sgst_rate, tds_rate, extra_loading, extra_other,
-                  'generated', payment_status, now))
+                  status, payment_status, now))
     batch_id = cur.lastrowid
     for tid in trip_ids:
         conn.execute("INSERT INTO invoice_batch_trips (invoice_batch_id, trip_id) VALUES (?,?)", (batch_id, tid))
+    for desc, amt, item_type in new_items:
+        conn.execute("INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type) VALUES (?,?,?,?)",
+                     (batch_id, desc, amt, item_type))
     conn.execute("UPDATE settings SET value=? WHERE key='next_invoice_number'", (str(next_num + 1),))
     conn.commit()
     conn.close()
 
+    if mode == 'draft':
+        return redirect(url_for('invoice_batches_list'))
+
+    buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
+                              cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
+                              tds_rate=tds_rate)
     return send_file(buf, as_attachment=True, download_name=f'{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices/generated')
@@ -3931,7 +4149,7 @@ def invoice_batches_list():
     search_f = request.args.get('search', '')
     type_f = request.args.get('invoice_type', '')
     query = """SELECT ib.id, ib.invoice_number, ib.invoice_type, ib.invoice_date, ib.due_date,
-               ib.payment_status, ib.created_at, p.name as party_name, v.name as vendor_name,
+               ib.payment_status, ib.status, ib.created_at, p.name as party_name, v.name as vendor_name,
                (SELECT COUNT(*) FROM invoice_batch_trips ibt WHERE ibt.invoice_batch_id=ib.id) as trip_count
                FROM invoice_batches ib
                LEFT JOIN parties p ON ib.party_id=p.id
@@ -3965,8 +4183,38 @@ def invoice_batch_edit(batch_id):
     batch = conn.execute("""SELECT ib.*, p.name as party_name, v.name as vendor_name FROM invoice_batches ib
                             LEFT JOIN parties p ON ib.party_id=p.id LEFT JOIN vendors v ON ib.vendor_id=v.id
                             WHERE ib.id=?""", (batch_id,)).fetchone()
+    batch_items = conn.execute("SELECT * FROM invoice_batch_items WHERE invoice_batch_id=? ORDER BY id", (batch_id,)).fetchall()
     conn.close()
-    return render_template('invoice_batch_edit.html', b=batch, active='invoices')
+    return render_template('invoice_batch_edit.html', b=batch, batch_items=batch_items, active='invoices')
+
+@app.route('/invoices/generated/<int:batch_id>/items/add', methods=['POST'])
+def invoice_batch_item_add(batch_id):
+    conn = get_db()
+    f = request.form
+    conn.execute("INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type) VALUES (?,?,?,?)",
+                 (batch_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type') or 'charge'))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('invoice_batch_edit', batch_id=batch_id))
+
+@app.route('/invoices/generated/items/<int:item_id>/delete', methods=['POST'])
+def invoice_batch_item_delete(item_id):
+    conn = get_db()
+    row = conn.execute("SELECT invoice_batch_id FROM invoice_batch_items WHERE id=?", (item_id,)).fetchone()
+    conn.execute("DELETE FROM invoice_batch_items WHERE id=?", (item_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('invoice_batch_edit', batch_id=row['invoice_batch_id'])) if row else redirect(url_for('invoice_batches_list'))
+
+@app.route('/invoices/generated/<int:batch_id>/delete', methods=['POST'])
+def invoice_batch_delete(batch_id):
+    conn = get_db()
+    conn.execute("DELETE FROM invoice_batch_trips WHERE invoice_batch_id=?", (batch_id,))
+    conn.execute("DELETE FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,))
+    conn.execute("DELETE FROM invoice_batches WHERE id=?", (batch_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('invoice_batches_list'))
 
 @app.route('/invoices/generated/<int:batch_id>/pdf')
 def invoice_batch_pdf(batch_id):
@@ -3985,13 +4233,21 @@ def invoice_batch_pdf(batch_id):
     elif batch['party_id']:
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (batch['party_id'],)).fetchone()
     s = _get_invoice_settings(conn)
+
+    # Batch-level custom items (added from the Edit screen) fold into Other Charges — same
+    # additive pattern as the per-trip items folded in at generate time — so a regenerated PDF
+    # always reflects the latest edits without changing what _build_invoice_pdf itself does.
+    items_total = 0
+    for it in conn.execute("SELECT amount, item_type FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,)).fetchall():
+        items_total += (it['amount'] or 0) if it['item_type'] == 'charge' else -(it['amount'] or 0)
     conn.close()
 
     cgst_rate = sgst_rate = round((batch['gst_rate'] or 0) / 2, 4) if batch['invoice_type'] == 'tax' else 0
     buf = _build_invoice_pdf(trips, batch['invoice_type'], entity, s, batch['invoice_number'], batch['invoice_date'],
                               batch['due_date'], batch['payment_status'], batch['remarks'],
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate,
-                              extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0)
+                              extra_loading=batch['loading_charges'] or 0, extra_other=(batch['other_charges'] or 0) + items_total,
+                              tds_rate=batch['tds_rate'] or 0)
     return send_file(buf, as_attachment=True, download_name=f'{batch["invoice_number"].replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices')
@@ -4988,7 +5244,7 @@ def edit_trip(trip_id):
             owner_name=?, fixed_rate_amount=?, owner_rate=?, paid_to_owner=?, owner_vendor_id=?,
             agent_commission=?, builty_expense=?, conductor_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
             toll=?, urea=?, loading_expense=?, unloading_expense=?, wear_tear=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
-            lr_received=?
+            lr_received=?, is_empty=?
             WHERE id=?""",
             (f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
              quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
@@ -5001,7 +5257,7 @@ def edit_trip(trip_id):
              n('agent_commission'), n('builty_expense'), n('conductor_expense'), n('fine'), n('labour_charges'),
              n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
              n('wear_tear'), n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
-             f.get('lr_received') or None, trip_id))
+             f.get('lr_received') or None, 1 if f.get('is_empty') else 0, trip_id))
         _save_trip_custom_items(conn, trip_id, f)
         conn.commit()
         conn.close()

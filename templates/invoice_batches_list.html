@@ -23,10 +23,10 @@
   {% if rows %}
   <table>
     <tr><th>Invoice No.</th><th>Type</th><th>Bill To</th><th>Invoice Date</th><th>Due Date</th>
-        <th>Trips</th><th>Payment Status</th><th>Actions</th></tr>
+        <th>Trips</th><th>Payment Status</th><th></th></tr>
     {% for r in rows %}
-    <tr>
-      <td>{{ r['invoice_number'] }}</td>
+    <tr class="clickable-row" onclick="window.location='/invoices/generated/{{ r['id'] }}/edit'">
+      <td>{{ r['invoice_number'] }}{% if r['status']=='draft' %} <span style="padding:2px 8px;border-radius:8px;font-size:0.68rem;font-weight:600;background:var(--paper);color:var(--steel);">Draft</span>{% endif %}</td>
       <td>{{ {'party':'Party Invoice','vehicle_owner':'Market Vehicle Invoice','tax':'Tax Invoice','bill':'Bill Invoice'}.get(r['invoice_type'], r['invoice_type']) }}</td>
       <td>{{ r['vendor_name'] if r['invoice_type']=='vehicle_owner' else r['party_name'] }}</td>
       <td>{{ r['invoice_date'] }}</td>
@@ -38,9 +38,11 @@
           {{ r['payment_status'] }}
         </span>
       </td>
-      <td>
-        <a href="/invoices/generated/{{ r['id'] }}/edit" style="margin-right:10px;">Edit</a>
-        <a href="/invoices/generated/{{ r['id'] }}/pdf">Download</a>
+      <td onclick="event.stopPropagation();" style="white-space:nowrap;">
+        <a href="/invoices/generated/{{ r['id'] }}/pdf" title="View / Regenerate PDF" style="padding:2px;font-size:1rem;text-decoration:none;">&#128065;&#65039;</a>
+        <form method="POST" action="/invoices/generated/{{ r['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Delete invoice {{ r['invoice_number'] }} permanently? This cannot be undone.');">
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button>
+        </form>
       </td>
     </tr>
     {% endfor %}

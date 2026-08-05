@@ -70,7 +70,7 @@
     <div class="stat-line"><span>Vehicles Covered</span><b style="color:var(--ink);">{{ c.vehicles_done }} / {{ total_fleet }}</b></div>
     <div class="stat-line"><span>Entries</span><b style="color:var(--ink);">{{ c.count }}</b></div>
     <div class="stat-line"><span>Cost</span><b style="color:var(--ink);">₹{{ '{:,.0f}'.format(c.cost) }}</b></div>
-    <a class="go-btn" href="/maintenance?tab={{ c.slug }}">Go to {{ c.label }} &rarr;</a>
+    <a class="go-btn" href="{% if c.slug in ('insurance','permit') %}/vehicles{% else %}/maintenance{% endif %}?tab={{ c.slug }}">Go to {{ c.label }} &rarr;</a>
   </div>
   {% endfor %}
 </div>
