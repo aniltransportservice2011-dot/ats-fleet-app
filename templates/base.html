@@ -33,17 +33,19 @@
   .autocomplete-item:hover, .autocomplete-item.highlighted { background:var(--paper); }
   .modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:4px; }
   .modal-close-x:hover { background:var(--paper); color:var(--ink); }
-  .modal-save-btn { display:block; width:100%; padding:13px; margin-top:16px; background:var(--accent); color:#fff; border:none; border-radius:6px; font-size:0.95rem; font-weight:600; cursor:pointer; text-align:center; }
-  .modal-save-btn:hover { opacity:0.92; }
+  .modal-save-btn { display:block; width:100%; padding:13px; margin-top:16px; background:var(--accent); color:#fff; border:none; border-radius:7px; font-size:0.95rem; font-weight:700; cursor:pointer; text-align:center; font-family:inherit; box-shadow:0 1px 2px rgba(20,33,61,0.08); transition:opacity .15s, box-shadow .15s, transform .08s; }
+  .modal-save-btn:hover { opacity:0.92; box-shadow:0 2px 6px rgba(192,86,33,0.25); }
+  .modal-save-btn:active { transform:translateY(1px); box-shadow:none; }
   .modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
   .modal-overlay.open { display:flex; }
   .modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:440px; max-width:90vw; max-height:90vh; overflow-y:auto; }
   .format-choice { display:flex; gap:12px; margin-top:10px; }
   .format-choice a { flex:1; text-align:center; padding:16px; border:1.5px solid var(--line); border-radius:6px; text-decoration:none; color:var(--ink); font-weight:600; }
   .format-choice a:hover { border-color:var(--accent); background:var(--paper); }
-  /* Every "Download This View" button in the app shares this style — filter-aware Excel/PDF export. */
-  .download-btn { background:var(--green); color:#fff; padding:9px 18px; border-radius:3px; font-size:0.82rem; font-weight:600; border:none; cursor:pointer; font-family:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
-  .download-btn:hover { opacity:0.9; }
+  /* Every "Export" button in the app shares this style — filter-aware Excel/PDF export. */
+  .download-btn { background:var(--green); color:#fff; padding:10px 20px; border-radius:7px; font-size:0.84rem; font-weight:700; border:none; cursor:pointer; font-family:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; box-shadow:0 1px 2px rgba(20,33,61,0.08); transition:opacity .15s, box-shadow .15s, transform .08s; }
+  .download-btn:hover { opacity:0.9; box-shadow:0 2px 6px rgba(26,122,76,0.25); }
+  .download-btn:active { transform:translateY(1px); box-shadow:none; }
   .nav-group { padding:0 12px; margin-bottom:18px; }
   .nav-label { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; color:rgba(255,255,255,0.4); padding:6px 10px; }
   .nav-item {

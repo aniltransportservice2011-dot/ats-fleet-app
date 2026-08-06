@@ -17,7 +17,12 @@ body {
   padding: 32px 24px 60px;
   font-size: 15px;
 }
-.wrap { max-width: 1500px; width: 94%; margin: 0 auto; }
+/* Full-width content, matching the Dashboard page's own layout (it already overrode this
+   locally with max-width:none/width:100% — that inline override is now redundant but harmless).
+   The old 1500px cap + auto-centering left huge empty gutters on wide monitors everywhere
+   except Dashboard; .main-content's own 32px side padding (base.html) is enough breathing
+   room on its own without an extra width cap fighting it. */
+.wrap { max-width: none; width: 100%; margin: 0; }
 a.back {
   color: var(--steel);
   text-decoration: none;
@@ -35,20 +40,30 @@ h1 {
   flex-wrap: wrap;
   gap: 10px;
 }
+/* Shared "real action" button look — Add/Save/Apply/Export controls across the whole app, styled
+   once here so every page reads as one consistent, professional design system. Small icon-only
+   utility buttons (delete icons, kebab menus, pager arrows, modal close-x) intentionally keep
+   their own minimal look and aren't touched by this. */
 a.add-btn, button.add-btn {
   background: var(--ink);
   color: var(--white);
-  padding: 9px 18px;
+  padding: 10px 20px;
   text-decoration: none;
-  font-size: 0.82rem;
-  font-weight: 600;
-  border-radius: 3px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border-radius: 7px;
   border: none;
   cursor: pointer;
   font-family: inherit;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
+  transition: background .15s, box-shadow .15s, transform .08s;
 }
-a.add-btn:hover, button.add-btn:hover { background: var(--accent); }
+a.add-btn:hover, button.add-btn:hover { background: var(--accent); box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
+a.add-btn:active, button.add-btn:active { transform: translateY(1px); box-shadow: none; }
 
 .filter-bar {
   background: var(--white);
@@ -80,19 +95,41 @@ a.add-btn:hover, button.add-btn:hover { background: var(--accent); }
   background: var(--accent);
   color: var(--white);
   border: none;
-  padding: 8px 18px;
-  border-radius: 3px;
+  padding: 9px 20px;
+  border-radius: 7px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
+  transition: opacity .15s, box-shadow .15s, transform .08s;
 }
-.filter-bar button:hover { opacity: 0.9; }
+.filter-bar button:hover { opacity: 0.9; box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
+.filter-bar button:active { transform: translateY(1px); box-shadow: none; }
 .filter-bar a.clear {
   color: var(--steel);
   text-decoration: none;
   font-size: 0.82rem;
   padding: 8px 4px;
 }
+
+/* Shared "Cancel" outline button — every modal's Cancel button across the app (Tyres, Battery,
+   Service, Insurance, Vehicles, Trips, Ledger...) uses this one class now instead of its own
+   copy of the same inline style, so the hover treatment (orange border + orange text, matching
+   Trip Form's and Invoice Center's own outline buttons) is consistent everywhere at once. */
+.btn-cancel {
+  background: none;
+  border: 1.5px solid var(--line);
+  padding: 9px 16px;
+  border-radius: 7px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s, color .15s;
+}
+.btn-cancel:hover { border-color: var(--accent); color: var(--accent); }
 
 .summary-strip {
   display: flex;
@@ -122,8 +159,9 @@ form.stack { background: var(--white); padding: 24px; display: grid; gap: 14px; 
 form.stack label { font-size: 0.8rem; color: var(--steel); text-transform: uppercase; letter-spacing: 0.04em; display: block; margin-bottom: 4px; font-weight: 600; }
 form.stack input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 3px; font-size: 0.95rem; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-button.submit { background: var(--accent); color: var(--white); border: none; padding: 12px; border-radius: 3px; font-size: 0.95rem; font-weight: 600; cursor: pointer; margin-top: 6px; }
-button.submit:hover { opacity: 0.9; }
+button.submit { background: var(--accent); color: var(--white); border: none; padding: 13px; border-radius: 7px; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 6px; font-family: inherit; box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08); transition: opacity .15s, box-shadow .15s, transform .08s; }
+button.submit:hover { opacity: 0.9; box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
+button.submit:active { transform: translateY(1px); box-shadow: none; }
 
 @media (max-width: 640px) {
   .row2 { grid-template-columns: 1fr; }

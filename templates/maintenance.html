@@ -5,7 +5,7 @@
 {% endblock %}
 {% block content %}
 {% set tab_titles = {'overview':'Overview','service':'Service','tyres':'Tyres','battery':'Battery','urea':'Urea'} %}
-<div class="wrap" style="max-width:1500px;">
+<div class="wrap" style="max-width:none; width:100%;">
   <div class="mt-crumb"><a href="/maintenance">Maintenance</a> &nbsp;&rsaquo;&nbsp; {{ tab_titles.get(tab, 'Overview') }}</div>
   <div class="mt-head">
     <div>
@@ -18,6 +18,8 @@
     <button type="button" class="add-btn" onclick="document.getElementById('addTyreModal').classList.add('open'); tySetMode('new');">+ Add Tyre</button>
     {% elif tab == 'battery' %}
     <button type="button" class="add-btn" onclick="document.getElementById('addBatteryModal').classList.add('open')">+ Add New Battery</button>
+    {% elif tab == 'urea' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addUreaModal').classList.add('open'); ureaSetMode('direct');">+ Add Urea</button>
     {% endif %}
   </div>
 
@@ -37,6 +39,8 @@
     {% include 'partials/_maintenance_tyres.html' %}
   {% elif tab == 'battery' %}
     {% include 'partials/_maintenance_battery.html' %}
+  {% elif tab == 'urea' %}
+    {% include 'partials/_maintenance_urea.html' %}
   {% else %}
     {% include 'partials/_maintenance_category.html' %}
   {% endif %}
@@ -44,4 +48,5 @@
 {% if tab == 'service' %}{% include 'partials/_maintenance_service_modals.html' %}{% endif %}
 {% if tab == 'tyres' %}{% include 'partials/_maintenance_tyre_modals.html' %}{% endif %}
 {% if tab == 'battery' %}{% include 'partials/_maintenance_battery_modals.html' %}{% endif %}
+{% if tab == 'urea' %}{% include 'partials/_maintenance_urea_modals.html' %}{% endif %}
 {% endblock %}

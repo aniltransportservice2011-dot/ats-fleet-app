@@ -83,7 +83,7 @@
     <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
     <button type="submit">Apply</button>
     <a class="clear" href="/business-performance">Clear</a>
-    <a class="download-btn" href="/business-performance/export?{{ request.query_string.decode() }}">&#8681; Download This View</a>
+    <a class="download-btn" href="/business-performance/export?{{ request.query_string.decode() }}">&#8681; Export</a>
   </form>
 
   {% macro growth_span(g, invert=False) %}

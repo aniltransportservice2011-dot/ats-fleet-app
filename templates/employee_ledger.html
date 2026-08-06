@@ -65,7 +65,7 @@
     <div class="detail-row"><div class="lbl">Notes</div>{{ e['notes'] or 'No notes for this entry' }}</div>
     <div class="detail-row" style="border-bottom:none;"><div class="lbl">Entry Recorded</div>{{ e['created_at'] }}</div>
     <div class="modal-actions">
-      <button type="button" onclick="document.getElementById('noteModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Close</button>
+      <button type="button" onclick="document.getElementById('noteModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Close</button>
     </div>
   </div>
 </div>

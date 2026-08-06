@@ -43,13 +43,13 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="wrap" style="max-width:1500px;">
+<div class="wrap" style="max-width:none; width:100%;">
   <div class="ra-head">
     <div>
       <h1 style="margin-bottom:2px;">Route Analytics</h1>
       <div class="sub">Analyze route performance, rates and profitability to make smarter business decisions.</div>
     </div>
-    <a class="download-btn" href="/route-analytics/export?{{ request.query_string.decode() }}">&#8681; Download This View</a>
+    <a class="download-btn" href="/route-analytics/export?{{ request.query_string.decode() }}">&#8681; Export</a>
   </div>
 
   <form class="filter-bar" method="GET" id="raFilterForm">
