@@ -4,6 +4,7 @@ import datetime
 import calendar
 import os
 from werkzeug.utils import secure_filename
+import compliance_service as cs
 
 app = Flask(__name__)
 app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
@@ -509,12 +510,16 @@ def dashboard():
         vtrips = sum(1 for t in trips if t['vehicle_no'] == vn)
         top_vehicles.append({'vehicle_no': vn, 'trips': vtrips, 'revenue': rev})
 
-    # Real alerts from real data (not fake insurance/fitness dates we don't track)
+    # Real alerts from real data. Compliance alerts are a pure DB read (cs.refresh_compliance
+    # inside get_compliance_alerts never calls a provider) — safe on every page load.
     alerts = []
     for r in receivables[:3]:
         alerts.append({'text': f"{r['name']} balance overdue", 'sub': f"₹{r['balance']:,.0f} pending"})
     if own_idle_count > 0:
         alerts.append({'text': f"{own_idle_count} own vehicle(s) currently idle", 'sub': 'Check Idle Tracker for details'})
+    for a in cs.get_compliance_alerts(conn)[:5]:
+        verb = 'expired' if a['status'] == 'Expired' else f"expires in {a['days_left']}d"
+        alerts.append({'text': f"{a['vehicle_no']} — {a['label']} {verb}", 'sub': f"Expiry {a['expiry']} — renew from Vehicles > Edit > Compliance"})
 
     conn.close()
     return render_template('dashboard.html',
@@ -532,6 +537,16 @@ def dashboard():
         maint_by_category=maint_by_category, exp_breakdown=exp_breakdown, vehicle_revenue=vehicle_revenue,
         fleet_running_pct=fleet_running_pct, top_vehicles=top_vehicles, alerts=alerts, active='dashboard')
 
+@app.route('/vehicles/compliance/sync-all', methods=['POST'])
+def vehicles_compliance_sync_all():
+    """Syncs every own-fleet vehicle's Fitness/PUC/Permit against the mock providers, then
+    goes straight back to the existing All Vehicles tab — no separate page for this."""
+    conn = get_db()
+    summary = cs.sync_all_vehicles(conn)
+    conn.close()
+    return redirect(url_for('vehicles_list', tab='all', synced=summary['synced'],
+                             changed=summary['changed'], failed=summary['failed']))
+
 @app.route('/vehicles')
 def vehicles_list():
     conn = get_db()
@@ -545,7 +560,7 @@ def vehicles_list():
     vehicle_f = request.args.get('vehicle', '')
     query = """SELECT v.id, v.vehicle_no, v.type, v.registration_date, v.capacity_mt,
                v.insurance_expiry, v.fitness_expiry, v.puc_valid_upto, v.permit_valid_upto,
-               v.status, v.body_type, v.notes,
+               v.status, v.body_type, v.notes, v.chassis_number, v.engine_number,
                (SELECT COUNT(*) FROM trips WHERE vehicle_id=v.id) as trip_count,
                (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE vehicle_id=v.id) as total_billed
                FROM vehicles v WHERE v.type IS NOT NULL"""
@@ -609,6 +624,11 @@ def vehicles_list():
 
     all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
 
+    # Compliance badges (Insurance/Fitness/PUC/Permit) — own fleet only, see compliance_service's
+    # module docstring for why Market vehicles are excluded. Keyed by vehicle_id for O(1) lookup
+    # in the template; a Market vehicle simply has no entry and renders "—" for every badge.
+    compliance_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
+
     conn.close()
     return render_template('vehicles_list.html', tab='all', rows=page_rows, f_type=type_f, f_status=status_f,
                             f_vehicle=vehicle_f, all_vehicle_nos=all_vehicle_nos, active='vehicles',
@@ -616,6 +636,7 @@ def vehicles_list():
                             inactive_count=inactive_count, ins_expiring=ins_expiring, puc_expiring=puc_expiring,
                             permit_expiring=permit_expiring, fit_expiring=fit_expiring,
                             compliance_overview=compliance_overview, body_type_dist=body_type_dist,
+                            compliance_by_vehicle=compliance_by_vehicle,
                             page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs)
 
 @app.route('/salaries')
@@ -932,6 +953,8 @@ def maintenance_list():
         return _maintenance_tyres_tab(conn)
     if tab == 'battery':
         return _maintenance_battery_tab(conn)
+    if tab == 'urea':
+        return _maintenance_urea_tab(conn)
     if tab in MAINTENANCE_TAB_LABELS:
         return _maintenance_category_tab(conn, tab)
     return _maintenance_overview_tab(conn)
@@ -1062,6 +1085,132 @@ def _maintenance_overview_tab(conn):
         total_cost=total_cost, total_unpaid=total_unpaid, avg_cost_km=avg_cost_km, fleet_availability=fleet_availability,
         category_cards=category_cards, health_bands=health_bands, actions=actions,
         recent_entries=recent_entries, top_spend=top_spend, trend=trend, trend_max=trend_max, chart_w=chart_w, chart_h=chart_h,
+        f_date_from=date_from, f_date_to=date_to, active='maintenance')
+
+UREA_LOW_STOCK_THRESHOLD_L = 200  # default reorder point per location — no Settings field for
+                                   # this yet, so it's a documented constant rather than a
+                                   # silently-invented one; easy to move into Settings later.
+
+def _maintenance_urea_tab(conn):
+    """Urea (AdBlue/DEF) stock ledger — every row is a real transaction (a purchase into stock,
+    or a consumption out of it), with a running balance computed live from the ledger, not a
+    separately-maintained counter that could drift. Cost only enters the maintenance table (and
+    therefore the Overview 'Urea' card) at the moment stock is purchased or a direct/off-stock
+    top-up happens — using stock you already paid for isn't a second expense."""
+    location_f = request.args.get('location', '')
+    supplier_f = request.args.get('supplier', '')
+    type_f = request.args.get('type', '')
+    search_f = request.args.get('search', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+
+    query = """SELECT u.*, ve.name as supplier_name, v.vehicle_no
+               FROM urea_transactions u LEFT JOIN vendors ve ON u.supplier_id=ve.id
+               LEFT JOIN vehicles v ON u.vehicle_id=v.id WHERE 1=1"""
+    params = []
+    if location_f:
+        query += " AND u.location=?"; params.append(location_f)
+    if supplier_f:
+        query += " AND ve.name=?"; params.append(supplier_f)
+    if type_f:
+        query += " AND u.txn_type=?"; params.append(type_f)
+    if search_f:
+        query += " AND (u.batch_no LIKE ? OR u.invoice_no LIKE ? OR v.vehicle_no LIKE ?)"
+        params += [f"%{search_f}%"] * 3
+    if date_from:
+        query += " AND u.date>=?"; params.append(date_from)
+    if date_to:
+        query += " AND u.date<=?"; params.append(date_to)
+    query += " ORDER BY u.date DESC, u.id DESC"
+    all_rows = conn.execute(query, params).fetchall()
+
+    # KPIs are computed from the *unfiltered* full ledger — a filtered view shouldn't make the
+    # stock level look different from reality.
+    full_ledger = conn.execute("SELECT * FROM urea_transactions ORDER BY date, id").fetchall()
+    current_stock = 0.0
+    stock_in_qty = stock_in_value = 0.0
+    for t in full_ledger:
+        if t['txn_type'] == 'stock_in':
+            current_stock += t['quantity_l']
+            stock_in_qty += t['quantity_l']
+            stock_in_value += t['total_value'] or 0
+        elif t['source'] == 'stock':
+            current_stock -= t['quantity_l']
+    avg_unit_cost = (stock_in_value / stock_in_qty) if stock_in_qty else 0
+    total_value = current_stock * avg_unit_cost
+
+    today = datetime.date.today().isoformat()
+    month_start = datetime.date.today().replace(day=1).isoformat()
+    today_usage = sum(t['quantity_l'] for t in full_ledger if t['txn_type'] == 'stock_out' and t['date'] == today)
+    month_usage = sum(t['quantity_l'] for t in full_ledger if t['txn_type'] == 'stock_out' and t['date'] >= month_start)
+
+    # Consumption (L/100km) needs real distance driven — the own fleet's actual_km already
+    # logged on trips this month, not an invented figure.
+    month_km = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
+                               WHERE v.type IN ('Line','Local') AND t.date>=? AND t.actual_km IS NOT NULL""",
+                            (month_start,)).fetchone()[0]
+    avg_consumption = round(month_usage / month_km * 100, 2) if month_km else None
+
+    # Low stock is evaluated per location, since that's the level stock is actually held/reordered at.
+    locations = sorted({t['location'] for t in full_ledger if t['location']})
+    low_stock_alerts = 0
+    for loc in locations:
+        bal = 0.0
+        for t in full_ledger:
+            if t['location'] != loc:
+                continue
+            if t['txn_type'] == 'stock_in':
+                bal += t['quantity_l']
+            elif t['source'] == 'stock':
+                bal -= t['quantity_l']
+        if bal < UREA_LOW_STOCK_THRESHOLD_L:
+            low_stock_alerts += 1
+
+    # Stock Trend (last 30 days) — running balance sampled at each transaction date.
+    trend_cutoff = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+    trend_rows = []
+    running = 0.0
+    for t in full_ledger:
+        if t['txn_type'] == 'stock_in':
+            running += t['quantity_l']
+        elif t['source'] == 'stock':
+            running -= t['quantity_l']
+        if t['date'] >= trend_cutoff:
+            trend_rows.append({'date': t['date'], 'balance': running})
+
+    # Top vehicles by usage (last 30 days, stock_out only).
+    usage_by_vehicle = {}
+    for t in full_ledger:
+        if t['txn_type'] == 'stock_out' and t['date'] >= trend_cutoff and t['vehicle_id']:
+            vno = next((r['vehicle_no'] for r in all_rows if r['id'] == t['id']), None)
+            usage_by_vehicle.setdefault(t['vehicle_id'], [None, 0.0])
+            usage_by_vehicle[t['vehicle_id']][1] += t['quantity_l']
+    vname_lookup = {r['vehicle_id']: r['vehicle_no'] for r in all_rows if r['vehicle_id']}
+    top_vehicles = sorted([{'vehicle_no': vname_lookup.get(vid, '—'), 'qty': q[1]}
+                            for vid, q in usage_by_vehicle.items()], key=lambda x: -x['qty'])[:5]
+
+    total_count = len(all_rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=8)
+    page_rows = all_rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    suppliers = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    conn.close()
+    return render_template('maintenance.html', tab='urea',
+        rows=page_rows, total_count=total_count, current_stock=current_stock, total_value=total_value,
+        avg_unit_cost=avg_unit_cost, today_usage=today_usage, month_usage=month_usage,
+        avg_consumption=avg_consumption, low_stock_alerts=low_stock_alerts, locations=locations,
+        trend_rows=trend_rows, top_vehicles=top_vehicles,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=vehicles, suppliers=suppliers, combined_names=combined_names,
+        f_location=location_f, f_supplier=supplier_f, f_type=type_f, f_search=search_f,
         f_date_from=date_from, f_date_to=date_to, active='maintenance')
 
 def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', active='maintenance', base_path='/maintenance'):
@@ -2055,6 +2204,104 @@ def delete_battery(battery_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
 
+@app.route('/maintenance/urea/add', methods=['POST'])
+def add_urea():
+    """One endpoint for all 3 Add Urea modes (mirrors the Tyre/Battery unified-modal pattern):
+    'stock_in' (pure stock purchase — the real cost event), 'stock_out' (consume already-paid-for
+    stock for a vehicle — no new cost), 'direct' (buy and use in the same moment, bypassing
+    tracked stock — its own real cost event, like Tyre's 'New Tyre' mode)."""
+    conn = get_db()
+    f = request.form
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        return cur.lastrowid
+
+    mode = f.get('mode')
+    date = f.get('date') or datetime.date.today().isoformat()
+    location = f.get('location') or None
+    notes = f.get('notes') or None
+    qty = float(f.get('quantity_l') or 0)
+    unit_price = float(f.get('unit_price') or 0)
+    total_value = round(qty * unit_price, 2)
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    if mode == 'stock_in':
+        supplier_id = get_or_create_vendor(conn, f.get('supplier_name'))
+        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
+                                vendor_id, notes, invoice_no) VALUES (?,?,?,?,?,?,?,?)""",
+                              (date, None, 'Urea', total_value, float(f.get('paid_amount') or 0),
+                               supplier_id, notes, f.get('invoice_no')))
+        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, supplier_id,
+                        invoice_no, quantity_l, unit_price, total_value, location, notes, maintenance_id, created_at)
+                        VALUES (?, 'stock_in', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (date, f.get('batch_no'), supplier_id, f.get('invoice_no'), qty, unit_price,
+                      total_value, location, notes, cur_m.lastrowid, now))
+    elif mode == 'stock_out':
+        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
+                        quantity_l, unit_price, total_value, location, odometer_km, notes, created_at)
+                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (date, f.get('batch_no'), vehicle_id, qty, unit_price, total_value, location,
+                      float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now))
+    elif mode == 'direct':
+        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        supplier_id = get_or_create_vendor(conn, f.get('supplier_name')) if f.get('supplier_name') else None
+        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
+                                vendor_id, notes, invoice_no) VALUES (?,?,?,?,?,?,?,?)""",
+                              (date, vehicle_id, 'Urea', total_value, float(f.get('paid_amount') or 0),
+                               supplier_id, notes, f.get('invoice_no')))
+        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, supplier_id, invoice_no,
+                        vehicle_id, quantity_l, unit_price, total_value, location, odometer_km, notes,
+                        maintenance_id, created_at)
+                        VALUES (?, 'stock_out', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (date, supplier_id, f.get('invoice_no'), vehicle_id, qty, unit_price, total_value,
+                      location, float(f.get('odometer_km')) if f.get('odometer_km') else None, notes,
+                      cur_m.lastrowid, now))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='urea'))
+
+@app.route('/maintenance/urea/<int:txn_id>/edit', methods=['GET', 'POST'])
+def edit_urea(txn_id):
+    conn = get_db()
+    if request.method == 'POST':
+        f = request.form
+        qty = float(f.get('quantity_l') or 0)
+        unit_price = float(f.get('unit_price') or 0)
+        total_value = round(qty * unit_price, 2)
+        conn.execute("""UPDATE urea_transactions SET date=?, batch_no=?, quantity_l=?, unit_price=?,
+                        total_value=?, location=?, odometer_km=?, notes=? WHERE id=?""",
+                     (f.get('date'), f.get('batch_no'), qty, unit_price, total_value, f.get('location'),
+                      float(f.get('odometer_km')) if f.get('odometer_km') else None, f.get('notes'), txn_id))
+        # Keep the linked cost entry (if any) in sync so Overview's Urea card never disagrees
+        # with what this ledger shows.
+        txn = conn.execute("SELECT maintenance_id FROM urea_transactions WHERE id=?", (txn_id,)).fetchone()
+        if txn and txn['maintenance_id']:
+            conn.execute("UPDATE maintenance SET date=?, amount=?, notes=? WHERE id=?",
+                         (f.get('date'), total_value, f.get('notes'), txn['maintenance_id']))
+        conn.commit()
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='urea'))
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='urea'))
+
+@app.route('/maintenance/urea/<int:txn_id>/delete', methods=['POST'])
+def delete_urea(txn_id):
+    conn = get_db()
+    txn = conn.execute("SELECT maintenance_id FROM urea_transactions WHERE id=?", (txn_id,)).fetchone()
+    if txn and txn['maintenance_id']:
+        conn.execute("DELETE FROM maintenance WHERE id=?", (txn['maintenance_id'],))
+    conn.execute("DELETE FROM urea_transactions WHERE id=?", (txn_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='urea'))
+
 @app.route('/maintenance/insurance/add', methods=['POST'])
 def add_insurance():
     conn = get_db()
@@ -2830,18 +3077,20 @@ def add_vehicle():
         if existing:
             conn.execute("""UPDATE vehicles SET type=?, registration_date=?, capacity_mt=?,
                             insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
-                            status=?, body_type=?, notes=? WHERE id=?""",
+                            status=?, body_type=?, chassis_number=?, engine_number=?, notes=? WHERE id=?""",
                          (vtype, f.get('registration_date'), f.get('capacity_mt') or None,
                           f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
                           f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                          f.get('chassis_number') or None, f.get('engine_number') or None,
                           f.get('notes'), existing[0]))
         else:
             conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
                             insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
-                            status, body_type, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                            status, body_type, chassis_number, engine_number, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          (vno, vtype, f.get('registration_date'), f.get('capacity_mt') or None,
                           f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
                           f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                          f.get('chassis_number') or None, f.get('engine_number') or None,
                           f.get('notes')))
         conn.commit()
         conn.close()
@@ -3096,10 +3345,11 @@ def edit_vehicle(vehicle_id):
         f = request.form
         conn.execute("""UPDATE vehicles SET vehicle_no=?, type=?, registration_date=?, capacity_mt=?,
                         insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
-                        status=?, body_type=?, notes=? WHERE id=?""",
+                        status=?, body_type=?, chassis_number=?, engine_number=?, notes=? WHERE id=?""",
                      (f.get('vehicle_no'), f.get('type'), f.get('registration_date'), f.get('capacity_mt') or None,
                       f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
                       f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                      f.get('chassis_number') or None, f.get('engine_number') or None,
                       f.get('notes'), vehicle_id))
         conn.commit()
         conn.close()
@@ -3129,6 +3379,48 @@ def delete_vehicle(vehicle_id):
     conn.commit()
     conn.close()
     return redirect(url_for('vehicles_list'))
+
+@app.route('/vehicles/<int:vehicle_id>/compliance/<ctype>/renew', methods=['POST'])
+def vehicle_compliance_renew(vehicle_id, ctype):
+    """Manual renewal — an office user typing in a new certificate/permit number and expiry
+    directly, independent of any provider sync. source='manual' distinguishes this from a
+    provider-synced record without overwriting whatever the last sync found."""
+    if ctype not in ('fitness', 'puc', 'permit'):
+        return redirect(url_for('vehicles_list'))
+    f = request.form
+    conn = get_db()
+    now = cs._now()
+    existing = conn.execute("SELECT id FROM vehicle_compliance WHERE vehicle_id=? AND compliance_type=?",
+                             (vehicle_id, ctype)).fetchone()
+    if existing:
+        conn.execute("""UPDATE vehicle_compliance SET document_number=?, valid_upto=?, source='manual',
+                        sync_status='Not Synced', updated_at=? WHERE id=?""",
+                     (f.get('document_number') or None, f.get('valid_upto') or None, now, existing['id']))
+    else:
+        conn.execute("""INSERT INTO vehicle_compliance
+                        (vehicle_id, compliance_type, document_number, valid_upto, source,
+                         sync_status, created_at, updated_at)
+                        VALUES (?,?,?,?,'manual','Not Synced',?,?)""",
+                     (vehicle_id, ctype, f.get('document_number') or None, f.get('valid_upto') or None, now, now))
+    # Keep the vehicle's own quick-glance column in sync too, same pattern already used for
+    # Insurance's expiry — so the plain date field in the Edit Vehicle form never disagrees
+    # with what Compliance shows.
+    col = {'fitness': 'fitness_expiry', 'puc': 'puc_valid_upto', 'permit': 'permit_valid_upto'}[ctype]
+    if f.get('valid_upto'):
+        conn.execute(f"UPDATE vehicles SET {col}=? WHERE id=?", (f.get('valid_upto'), vehicle_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('vehicles_list', tab='all'))
+
+@app.route('/vehicles/<int:vehicle_id>/compliance/sync', methods=['POST'])
+def vehicle_compliance_sync(vehicle_id):
+    """Manual per-vehicle 'Sync Now' — calls the same mock providers the nightly job uses,
+    just for one vehicle, so a user doesn't have to wait for 2 AM to see it work."""
+    conn = get_db()
+    cs.sync_vehicle(conn, vehicle_id)
+    conn.commit()
+    conn.close()
+    return redirect(url_for('vehicles_list', tab='all'))
 
 @app.route('/employee/<employee>', methods=['GET', 'POST'])
 def employee_ledger(employee):
@@ -5795,4 +6087,19 @@ def export_excel():
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 if __name__ == '__main__':
+    # Weekly compliance scheduler — opt-in via ENABLE_COMPLIANCE_SCHEDULER=1, not on by default.
+    # A background scheduler that starts silently every time `python app.py` is run (which
+    # happens constantly during local development, including on every debug-reloader restart)
+    # is more surprising than helpful; a real deployment should set this env var deliberately.
+    # When it IS enabled: with debug=True, Werkzeug's reloader runs this file in two processes
+    # (a watcher + the actual server); only the actual server process has WERKZEUG_RUN_MAIN set,
+    # so gating on it stops the job from being registered twice. Under gunicorn (no reloader, no
+    # debug), it starts once per worker — fine for a single-worker deployment; a multi-worker
+    # production deployment should instead trigger the sync from an external cron hitting a
+    # protected endpoint, not this in-process scheduler.
+    if os.environ.get('ENABLE_COMPLIANCE_SCHEDULER') == '1' and (os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug):
+        import logging
+        logging.basicConfig(level=logging.INFO)
+        from scheduler import start_scheduler
+        start_scheduler(get_db)
     app.run(debug=True, port=5050)

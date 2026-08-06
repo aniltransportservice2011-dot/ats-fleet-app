@@ -96,7 +96,7 @@
 {% endblock %}
 {% block content %}
 {% macro kind_colors(k) %}{% if k=='Payment In' %}background:#e8f5ee;color:var(--green);{% elif k=='Payment Out' %}background:#fdecea;color:var(--red);{% elif k=='Trip Bill' %}background:#eaf1fb;color:#2a78d6;{% elif k=='Expense Adj.' %}background:rgba(74,58,167,0.1);color:#4a3aa7;{% else %}background:#f1f2f5;color:var(--steel);{% endif %}{% endmacro %}
-<div class="wrap" style="max-width:1500px;">
+<div class="wrap" style="max-width:none; width:100%;">
   <a class="back" href="/accounts">&larr; Back to Ledger</a>
 
   <div class="lg2-head">
@@ -110,7 +110,7 @@
     <div class="lg2-head-actions">
       <button type="button" onclick="document.getElementById('paymentModal').classList.add('open')" class="add-btn">+ Add Payment</button>
       <div class="lg2-dl-wrap">
-        <button onclick="document.getElementById('lg2DlMenu').classList.toggle('open')" class="download-btn">&#8681; Download This View &#9662;</button>
+        <button onclick="document.getElementById('lg2DlMenu').classList.toggle('open')" class="download-btn">&#8681; Export &#9662;</button>
         <div class="lg2-dl-menu" id="lg2DlMenu">
           <a href="{{ export_url }}/pdf?{{ request.query_string.decode() }}">PDF</a>
           <a href="{{ export_url }}?{{ request.query_string.decode() }}">Excel</a>
@@ -297,7 +297,7 @@
       {% endif %}
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
-        <button type="button" onclick="document.getElementById('paymentModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="document.getElementById('paymentModal').classList.remove('open')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Payment</button>
       </div>
     </form>
@@ -309,7 +309,7 @@
       <label>As Of Date</label>
       <input type="date" name="opening_balance_date" value="{{ opening_balance_date or since_date or '' }}">
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
-        <button type="button" onclick="document.getElementById('paymentModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="document.getElementById('paymentModal').classList.remove('open')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Opening Balance</button>
       </div>
     </form>
@@ -338,7 +338,7 @@
         <option value="Inactive" {% if status=='Inactive' %}selected{% endif %}>Inactive</option>
       </select>
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">
-        <button type="button" onclick="document.getElementById('editContactModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="document.getElementById('editContactModal').classList.remove('open')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save</button>
       </div>
     </form>

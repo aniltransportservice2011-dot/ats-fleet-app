@@ -62,7 +62,7 @@
     <div class="detail-row"><div class="lbl">Receipt / Invoice No.</div>{{ r['receipt_number'] or '—' }}</div>
     <div class="detail-row" style="border-bottom:none;"><div class="lbl">Notes</div>{{ r['notes'] or 'No notes for this entry' }}</div>
     <div class="modal-actions">
-      <button type="button" onclick="document.getElementById('ohModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Close</button>
+      <button type="button" onclick="document.getElementById('ohModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Close</button>
     </div>
   </div>
 </div>

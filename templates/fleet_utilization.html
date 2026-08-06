@@ -52,13 +52,13 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="wrap" style="max-width:1500px;">
+<div class="wrap" style="max-width:none; width:100%;">
   <div class="fu-head">
     <div>
       <h1 style="margin-bottom:2px;">Fleet Utilization &amp; Efficiency</h1>
       <div class="sub">Monitor idle time and empty runs to improve fleet performance and reduce operational costs.</div>
     </div>
-    <a class="download-btn" href="/fleet-utilization/export?{{ request.query_string.decode() }}">&#8681; Download This View</a>
+    <a class="download-btn" href="/fleet-utilization/export?{{ request.query_string.decode() }}">&#8681; Export</a>
   </div>
 
   <form class="filter-bar" method="GET">

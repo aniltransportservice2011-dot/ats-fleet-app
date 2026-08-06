@@ -75,7 +75,7 @@
         <div class="mt-fld"><textarea name="notes" rows="2" placeholder="Enter any special conditions or notes..."></textarea></div>
       </div>
       <div class="ins-modal-ftr">
-        <button type="button" onclick="document.getElementById('addInsuranceModal').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="document.getElementById('addInsuranceModal').classList.remove('open')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Insurance</button>
       </div>
     </form>
@@ -161,7 +161,7 @@ function insShowFileName(input, id) {
         <div class="mt-fld"><textarea name="notes" rows="2">{{ r['notes'] or '' }}</textarea></div>
       </div>
       <div class="ins-modal-ftr">
-        <button type="button" onclick="document.getElementById('convertInsuranceModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="document.getElementById('convertInsuranceModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Policy Details</button>
       </div>
     </form>
@@ -200,7 +200,7 @@ function insShowFileName(input, id) {
     {% endif %}
 
     <div style="display:flex;justify-content:flex-end;gap:10px;">
-      <button type="button" onclick="document.getElementById('viewInsuranceModal{{ loop.index }}').classList.remove('open');document.getElementById('editInsuranceModal{{ loop.index }}').classList.add('open');" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">&#9998; Edit</button>
+      <button type="button" onclick="document.getElementById('viewInsuranceModal{{ loop.index }}').classList.remove('open');document.getElementById('editInsuranceModal{{ loop.index }}').classList.add('open');" class="btn-cancel">&#9998; Edit</button>
       <form method="POST" action="/maintenance/insurance/{{ r['id'] }}/delete" onsubmit="return confirm('Delete this insurance policy permanently?');">
         <button type="submit" style="background:var(--red);color:#fff;border:none;padding:9px 16px;border-radius:3px;cursor:pointer;">&#128465; Delete</button>
       </form>
@@ -250,7 +250,7 @@ function insShowFileName(input, id) {
       <div class="mt-fld" style="margin-bottom:6px;"><label>Notes</label><textarea name="notes" rows="2">{{ r['notes'] or '' }}</textarea></div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
-        <button type="button" onclick="document.getElementById('editInsuranceModal{{ loop.index }}').classList.remove('open')" style="background:none;border:1px solid var(--line);padding:9px 16px;border-radius:3px;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="document.getElementById('editInsuranceModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
       </div>
     </form>
