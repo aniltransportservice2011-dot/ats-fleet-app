@@ -3948,7 +3948,9 @@ def number_to_words_inr(n):
 
 INVOICE_SETTINGS_KEYS = ['company_name', 'address', 'gstin', 'pan', 'phone', 'email', 'bank_name', 'account_holder',
                          'account_number', 'ifsc_code', 'branch', 'rcm_clause', 'cgst_rate', 'sgst_rate',
-                         'invoice_prefix', 'next_invoice_number']
+                         'invoice_prefix', 'next_invoice_number', 'logo_path']
+LOGO_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'logo')
+os.makedirs(LOGO_UPLOAD_DIR, exist_ok=True)
 
 def _get_invoice_settings(conn):
     s = {}
@@ -3957,14 +3959,34 @@ def _get_invoice_settings(conn):
         s[key] = row['value'] if row else ''
     return s
 
+@app.route('/settings/logo/upload', methods=['POST'])
+def upload_company_logo():
+    """Company logo shown on every generated invoice PDF — uploaded once here, reused
+    everywhere _build_invoice_pdf runs. Same save-and-record-a-relative-path pattern as
+    Insurance's document uploads."""
+    f = request.files.get('logo')
+    conn = get_db()
+    if f and f.filename:
+        filename = secure_filename(f.filename)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
+            unique = f"logo_{int(datetime.datetime.now().timestamp() * 1000)}{ext}"
+            f.save(os.path.join(LOGO_UPLOAD_DIR, unique))
+            rel_path = f"uploads/logo/{unique}"
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('logo_path', ?)", (rel_path,))
+            conn.commit()
+    conn.close()
+    return redirect(url_for('settings_page', tab='company'))
+
 def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
-                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0):
+                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0, extra_items=None):
     from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.lib import colors
-    import io
+    from reportlab.lib.utils import ImageReader
+    import io, os
 
     # Per-trip freight and charge breakdown
     line_items = []
@@ -3993,8 +4015,14 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     total_gps = sum(li['gps'] for li in line_items)
     total_other = sum(li['other'] for li in line_items) + extra_other
 
+    # Named ad-hoc charges/deductions (per-trip "Others" items + Invoice Center extra rows), kept
+    # separate from the anonymous Other Charges total above so each one can be printed on the
+    # invoice by its own description (e.g. "Detention") rather than disappearing into one lump sum.
+    extra_items = extra_items or []
+    named_extra_total = sum((it['amount'] or 0) if it['item_type'] == 'charge' else -(it['amount'] or 0) for it in extra_items)
+
     freight_and_charges = total_freight + total_loading + total_unloading + total_permit + total_toll
-    additional_charges = total_weighment + total_driver_bata + total_gps + total_other
+    additional_charges = total_weighment + total_driver_bata + total_gps + total_other + named_extra_total
     sub_total = freight_and_charges + additional_charges
 
     cgst_amount = round(sub_total * cgst_rate / 100, 2)
@@ -4020,6 +4048,15 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, topMargin=0.4*inch, bottomMargin=0.4*inch, leftMargin=0.45*inch, rightMargin=0.45*inch)
+    # Every full-width element below (header, item table, totals box, footer...) is sized off
+    # this one constant so their left/right edges always line up with each other — no more
+    # tables that are each "approximately" full width but a few points off from their neighbours.
+    CONTENT_W = 6.9 * inch
+    # The Additional Charges box and the Sub Total/Grand Total box sit side by side and share this
+    # same gap treatment as Bill To / Trip Details, so the two never read as one fused block.
+    COMBO_GAP = 0.15 * inch
+    COMBO_L = 4.2 * inch - COMBO_GAP / 2
+    COMBO_R = 2.7 * inch - COMBO_GAP / 2
     styles = getSampleStyleSheet()
     BLACK = colors.HexColor('#1A1A1A')
     GREY = colors.HexColor('#5A5A5A')
@@ -4031,8 +4068,26 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     label_style = ParagraphStyle('L', parent=styles['Normal'], fontSize=8.5, textColor=GREY, leading=12)
     title_box_style = ParagraphStyle('TB', parent=styles['Heading2'], fontSize=14, textColor=BLACK, alignment=1)
     section_head_style = ParagraphStyle('SH', parent=styles['Normal'], fontSize=8.5, textColor=BLACK, fontName='Helvetica-Bold')
+    # Table-cell text that can genuinely run long in real data (route names, material
+    # descriptions, LR numbers) — wrapped in Paragraph so it wraps inside its column instead of
+    # overflowing into the next cell, which is the exact "long text overriding other text" bug
+    # plain strings in a reportlab Table cell cause.
+    cell_style = ParagraphStyle('CE', parent=styles['Normal'], fontSize=7.3, textColor=BLACK, leading=9)
+    cell_label_style = ParagraphStyle('CL', parent=styles['Normal'], fontSize=8.3, textColor=GREY, leading=10.5)
+    cell_val_style = ParagraphStyle('CV', parent=styles['Normal'], fontSize=8.3, textColor=BLACK, leading=10.5)
+    def cell(text):
+        """Wrap any table-cell value that might be long real data (route names, material,
+        LR numbers) so ReportLab wraps it instead of letting it spill into the next column."""
+        return Paragraph(esc(text) if text not in (None, '') else '—', cell_style)
 
-    invoice_titles = {'party': 'PARTY INVOICE', 'vehicle_owner': 'MARKET VEHICLE INVOICE', 'tax': 'TAX INVOICE', 'bill': 'BILL INVOICE'}
+    def esc(text):
+        """Escape real user-entered text (names, addresses, remarks) before it goes inside a
+        Paragraph's mini-XML markup — an unescaped '&' or '<' in a real company/party name
+        (e.g. "R&B Transport") would otherwise break the PDF build or render garbled."""
+        from xml.sax.saxutils import escape
+        return escape(str(text)) if text else ''
+
+    invoice_titles = {'party': 'INVOICE', 'vehicle_owner': 'INVOICE', 'tax': 'INVOICE', 'bill': 'INVOICE'}
     is_single = len(line_items) == 1
 
     def section_box(title, rows_data, col_widths, header_bg=LIGHTBG):
@@ -4049,62 +4104,99 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
 
     # ---------- Header ----------
     company_block = [
-        Paragraph(f"<b>{s['company_name']}</b>", company_style),
+        Paragraph(f"<b>{esc(s['company_name'])}</b>", company_style),
         Paragraph("SAFE | RELIABLE | ON TIME", tagline_style),
         Spacer(1, 3),
-        Paragraph(f"{s['address']}", sub_style),
+        Paragraph(esc(s['address']), sub_style),
     ]
     if invoice_type == 'tax':
-        company_block.append(Paragraph(f"GSTIN: {s['gstin']} &nbsp;&nbsp; PAN: {s['pan']}", sub_style))
-    company_block.append(Paragraph(f"&#9742; {s['phone']} &nbsp;&nbsp; &#9993; {s['email']}", sub_style))
+        company_block.append(Paragraph(f"GSTIN: {esc(s['gstin'])} &nbsp;&nbsp; PAN: {esc(s['pan'])}", sub_style))
+    company_block.append(Paragraph(f"&#9742; {esc(s['phone'])} &nbsp;&nbsp; &#9993; {esc(s['email'])}", sub_style))
 
-    invoice_box_inner = [[Paragraph(invoice_titles.get(invoice_type, 'INVOICE'), title_box_style)]]
-    box_body = Table([
-        [Paragraph('Invoice No.', label_style)], [Paragraph(f"<b><font color='#B33A2E'>{invoice_number}</font></b>", label_style)],
-        [Paragraph(f"Invoice Date&nbsp;&nbsp;&nbsp;{invoice_date}", label_style)],
-        [Paragraph(f"Due Date&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{due_date or '—'}", label_style)],
-    ], colWidths=[2.1*inch])
-    box_body.setStyle(TableStyle([('TOPPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 2)]))
+    # Company logo, if one's been uploaded (Settings > Company Profile) — sized modestly and
+    # placed beside the company name, never dominating the header. Falls back silently to the
+    # text-only header if no logo is set, or the stored file has gone missing on disk.
+    logo_path = s.get('logo_path')
+    logo_full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', logo_path) if logo_path else None
+    if logo_full_path and os.path.isfile(logo_full_path):
+        try:
+            # Fully decode the pixel data now (not just read the header/dimensions) so a
+            # truncated or corrupt upload is caught here and falls back cleanly, rather than
+            # crashing later inside doc.build() once it's too late to recover gracefully.
+            from PIL import Image as PILImage
+            with PILImage.open(logo_full_path) as pil_img:
+                pil_img.load()
+                iw, ih = pil_img.size
+            max_h = 0.45 * inch
+            logo_img = Image(logo_full_path, width=max_h * iw / ih, height=max_h)
+            header_left_w = CONTENT_W - 2.4*inch
+            header_left = Table([[logo_img, company_block]], colWidths=[max_h * iw / ih + 8, header_left_w - (max_h * iw / ih + 8)])
+            header_left.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (0, 0), 0),
+                                              ('RIGHTPADDING', (0, 0), (0, 0), 8), ('LEFTPADDING', (1, 0), (1, 0), 0)]))
+        except Exception:
+            header_left = company_block  # a corrupt/unreadable logo file never blocks invoice generation
+    else:
+        header_left = company_block
+
+    # Big bold open title (no heavy box), matching the reference's "INVOICE" treatment — a thin
+    # rule under the title separates it from the metadata rather than a full border box.
+    big_title_style = ParagraphStyle('BT', parent=styles['Heading1'], fontSize=18, textColor=BLACK,
+                                      alignment=2, leading=20, fontName='Helvetica-Bold', spaceAfter=0)
+    meta_label_style = ParagraphStyle('ML', parent=styles['Normal'], fontSize=8, textColor=GREY, alignment=2, leading=11)
+    meta_val_style = ParagraphStyle('MV', parent=styles['Normal'], fontSize=9.5, textColor=BLACK, alignment=2,
+                                     leading=12, fontName='Helvetica-Bold')
+
     status_color = colors.HexColor('#2E7D32') if payment_status == 'PAID' else colors.HexColor('#B8860B')
     status_bg = colors.HexColor('#E8F5E9') if payment_status == 'PAID' else colors.HexColor('#FFF8E1')
-    status_table = Table([[payment_status]], colWidths=[1.3*inch])
+    status_table = Table([[payment_status]], colWidths=[1.1*inch])
     status_table.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), status_bg), ('TEXTCOLOR', (0,0), (-1,-1), status_color),
-                                       ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 9),
-                                       ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5)]))
+                                       ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 8.5),
+                                       ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4)]))
 
-    invoice_box = Table([[Paragraph(invoice_titles.get(invoice_type, 'INVOICE'), title_box_style)], [box_body], [status_table]], colWidths=[2.2*inch])
+    invoice_box_rows = [
+        [Paragraph(invoice_titles.get(invoice_type, 'INVOICE'), big_title_style)],
+        [Spacer(1, 6)],
+        [Paragraph('INVOICE NO.', meta_label_style)],
+        [Paragraph(esc(invoice_number), meta_val_style)],
+        [Paragraph(f"Date: {esc(invoice_date)}", meta_label_style)],
+        [Spacer(1, 4)],
+        [status_table],
+    ]
+    invoice_box = Table(invoice_box_rows, colWidths=[2.4*inch])
     invoice_box.setStyle(TableStyle([
-        ('BOX', (0,0), (-1,-1), 1.2, BLACK), ('LINEBELOW', (0,0), (-1,0), 0.5, colors.HexColor('#CCCCCC')),
-        ('TOPPADDING', (0,0), (-1,-1), 7), ('BOTTOMPADDING', (0,0), (-1,-1), 7), ('LEFTPADDING', (0,0), (-1,-1), 10),
-        ('ALIGN', (0,2), (-1,2), 'CENTER'),
+        ('LINEBELOW', (0,0), (-1,0), 1.4, BLACK), ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 1), ('BOTTOMPADDING', (0,0), (-1,-1), 1),
     ]))
 
-    header_table = Table([[company_block, invoice_box]], colWidths=[4.6*inch, 2.4*inch])
+    header_table = Table([[header_left, invoice_box]], colWidths=[CONTENT_W - 2.4*inch, 2.4*inch])
     header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
     story = [header_table, Spacer(1, 10)]
 
     # ---------- Bill To + Trip Details/Summary ----------
-    bill_lines = [f"<b>BILL TO ({'PARTY' if invoice_type != 'vehicle_owner' else 'VEHICLE OWNER'} DETAILS)</b>", "",
-                  f"<b>{entity['name'] if entity else ''}</b>"]
+    bill_name_lines = [f"<b>{esc(entity['name'])}</b>" if entity else '—']
     if entity and entity['address']:
-        bill_lines.append(entity['address'])
-    bill_para = Paragraph('<br/>'.join(bill_lines), label_style)
+        bill_name_lines.append(esc(entity['address']))
+    def make_bill_box(width):
+        body = Table([[Paragraph('<br/>'.join(bill_name_lines), cell_val_style)]], colWidths=[width - 0.2*inch])
+        body.setStyle(TableStyle([('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
+        return section_box('BILL TO', [[body]], [width])
 
     if is_single:
         t = line_items[0]['trip']
+        col_gap = 0.15 * inch  # visible breathing room between Bill To and Trip Details, not flush-joined
+        half_w = (CONTENT_W - col_gap) / 2
         trip_rows = [
-            ['LR Number', ':', t['lr_number'] or ''], ['Trip Date', ':', t['date'] or ''],
-            ['Vehicle No.', ':', t['vehicle_no'] or ''], ['Driver Name', ':', t['driver_name'] or '—'],
-            ['From', ':', t['from_loc'] or ''], ['To', ':', t['to_loc'] or ''],
-            ['Material', ':', t['material'] or '—'], ['Weight', ':', f"{t['quantity'] or 0} MT"],
-            ['Type', ':', t['type'] or '—'],
+            ['LR Number', ':', cell(t['lr_number'])], ['Trip Date', ':', t['date'] or ''],
+            ['Vehicle No.', ':', cell(t['vehicle_no'])],
+            ['From', ':', cell(t['from_loc'])], ['To', ':', cell(t['to_loc'])],
+            ['Material', ':', cell(t['material'])], ['Weight', ':', f"{t['quantity'] or 0} MT"],
         ]
-        trip_body = Table(trip_rows, colWidths=[1.1*inch, 0.15*inch, 2.05*inch])
+        trip_body = Table(trip_rows, colWidths=[1.1*inch, 0.15*inch, half_w - 1.25*inch - 0.2*inch])
         trip_body.setStyle(TableStyle([('FONTSIZE',(0,0),(-1,-1),8.3), ('TOPPADDING',(0,0),(-1,-1),2.5), ('BOTTOMPADDING',(0,0),(-1,-1),2.5),
                                         ('TEXTCOLOR',(0,0),(0,-1),GREY)]))
-        trip_box = section_box('TRIP DETAILS', [[trip_body]], [3.3*inch])
-        two_col = Table([[bill_para, trip_box]], colWidths=[3.5*inch, 3.5*inch])
-        two_col.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP')]))
+        trip_box = section_box('TRIP DETAILS', [[trip_body]], [half_w])
+        two_col = Table([[make_bill_box(half_w), '', trip_box]], colWidths=[half_w, col_gap, half_w])
+        two_col.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'), ('LEFTPADDING',(1,0),(1,-1),0), ('RIGHTPADDING',(1,0),(1,-1),0)]))
         story.append(two_col)
     else:
         summary_rows = [[
@@ -4113,10 +4205,10 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             Paragraph(f"Total Vehicles<br/><b>{total_vehicles}</b>", label_style),
             Paragraph(f"Total Weight<br/><b>{total_weight:.3f} MT</b>", label_style),
         ]]
-        summary_body = Table(summary_rows, colWidths=[1.7*inch]*4)
+        summary_body = Table(summary_rows, colWidths=[CONTENT_W/4]*4)
         summary_body.setStyle(TableStyle([('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
-        summary_box = section_box('TRIP SUMMARY', [[summary_body]], [6.9*inch])
-        story.append(bill_para)
+        summary_box = section_box('TRIP SUMMARY', [[summary_body]], [CONTENT_W])
+        story.extend(make_bill_box(CONTENT_W))
         story.append(Spacer(1, 8))
         story.extend(summary_box)
     story.append(Spacer(1, 12))
@@ -4156,17 +4248,21 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             if val:
                 addl_rows.append([str(n), label, 'Per Trip', f"{val:,.2f}"])
                 n += 1
+        for it in extra_items:
+            addl_rows.append([str(n), cell(it['desc']), 'Deduction' if it['item_type'] == 'deduction' else 'Charge',
+                               f"- {it['amount']:,.2f}" if it['item_type'] == 'deduction' else f"{it['amount']:,.2f}"])
+            n += 1
         if len(addl_rows) > 1:
-            addl_left = Table(addl_rows, colWidths=[0.3*inch, 1.9*inch, 1*inch, 1*inch])
+            addl_left = Table(addl_rows, colWidths=[0.3*inch, 1.9*inch, 1*inch, COMBO_L - 3.2*inch])
             addl_left.setStyle(TableStyle([
                 ('BACKGROUND',(0,0),(-1,0), colors.HexColor('#EEEEEE')), ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
                 ('FONTSIZE',(0,0),(-1,-1),8.3), ('ALIGN',(3,0),(3,-1),'RIGHT'), ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#DDDDDD')),
                 ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4),
             ]))
-            addl_box_head = Table([[Paragraph('<b>ADDITIONAL CHARGES</b>', section_head_style)]], colWidths=[4.2*inch])
+            addl_box_head = Table([[Paragraph('<b>ADDITIONAL CHARGES</b>', section_head_style)]], colWidths=[COMBO_L])
             addl_box_head.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('BOX',(0,0),(-1,-1),0.5,LINE),
                                                 ('TOPPADDING',(0,0),(-1,-1),5), ('BOTTOMPADDING',(0,0),(-1,-1),5), ('LEFTPADDING',(0,0),(-1,-1),8)]))
-            addl_tot = Table([['TOTAL ADDITIONAL CHARGES', f"Rs. {additional_charges:,.2f}"]], colWidths=[3.2*inch, 1*inch])
+            addl_tot = Table([['TOTAL ADDITIONAL CHARGES', f"Rs. {additional_charges:,.2f}"]], colWidths=[COMBO_L - 1*inch, 1*inch])
             addl_tot.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
                                            ('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'), ('BOX',(0,0),(-1,-1),0.5,LINE),
                                            ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
@@ -4179,18 +4275,21 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
                 sub_total_lines.append([f'TDS ({tds_rate:g}%)', f"- Rs. {tds_amount:,.2f}"])
             if invoice_type == 'tax' or tds_rate:
                 sub_total_lines.append(['Round Off', f"Rs. {round_off:,.2f}"])
-            sub_totals_table = Table(sub_total_lines, colWidths=[1.6*inch, 1.1*inch])
-            sub_totals_table.setStyle(TableStyle([('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'),
-                                                   ('TOPPADDING',(0,0),(-1,-1),3), ('BOTTOMPADDING',(0,0),(-1,-1),3)]))
-            grand_box = Table([['GRAND TOTAL (Rs.)', f"{grand_total:,.2f}"]], colWidths=[1.6*inch, 1.1*inch])
-            grand_box.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
-                                            ('FONTSIZE',(0,0),(-1,-1),10.5), ('ALIGN',(1,0),(1,-1),'RIGHT'), ('BOX',(0,0),(-1,-1),0.7,LINE),
-                                            ('TOPPADDING',(0,0),(-1,-1),6), ('BOTTOMPADDING',(0,0),(-1,-1),6)]))
-            right_stack = [sub_totals_table, Spacer(1,6), grand_box]
+            sub_total_lines.append(['GRAND TOTAL (Rs.)', f"{grand_total:,.2f}"])
+            # One bordered box with every row (Sub Total through Grand Total) instead of a plain
+            # floating list plus a separately-boxed final row — same "one continuous box, distinct
+            # rows" pattern as TOTAL FREIGHT & CHARGES above it.
+            right_stack = Table(sub_total_lines, colWidths=[COMBO_R - 1.1*inch, 1.1*inch])
+            right_stack.setStyle(TableStyle([
+                ('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'),
+                ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4), ('LEFTPADDING',(0,0),(-1,-1),8),
+                ('BOX',(0,0),(-1,-1),0.5,LINE), ('LINEBELOW',(0,0),(-1,-2),0.3,colors.HexColor('#DDDDDD')),
+                ('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'), ('FONTSIZE',(0,-1),(-1,-1),10.5), ('BACKGROUND',(0,-1),(-1,-1),LIGHTBG),
+            ]))
 
             left_col = [addl_box_head, addl_left, addl_tot]
-            combo = Table([[left_col, right_stack]], colWidths=[4.3*inch, 2.7*inch])
-            combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP')]))
+            combo = Table([[left_col, '', right_stack]], colWidths=[COMBO_L, COMBO_GAP, COMBO_R])
+            combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'), ('LEFTPADDING',(1,0),(1,-1),0), ('RIGHTPADDING',(1,0),(1,-1),0)]))
             story.append(combo)
         else:
             sub_total_lines = [['Sub Total', f"Rs. {sub_total:,.2f}"]]
@@ -4202,21 +4301,23 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             if invoice_type == 'tax' or tds_rate:
                 sub_total_lines.append(['Round Off', f"Rs. {round_off:,.2f}"])
             sub_total_lines.append(['GRAND TOTAL (Rs.)', f"{grand_total:,.2f}"])
-            tt = Table(sub_total_lines, colWidths=[4.7*inch, 1.8*inch])
+            tt = Table(sub_total_lines, colWidths=[5.6*inch, 1.3*inch])
             tt.setStyle(TableStyle([('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'), ('FONTSIZE',(0,-1),(-1,-1),10.5),
-                                     ('BACKGROUND',(0,-1),(-1,-1),LIGHTBG), ('BOX',(0,-1),(-1,-1),0.7,LINE),
+                                     ('BACKGROUND',(0,-1),(-1,-1),LIGHTBG), ('BOX',(0,0),(-1,-1),0.5,LINE),
+                                     ('LINEBELOW',(0,0),(-1,-2),0.3,colors.HexColor('#DDDDDD')),
                                      ('ALIGN',(1,0),(1,-1),'RIGHT'), ('FONTSIZE',(0,0),(-2,-2),8.5),
-                                     ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
+                                     ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4),
+                                     ('LEFTPADDING',(0,0),(-1,-1),8)]))
             story.append(tt)
     else:
         item_rows = [['#', 'LR NUMBER', 'TRIP DATE', 'VEHICLE NO.', 'FROM', 'TO', 'MATERIAL', 'WEIGHT (MT)', 'FREIGHT (Rs.)']]
         for i, li in enumerate(line_items, 1):
             t = li['trip']
-            item_rows.append([str(i), t['lr_number'] or '', t['date'] or '', t['vehicle_no'] or '',
-                               t['from_loc'] or '', t['to_loc'] or '', t['material'] or '—',
+            item_rows.append([str(i), cell(t['lr_number']), t['date'] or '', cell(t['vehicle_no']),
+                               cell(t['from_loc']), cell(t['to_loc']), cell(t['material']),
                                f"{t['quantity'] or 0:.3f}", f"{li['freight']:,.2f}"])
         item_rows.append(['', '', '', '', '', '', 'TOTAL', f"{total_weight:.3f}", f"{total_freight:,.2f}"])
-        item_table = Table(item_rows, colWidths=[0.25*inch, 0.75*inch, 0.65*inch, 0.75*inch, 1.1*inch, 1.1*inch, 0.8*inch, 0.75*inch, 0.85*inch], repeatRows=1)
+        item_table = Table(item_rows, colWidths=[0.25*inch, 0.75*inch, 0.65*inch, 0.75*inch, 1.1*inch, 1.1*inch, 0.8*inch, 0.65*inch, 0.85*inch], repeatRows=1)
         item_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), BLACK), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#EEEEEE')),
@@ -4234,17 +4335,20 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
                             ('GPS Charges', total_gps), ('Other Charges', total_other)]:
             if val:
                 addl_rows.append([label, 'Per Trip', f"{val:,.2f}"])
+        for it in extra_items:
+            addl_rows.append([cell(it['desc']), 'Deduction' if it['item_type'] == 'deduction' else 'Charge',
+                               f"- {it['amount']:,.2f}" if it['item_type'] == 'deduction' else f"{it['amount']:,.2f}"])
         if len(addl_rows) > 1:
-            addl_left = Table(addl_rows, colWidths=[2.2*inch, 1*inch, 1*inch])
+            addl_left = Table(addl_rows, colWidths=[2.2*inch, 1*inch, COMBO_L - 3.2*inch])
             addl_left.setStyle(TableStyle([
                 ('BACKGROUND',(0,0),(-1,0), colors.HexColor('#EEEEEE')), ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
                 ('FONTSIZE',(0,0),(-1,-1),8), ('ALIGN',(2,0),(2,-1),'RIGHT'), ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#DDDDDD')),
                 ('TOPPADDING',(0,0),(-1,-1),3.5), ('BOTTOMPADDING',(0,0),(-1,-1),3.5),
             ]))
-            addl_head = Table([[Paragraph('<b>ADDITIONAL CHARGES (SUMMARY)</b>', section_head_style)]], colWidths=[4.2*inch])
+            addl_head = Table([[Paragraph('<b>ADDITIONAL CHARGES (SUMMARY)</b>', section_head_style)]], colWidths=[COMBO_L])
             addl_head.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('BOX',(0,0),(-1,-1),0.5,LINE),
                                             ('TOPPADDING',(0,0),(-1,-1),5), ('BOTTOMPADDING',(0,0),(-1,-1),5), ('LEFTPADDING',(0,0),(-1,-1),8)]))
-            addl_tot = Table([['TOTAL ADDITIONAL CHARGES', f"{multi_additional_total:,.2f}"]], colWidths=[3.2*inch, 1*inch])
+            addl_tot = Table([['TOTAL ADDITIONAL CHARGES', f"{multi_additional_total:,.2f}"]], colWidths=[COMBO_L - 1*inch, 1*inch])
             addl_tot.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
                                            ('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'), ('BOX',(0,0),(-1,-1),0.5,LINE),
                                            ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
@@ -4261,17 +4365,18 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             r_rows.append([f'TDS ({tds_rate:g}%)', f"- Rs. {tds_amount:,.2f}"])
         if invoice_type == 'tax' or tds_rate:
             r_rows.append(['Round Off', f"Rs. {round_off:,.2f}"])
-        r_table = Table(r_rows, colWidths=[1.7*inch, 1.1*inch])
-        r_table.setStyle(TableStyle([('FONTSIZE',(0,0),(-1,-1),8.3), ('ALIGN',(1,0),(1,-1),'RIGHT'),
-                                      ('TOPPADDING',(0,0),(-1,-1),3), ('BOTTOMPADDING',(0,0),(-1,-1),3)]))
-        grand_box = Table([['GRAND TOTAL (Rs.)', f"{grand_total:,.2f}"]], colWidths=[1.7*inch, 1.1*inch])
-        grand_box.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#E8F5E9')), ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
-                                        ('FONTSIZE',(0,0),(-1,-1),10.5), ('TEXTCOLOR',(1,0),(1,-1),colors.HexColor('#2E7D32')),
-                                        ('ALIGN',(1,0),(1,-1),'RIGHT'), ('BOX',(0,0),(-1,-1),0.7,LINE),
-                                        ('TOPPADDING',(0,0),(-1,-1),6), ('BOTTOMPADDING',(0,0),(-1,-1),6)]))
-        right_stack = [r_table, Spacer(1,6), grand_box]
-        combo = Table([[left_col, right_stack]], colWidths=[4.3*inch, 2.9*inch])
-        combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP')]))
+        r_rows.append(['GRAND TOTAL (Rs.)', f"{grand_total:,.2f}"])
+        # Same single-box, every-row-visible pattern as the single-trip layout above.
+        right_stack = Table(r_rows, colWidths=[COMBO_R - 1.1*inch, 1.1*inch])
+        right_stack.setStyle(TableStyle([
+            ('FONTSIZE',(0,0),(-1,-1),8.3), ('ALIGN',(1,0),(1,-1),'RIGHT'),
+            ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4), ('LEFTPADDING',(0,0),(-1,-1),8),
+            ('BOX',(0,0),(-1,-1),0.5,LINE), ('LINEBELOW',(0,0),(-1,-2),0.3,colors.HexColor('#DDDDDD')),
+            ('BACKGROUND',(0,-1),(-1,-1),colors.HexColor('#E8F5E9')), ('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'),
+            ('FONTSIZE',(0,-1),(-1,-1),10.5), ('TEXTCOLOR',(1,-1),(1,-1),colors.HexColor('#2E7D32')),
+        ]))
+        combo = Table([[left_col, '', right_stack]], colWidths=[COMBO_L, COMBO_GAP, COMBO_R])
+        combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'), ('LEFTPADDING',(1,0),(1,-1),0), ('RIGHTPADDING',(1,0),(1,-1),0)]))
         story.append(combo)
 
     if invoice_type == 'vehicle_owner' and total_already_given:
@@ -4283,42 +4388,57 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         if total_paid_to_owner:
             deduction_rows.append(['Less: Amount Already Paid', f"Rs. {total_paid_to_owner:,.2f}"])
         deduction_rows.append(['NET PAYABLE TO OWNER (Rs.)', f"{net_payable:,.2f}"])
+        # Same bordered-bar treatment as "TOTAL FREIGHT & CHARGES" above (BOX + row rules +
+        # highlighted final row) instead of plain floating text, so this reads as one continuous
+        # pattern with the totals above it rather than a visually distinct, "distorted" block.
         deduction_table = Table(deduction_rows, colWidths=[5.6*inch, 1.3*inch])
         deduction_table.setStyle(TableStyle([
             ('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'),
-            ('TOPPADDING',(0,0),(-1,-1),3), ('BOTTOMPADDING',(0,0),(-1,-1),3),
+            ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4),
+            ('LEFTPADDING',(0,0),(-1,-1),8), ('BOX',(0,0),(-1,-1),0.5,LINE),
+            ('LINEBELOW',(0,0),(-1,-2),0.3,colors.HexColor('#DDDDDD')),
             ('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'), ('FONTSIZE',(0,-1),(-1,-1),10.5),
-            ('BACKGROUND',(0,-1),(-1,-1),LIGHTBG), ('BOX',(0,-1),(-1,-1),0.7,LINE),
+            ('BACKGROUND',(0,-1),(-1,-1),LIGHTBG),
         ]))
         story.append(Spacer(1, 8))
         story.append(deduction_table)
 
     story.append(Spacer(1, 8))
-    story.append(Paragraph(f"<b>Amount In Words:</b> Rupees {number_to_words_inr(net_payable)} Only", label_style))
+    # Constrained to CONTENT_W (not the full page frame, which is wider) so this line's left/right
+    # edges match every box above it instead of running further right and reading "out of line".
+    words_table = Table([[Paragraph(f"<b>Amount In Words:</b> Rupees {number_to_words_inr(net_payable)} Only", label_style)]],
+                         colWidths=[CONTENT_W])
+    words_table.setStyle(TableStyle([('LEFTPADDING',(0,0),(-1,-1),0), ('RIGHTPADDING',(0,0),(-1,-1),0),
+                                      ('TOPPADDING',(0,0),(-1,-1),0), ('BOTTOMPADDING',(0,0),(-1,-1),0)]))
+    story.append(words_table)
     story.append(Spacer(1, 16))
 
-    # ---------- Footer: Bank Details / Terms / Signature ----------
-    footer_cells = []
+    # ---------- Footer: Payment Details + Terms (left) / Signature (right) ----------
+    # A fixed 2-column layout — left content always starts flush left, signature always sits
+    # flush right — instead of the previous 3-column table that padded a blank cell onto the
+    # front whenever Payment Details didn't apply, which pushed Terms & Conditions into the
+    # middle column and left the true left edge empty.
+    left_blocks = []
     if invoice_type == 'tax' and s['bank_name']:
-        bank_lines = ["<b>BANK DETAILS</b>", f"Bank Name : {s['bank_name']}", f"A/C Number : {s['account_number']}",
-                      f"IFSC Code : {s['ifsc_code']}", f"Branch : {s['branch']}"]
-        footer_cells.append(Paragraph('<br/>'.join(bank_lines), label_style))
+        bank_lines = ["<b>PAYMENT DETAILS</b>", f"Bank Name : {esc(s['bank_name'])}", f"A/C Number : {esc(s['account_number'])}",
+                      f"IFSC Code : {esc(s['ifsc_code'])}", f"Branch : {esc(s['branch'])}"]
+        left_blocks.append(Paragraph('<br/>'.join(bank_lines), label_style))
+        left_blocks.append(Spacer(1, 10))
     terms_lines = ["<b>TERMS &amp; CONDITIONS</b>", "1. Payment should be made within due date.",
                    "2. Interest @ 18% p.a. will be charged on overdue.", "3. All disputes subject to Rourkela Jurisdiction."]
-    footer_cells.append(Paragraph('<br/>'.join(terms_lines), label_style))
-    footer_cells.append(Paragraph(f"<b>FOR {s['company_name']}</b><br/><br/><br/>Authorised Signatory", label_style))
-    while len(footer_cells) < 3:
-        footer_cells.insert(0, '')
-    footer_table = Table([footer_cells], colWidths=[2.3*inch, 2.3*inch, 2.3*inch])
-    footer_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    left_blocks.append(Paragraph('<br/>'.join(terms_lines), label_style))
+    signature_block = Paragraph(f"<b>FOR {esc(s['company_name'])}</b><br/><br/><br/>Authorised Signatory", label_style)
+    footer_table = Table([[left_blocks, signature_block]], colWidths=[4.6*inch, 2.3*inch])
+    footer_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LINEABOVE', (0,0), (-1,0), 0.7, LINE),
+                                       ('TOPPADDING', (0,0), (-1,-1), 8), ('LEFTPADDING', (0,0), (0,0), 0)]))
     story.append(footer_table)
 
     if invoice_type == 'tax' and s['rcm_clause']:
         story.append(Spacer(1, 10))
-        story.append(Paragraph(f"<b>RCM Note:</b> {s['rcm_clause']}", label_style))
+        story.append(Paragraph(f"<b>RCM Note:</b> {esc(s['rcm_clause'])}", label_style))
     if remarks:
         story.append(Spacer(1, 8))
-        story.append(Paragraph(f"<b>Remarks:</b> {remarks}", label_style))
+        story.append(Paragraph(f"<b>Remarks:</b> {esc(remarks)}", label_style))
 
     story.append(Spacer(1, 14))
     story.append(Paragraph("Thank you for your business!", ParagraphStyle('TY', parent=styles['Normal'], fontSize=9, alignment=1, fontName='Helvetica-Oblique')))
@@ -4354,20 +4474,22 @@ def invoice_center_generate():
     trips = conn.execute(f"""SELECT t.*, v.vehicle_no FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                              WHERE t.id IN ({placeholders})""", trip_ids).fetchall() if trip_ids else []
 
-    # Each selected trip's own "Others" line items (real per-trip charges/deductions) — every item
-    # checkbox is checked (included) by default in the UI, so a plain form submit with JS disabled
-    # still includes everything; unchecking one removes it from included_item_ids and its amount is
-    # left out. Their net folds into Other Charges rather than being fabricated or silently dropped.
+    # Each selected trip's own "Others" line items (real per-trip charges/deductions, e.g.
+    # Detention, an advance already given) — every item checkbox is checked (included) by default
+    # in the UI, so a plain form submit with JS disabled still includes everything; unchecking one
+    # removes it from included_item_ids. Kept as named entries (not folded into a number) so each
+    # one is printed on the invoice by its own description instead of disappearing into one total.
+    extra_items = []
     included_item_ids = {int(x) for x in f.getlist('included_item_ids') if x}
     if trip_ids:
-        for it in conn.execute(f"""SELECT id, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})""", trip_ids).fetchall():
+        for it in conn.execute(f"""SELECT id, description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})""", trip_ids).fetchall():
             if it['id'] not in included_item_ids:
                 continue
-            extra_other += (it['amount'] or 0) if it['item_type'] == 'charge' else -(it['amount'] or 0)
+            extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
 
-    # Ad-hoc charges/deductions typed directly into Invoice Center at generation time — folded into
-    # Other Charges for the total, and (once the batch exists) saved as real invoice_batch_items so
-    # they're visible and still editable from Generated Invoices afterwards, same as items added there.
+    # Ad-hoc charges/deductions typed directly into Invoice Center at generation time — kept as
+    # named entries too (once the batch exists, saved as real invoice_batch_items so they're still
+    # visible/editable from Generated Invoices afterwards, same as items added there).
     extra_descs = f.getlist('extra_item_desc')
     extra_amounts = f.getlist('extra_item_amount')
     extra_types = f.getlist('extra_item_type')
@@ -4382,7 +4504,7 @@ def invoice_center_generate():
             amt = 0
         item_type = extra_types[i] if i < len(extra_types) and extra_types[i] in ('charge', 'deduction') else 'charge'
         new_items.append((desc, amt, item_type))
-        extra_other += amt if item_type == 'charge' else -amt
+        extra_items.append({'desc': desc, 'amount': amt, 'item_type': item_type})
 
     entity = None
     if invoice_type == 'vehicle_owner' and vendor_id:
@@ -4405,7 +4527,7 @@ def invoice_center_generate():
         # Preview never touches the DB or the invoice-number counter — it's just a look at the PDF.
         buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
                                   cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
-                                  tds_rate=tds_rate)
+                                  tds_rate=tds_rate, extra_items=extra_items)
         conn.close()
         return send_file(buf, download_name=f'preview-{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
@@ -4432,7 +4554,7 @@ def invoice_center_generate():
 
     buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
-                              tds_rate=tds_rate)
+                              tds_rate=tds_rate, extra_items=extra_items)
     return send_file(buf, as_attachment=True, download_name=f'{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices/generated')
@@ -4526,20 +4648,23 @@ def invoice_batch_pdf(batch_id):
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (batch['party_id'],)).fetchone()
     s = _get_invoice_settings(conn)
 
-    # Batch-level custom items (added from the Edit screen) fold into Other Charges — same
-    # additive pattern as the per-trip items folded in at generate time — so a regenerated PDF
-    # always reflects the latest edits without changing what _build_invoice_pdf itself does.
-    items_total = 0
-    for it in conn.execute("SELECT amount, item_type FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,)).fetchall():
-        items_total += (it['amount'] or 0) if it['item_type'] == 'charge' else -(it['amount'] or 0)
+    # Batch-level custom items (added from the Edit screen) plus each trip's own "Others" items —
+    # kept as named entries, same as at generate time, so a regenerated PDF still prints each one
+    # by its own description (e.g. "Detention") instead of folding them into one anonymous total.
+    extra_items = []
+    for it in conn.execute("SELECT description, amount, item_type FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,)).fetchall():
+        extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+    if trip_ids:
+        for it in conn.execute(f"SELECT description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall():
+            extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
     conn.close()
 
     cgst_rate = sgst_rate = round((batch['gst_rate'] or 0) / 2, 4) if batch['invoice_type'] == 'tax' else 0
     buf = _build_invoice_pdf(trips, batch['invoice_type'], entity, s, batch['invoice_number'], batch['invoice_date'],
                               batch['due_date'], batch['payment_status'], batch['remarks'],
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate,
-                              extra_loading=batch['loading_charges'] or 0, extra_other=(batch['other_charges'] or 0) + items_total,
-                              tds_rate=batch['tds_rate'] or 0)
+                              extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0,
+                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items)
     return send_file(buf, as_attachment=True, download_name=f'{batch["invoice_number"].replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices')
@@ -4903,7 +5028,7 @@ ALL_SETTING_KEYS = [
     'company_name', 'address', 'state', 'phone', 'email', 'gstin', 'pan', 'business_type', 'company_since', 'currency',
     'bank_name', 'account_holder', 'account_number', 'ifsc_code', 'branch', 'account_type',
     'default_invoice_type', 'default_payment_terms', 'default_place_of_supply', 'default_due_days',
-    'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words',
+    'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words', 'logo_path',
     'invoice_prefix', 'next_invoice_number',
     'cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
