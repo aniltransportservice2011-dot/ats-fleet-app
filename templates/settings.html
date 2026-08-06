@@ -88,6 +88,18 @@
           <div><h3>Company Details</h3><div class="sub">Update your company information and contact details.</div></div>
           <button type="button" class="edit-toggle-btn" onclick="document.getElementById('companyEditModal').classList.add('open')">Edit</button>
         </div>
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line);">
+          {% if s['logo_path'] %}
+          <img src="/static/{{ s['logo_path'] }}" alt="Company logo" style="height:52px;width:auto;max-width:120px;object-fit:contain;border:1px solid var(--line);border-radius:6px;padding:4px;background:#fff;">
+          {% else %}
+          <div style="height:52px;width:52px;border:1.5px dashed var(--line);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--steel);font-size:0.7rem;text-align:center;">No logo</div>
+          {% endif %}
+          <form method="POST" action="/settings/logo/upload" enctype="multipart/form-data" style="display:flex;align-items:center;gap:8px;">
+            <input type="file" name="logo" accept=".png,.jpg,.jpeg,.gif,.webp" id="logoFileInput" style="display:none;" onchange="this.form.submit()">
+            <button type="button" class="edit-toggle-btn" onclick="document.getElementById('logoFileInput').click()">{{ 'Change Logo' if s['logo_path'] else 'Upload Logo' }}</button>
+          </form>
+          <div style="font-size:0.72rem;color:var(--steel);">Shown top-left on every generated invoice PDF.</div>
+        </div>
         <div class="kv-grid" id="companyView">
           <div><div class="lbl">Company Name</div>{{ s['company_name'] }}</div>
           <div><div class="lbl">GSTIN</div>{{ s['gstin'] }}</div>
