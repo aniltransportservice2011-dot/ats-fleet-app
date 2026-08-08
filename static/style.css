@@ -23,13 +23,25 @@ body {
    except Dashboard; .main-content's own 32px side padding (base.html) is enough breathing
    room on its own without an extra width cap fighting it. */
 .wrap { max-width: none; width: 100%; margin: 0; }
+/* "Back to X" navigation — its own black-outline tier, deliberately distinct from the orange
+   Add/Save/Apply tier and the green Export tier so it never reads as another action button. */
 a.back {
-  color: var(--steel);
+  background: var(--white);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
   text-decoration: none;
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: 700;
+  padding: 9px 16px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  transition: background .15s, box-shadow .15s, transform .08s;
 }
-a.back:hover { color: var(--accent); }
+a.back:hover { background: var(--paper); box-shadow: 0 1px 3px rgba(20, 33, 61, 0.12); }
+a.back:active { transform: translateY(1px); }
 h1 {
   font-size: 1.55rem;
   margin: 10px 0 4px;
@@ -40,30 +52,37 @@ h1 {
   flex-wrap: wrap;
   gap: 10px;
 }
-/* Shared "real action" button look — Add/Save/Apply/Export controls across the whole app, styled
-   once here so every page reads as one consistent, professional design system. Small icon-only
-   utility buttons (delete icons, kebab menus, pager arrows, modal close-x) intentionally keep
-   their own minimal look and aren't touched by this. */
+/* Shared "real action" button look — Add/Save/Apply controls across the whole app, styled once
+   here so every page reads as one consistent design system: white fill, a colored outline, bold
+   colored label, filling solid on hover. Orange = the primary action tier (Add/Save/Apply/Update).
+   Export/Download uses its own green tier (.download-btn below) and "Back to X" navigation uses
+   its own black tier (a.back below) — same shape and weight, different color, so buttons sitting
+   next to each other stay easy to tell apart at a glance. The !important pins below are deliberate:
+   many call sites still carry an old per-button inline background color from before this system
+   existed, and without it those would silently keep their old fill instead of picking this up.
+   Small icon-only utility buttons (delete icons, kebab menus, pager arrows, modal close-x)
+   intentionally keep their own minimal look and aren't touched by this. */
 a.add-btn, button.add-btn {
-  background: var(--ink);
-  color: var(--white);
+  background: var(--white) !important;
+  color: var(--accent) !important;
+  border: 1.5px solid var(--accent) !important;
   padding: 10px 20px;
   text-decoration: none;
   font-size: 0.84rem;
   font-weight: 700;
   letter-spacing: 0.01em;
   border-radius: 7px;
-  border: none;
   cursor: pointer;
   font-family: inherit;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
-  transition: background .15s, box-shadow .15s, transform .08s;
+  transition: background .15s, color .15s, box-shadow .15s, transform .08s;
 }
-a.add-btn:hover, button.add-btn:hover { background: var(--accent); box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
+a.add-btn:hover, button.add-btn:hover { background: var(--accent) !important; color: var(--white) !important; box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
 a.add-btn:active, button.add-btn:active { transform: translateY(1px); box-shadow: none; }
+a.add-btn[disabled], button.add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+a.add-btn[disabled]:hover, button.add-btn:disabled:hover { background: var(--white) !important; color: var(--accent) !important; box-shadow: none; }
 
 .filter-bar {
   background: var(--white);
@@ -91,20 +110,21 @@ a.add-btn:active, button.add-btn:active { transform: translateY(1px); box-shadow
   font-size: 0.87rem;
   min-width: 130px;
 }
+/* Apply Filters — same orange-outline tier as .add-btn, on every filter bar in the app so
+   "Apply"/"Apply Filters" always looks identical no matter which page it's on. */
 .filter-bar button {
-  background: var(--accent);
-  color: var(--white);
-  border: none;
+  background: var(--white);
+  color: var(--accent);
+  border: 1.5px solid var(--accent);
   padding: 9px 20px;
   border-radius: 7px;
   font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
-  box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08);
-  transition: opacity .15s, box-shadow .15s, transform .08s;
+  transition: background .15s, color .15s, box-shadow .15s, transform .08s;
 }
-.filter-bar button:hover { opacity: 0.9; box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
+.filter-bar button:hover { background: var(--accent); color: var(--white); box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
 .filter-bar button:active { transform: translateY(1px); box-shadow: none; }
 .filter-bar a.clear {
   color: var(--steel);
@@ -127,6 +147,10 @@ a.add-btn:active, button.add-btn:active { transform: translateY(1px); box-shadow
   color: var(--ink);
   cursor: pointer;
   font-family: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   transition: border-color .15s, color .15s;
 }
 .btn-cancel:hover { border-color: var(--accent); color: var(--accent); }
@@ -159,8 +183,8 @@ form.stack { background: var(--white); padding: 24px; display: grid; gap: 14px; 
 form.stack label { font-size: 0.8rem; color: var(--steel); text-transform: uppercase; letter-spacing: 0.04em; display: block; margin-bottom: 4px; font-weight: 600; }
 form.stack input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 3px; font-size: 0.95rem; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-button.submit { background: var(--accent); color: var(--white); border: none; padding: 13px; border-radius: 7px; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 6px; font-family: inherit; box-shadow: 0 1px 2px rgba(20, 33, 61, 0.08); transition: opacity .15s, box-shadow .15s, transform .08s; }
-button.submit:hover { opacity: 0.9; box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
+button.submit { background: var(--white); color: var(--accent); border: 1.5px solid var(--accent); padding: 13px; border-radius: 7px; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 6px; font-family: inherit; transition: background .15s, color .15s, box-shadow .15s, transform .08s; }
+button.submit:hover { background: var(--accent); color: var(--white); box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
 button.submit:active { transform: translateY(1px); box-shadow: none; }
 
 @media (max-width: 640px) {
@@ -191,10 +215,13 @@ button.submit:active { transform: translateY(1px); box-shadow: none; }
   .mt-head h1 { margin:0 0 2px; font-size:1.5rem; }
   .mt-head .sub { color:var(--steel); font-size:0.88rem; }
 
-  .mt-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:10px; padding:6px; margin-bottom:18px; overflow-x:auto; }
-  .mt-tab { display:flex; align-items:center; gap:7px; padding:9px 15px; border-radius:7px; font-size:0.84rem; font-weight:600; color:var(--steel); white-space:nowrap; text-decoration:none; }
-  .mt-tab.active { background:var(--accent); color:#fff; }
-  .mt-tab:hover:not(.active) { background:var(--paper); }
+  /* Same tab design as Route Analytics (.ra-tab) everywhere a page has section tabs: boxed pill
+     strip, flat inactive tabs, active tab picked out by accent text + underline (never a filled
+     background) — one consistent "how tabs work" across the whole app. */
+  .mt-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
+  .mt-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); white-space:nowrap; text-decoration:none; border-bottom:2px solid transparent; }
+  .mt-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .mt-tab:hover:not(.active) { color:var(--ink); }
 
   .mt-kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
   @media (max-width:1300px) { .mt-kpi-row { grid-template-columns:repeat(3,1fr); } }

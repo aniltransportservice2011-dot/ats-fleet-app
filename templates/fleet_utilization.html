@@ -15,8 +15,9 @@
   @media (max-width:760px) { .kpi-row { grid-template-columns:repeat(2,1fr); } }
 
   .fu-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
-  .fu-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; }
-  .fu-tab.active { background:#fff6ee; color:var(--accent); }
+  .fu-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:2px solid transparent; }
+  .fu-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .fu-tab:hover:not(.active) { color:var(--ink); }
   .fu-tab-panel { display:none; }
   .fu-tab-panel.active { display:block; }
 

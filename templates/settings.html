@@ -3,8 +3,9 @@
 {% block extra_head %}
 <style>
   .settings-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:20px; overflow-x:auto; }
-  .settings-tab { padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; }
-  .settings-tab.active { background:#fff6ee; color:var(--accent); }
+  .settings-tab { padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:2px solid transparent; }
+  .settings-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .settings-tab:hover:not(.active) { color:var(--ink); }
   .settings-tab-panel { display:none; }
   .settings-tab-panel.active { display:block; }
   .modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }

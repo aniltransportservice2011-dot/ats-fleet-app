@@ -8,8 +8,8 @@
   .lg-head-actions { display:flex; gap:10px; flex-shrink:0; }
   .lg-btn-outline { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:7px; }
   .lg-btn-outline:hover { border-color:var(--accent); color:var(--accent); }
-  .lg-btn-primary { background:var(--accent); border:none; color:#fff; padding:10px 18px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
-  .lg-btn-primary:hover { opacity:0.92; }
+  .lg-btn-primary { background:var(--white); border:1.5px solid var(--accent); color:var(--accent); padding:10px 18px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; transition:background .15s, color .15s; }
+  .lg-btn-primary:hover { background:var(--accent); color:#fff; }
 
   .lg-filters { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:18px 0; display:grid; grid-template-columns:1.4fr 1fr 1fr 1fr auto; gap:14px; align-items:end; }
   @media (max-width:1100px) { .lg-filters { grid-template-columns:1fr 1fr; } }
@@ -53,7 +53,7 @@
       <div class="sub">View and manage all parties and vendors with their current balances and transaction history.</div>
     </div>
     <div class="lg-head-actions">
-      <a class="lg-btn-outline" href="/accounts/export?{{ request.query_string.decode() }}">&#8681; Export</a>
+      <a class="download-btn" href="/accounts/export?{{ request.query_string.decode() }}">&#8681; Export</a>
       <button type="button" class="lg-btn-primary" onclick="document.getElementById('addAccountModal').classList.add('open')">+ Add Party / Vendor</button>
     </div>
   </div>

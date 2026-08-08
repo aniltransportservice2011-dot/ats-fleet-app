@@ -17,10 +17,10 @@
 {% block content %}
 <div class="wrap" style="max-width:none; width:96%;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-    <a href="/invoices" style="color:var(--steel);text-decoration:none;font-size:0.85rem;">&larr; Back to search</a>
+    <a href="/invoices" class="back">&larr; Back to search</a>
     <div style="display:flex;gap:10px;">
-      <a href="/invoices/{{ t['id'] }}/edit" class="add-btn" style="background:var(--accent);">Edit Invoice</a>
-      <a href="/invoices/{{ t['id'] }}/pdf" class="add-btn" style="background:var(--green);">Download PDF</a>
+      <a href="/invoices/{{ t['id'] }}/edit" class="add-btn">Edit Invoice</a>
+      <a href="/invoices/{{ t['id'] }}/pdf" class="download-btn">Download PDF</a>
     </div>
   </div>
 

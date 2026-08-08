@@ -40,6 +40,30 @@
   .donut-inner .lbl { font-size:0.62rem; color:var(--steel); }
   .legend-item { display:flex; align-items:center; gap:6px; font-size:0.82rem; margin-bottom:6px; }
   .legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+
+  .stat-compound-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; }
+  @media (max-width:900px) { .stat-compound-row { grid-template-columns:1fr; } }
+  .stat-compound-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
+  .stat-compound-head { display:flex; align-items:center; gap:10px; font-weight:700; font-size:0.9rem; margin-bottom:16px; }
+  .stat-compound-head .ic { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:0.95rem; flex-shrink:0; }
+  .stat-compound-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .stat-compound-item { text-align:center; }
+  .stat-compound-item .lbl { font-size:0.72rem; color:var(--steel); margin-bottom:5px; }
+  .stat-compound-item .val { font-size:1.2rem; font-weight:700; }
+
+  /* Route Rates table gains two grouped column blocks (Driver Advance / Fuel Taken) and gets wide
+     enough to need horizontal scroll — From/To stay pinned on the left so you never lose track of
+     which route a row belongs to while scrolling through the extra columns. */
+  .rr-table-wrap { overflow-x:auto; }
+  .rr-table { border-collapse:separate; border-spacing:0; white-space:nowrap; }
+  .rr-table th, .rr-table td { padding:9px 12px; }
+  .rr-table thead th { border-bottom:1px solid var(--line); }
+  .rr-table tbody td { border-bottom:1px solid var(--line); }
+  .rr-table .grp-th { text-align:center; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.02em; color:var(--steel); border-bottom:1px solid var(--line); }
+  .rr-table .sticky-col { position:sticky; background:var(--white); z-index:2; overflow:hidden; text-overflow:ellipsis; }
+  .rr-table th.sticky-col { z-index:3; }
+  .rr-table .sticky-from { left:0; max-width:130px; }
+  .rr-table .sticky-to { left:130px; max-width:120px; box-shadow:2px 0 4px -2px rgba(0,0,0,0.08); }
 </style>
 {% endblock %}
 {% block content %}
@@ -57,11 +81,20 @@
     <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
     <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
     <div class="field">
-      <label>Route</label>
-      <select name="route">
-        <option value="">All Routes</option>
-        {% for r in all_routes_list %}
-        <option value="{{ r }}" {% if f_route==r %}selected{% endif %}>{{ r }}</option>
+      <label>From</label>
+      <select name="from">
+        <option value="">All Origins</option>
+        {% for r in all_from_list %}
+        <option value="{{ r }}" {% if f_from==r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>To</label>
+      <select name="to">
+        <option value="">All Destinations</option>
+        {% for r in all_to_list %}
+        <option value="{{ r }}" {% if f_to==r %}selected{% endif %}>{{ r }}</option>
         {% endfor %}
       </select>
     </div>
@@ -163,6 +196,25 @@
       <div class="kpi-card"><div><div class="lbl">Total Routes</div><div class="val">{{ rr_total_routes }}</div><div class="sub">All types</div></div><div class="kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128506;</div></div>
     </div>
 
+    <div class="stat-compound-row">
+      <div class="stat-compound-card">
+        <div class="stat-compound-head"><span class="ic" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128100;</span>Driver Advances (₹)</div>
+        <div class="stat-compound-grid">
+          <div class="stat-compound-item"><div class="lbl">Lowest</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(da_lowest) }}</div></div>
+          <div class="stat-compound-item"><div class="lbl">Average</div><div class="val">₹{{ '{:,.0f}'.format(da_average) }}</div></div>
+          <div class="stat-compound-item"><div class="lbl">Highest</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(da_highest) }}</div></div>
+        </div>
+      </div>
+      <div class="stat-compound-card">
+        <div class="stat-compound-head"><span class="ic" style="background:#e8f5ee;color:var(--green);">&#9981;</span>Fuel Taken (₹)</div>
+        <div class="stat-compound-grid">
+          <div class="stat-compound-item"><div class="lbl">Lowest</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(fuel_lowest) }}</div></div>
+          <div class="stat-compound-item"><div class="lbl">Average</div><div class="val">₹{{ '{:,.0f}'.format(fuel_average) }}</div></div>
+          <div class="stat-compound-item"><div class="lbl">Highest</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(fuel_highest) }}</div></div>
+        </div>
+      </div>
+    </div>
+
     <div class="ra-grid-2">
       <div class="ra-panel">
         <div class="ra-panel-head"><h3>Rate Trend (Average Rate Over Time)</h3></div>
@@ -190,20 +242,49 @@
     </div>
 
     <div class="ra-panel">
-      <div class="ra-panel-head"><h3>Route Rates</h3></div>
+      <div class="ra-panel-head"><h3>Route Rates <span style="color:var(--steel);font-weight:400;font-size:0.8rem;">({{ rr_total_count }})</span></h3></div>
       {% if rr_rows %}
-      <table>
-        <tr><th>From</th><th>To</th><th>Type</th><th class="num">Highest</th><th class="num">Average</th><th class="num">Lowest</th><th class="num">Trips</th></tr>
+      <div class="rr-table-wrap">
+      <table class="rr-table">
+        <thead>
+        <tr>
+          <th class="sticky-col sticky-from" rowspan="2" style="vertical-align:bottom;">From</th>
+          <th class="sticky-col sticky-to" rowspan="2" style="vertical-align:bottom;">To</th>
+          <th rowspan="2" style="vertical-align:bottom;">Type</th>
+          <th class="num" rowspan="2" style="vertical-align:bottom;">Highest</th>
+          <th class="num" rowspan="2" style="vertical-align:bottom;">Average</th>
+          <th class="num" rowspan="2" style="vertical-align:bottom;">Lowest</th>
+          <th class="num" rowspan="2" style="vertical-align:bottom;">Trips</th>
+          <th class="grp-th" colspan="3">Driver Advance (₹)</th>
+          <th class="grp-th" colspan="3">Fuel Taken (₹)</th>
+        </tr>
+        <tr>
+          <th class="num grp-th">Lowest</th><th class="num grp-th">Average</th><th class="num grp-th">Highest</th>
+          <th class="num grp-th">Lowest</th><th class="num grp-th">Average</th><th class="num grp-th">Highest</th>
+        </tr>
+        </thead>
+        <tbody>
         {% for r in rr_rows %}
         <tr>
-          <td>{{ r.clean_from }}</td><td>{{ r.clean_to }}</td><td>{{ r.type }}</td>
+          <td class="sticky-col sticky-from">{{ r.clean_from }}</td>
+          <td class="sticky-col sticky-to">{{ r.clean_to }}</td>
+          <td>{{ r.type }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.highest) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.average) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.lowest) }}</td>
           <td class="num">{{ r.trips }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.da_lowest) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.da_average) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.da_highest) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_lowest) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_average) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_highest) }}</td>
         </tr>
         {% endfor %}
+        </tbody>
       </table>
+      </div>
+      {{ pager.render_pager('rrPager', rr_page, rr_total_pages, rr_per_page, rr_base_qs, rr_page_tokens, page_param='rr_page') }}
       {% else %}
       <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No per-MT rate data for this selection.</div>
       {% endif %}
