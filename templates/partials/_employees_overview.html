@@ -98,7 +98,7 @@
   <table>
     <tr><th>Employee</th><th>Role</th><th>Joining Date</th><th>Attendance</th><th>Salary Status</th><th class="num">Advance</th><th></th></tr>
     {% for r in rows %}
-    <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}'">
+    <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}?from_tab=overview'">
       <td>
         <div class="emp-name-cell">
           <div class="emp-avatar" style="background:{{ r.avatar_colors[0] }};color:{{ r.avatar_colors[1] }};">{{ r.initials }}</div>
@@ -112,7 +112,7 @@
           {% else %}<span class="mt-type-badge" style="background:var(--paper);color:var(--steel);">No Payment</span>{% endif %}</td>
       <td class="num">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
       <td onclick="event.stopPropagation();">
-        <a href="/employee/{{ r.name|urlencode }}" title="Open Ledger" style="color:var(--steel);margin-right:8px;">&#128220;</a>
+        <a href="/employee/{{ r.name|urlencode }}?from_tab=overview" title="Open Ledger" style="color:var(--steel);margin-right:8px;">&#128220;</a>
         <button type="button" title="Edit Employee" style="background:none;border:none;color:var(--steel);cursor:pointer;" onclick="document.getElementById('editEmpModal{{ r.id }}').classList.add('open')">&#9999;&#65039;</button>
       </td>
     </tr>

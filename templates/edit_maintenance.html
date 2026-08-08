@@ -2,9 +2,10 @@
 {% block title %}Edit Maintenance{% endblock %}
 {% block content %}
 <div class="wrap" style="max-width:700px;">
-  <a class="back" href="/maintenance">&larr; Back</a>
+  <a class="back" href="{{ return_to or '/maintenance' }}">&larr; {{ 'Back to Ledger' if return_to else 'Back' }}</a>
   <h1>Edit Maintenance</h1>
   <form class="stack" method="POST">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
     <div class="row2">
       <div><label>Date</label><input type="date" name="date" value="{{ m['date'] }}" required></div>
       <div><label>Vehicle No</label><input type="text" name="vehicle_no" value="{{ m['vehicle_no'] or '' }}" list="vehicle-list" required></div>

@@ -197,10 +197,10 @@
     <table>
       <tr><th>Date</th><th>Type</th><th>Details</th><th>Ref / Document</th><th class="num">Debit (₹)</th><th class="num">Credit (₹)</th><th class="num">Balance (₹)</th></tr>
       {% for e in entries %}
-      <tr>
+      <tr{% if e.link %} class="clickable-row" onclick="window.location='{{ e.link }}?return_to={{ return_to|urlencode }}'" title="Open this {{ 'trip' if 'Trip' in e.kind else 'record' }}"{% endif %}>
         <td style="white-space:nowrap;">{{ e.date }}</td>
         <td><span class="lg2-type-badge" style="{{ kind_colors(e.kind) }}">{{ e.kind }}</span></td>
-        <td>{{ e.detail.split(' — ')[0] }}{% if ' — ' in e.detail %}<div class="lg2-detail-sub">{{ e.detail.split(' — ',1)[1] }}</div>{% endif %}</td>
+        <td>{{ e.detail.split(' — ')[0] }}{% if ' — ' in e.detail %}<div class="lg2-detail-sub">{{ e.detail.split(' — ',1)[1] }}</div>{% endif %}{% if e.link %} <span style="color:var(--steel);font-size:0.72rem;">&#8594;</span>{% endif %}</td>
         <td>{{ e.ref or '—' }}</td>
         <td class="num">{% if e.debit %}₹{{ '{:,.0f}'.format(e.debit) }}{% else %}—{% endif %}</td>
         <td class="num" style="color:var(--green);">{% if e.credit %}₹{{ '{:,.0f}'.format(e.credit) }}{% else %}—{% endif %}</td>

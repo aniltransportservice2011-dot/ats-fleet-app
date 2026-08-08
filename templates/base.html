@@ -190,7 +190,15 @@
     if (pushState) {
       history.pushState({ softNav: true }, '', url);
     }
-    window.scrollTo(0, 0);
+    // Pagination links carry a #anchor pointing at the table/pager being refreshed — land back
+    // on that section instead of yanking the user to the top of a long page on every page click.
+    var hash = url.split('#')[1];
+    var hashEl = hash ? document.getElementById(hash) : null;
+    if (hashEl) {
+      hashEl.scrollIntoView({ block: 'nearest' });
+    } else {
+      window.scrollTo(0, 0);
+    }
   }
 
   function goTo(url) {
@@ -255,6 +263,18 @@
         e.preventDefault();
         goTo(href);
       });
+    });
+
+    // Pagination (page number / prev / next / first / last) — delegated on #main-content so it
+    // keeps working after a soft-nav swap replaces the table underneath it. Only the table/pager
+    // section's data changes; the sidebar, topbar and rest of the page are left untouched.
+    mainEl.addEventListener('click', function(e) {
+      var link = e.target.closest('a.pjax-page');
+      if (!link || link.classList.contains('disabled')) return;
+      var href = link.getAttribute('href');
+      if (!href) return;
+      e.preventDefault();
+      goTo(href);
     });
   }
   attachHandlers();

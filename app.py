@@ -98,7 +98,7 @@ def _period_financials(conn, date_from, date_to):
                (t['fine'] or 0) + (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
                (t['loading_expense'] or 0) + (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) +
                (t['weighbridge_charges'] or 0) + (t['other_expense'] or 0) + (t['permit_charges'] or 0) for t in trips)
-    owner_cost = sum((t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+    owner_cost = sum((t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
                       for t in trips if t['type'] == 'Market')
     maint_all = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     # Toll Management (Maintenance > Toll) is the source of truth for period-level toll cost now —
@@ -246,7 +246,7 @@ def _accounts_rows(conn):
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
         (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
@@ -507,7 +507,7 @@ def dashboard():
     # Owner's actual contracted cost (fixed rate, or owner_rate x quantity) — not what's been paid
     # to them so far, so the margin holds regardless of whether that payment is still pending.
     market_owner_cost = sum(
-        (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+        (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         for t in market_trips)
     market_vehicle_profit = market_billed - market_owner_cost
 
@@ -1172,6 +1172,8 @@ def add_trip():
         rate = n('rate')
         rate_type = f.get('rate_type')
         fixed_rate_amount = n('fixed_rate_amount')
+        owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
+        owner_fixed_amount = n('owner_fixed_amount')
 
         freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
 
@@ -1185,15 +1187,19 @@ def add_trip():
                              n('shortage_amount')+n('tds')+n('other_deductions'))
         billed_amount = freight + total_charges - total_deductions
 
+        # conductor_expense/wear_tear are no longer collected from this form (dropped in favor of
+        # Fuel Liters/Fuel Price below) — simply left out of the INSERT so they take their schema
+        # default for every new trip, same "stop collecting, don't touch history" pattern as
+        # driver_payment above.
         cols = ['date','lr_number','vehicle_id','type','party_id','from_loc','to_loc','quantity','rate',
                 'driver_name','material','rate_type','billed_amount',
                 'detention_charges','gps_cost','loading_charge','unloading_charge',
                 'police_charges','sim_tracking','union_charges','weight_charges','other_charges',
                 'brokerage','builty_commission','late_fees','material_damage','shortage_amount','shortage_qty','tds','other_deductions',
-                'fuel_amount','fuel_vendor_id','driver_adv_amount','driver_adv_vendor_id','party_advance','payment_received',
-                'owner_name','fixed_rate_amount','owner_rate','paid_to_owner','owner_vendor_id',
-                'agent_commission','builty_expense','conductor_expense','fine','labour_charges','parking','puncture',
-                'toll','urea','loading_expense','unloading_expense','wear_tear','weighbridge_charges','other_expense','misc_vendor_id',
+                'fuel_amount','fuel_vendor_id','fuel_liters','fuel_price','driver_adv_amount','driver_adv_vendor_id','party_advance','payment_received',
+                'owner_name','fixed_rate_amount','owner_rate','owner_rate_type','owner_fixed_amount','paid_to_owner','owner_vendor_id',
+                'agent_commission','builty_expense','fine','labour_charges','parking','puncture',
+                'toll','urea','loading_expense','unloading_expense','weighbridge_charges','other_expense','misc_vendor_id',
                 'lr_received','is_empty']
         vals = [f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
                 quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
@@ -1201,11 +1207,11 @@ def add_trip():
                 n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
                 n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
                 n('shortage_qty'), n('tds'), n('other_deductions'),
-                n('fuel_amount'), fuel_vendor_id, n('driver_adv_amount'), driveradv_vendor_id, n('party_advance'), n('payment_received'),
-                f.get('owner_name'), fixed_rate_amount, n('owner_rate'), n('paid_to_owner'), owner_vendor_id,
-                n('agent_commission'), n('builty_expense'), n('conductor_expense'), n('fine'), n('labour_charges'),
+                n('fuel_amount'), fuel_vendor_id, f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), driveradv_vendor_id, n('party_advance'), n('payment_received'),
+                f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, n('paid_to_owner'), owner_vendor_id,
+                n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
                 n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
-                n('wear_tear'), n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
+                n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
                 f.get('lr_received') or None, 1 if f.get('is_empty') else 0]
         placeholders = ','.join('?' * len(cols))
         cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
@@ -1220,7 +1226,7 @@ def add_trip():
     conn2.close()
     return render_template('trip_form.html', mode='add', t={}, custom_items=[],
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                            employees=employees, active='trips')
+                            employees=employees, return_to='', active='trips')
 
 def _save_trip_custom_items(conn, trip_id, form):
     """Replace a trip's custom "Others" line items (stored in invoice_items, the same table the
@@ -3489,7 +3495,7 @@ def party_ledger(party_id):
                             opening_balance=party['opening_balance'], opening_balance_date=party['opening_balance_date'],
                             gstin=party['gstin'], category=party['category'], status=party['status'] or 'Active',
                             pending_trips=pending_trips, total_pending_trips=total_pending_trips,
-                            active='accounts', **ctx)
+                            return_to=request.full_path, active='accounts', **ctx)
 
 @app.route('/ledger/vendor/<int:vendor_id>')
 def vendor_ledger(vendor_id):
@@ -3499,10 +3505,10 @@ def vendor_ledger(vendor_id):
         conn.close()
         return redirect(url_for('party_ledger', party_id=vendor['linked_party_id']))
     pending_trips_raw = conn.execute("""SELECT t.id, t.date, t.lr_number, t.from_loc, t.to_loc, v.vehicle_no,
-                                    (CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END) as billed_amount,
-                                    (CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) as pending
+                                    (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END) as billed_amount,
+                                    (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) as pending
                                     FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.owner_vendor_id=?
-                                    AND (CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) > 0.01
+                                    AND (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) > 0.01
                                     ORDER BY t.date""", (vendor_id,)).fetchall()
     conn.close()
     pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
@@ -3520,7 +3526,7 @@ def vendor_ledger(vendor_id):
                             opening_balance=vendor['opening_balance'], opening_balance_date=vendor['opening_balance_date'],
                             gstin=vendor['gstin'], category=vendor['category'], status=vendor['status'] or 'Active',
                             pending_trips=pending_trips, total_pending_trips=total_pending_trips,
-                            active='accounts', **ctx)
+                            return_to=request.full_path, active='accounts', **ctx)
 
 def _export_ledger_entries(name, entries):
     from openpyxl import Workbook
@@ -3605,7 +3611,8 @@ def _get_party_ledger_entries(party_id):
         # spelled out in full on every ledger row.
         entries.append({'date': t['date'], 'detail': f"Trip: {_lr_label(t['lr_number'], t['id'])} — {_clean_loc(t['from_loc'])} → {_clean_loc(t['to_loc'])}",
                          'debit': t['billed_amount'] or 0, 'credit': original_received + (t['party_advance'] or 0),
-                         'kind': 'Trip Bill', 'ref': trip_invoice_no.get(t['id']) or t['lr_number'] or '', 'vehicle_type': t['type'] or ''})
+                         'kind': 'Trip Bill', 'ref': trip_invoice_no.get(t['id']) or t['lr_number'] or '', 'vehicle_type': t['type'] or '',
+                         'link': url_for('edit_trip', trip_id=t['id'])})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment received')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
@@ -3625,7 +3632,8 @@ def _get_party_ledger_entries(party_id):
         for ve in vendor_entries:
             entries.append({'date': ve['date'], 'detail': ve['detail'] + ' (vendor side)',
                              'debit': ve['debit'], 'credit': ve['credit'],
-                             'kind': ve.get('kind', 'Expense Adj.'), 'ref': ve.get('ref', ''), 'vehicle_type': ve.get('vehicle_type', '')})
+                             'kind': ve.get('kind', 'Expense Adj.'), 'ref': ve.get('ref', ''), 'vehicle_type': ve.get('vehicle_type', ''),
+                             'link': ve.get('link')})
     entries.sort(key=lambda x: x['date'] or '')
     balance = 0
     for e in entries:
@@ -3637,7 +3645,7 @@ def _get_party_ledger_entries(party_id):
 def _get_vendor_ledger_entries(vendor_id):
     conn = get_db()
     vendor = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM vendors WHERE id=?", (vendor_id,)).fetchone()
-    maint = conn.execute("""SELECT m.date, m.category, m.service_type, m.tyre_action, m.tyre_id, m.invoice_no,
+    maint = conn.execute("""SELECT m.id, m.date, m.category, m.service_type, m.tyre_action, m.tyre_id, m.invoice_no,
                              m.amount, m.paid_amount, v.vehicle_no, b.battery_no, ip.policy_number
                              FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
                              LEFT JOIN batteries b ON b.maintenance_id=m.id
@@ -3650,6 +3658,7 @@ def _get_vendor_ledger_entries(vendor_id):
                           FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                           WHERE t.driver_adv_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
     owner_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.rate_type, t.fixed_rate_amount, t.owner_rate,
+                                  t.owner_rate_type, t.owner_fixed_amount,
                                   t.quantity, t.paid_to_owner, t.type, v.vehicle_no
                                   FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                                   WHERE t.owner_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
@@ -3694,19 +3703,22 @@ def _get_vendor_ledger_entries(vendor_id):
             detail += f" ({specific_ref})"
         entries.append({'date': m['date'], 'detail': detail,
                          'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0,
-                         'kind': 'Expense Adj.', 'ref': m['invoice_no'] or '', 'vehicle_type': ''})
+                         'kind': 'Expense Adj.', 'ref': m['invoice_no'] or '', 'vehicle_type': '',
+                         'link': url_for('edit_maintenance', m_id=m['id'])})
     for f in fuel:
         ident = f['vehicle_no'] or trip_invoice_no.get(f['id'], '')
         detail = 'Fuel' + (f" — {ident}" if ident else '')
         entries.append({'date': f['date'], 'detail': detail, 'debit': 0, 'credit': f['fuel_amount'] or 0,
-                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(f['id'], ''), 'vehicle_type': f['type'] or ''})
+                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(f['id'], ''), 'vehicle_type': f['type'] or '',
+                         'link': url_for('edit_trip', trip_id=f['id'])})
     for a in adv:
         ident = a['vehicle_no'] or trip_invoice_no.get(a['id'], '')
         detail = 'Driver Advance' + (f" — {ident}" if ident else '')
         entries.append({'date': a['date'], 'detail': detail, 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
-                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(a['id'], ''), 'vehicle_type': a['type'] or ''})
+                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(a['id'], ''), 'vehicle_type': a['type'] or '',
+                         'link': url_for('edit_trip', trip_id=a['id'])})
     for o in owner_trips:
-        owed = o['fixed_rate_amount'] if o['rate_type']=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
+        owed = o['owner_fixed_amount'] if (o['owner_rate_type'] or 'PER_MT')=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
             original_paid = (o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0)
             detail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire"
@@ -3715,7 +3727,8 @@ def _get_vendor_ledger_entries(vendor_id):
                 detail += f" ({ident})"
             entries.append({'date': o['date'], 'detail': detail,
                              'debit': original_paid, 'credit': owed,
-                             'kind': 'Trip Bill', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or ''})
+                             'kind': 'Trip Bill', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
+                             'link': url_for('edit_trip', trip_id=o['id'])})
     for it in other_items:
         ident = it['vehicle_no'] or trip_invoice_no.get(it['trip_id'], '')
         detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}" + (f" ({ident})" if ident else '')
@@ -3726,7 +3739,7 @@ def _get_vendor_ledger_entries(vendor_id):
                          'debit': amt if it['item_type'] == 'deduction' else 0,
                          'credit': amt if it['item_type'] == 'charge' else 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(it['trip_id']) or it['lr_number'] or '',
-                         'vehicle_type': it['type'] or ''})
+                         'vehicle_type': it['type'] or '', 'link': url_for('edit_trip', trip_id=it['trip_id'])})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment made')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
@@ -3903,7 +3916,7 @@ def add_vendor_payment(vendor_id):
         for tid in trip_ids:
             if remaining <= 0.004:
                 break
-            trip = conn.execute("""SELECT (CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END) as owed,
+            trip = conn.execute("""SELECT (CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END) as owed,
                                    paid_to_owner FROM trips WHERE id=?""", (tid,)).fetchone()
             if not trip:
                 continue
@@ -4035,14 +4048,16 @@ def edit_maintenance(m_id):
                       float(f.get('paid_amount') or 0), vendor_id, f.get('notes'), m_id))
         conn.commit()
         conn.close()
-        return redirect(url_for('maintenance_list'))
+        return_to = f.get('return_to')
+        return redirect(return_to) if return_to else redirect(url_for('maintenance_list'))
 
     m = conn.execute("""SELECT mt.*, v.vehicle_no, ve.name as vendor_name FROM maintenance mt
                         LEFT JOIN vehicles v ON mt.vehicle_id=v.id
                         LEFT JOIN vendors ve ON mt.vendor_id=ve.id WHERE mt.id=?""", (m_id,)).fetchone()
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
     conn.close()
-    return render_template('edit_maintenance.html', m=m, vehicles=vehicles, combined_names=combined_names, active='maintenance')
+    return render_template('edit_maintenance.html', m=m, vehicles=vehicles, combined_names=combined_names,
+                            return_to=request.args.get('return_to', ''), active='maintenance')
 
 @app.route('/salaries/delete/<int:s_id>', methods=['POST'])
 def delete_salary(s_id):
@@ -4716,6 +4731,7 @@ def employee_ledger(employee):
     conn = get_db()
     if request.method == 'POST':
         f = request.form
+        from_tab = f.get('from_tab', 'overview')
         entry_kind = f.get('entry_kind')
         tx_date = f.get('date')
         amount = float(f.get('amount') or 0)
@@ -4739,27 +4755,29 @@ def employee_ledger(employee):
                          (employee, tx_date, amount, entry_kind, f.get('notes'), now))
         conn.commit()
         conn.close()
-        return redirect(url_for('employee_ledger', employee=employee))
+        return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
 
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    from_tab = request.args.get('from_tab', 'overview')
     led = _employee_ledger_entries(conn, employee, date_from, date_to)
     conn.close()
     return render_template('employee_ledger.html', employee=employee, entries=led['entries'],
                             advance_balance=led['advance_balance'], total_salary_paid=led['total_salary_paid'],
                             opening_balance=led['opening_balance'],
                             opening_balance_date=led['opening_balance_date'],
-                            f_date_from=date_from, f_date_to=date_to, active='salaries')
+                            f_date_from=date_from, f_date_to=date_to, from_tab=from_tab, active='salaries')
 
 @app.route('/employee/<employee>/opening-balance', methods=['POST'])
 def update_employee_opening_balance(employee):
     conn = get_db()
     f = request.form
+    from_tab = f.get('from_tab', 'overview')
     conn.execute("UPDATE employees SET opening_balance=?, opening_balance_date=? WHERE name=? COLLATE NOCASE",
                  (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None, employee))
     conn.commit()
     conn.close()
-    return redirect(url_for('employee_ledger', employee=employee))
+    return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
 
 @app.route('/driver-performance')
 def driver_performance():
@@ -5116,7 +5134,7 @@ def invoice_center():
     elif invoice_type == 'vehicle_owner' and vendor_id:
         selected_vendor = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
         query = """SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date,
-                   CASE WHEN t.rate_type='FIXED' THEN t.fixed_rate_amount ELSE t.owner_rate*t.quantity END as billed_amount
+                   CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE t.owner_rate*t.quantity END as billed_amount
                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                    WHERE t.owner_vendor_id=?"""
         params = [vendor_id]
@@ -5187,7 +5205,7 @@ def invoice_center_review():
     line_items = []
     for t in trips:
         if invoice_type == 'vehicle_owner':
-            freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            freight = t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT')=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
             already_given = (t['paid_to_owner'] or 0) + (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
             net = freight - already_given
         else:
@@ -5277,7 +5295,7 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     line_items = []
     for t in trips:
         if invoice_type == 'vehicle_owner':
-            freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            freight = t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT')=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         else:
             freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
         line_items.append({
@@ -5504,10 +5522,20 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     if is_single:
         li = line_items[0]
         t = li['trip']
-        rate_basis = 'Per Trip' if t['rate_type'] == 'FIXED' else f"{t['quantity']} MT"
-        rate_val = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else t['rate']
+        # Owner invoices ("vehicle_owner") are billed against the vehicle owner's own Charge Type
+        # (owner_rate_type/owner_fixed_amount), which is tracked independently of the party's —
+        # everything else (party invoices, tax invoices) uses the party's rate_type as before.
+        if invoice_type == 'vehicle_owner':
+            is_fixed = (t['owner_rate_type'] or 'PER_MT') == 'FIXED'
+            rate_basis = 'Per Trip' if is_fixed else f"{t['quantity']} MT"
+            rate_val = t['owner_fixed_amount'] if is_fixed else t['owner_rate']
+        else:
+            is_fixed = t['rate_type'] == 'FIXED'
+            rate_basis = 'Per Trip' if is_fixed else f"{t['quantity']} MT"
+            rate_val = t['fixed_rate_amount'] if is_fixed else t['rate']
+        freight_desc = 'Freight Charges' + (' (Fixed)' if is_fixed else '')
         freight_rows = [['#', 'DESCRIPTION', 'RATE (Rs.)', 'QTY / BASIS', 'AMOUNT (Rs.)'],
-                         ['1', 'Freight Charges', f"{rate_val or 0:,.2f}", rate_basis, f"{li['freight']:,.2f}"]]
+                         ['1', freight_desc, f"{rate_val or 0:,.2f}", rate_basis, f"{li['freight']:,.2f}"]]
         n = 2
         for label, val in [('Loading Charges', li['loading']), ('Unloading Charges', li['unloading']),
                             ('Permit Charges', li['permit']), ('Toll Charges (Estimate)', li['toll'])]:
@@ -6508,7 +6536,7 @@ def route_analytics():
     trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
                     toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
                     puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
-                    other_expense, permit_charges, fixed_rate_amount, owner_rate, quantity
+                    other_expense, permit_charges, fixed_rate_amount, owner_rate, owner_rate_type, owner_fixed_amount, quantity
                     FROM trips WHERE date>=? AND date<=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
     params = [date_from, date_to]
     if type_f:
@@ -6532,7 +6560,7 @@ def route_analytics():
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
                 (t['other_expense'] or 0) + (t['permit_charges'] or 0))
         if t['type'] == 'Market':
-            cost += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            cost += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['cost'] += cost
 
     route_rows = []
@@ -6663,7 +6691,7 @@ def export_route_analytics():
     trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
                     toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
                     puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
-                    other_expense, permit_charges, fixed_rate_amount, owner_rate, quantity
+                    other_expense, permit_charges, fixed_rate_amount, owner_rate, owner_rate_type, owner_fixed_amount, quantity
                     FROM trips WHERE date>=? AND date<=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
     params = [date_from, date_to]
     if type_f:
@@ -6688,7 +6716,7 @@ def export_route_analytics():
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
                 (t['other_expense'] or 0) + (t['permit_charges'] or 0))
         if t['type'] == 'Market':
-            cost += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            cost += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['cost'] += cost
         if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0:
             rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
@@ -6931,6 +6959,8 @@ def edit_trip(trip_id):
         rate = n('rate')
         rate_type = f.get('rate_type')
         fixed_rate_amount = n('fixed_rate_amount')
+        owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
+        owner_fixed_amount = n('owner_fixed_amount')
         freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
         # driver_payment ("Driver Bata") no longer has a form field — deliberately left out of both
         # the recompute and the UPDATE below so an existing trip's historical value is never touched.
@@ -6943,16 +6973,19 @@ def edit_trip(trip_id):
 
         owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
 
+        # conductor_expense/wear_tear no longer have form fields — left out of the UPDATE entirely
+        # (not just zeroed) so an existing trip's historical value is never touched, same pattern as
+        # driver_payment above.
         conn.execute("""UPDATE trips SET
             date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, rate=?,
             driver_name=?, material=?, rate_type=?, billed_amount=?,
             detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
             police_charges=?, sim_tracking=?, union_charges=?, weight_charges=?, other_charges=?,
             brokerage=?, builty_commission=?, late_fees=?, material_damage=?, shortage_amount=?, shortage_qty=?, tds=?, other_deductions=?,
-            fuel_amount=?, driver_adv_amount=?, party_advance=?, payment_received=?, fuel_vendor_id=?, driver_adv_vendor_id=?,
-            owner_name=?, fixed_rate_amount=?, owner_rate=?, paid_to_owner=?, owner_vendor_id=?,
-            agent_commission=?, builty_expense=?, conductor_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
-            toll=?, urea=?, loading_expense=?, unloading_expense=?, wear_tear=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
+            fuel_amount=?, fuel_liters=?, fuel_price=?, driver_adv_amount=?, party_advance=?, payment_received=?, fuel_vendor_id=?, driver_adv_vendor_id=?,
+            owner_name=?, fixed_rate_amount=?, owner_rate=?, owner_rate_type=?, owner_fixed_amount=?, paid_to_owner=?, owner_vendor_id=?,
+            agent_commission=?, builty_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
+            toll=?, urea=?, loading_expense=?, unloading_expense=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
             lr_received=?, is_empty=?
             WHERE id=?""",
             (f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
@@ -6961,16 +6994,17 @@ def edit_trip(trip_id):
              n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
              n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
              n('shortage_qty'), n('tds'), n('other_deductions'),
-             n('fuel_amount'), n('driver_adv_amount'), n('party_advance'), n('payment_received'), fuel_vendor_id, driveradv_vendor_id,
-             f.get('owner_name'), fixed_rate_amount, n('owner_rate'), n('paid_to_owner'), owner_vendor_id,
-             n('agent_commission'), n('builty_expense'), n('conductor_expense'), n('fine'), n('labour_charges'),
+             n('fuel_amount'), f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), n('party_advance'), n('payment_received'), fuel_vendor_id, driveradv_vendor_id,
+             f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, n('paid_to_owner'), owner_vendor_id,
+             n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
              n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
-             n('wear_tear'), n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
+             n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
              f.get('lr_received') or None, 1 if f.get('is_empty') else 0, trip_id))
         _save_trip_custom_items(conn, trip_id, f)
         conn.commit()
         conn.close()
-        return redirect(url_for('trips_list'))
+        return_to = f.get('return_to')
+        return redirect(return_to) if return_to else redirect(url_for('trips_list'))
 
     trip = conn.execute("""SELECT t.*, v.vehicle_no, p.name as party_name,
                            fv.name as fuel_vendor_name, dv.name as driveradv_vendor_name, mv.name as misc_vendor_name
@@ -6997,7 +7031,7 @@ def edit_trip(trip_id):
     conn2.close()
     return render_template('trip_form.html', mode='edit', t=dict(trip), custom_items=custom_items,
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                            employees=employees, active='trips')
+                            employees=employees, return_to=request.args.get('return_to', ''), active='trips')
 
 @app.route('/business-performance')
 def business_performance():
@@ -7044,7 +7078,7 @@ def business_performance():
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
         (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
@@ -7101,7 +7135,7 @@ def business_performance():
         d['trips'] += 1
         direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, curr_toll_map) + (t['parking'] or 0)
         if t['type'] == 'Market':
-            direct += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
     top_customers = []
     for pid, d in sorted(party_period.items(), key=lambda kv: kv[1]['revenue'], reverse=True)[:6]:
@@ -7203,7 +7237,7 @@ def business_performance():
                   (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
                   (t['other_expense'] or 0) + (t['permit_charges'] or 0))
         if t['type'] == 'Market':
-            direct += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         day_expense[t['date']] = day_expense.get(t['date'], 0) + direct
     for r in conn.execute("SELECT date, SUM(amount) as amt FROM maintenance WHERE date>=? AND date<=? GROUP BY date", (date_from, date_to)).fetchall():
         day_expense[r['date']] = day_expense.get(r['date'], 0) + (r['amt'] or 0)
@@ -7357,7 +7391,7 @@ def export_business_performance():
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
         (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
@@ -7384,7 +7418,7 @@ def export_business_performance():
         d['revenue'] += t['billed_amount'] or 0
         direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, export_toll_map) + (t['parking'] or 0)
         if t['type'] == 'Market':
-            direct += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+            direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
     top_customers = []
     for pid, d in sorted(party_period.items(), key=lambda kv: kv[1]['revenue'], reverse=True):

@@ -21,15 +21,16 @@
 {% endblock %}
 {% block content %}
 <div class="wrap">
-  <a class="back" href="/salaries">&larr; Back to Salaries</a>
+  <a class="back" href="/salaries?tab={{ from_tab }}">&larr; Back to Salaries</a>
   <h1>{{ employee }} <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Payment</button></h1>
   <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">Employee Ledger — Salary payments and advances, combined. Click any row for full details and notes.</div>
 
   <form class="filter-bar" method="GET">
+    <input type="hidden" name="from_tab" value="{{ from_tab }}">
     <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
     <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
     <button type="submit">Apply</button>
-    <a class="clear" href="/employee/{{ employee }}">Clear</a>
+    <a class="clear" href="/employee/{{ employee }}?from_tab={{ from_tab }}">Clear</a>
   </form>
 
   <div class="summary-strip">
@@ -81,6 +82,7 @@
     </div>
 
     <form method="POST" id="pm-pay" class="pm-panel active">
+      <input type="hidden" name="from_tab" value="{{ from_tab }}">
       <label>Type</label>
       <select name="entry_kind">
         <option value="salary">Salary Paid</option>
@@ -97,6 +99,7 @@
     </form>
 
     <form method="POST" action="/employee/{{ employee }}/opening-balance" id="pm-ob" class="pm-panel">
+      <input type="hidden" name="from_tab" value="{{ from_tab }}">
       <div class="pm-hint">Set this once to record the advance balance this employee carried over before you started using this system. Positive = they owe an outstanding advance. Negative = they're in credit. Saving again replaces the previous value.</div>
       <label>Opening Advance Balance (₹)</label>
       <input type="number" step="0.01" name="opening_balance" value="{{ opening_balance or 0 }}" required>

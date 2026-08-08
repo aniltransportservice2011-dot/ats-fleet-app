@@ -1,18 +1,18 @@
 {% macro render_pager(anchor, page, total_pages, per_page, qs_prefix, page_tokens, per_page_options=[10,25,50,100], page_param='page') %}
 <div class="pager-row" id="{{ anchor }}">
-  <select onchange="window.location='?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}per_page='+this.value+'#{{ anchor }}'">
+  <select onchange="(window.goTo || function(u){window.location=u;})('?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}per_page='+this.value+'#{{ anchor }}')">
     {% for n in per_page_options %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }} / page</option>{% endfor %}
   </select>
   <div class="pager-btns">
-    <a class="pager-btn {{ 'disabled' if page<=1 }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}=1&per_page={{ per_page }}#{{ anchor }}" title="First page">&laquo;</a>
-    <a class="pager-btn {{ 'disabled' if page<=1 }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ page-1 }}&per_page={{ per_page }}#{{ anchor }}" title="Previous">&lsaquo;</a>
+    <a class="pager-btn pjax-page {{ 'disabled' if page<=1 }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}=1&per_page={{ per_page }}#{{ anchor }}" title="First page">&laquo;</a>
+    <a class="pager-btn pjax-page {{ 'disabled' if page<=1 }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ page-1 }}&per_page={{ per_page }}#{{ anchor }}" title="Previous">&lsaquo;</a>
     {% for tok in page_tokens %}
       {% if tok == '...' %}<span class="pager-ellipsis">&hellip;</span>
-      {% else %}<a class="pager-btn {{ 'active' if tok==page }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ tok }}&per_page={{ per_page }}#{{ anchor }}">{{ tok }}</a>
+      {% else %}<a class="pager-btn pjax-page {{ 'active' if tok==page }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ tok }}&per_page={{ per_page }}#{{ anchor }}">{{ tok }}</a>
       {% endif %}
     {% endfor %}
-    <a class="pager-btn {{ 'disabled' if page>=total_pages }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ page+1 }}&per_page={{ per_page }}#{{ anchor }}" title="Next">&rsaquo;</a>
-    <a class="pager-btn {{ 'disabled' if page>=total_pages }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ total_pages }}&per_page={{ per_page }}#{{ anchor }}" title="Last page">&raquo;</a>
+    <a class="pager-btn pjax-page {{ 'disabled' if page>=total_pages }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ page+1 }}&per_page={{ per_page }}#{{ anchor }}" title="Next">&rsaquo;</a>
+    <a class="pager-btn pjax-page {{ 'disabled' if page>=total_pages }}" href="?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}{{ page_param }}={{ total_pages }}&per_page={{ per_page }}#{{ anchor }}" title="Last page">&raquo;</a>
   </div>
   <span style="color:var(--steel);">Page {{ page }} of {{ total_pages }}</span>
 </div>
