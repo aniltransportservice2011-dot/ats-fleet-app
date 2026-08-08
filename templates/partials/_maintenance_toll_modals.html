@@ -71,7 +71,7 @@
         </a>
       </div>
       {% if excel_error %}
-      <div style="background:#fdecea;border:1px solid rgba(198,40,40,0.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--red);">&#9888;&#65039; {{ excel_error }}</div>
+      <div style="background:rgba(198,40,40,0.08);border:1px solid rgba(198,40,40,0.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--red);">&#9888;&#65039; {{ excel_error }}</div>
       {% endif %}
       <form method="POST" action="/maintenance/toll/excel/preview" enctype="multipart/form-data" id="tollExcelForm">
         <label for="tollExcelFile" id="tollDropZone" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed var(--line);border-radius:10px;padding:36px 20px;cursor:pointer;text-align:center;">

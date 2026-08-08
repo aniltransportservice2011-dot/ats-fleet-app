@@ -8,6 +8,24 @@
   --green: #1a7a4c;
   --red: #b3392f;
 }
+/* Dark theme — toggled via the sun/moon switch in the topbar (see base.html). Because virtually
+   every page in the app is already built on these same variables (var(--ink)/var(--white)/
+   var(--paper)/var(--steel)/var(--line)), redefining just these five here re-themes the whole
+   app in one place, no per-page work needed. --accent/--green/--red get slightly brighter
+   variants so they stay legible on dark cards instead of reading muddy. A small number of
+   components that intentionally use --ink as a fixed dark badge/bar background (table headers,
+   the topbar avatar) are hardcoded to that literal color rather than the variable, specifically
+   so they don't flip to a pale header bar in dark mode — everywhere else --ink is used as text
+   or a border, which is exactly what should flip. */
+:root[data-theme="dark"] {
+  --ink: #eef1f8;
+  --steel: #93a0c2;
+  --line: #2b3350;
+  --paper: #0d1220;
+  --white: #161c2e;
+  --green: #34c77b;
+  --red: #f0665e;
+}
 * { box-sizing: border-box; }
 body {
   font-family: 'Segoe UI', -apple-system, Arial, sans-serif;
@@ -17,6 +35,20 @@ body {
   padding: 32px 24px 60px;
   font-size: 15px;
 }
+/* No page anywhere sets its own input/select/textarea background — every form field across the
+   whole app was silently relying on the browser's default white, which is exactly why dark mode
+   would otherwise leave every field a jarring white box. One rule here fixes every field on every
+   page: the many per-page ".xx-field input" rules only ever set padding/border/radius, so this
+   still supplies background/color/border underneath them without conflicting. */
+input, select, textarea {
+  background: var(--white);
+  color: var(--ink);
+  border-color: var(--line);
+  font-family: inherit;
+  accent-color: var(--accent);
+}
+input::placeholder, textarea::placeholder { color: var(--steel); opacity: 0.8; }
+input:disabled, select:disabled, textarea:disabled { background: var(--paper); color: var(--steel); }
 /* Full-width content, matching the Dashboard page's own layout (it already overrode this
    locally with max-width:none/width:100% — that inline override is now redundant but harmless).
    The old 1500px cap + auto-centering left huge empty gutters on wide monitors everywhere
@@ -126,12 +158,17 @@ a.add-btn[disabled]:hover, button.add-btn:disabled:hover { background: var(--whi
 }
 .filter-bar button:hover { background: var(--accent); color: var(--white); box-shadow: 0 2px 6px rgba(192, 86, 33, 0.25); }
 .filter-bar button:active { transform: translateY(1px); box-shadow: none; }
-.filter-bar a.clear {
+/* Not scoped to .filter-bar on purpose — some filter forms use .mt-filters/.lg2-filters/
+   .lg-filters instead, and a Clear link inside those was falling through to the browser's
+   unstyled default blue underlined link since nothing else matched it. One rule, applies
+   wherever a.clear shows up. */
+a.clear {
   color: var(--steel);
   text-decoration: none;
   font-size: 0.82rem;
   padding: 8px 4px;
 }
+a.clear:hover { color: var(--ink); }
 
 /* Shared "Cancel" outline button — every modal's Cancel button across the app (Tyres, Battery,
    Service, Insurance, Vehicles, Trips, Ledger...) uses this one class now instead of its own
@@ -167,8 +204,10 @@ a.add-btn[disabled]:hover, button.add-btn:disabled:hover { background: var(--whi
 table { width: 100%; border-collapse: collapse; background: var(--white); border-radius: 4px; overflow: hidden; }
 th, td { padding: 10px 14px; text-align: left; font-size: 0.87rem; border-bottom: 1px solid var(--line); }
 th {
-  background: var(--ink);
-  color: var(--white);
+  /* Fixed dark bar in both themes, deliberately not var(--ink) — that flips to a light color in
+     dark mode, which would turn this into a pale header bar instead of staying a dark one. */
+  background: #14213d;
+  color: #fff;
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;

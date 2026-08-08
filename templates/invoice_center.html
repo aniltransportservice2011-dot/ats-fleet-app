@@ -14,7 +14,7 @@
 
   .ic-type-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
   .ic-type-tile { border:1.5px solid var(--line); border-radius:8px; padding:14px; cursor:pointer; text-decoration:none; color:var(--ink); display:flex; align-items:center; gap:10px; }
-  .ic-type-tile.active { border-color:var(--accent); background:#fff6ee; }
+  .ic-type-tile.active { border-color:var(--accent); background:rgba(192,86,33,0.1); }
   .ic-type-tile .ic { width:36px; height:36px; border-radius:8px; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:1.1rem; flex-shrink:0; }
   .ic-type-tile.active .ic { background:var(--accent); color:#fff; }
   .ic-type-tile .ttl { font-weight:700; font-size:0.86rem; }
@@ -46,7 +46,7 @@
   .ic-summary-row .val { font-weight:700; }
   .ic-summary-row input { width:110px; padding:6px 8px; border:1px solid var(--line); border-radius:4px; font-size:0.85rem; text-align:right; }
   .ic-subtotal-row { display:flex; justify-content:space-between; padding:10px 0; border-top:1.5px solid var(--line); margin-top:4px; font-weight:700; font-size:0.92rem; }
-  .ic-grand-box { background:#e8f5ee; border-radius:8px; padding:14px 16px; margin-top:10px; display:flex; justify-content:space-between; align-items:center; }
+  .ic-grand-box { background:rgba(26,122,76,0.08); border:1px solid rgba(26,122,76,0.2); border-radius:8px; padding:14px 16px; margin-top:10px; display:flex; justify-content:space-between; align-items:center; }
   .ic-grand-box .lbl { font-weight:700; }
   .ic-grand-box .val { font-weight:800; font-size:1.2rem; color:var(--green); }
   .ic-words { font-size:0.74rem; color:var(--steel); margin-top:8px; font-style:italic; }
@@ -59,13 +59,13 @@
   .ic-actions button, .ic-actions a { width:100%; padding:11px; border-radius:6px; font-size:0.88rem; font-weight:700; cursor:pointer; border:none; text-align:center; text-decoration:none; display:block; }
   .ic-btn-generate { background:var(--green); color:#fff; }
   .ic-btn-generate:hover { opacity:0.92; }
-  .ic-btn-preview { background:var(--ink); color:#fff; }
+  .ic-btn-preview { background:#14213d; color:#fff; }
   .ic-btn-preview:hover { opacity:0.92; }
   .ic-btn-draft { background:var(--white); border:1.5px solid var(--line) !important; color:var(--ink); }
   .ic-btn-draft:hover { border-color:var(--accent); color:var(--accent); }
   .ic-btn-cancel { background:none; color:var(--steel); }
 
-  .ic-help-box { background:#fff8e8; border:1px solid #f5d99b; border-radius:10px; padding:16px; }
+  .ic-help-box { background:rgba(217,164,6,0.1); border:1px solid rgba(217,164,6,0.35); border-radius:10px; padding:16px; }
   .ic-help-box h3 { margin:0 0 6px; font-size:0.86rem; }
   .ic-help-box p { font-size:0.78rem; color:var(--steel); margin:0 0 10px; }
 </style>
@@ -153,7 +153,7 @@
             <option value="invoiced" {% if f_status=='invoiced' %}selected{% endif %}>Already Invoiced</option>
           </select>
         </div>
-        <button type="button" onclick="icApplyFilters()">Apply Filters</button>
+        <button type="button" onclick="icApplyFilters()">Apply</button>
         <a class="clear" href="/invoice-center?invoice_type={{ invoice_type }}&party_id={{ f_party_id }}&vendor_id={{ f_vendor_id }}">Clear</a>
       </div>
     </div>
