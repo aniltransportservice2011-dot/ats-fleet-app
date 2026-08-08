@@ -28,9 +28,12 @@
   .lg-kpi .sub { font-size:0.72rem; color:var(--steel); margin-top:5px; }
   .lg-kpi-icon { width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1rem; }
 
-  .lg-tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:18px 0 0; }
-  .lg-tab { padding:10px 4px; margin-right:22px; font-size:0.86rem; font-weight:600; color:var(--steel); text-decoration:none; border-bottom:2px solid transparent; }
+  /* Same tab design as Route Analytics: boxed pill strip, active tab picked out by accent text +
+     underline, never a filled background. */
+  .lg-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin:18px 0 0; overflow-x:auto; }
+  .lg-tab { padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
   .lg-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .lg-tab:hover:not(.active) { color:var(--ink); }
   .lg-table-bar { display:flex; justify-content:flex-end; margin:14px 0 10px; }
 
   .lg-type-pill { display:inline-block; padding:3px 11px; border-radius:10px; font-size:0.75rem; font-weight:700; }
@@ -82,7 +85,7 @@
     </div>
     <div style="display:flex;gap:8px;">
       <button type="submit" class="lg-btn-primary" style="padding:9px 16px;">Apply</button>
-      <a class="lg-btn-outline" href="/accounts">Clear</a>
+      <a class="clear" href="/accounts">Clear</a>
     </div>
   </form>
 

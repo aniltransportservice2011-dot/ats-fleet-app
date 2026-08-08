@@ -17,7 +17,7 @@
   .card-head { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-bottom:16px; }
   .card-head h3 { margin:0; font-size:0.95rem; }
   .card-head .sub { font-size:0.75rem; color:var(--steel); margin-top:2px; }
-  .edit-toggle-btn { background:#fff6ee; border:1px solid var(--accent); color:var(--accent); padding:6px 14px; border-radius:4px; font-size:0.8rem; font-weight:600; cursor:pointer; flex-shrink:0; white-space:nowrap; }
+  .edit-toggle-btn { background:rgba(192,86,33,0.1); border:1px solid var(--accent); color:var(--accent); padding:6px 14px; border-radius:4px; font-size:0.8rem; font-weight:600; cursor:pointer; flex-shrink:0; white-space:nowrap; }
   .kv-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 20px; font-size:0.85rem; }
   .kv-grid .lbl { color:var(--steel); font-size:0.75rem; margin-bottom:2px; }
   .toggle-badge { padding:2px 10px; border-radius:10px; font-size:0.72rem; font-weight:600; }
@@ -61,7 +61,7 @@
   label.ur-section-lbl { font-size:0.7rem; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:0; }
   .ur-access-tiles { display:flex; gap:10px; margin-bottom:4px; }
   .ur-access-tile { flex:1; border:1.5px solid var(--line); border-radius:8px; padding:12px 10px; cursor:pointer; text-align:center; }
-  .ur-access-tile.active { border-color:var(--accent); background:#fff6ee; }
+  .ur-access-tile.active { border-color:var(--accent); background:rgba(192,86,33,0.1); }
   .ur-access-tile .ic { font-size:1.2rem; margin-bottom:4px; }
   .ur-access-tile .lbl { font-weight:700; font-size:0.8rem; }
   .ur-access-tile .sub { font-size:0.66rem; color:var(--steel); }
@@ -221,7 +221,7 @@
         <div class="kv-grid" id="numberingView">
           <div><div class="lbl">Invoice Prefix</div>{{ s['invoice_prefix'] }}</div>
           <div><div class="lbl">Next Invoice Number</div>{{ s['next_invoice_number'] }}</div>
-          <div style="grid-column:span 2;"><div class="lbl">Example</div><span style="background:#fff6ee;color:var(--accent);padding:3px 10px;border-radius:4px;font-weight:600;">{{ invoice_example }}</span></div>
+          <div style="grid-column:span 2;"><div class="lbl">Example</div><span style="background:rgba(192,86,33,0.1);color:var(--accent);padding:3px 10px;border-radius:4px;font-weight:600;">{{ invoice_example }}</span></div>
         </div>
         <div class="modal-overlay" id="numEditModal">
           <div class="modal-box ur-modal-box">
@@ -484,7 +484,7 @@
     <h3>&#128100; Add New User</h3>
     <div style="font-size:0.8rem;color:var(--steel);margin:-6px 0 14px;">Create a new user and set access level</div>
     {% if user_error %}
-    <div style="background:#fdecea;color:var(--red);padding:10px 14px;border-radius:4px;font-size:0.85rem;margin-bottom:14px;">{{ user_error }}</div>
+    <div style="background:rgba(179,57,47,0.08);border:1px solid rgba(179,57,47,0.25);color:var(--red);padding:10px 14px;border-radius:4px;font-size:0.85rem;margin-bottom:14px;">{{ user_error }}</div>
     {% endif %}
     <form method="POST" action="/settings/users/add">
       <label class="ur-section-lbl">1. User Information</label>

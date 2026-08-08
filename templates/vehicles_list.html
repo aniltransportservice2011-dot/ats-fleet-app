@@ -91,7 +91,7 @@
   {% else %}
 
   {% if request.args.get('synced') %}
-  <div style="background:#e8f5ee;border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+  <div style="background:rgba(26,122,76,0.08);border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
     &#9989; Compliance sync complete — {{ request.args.get('synced') }} record(s) checked (Fitness/PUC/Permit){% if request.args.get('changed') %}, <b>{{ request.args.get('changed') }} changed</b>{% endif %}{% if request.args.get('failed') and request.args.get('failed') != '0' %}, {{ request.args.get('failed') }} failed{% endif %}.
   </div>
   {% endif %}

@@ -1,10 +1,10 @@
 {% if request.args.get('synced') is not none %}
-<div style="background:#e8f5ee;border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+<div style="background:rgba(26,122,76,0.08);border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
   &#9989; FASTag sync complete — {{ request.args.get('synced') }} new transaction(s) pulled in.
 </div>
 {% endif %}
 {% if request.args.get('imported') is not none %}
-<div style="background:#e8f5ee;border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+<div style="background:rgba(26,122,76,0.08);border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
   &#9989; Excel import complete — {{ request.args.get('imported') }} toll entr{{ 'y' if request.args.get('imported')=='1' else 'ies' }} added{% if request.args.get('updated') and request.args.get('updated') != '0' %}, {{ request.args.get('updated') }} existing record{{ 's' if request.args.get('updated') != '1' }} updated{% endif %}.
 </div>
 {% endif %}
@@ -47,7 +47,7 @@
   <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Toll plaza, highway..."></div>
   <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
   <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
-  <button type="submit">Apply Filters</button>
+  <button type="submit">Apply</button>
   <a class="clear" href="/maintenance?tab=toll">Clear</a>
 </form>
 

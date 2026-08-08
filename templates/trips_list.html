@@ -24,12 +24,12 @@
   .action-menu-dropdown button:hover { background:var(--paper); }
   .end-trip-summary { background:var(--paper); border-radius:6px; padding:12px 14px; margin-bottom:16px; font-size:0.85rem; }
   .end-trip-summary .route { margin-top:4px; color:var(--steel); }
-  .shortage-box { background:#fff8e8; border:1px solid #f5d99b; border-radius:6px; padding:14px; margin:14px 0; }
+  .shortage-box { background:rgba(217,164,6,0.1); border:1px solid rgba(217,164,6,0.35); border-radius:6px; padding:14px; margin:14px 0; }
   .shortage-box .hd { font-weight:600; font-size:0.85rem; margin-bottom:10px; }
   .shortage-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
   .fld-sm label { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.02em; color:var(--steel); font-weight:600; display:block; margin-bottom:4px; }
   .fld-sm input, .fld-sm select, .fld-sm textarea { width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:3px; font-size:0.87rem; font-family:inherit; box-sizing:border-box; }
-  .info-note { background:#eaf1fb; border-radius:6px; padding:10px 12px; margin:14px 0; font-size:0.78rem; color:var(--steel); display:flex; gap:8px; align-items:flex-start; }
+  .info-note { background:rgba(42,120,214,0.08); border:1px solid rgba(42,120,214,0.2); border-radius:6px; padding:10px 12px; margin:14px 0; font-size:0.78rem; color:var(--steel); display:flex; gap:8px; align-items:flex-start; }
   .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
   @media (max-width:640px) { .row3 { grid-template-columns:1fr; } }
 </style>
@@ -86,7 +86,7 @@
         <option value="not_received" {% if f_lr=='not_received' %}selected{% endif %}>Not Received</option>
       </select>
     </div>
-    <button type="submit">Apply Filters</button>
+    <button type="submit">Apply</button>
     <a class="clear" href="/trips">Clear</a>
   </form>
 

@@ -142,7 +142,7 @@ function mtShowDetailTab(idx, which, btn) {
     </div>
 
     {% if r['next_due_km'] or r['next_service_date'] %}
-    <div style="background:#e8f5ee;border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:12px 14px;margin-top:14px;display:flex;justify-content:space-between;font-size:0.85rem;">
+    <div style="background:rgba(26,122,76,0.08);border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:12px 14px;margin-top:14px;display:flex;justify-content:space-between;font-size:0.85rem;">
       <div>&#128198; <b>Next Service</b></div>
       <div>{% if r['next_due_km'] %}{{ '{:,.0f}'.format(r['next_due_km']) }} KM{% endif %}{% if r['next_due_km'] and r['next_service_date'] %} &nbsp;•&nbsp; {% endif %}{% if r['next_service_date'] %}{{ r['next_service_date'] }}{% endif %}</div>
     </div>

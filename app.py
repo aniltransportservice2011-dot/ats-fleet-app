@@ -6221,6 +6221,11 @@ def inject_company_name():
     except Exception:
         return {'company_name': 'ANIL TRANSPORT SERVICE'}
 
+@app.context_processor
+def inject_current_year():
+    """Sidebar footer copyright year — computed, not hardcoded, so it never goes stale."""
+    return {'current_year': datetime.datetime.now().year}
+
 @app.before_request
 def require_login():
     exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp']
