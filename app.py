@@ -6522,16 +6522,19 @@ def route_analytics():
     tab = request.args.get('tab', 'best-routes')
     date_from = request.args.get('date_from', '2026-04-01')
     date_to = request.args.get('date_to', '2026-07-31')
-    route_f = request.args.get('route', '')
+    from_f = request.args.get('from', '')
+    to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
 
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
-    # All routes ever seen (unfiltered), for the Route dropdown — independent of the current filters.
+    # All origins/destinations ever seen (unfiltered), for the From/To dropdowns — independent of
+    # the current filters, and independent of each other, so you can filter by From alone, To
+    # alone, or both together for one exact route.
     all_routes_rows = conn.execute("SELECT DISTINCT from_loc, to_loc FROM trips").fetchall()
-    all_routes_list = sorted(set(f"{_clean_loc(r['from_loc'])} → {_clean_loc(r['to_loc'])}" for r in all_routes_rows
-                                  if r['from_loc'] and r['to_loc']))
+    all_from_list = sorted(set(_clean_loc(r['from_loc']) for r in all_routes_rows if r['from_loc']))
+    all_to_list = sorted(set(_clean_loc(r['to_loc']) for r in all_routes_rows if r['to_loc']))
 
     trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
                     toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
@@ -6549,7 +6552,7 @@ def route_analytics():
     groups = {}
     for t in trips:
         cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
-        if route_f and f"{cf} → {ct}" != route_f:
+        if (from_f and cf != from_f) or (to_f and ct != to_f):
             continue
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
@@ -6577,7 +6580,7 @@ def route_analytics():
     avg_margin = round((total_revenue_sel - total_cost_sel) / total_revenue_sel * 100, 1) if total_revenue_sel else 0
 
     rate_values = [t['rate'] for t in trips if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0
-                   and (not route_f or f"{_clean_loc(t['from_loc'])} → {_clean_loc(t['to_loc'])}" == route_f)]
+                   and (not from_f or _clean_loc(t['from_loc']) == from_f) and (not to_f or _clean_loc(t['to_loc']) == to_f)]
     avg_rate = round(sum(rate_values) / len(rate_values), 0) if rate_values else 0
 
     top5_by_margin = sorted(route_rows, key=lambda r: r['margin'], reverse=True)[:5]
@@ -6594,20 +6597,57 @@ def route_analytics():
     page_tokens = _page_tokens(page, total_pages)
 
     # ---------- Route Rates tab: rate stats grouped by (from, to, vehicle type) ----------
+    # Driver Advance / Fuel Taken are tracked in parallel dicts (same grouping key, same trip set
+    # that contributes the rate stats) rather than folded into rr_groups itself, so every existing
+    # rr_groups reader below keeps working untouched.
     rr_groups = {}
+    rr_driver_adv_groups = {}
+    rr_fuel_groups = {}
     for t in trips:
         if t['rate_type'] != 'PER_MT' or not t['rate'] or t['rate'] <= 0:
             continue
         cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
-        if route_f and f"{cf} → {ct}" != route_f:
+        if (from_f and cf != from_f) or (to_f and ct != to_f):
             continue
         rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
+        if t['driver_adv_amount']:
+            rr_driver_adv_groups.setdefault((cf, ct, t['type']), []).append(t['driver_adv_amount'])
+        if t['fuel_amount']:
+            rr_fuel_groups.setdefault((cf, ct, t['type']), []).append(t['fuel_amount'])
 
     rr_rows = []
     for (cf, ct, ttype), rates in rr_groups.items():
+        da = rr_driver_adv_groups.get((cf, ct, ttype), [])
+        fu = rr_fuel_groups.get((cf, ct, ttype), [])
         rr_rows.append({'clean_from': cf, 'clean_to': ct, 'type': ttype, 'highest': max(rates),
-                         'average': sum(rates) / len(rates), 'lowest': min(rates), 'trips': len(rates)})
+                         'average': sum(rates) / len(rates), 'lowest': min(rates), 'trips': len(rates),
+                         'da_lowest': min(da) if da else 0, 'da_average': (sum(da) / len(da)) if da else 0, 'da_highest': max(da) if da else 0,
+                         'fuel_lowest': min(fu) if fu else 0, 'fuel_average': (sum(fu) / len(fu)) if fu else 0, 'fuel_highest': max(fu) if fu else 0})
     rr_rows.sort(key=lambda r: (r['clean_from'], r['clean_to']))
+
+    # Overall Driver Advance / Fuel Taken KPI cards — every trip in the current filters (not just
+    # the PER_MT-rate subset that feeds the rate table), since these are real costs paid regardless
+    # of how the party was charged. Zero/blank amounts are excluded — "lowest" should mean the
+    # smallest amount actually given, not an untouched trip.
+    overall_driver_adv = [t['driver_adv_amount'] for t in trips if t['driver_adv_amount']
+                           and (not from_f or _clean_loc(t['from_loc']) == from_f) and (not to_f or _clean_loc(t['to_loc']) == to_f)]
+    overall_fuel = [t['fuel_amount'] for t in trips if t['fuel_amount']
+                     and (not from_f or _clean_loc(t['from_loc']) == from_f) and (not to_f or _clean_loc(t['to_loc']) == to_f)]
+    da_lowest = min(overall_driver_adv) if overall_driver_adv else 0
+    da_average = round(sum(overall_driver_adv) / len(overall_driver_adv)) if overall_driver_adv else 0
+    da_highest = max(overall_driver_adv) if overall_driver_adv else 0
+    fuel_lowest = min(overall_fuel) if overall_fuel else 0
+    fuel_average = round(sum(overall_fuel) / len(overall_fuel)) if overall_fuel else 0
+    fuel_highest = max(overall_fuel) if overall_fuel else 0
+
+    # Route Rates table — its own page number (rr_page) but shares the same per_page value/param
+    # as the Best Routes summary table above, same two-pagers-one-per_page pattern Performance
+    # already uses for its Driver/Vehicle tabs (d_page/v_page sharing one per_page).
+    rr_total_count = len(rr_rows)
+    rr_page, rr_per_page, rr_total_pages = _paginate(request.args.get('rr_page'), request.args.get('per_page'), rr_total_count,
+                                                       per_page_options=(10, 25, 50, 100), default_per_page=10)
+    rr_rows_page = rr_rows[(rr_page - 1) * rr_per_page: rr_page * rr_per_page]
+    rr_page_tokens = _page_tokens(rr_page, rr_total_pages)
 
     all_rates_flat = [r for rates in rr_groups.values() for r in rates]
     highest_entry = None
@@ -6661,16 +6701,25 @@ def route_analytics():
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
+    rr_base_params = request.args.to_dict()
+    rr_base_params.pop('rr_page', None)
+    rr_base_params.pop('per_page', None)
+    rr_base_qs = urlencode(rr_base_params)
+
     return render_template('route_analytics.html',
-        tab=tab, f_date_from=date_from, f_date_to=date_to, f_route=route_f, f_vehicle_type=type_f,
-        all_routes_list=all_routes_list,
+        tab=tab, f_date_from=date_from, f_date_to=date_to, f_from=from_f, f_to=to_f, f_vehicle_type=type_f,
+        all_from_list=all_from_list, all_to_list=all_to_list,
         total_routes=total_routes, total_trips_sel=total_trips_sel, total_revenue_sel=total_revenue_sel,
         avg_rate=avg_rate, avg_margin=avg_margin,
         top5_by_margin=top5_by_margin, top5_by_revenue=top5_by_revenue,
         summary_rows=summary_rows, page=page, per_page=per_page, total_pages=total_pages,
         page_tokens=page_tokens, base_qs=base_qs,
-        rr_rows=rr_rows, highest_entry=highest_entry, lowest_entry=lowest_entry, rr_avg_rate_overall=rr_avg_rate_overall,
+        rr_rows=rr_rows_page, rr_total_count=rr_total_count, rr_page=rr_page, rr_per_page=rr_per_page,
+        rr_total_pages=rr_total_pages, rr_page_tokens=rr_page_tokens, rr_base_qs=rr_base_qs,
+        highest_entry=highest_entry, lowest_entry=lowest_entry, rr_avg_rate_overall=rr_avg_rate_overall,
         rr_total_routes=rr_total_routes, line_avg=line_avg, local_avg=local_avg, line_pct=line_pct,
+        da_lowest=da_lowest, da_average=da_average, da_highest=da_highest,
+        fuel_lowest=fuel_lowest, fuel_average=fuel_average, fuel_highest=fuel_highest,
         trend_points=trend_points, svg_points=svg_points, svg_labels=svg_labels,
         active='route-analytics')
 
@@ -6683,7 +6732,8 @@ def export_route_analytics():
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
     date_to = request.args.get('date_to', '2026-07-31')
-    route_f = request.args.get('route', '')
+    from_f = request.args.get('from', '')
+    to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
     if date_from > date_to:
         date_from, date_to = date_to, date_from
@@ -6703,9 +6753,11 @@ def export_route_analytics():
 
     groups = {}
     rr_groups = {}
+    rr_driver_adv_groups = {}
+    rr_fuel_groups = {}
     for t in trips:
         cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
-        if route_f and f"{cf} → {ct}" != route_f:
+        if (from_f and cf != from_f) or (to_f and ct != to_f):
             continue
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
@@ -6720,6 +6772,10 @@ def export_route_analytics():
         d['cost'] += cost
         if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0:
             rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
+            if t['driver_adv_amount']:
+                rr_driver_adv_groups.setdefault((cf, ct, t['type']), []).append(t['driver_adv_amount'])
+            if t['fuel_amount']:
+                rr_fuel_groups.setdefault((cf, ct, t['type']), []).append(t['fuel_amount'])
 
     route_rows = []
     for (cf, ct), d in groups.items():
@@ -6730,7 +6786,11 @@ def export_route_analytics():
 
     rate_rows = []
     for (cf, ct, ttype), rates in rr_groups.items():
-        rate_rows.append((f"{cf} → {ct}", ttype, max(rates), sum(rates) / len(rates), min(rates), len(rates)))
+        da = rr_driver_adv_groups.get((cf, ct, ttype), [])
+        fu = rr_fuel_groups.get((cf, ct, ttype), [])
+        rate_rows.append((f"{cf} → {ct}", ttype, max(rates), sum(rates) / len(rates), min(rates), len(rates),
+                           min(da) if da else 0, (sum(da) / len(da)) if da else 0, max(da) if da else 0,
+                           min(fu) if fu else 0, (sum(fu) / len(fu)) if fu else 0, max(fu) if fu else 0))
     rate_rows.sort(key=lambda r: r[0])
 
     navy = "1B2A4A"
@@ -6748,7 +6808,9 @@ def export_route_analytics():
             ws.cell(row=r_idx, column=c_idx, value=val)
 
     ws2 = wb.create_sheet("Route Rates")
-    headers2 = ["Route", "Type", "Highest Rate", "Average Rate", "Lowest Rate", "Trips"]
+    headers2 = ["Route", "Type", "Highest Rate", "Average Rate", "Lowest Rate", "Trips",
+                "Driver Adv. Lowest", "Driver Adv. Average", "Driver Adv. Highest",
+                "Fuel Lowest", "Fuel Average", "Fuel Highest"]
     for i, h in enumerate(headers2, 1):
         c = ws2.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
     for r_idx, row in enumerate(rate_rows, 2):
