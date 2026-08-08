@@ -215,10 +215,13 @@ button.submit:active { transform: translateY(1px); box-shadow: none; }
   .mt-head h1 { margin:0 0 2px; font-size:1.5rem; }
   .mt-head .sub { color:var(--steel); font-size:0.88rem; }
 
-  .mt-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:10px; padding:6px; margin-bottom:18px; overflow-x:auto; }
-  .mt-tab { display:flex; align-items:center; gap:7px; padding:9px 15px; border-radius:7px; font-size:0.84rem; font-weight:600; color:var(--steel); white-space:nowrap; text-decoration:none; }
-  .mt-tab.active { background:var(--accent); color:#fff; }
-  .mt-tab:hover:not(.active) { background:var(--paper); }
+  /* Same tab design as Route Analytics (.ra-tab) everywhere a page has section tabs: boxed pill
+     strip, flat inactive tabs, active tab picked out by accent text + underline (never a filled
+     background) — one consistent "how tabs work" across the whole app. */
+  .mt-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:18px; overflow-x:auto; }
+  .mt-tab { display:flex; align-items:center; gap:7px; padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); white-space:nowrap; text-decoration:none; border-bottom:2px solid transparent; }
+  .mt-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .mt-tab:hover:not(.active) { color:var(--ink); }
 
   .mt-kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
   @media (max-width:1300px) { .mt-kpi-row { grid-template-columns:repeat(3,1fr); } }

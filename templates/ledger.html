@@ -43,9 +43,12 @@
 .lg2-kpi .sub { font-size:0.72rem; color:var(--steel); margin-top:6px; }
 .lg2-kpi-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:1rem; }
 
-.lg2-tabs { display:flex; gap:0; border-bottom:1px solid var(--line); margin-bottom:16px; }
-.lg2-tab { padding:11px 4px; margin-right:26px; font-size:0.88rem; font-weight:600; color:var(--steel); text-decoration:none; border-bottom:2px solid transparent; }
+/* Same tab design as Route Analytics: boxed pill strip, active tab picked out by accent text +
+   underline, never a filled background. */
+.lg2-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:16px; overflow-x:auto; }
+.lg2-tab { padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
 .lg2-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.lg2-tab:hover:not(.active) { color:var(--ink); }
 
 .lg2-filters { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:14px; align-items:end; }
 @media (max-width:1100px) { .lg2-filters { grid-template-columns:1fr 1fr; } }
