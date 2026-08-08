@@ -1,0 +1,184 @@
+<div class="mt-kpi-row">
+  <div class="mt-kpi"><div><div class="lbl">Total Employees</div><div class="val">{{ total_employees }}</div><div class="sub">All Employees</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128101;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Drivers</div><div class="val">{{ drivers }}</div><div class="sub">{{ drivers_pct }}% of total</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128663;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Office Staff</div><div class="val">{{ office_staff }}</div><div class="sub">{{ (100-drivers_pct)|round(1) }}% of total</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128100;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Present Today</div><div class="val">{{ present_today }}</div><div class="sub">{{ (present_today/total_employees*100)|round(1) if total_employees else 0 }}% of total</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">On Leave</div><div class="val">{{ on_leave_today }}</div><div class="sub">{{ (on_leave_today/total_employees*100)|round(1) if total_employees else 0 }}% of total</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128197;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Attendance %</div><div class="val">{{ overall_attendance_pct }}%</div><div class="sub">Selected Period</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128202;</div></div>
+</div>
+
+<div class="emp-kpi-row-4">
+  <div class="mt-kpi"><div><div class="lbl">Total Payroll</div><div class="val">₹{{ '{:,.0f}'.format(total_payroll) }}</div><div class="sub">Selected Period</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#8377;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Paid</div><div class="val">₹{{ '{:,.0f}'.format(paid_payroll) }}</div><div class="sub">{{ (paid_payroll/total_payroll*100)|round(1) if total_payroll else 0 }}% of payroll</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128197;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Pending</div><div class="val">₹{{ '{:,.0f}'.format(pending_payroll) }}</div><div class="sub">{{ (pending_payroll/total_payroll*100)|round(1) if total_payroll else 0 }}% of payroll</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128337;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Outstanding Advances</div><div class="val">₹{{ '{:,.0f}'.format(total_outstanding_advances) }}</div><div class="sub">To be recovered</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128179;</div></div>
+</div>
+
+<div class="mt-row-2">
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Attendance Trend (6 months)</div></div>
+    {% if trend %}
+    <svg viewBox="0 0 600 160" width="100%" style="overflow:visible;max-height:180px;">
+      <line x1="20" y1="145" x2="590" y2="145" stroke="var(--line)"/>
+      {% set step = 570 / ((trend|length - 1) if trend|length > 1 else 1) %}
+      <polyline points="{% for t in trend %}{{ 20 + loop.index0*step }},{{ 140 - (t.pct/100*120) }} {% endfor %}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
+      {% for t in trend %}
+      <circle cx="{{ 20 + loop.index0*step }}" cy="{{ 140 - (t.pct/100*120) }}" r="2.6" fill="var(--accent)"/>
+      <text x="{{ 20 + loop.index0*step }}" y="158" font-size="9" fill="var(--steel)" text-anchor="middle">{{ t.label }}</text>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No attendance history yet.</div>
+    {% endif %}
+  </div>
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Salary Distribution</div></div>
+    {% if sal_dist %}
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      {% for s in sal_dist %}
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;"><span>{{ s.name }}</span><b>₹{{ '{:,.0f}'.format(s.amount) }}</b></div>
+        <div style="background:var(--paper);border-radius:4px;height:6px;overflow:hidden;"><div style="width:{{ (s.amount/sal_dist_max*100)|round(1) }}%;background:var(--accent);height:100%;"></div></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No salary paid in this period yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="mt-row-2">
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Department Distribution</div></div>
+    {% if dept_dist %}
+    <div style="display:flex;flex-direction:column;gap:9px;">
+      {% for d in dept_dist %}
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;"><span>{{ d.label }}</span><b>{{ d.count }}</b></div>
+        <div style="background:var(--paper);border-radius:4px;height:6px;overflow:hidden;"><div style="width:{{ (d.count/dept_max*100)|round(1) }}%;background:#2a78d6;height:100%;"></div></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No employees yet.</div>
+    {% endif %}
+  </div>
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Drivers vs Office Staff</div></div>
+    {% if total_employees %}
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;"><span>Drivers</span><b>{{ drivers }} ({{ drivers_pct }}%)</b></div>
+        <div style="background:var(--paper);border-radius:4px;height:8px;overflow:hidden;"><div style="width:{{ drivers_pct }}%;background:var(--accent);height:100%;"></div></div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;"><span>Office Staff</span><b>{{ office_staff }} ({{ (100-drivers_pct)|round(1) }}%)</b></div>
+        <div style="background:var(--paper);border-radius:4px;height:8px;overflow:hidden;"><div style="width:{{ (100-drivers_pct)|round(1) }}%;background:#2a78d6;height:100%;"></div></div>
+      </div>
+    </div>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No employees yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="overview">
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <button type="submit">Apply</button>
+  <a class="clear" href="/salaries?tab=overview">Clear</a>
+</form>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Employee Summary ({{ total_count }})</div></div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Employee</th><th>Role</th><th>Joining Date</th><th>Attendance</th><th>Salary Status</th><th class="num">Advance</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}'">
+      <td>
+        <div class="emp-name-cell">
+          <div class="emp-avatar" style="background:{{ r.avatar_colors[0] }};color:{{ r.avatar_colors[1] }};">{{ r.initials }}</div>
+          <div><div class="nm">{{ r.name }}</div><div class="code">{{ r.employee_code }}</div></div>
+        </div>
+      </td>
+      <td>{{ r.role }}</td>
+      <td>{{ r.joining_date }}</td>
+      <td><span class="mt-type-badge" style="background:#e8f5ee;color:var(--green);">{{ r.attendance_pct ~ '%' if r.attendance_pct is not none else '—' }}</span></td>
+      <td>{% if r.salary_status=='paid' %}<span class="mt-type-badge" style="background:#e8f5ee;color:var(--green);">Paid</span>
+          {% else %}<span class="mt-type-badge" style="background:var(--paper);color:var(--steel);">No Payment</span>{% endif %}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
+      <td onclick="event.stopPropagation();">
+        <a href="/employee/{{ r.name|urlencode }}" title="Open Ledger" style="color:var(--steel);margin-right:8px;">&#128220;</a>
+        <button type="button" title="Edit Employee" style="background:none;border:none;color:var(--steel);cursor:pointer;" onclick="document.getElementById('editEmpModal{{ r.id }}').classList.add('open')">&#9999;&#65039;</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('empPager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No employees yet.</div>
+  {% endif %}
+</div>
+
+{% for r in rows %}
+<div class="modal-overlay" id="editEmpModal{{ r.id }}">
+  <div class="modal-box mt-modal-box" style="width:900px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('editEmpModal{{ r.id }}').classList.remove('open')">&#10005;</button>
+    <h3>&#9999;&#65039; Edit Employee — {{ r.name }}</h3>
+    <form method="POST" action="/employees/{{ r.id }}/edit">
+      <input type="hidden" name="return_tab" value="overview">
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Basic Information</div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Employee Name *</label><input type="text" name="name" value="{{ r.name }}" required></div>
+        <div class="mt-fld"><label>Type *</label>
+          <select name="type" required>
+            <option value="Driver" {% if r.type=='Driver' %}selected{% endif %}>Driver</option>
+            <option value="Staff" {% if r.type=='Staff' %}selected{% endif %}>Staff</option>
+          </select>
+        </div>
+        <div class="mt-fld"><label>Role</label><input type="text" name="role" value="{{ r.raw_role or '' }}"></div>
+        <div class="mt-fld"><label>Mobile</label><input type="text" name="mobile" value="{{ r.mobile or '' }}"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Email</label><input type="email" name="email" value="{{ r.email or '' }}"></div>
+        <div class="mt-fld" style="grid-column:span 2;"><label>Address</label><input type="text" name="address" value="{{ r.address or '' }}"></div>
+      </div>
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Employment Information</div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Joining Date</label><input type="date" name="joining_date" value="{{ r.joining_date if r.joining_date != '—' else '' }}"></div>
+        <div class="mt-fld"><label>Date of Birth</label><input type="date" name="date_of_birth" value="{{ r.date_of_birth or '' }}"></div>
+        <div class="mt-fld" style="grid-column:span 2;"><label>Emergency Contact</label><input type="text" name="emergency_contact" value="{{ r.emergency_contact or '' }}"></div>
+      </div>
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Salary Information</div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Monthly Basic Salary</label><input type="number" step="0.01" name="basic_salary" value="{{ r.basic_salary_raw }}"></div>
+        <div class="mt-fld"><label>Bank Account</label><input type="text" name="bank_account" value="{{ r.bank_account or '' }}"></div>
+        <div class="mt-fld"><label>IFSC Code</label><input type="text" name="ifsc_code" value="{{ r.ifsc_code or '' }}"></div>
+        <div class="mt-fld"><label>UPI ID</label><input type="text" name="upi_id" value="{{ r.upi_id or '' }}"></div>
+      </div>
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Documents</div>
+      <div class="mt-form-grid cols3">
+        <div class="mt-fld"><label>Aadhaar Number</label><input type="text" name="aadhaar" value="{{ r.aadhaar or '' }}"></div>
+        <div class="mt-fld"><label>PAN Number</label><input type="text" name="pan" value="{{ r.pan or '' }}"></div>
+        <div class="mt-fld"><label>Driving License</label><input type="text" name="driving_license" value="{{ r.driving_license or '' }}"></div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('editEmpModal{{ r.id }}').classList.remove('open')" class="btn-cancel">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
+      </div>
+    </form>
+    <form method="POST" action="/employees/{{ r.id }}/deactivate" onsubmit="return confirm('{{ 'Reactivate' if r.status=='Inactive' else 'Deactivate' }} this employee?');" style="margin-top:8px;">
+      <button type="submit" class="btn-cancel" style="color:var(--red);border-color:var(--red);width:100%;">{{ 'Reactivate Employee' if r.status=='Inactive' else 'Deactivate Employee' }}</button>
+    </form>
+  </div>
+</div>
+{% endfor %}

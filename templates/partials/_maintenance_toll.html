@@ -1,0 +1,175 @@
+{% if request.args.get('synced') is not none %}
+<div style="background:#e8f5ee;border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+  &#9989; FASTag sync complete — {{ request.args.get('synced') }} new transaction(s) pulled in.
+</div>
+{% endif %}
+{% if request.args.get('imported') is not none %}
+<div style="background:#e8f5ee;border:1px solid rgba(26,122,76,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+  &#9989; Excel import complete — {{ request.args.get('imported') }} toll entr{{ 'y' if request.args.get('imported')=='1' else 'ies' }} added{% if request.args.get('updated') and request.args.get('updated') != '0' %}, {{ request.args.get('updated') }} existing record{{ 's' if request.args.get('updated') != '1' }} updated{% endif %}.
+</div>
+{% endif %}
+
+<div class="mt-kpi-row">
+  <div class="mt-kpi"><div><div class="lbl">Today's Toll</div><div class="val">₹{{ '{:,.0f}'.format(today_total) }}</div><div class="sub">{{ today_count }} transaction{{ 's' if today_count != 1 }}</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128181;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">This Month Toll</div><div class="val">₹{{ '{:,.0f}'.format(month_total) }}</div><div class="sub">{{ month_count }} transaction{{ 's' if month_count != 1 }}</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128197;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">FASTag Transactions</div><div class="val">{{ fastag_count }}</div><div class="sub">₹{{ '{:,.0f}'.format(fastag_total) }} ({{ fastag_pct }}%)</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128180;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Manual Entries</div><div class="val">{{ manual_count }}</div><div class="sub">₹{{ '{:,.0f}'.format(manual_total) }} ({{ manual_pct }}%)</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128221;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Avg Toll / Trip</div><div class="val">₹{{ '{:,.0f}'.format(avg_per_trip) }}</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128200;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Highest Toll Route</div><div class="val" style="font-size:0.95rem;line-height:1.25;">{{ highest_plaza or '—' }}</div><div class="sub">{% if highest_plaza %}₹{{ '{:,.0f}'.format(highest_plaza_amt) }} total{% endif %}</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#128663;</div></div>
+</div>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.76rem;color:var(--steel);">
+  <span>Own fleet only (Line/Local) — same scope as Compliance &amp; Urea.</span>
+  <span>Last FASTag sync: <b style="color:var(--ink);">{{ last_sync_at or 'Never' }}</b></span>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="toll">
+  <div class="field"><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Source</label>
+    <select name="source"><option value="">All Sources</option>
+      <option value="fastag" {% if f_source=='fastag' %}selected{% endif %}>FASTag</option>
+      <option value="manual" {% if f_source=='manual' %}selected{% endif %}>Manual</option>
+    </select>
+  </div>
+  <div class="field"><label>Status</label>
+    <select name="status"><option value="">All Status</option>
+      <option value="synced" {% if f_status=='synced' %}selected{% endif %}>Synced</option>
+      <option value="approved" {% if f_status=='approved' %}selected{% endif %}>Approved</option>
+      <option value="pending" {% if f_status=='pending' %}selected{% endif %}>Pending</option>
+      <option value="rejected" {% if f_status=='rejected' %}selected{% endif %}>Rejected</option>
+    </select>
+  </div>
+  <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Toll plaza, highway..."></div>
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/maintenance?tab=toll">Clear</a>
+</form>
+
+<!-- Charts/analytics always sit right after the filters, computed from the full own-fleet ledger
+     (not the filtered rows below) so they never change just because the transaction table below
+     is filtered — the transaction list itself comes after them, at the bottom of the page. -->
+<div class="mt-row-2">
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Monthly Toll Trend (6 months)</div></div>
+    {% if trend %}
+    <svg viewBox="0 0 600 160" width="100%" style="overflow:visible;max-height:180px;">
+      <line x1="20" y1="145" x2="590" y2="145" stroke="var(--line)"/>
+      {% set step = 570 / ((trend|length - 1) if trend|length > 1 else 1) %}
+      <polyline points="{% for t in trend %}{{ 20 + loop.index0*step }},{{ 140 - (t.amount/trend_max*120) }} {% endfor %}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
+      {% for t in trend %}
+      <circle cx="{{ 20 + loop.index0*step }}" cy="{{ 140 - (t.amount/trend_max*120) }}" r="2.6" fill="var(--accent)"/>
+      <text x="{{ 20 + loop.index0*step }}" y="158" font-size="9" fill="var(--steel)" text-anchor="middle">{{ t.label }}</text>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No toll history yet.</div>
+    {% endif %}
+  </div>
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Top Toll Plazas</div></div>
+    {% if top_plazas %}
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      {% for p in top_plazas %}
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;"><span>{{ p.plaza }}</span><b>₹{{ '{:,.0f}'.format(p.amount) }}</b></div>
+        <div style="background:var(--paper);border-radius:4px;height:6px;overflow:hidden;"><div style="width:{{ (p.amount/plaza_max*100)|round(1) }}%;background:var(--accent);height:100%;"></div></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No toll plazas recorded yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Highway-wise Distribution and FASTag vs Manual panels are hidden for now (still fully
+     computed below in _toll_tab_base_context as hwy_dist/fastag_total/fastag_pct/manual_total/
+     manual_pct — just not rendered here) — re-add their markup if/when they come back. -->
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Vehicle-wise Comparison</div></div>
+  {% if top_vehicles %}
+  <div style="display:flex;flex-direction:column;gap:10px;">
+    {% for v in top_vehicles %}
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;"><span>{{ v.vehicle_no }}</span><b>₹{{ '{:,.0f}'.format(v.amount) }}</b></div>
+      <div style="background:var(--paper);border-radius:4px;height:6px;overflow:hidden;"><div style="width:{{ (v.amount/veh_max*100)|round(1) }}%;background:#2a78d6;height:100%;"></div></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No vehicle toll data yet.</div>
+  {% endif %}
+</div>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Toll Transactions ({{ total_count }})</div></div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Date &amp; Time</th><th>Vehicle</th><th>Trip</th><th>Toll Plaza</th><th>Highway</th><th class="num">Amount</th><th>Source</th><th>Status</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('tollDetail{{ loop.index }}').classList.add('open')">
+      <td>{{ r['date'] }}{% if r['time'] %} <span style="color:var(--steel);">{{ r['time'] }}</span>{% endif %}</td>
+      <td>{{ r['vehicle_no'] }}</td>
+      <td>{{ r['lr_number'] or '—' }}</td>
+      <td>{{ r['toll_plaza'] }}</td>
+      <td>{{ r['highway'] or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</td>
+      <td><span class="mt-type-badge" style="background:{% if r['source']=='fastag' %}rgba(74,58,167,0.1);color:#4a3aa7{% else %}#e8f5ee;color:var(--green){% endif %};">{{ 'FASTag' if r['source']=='fastag' else 'Manual' }}</span></td>
+      <td><span class="mt-type-badge" style="background:{{ status_colors[r['status']][0] }};color:{{ status_colors[r['status']][1] }};">{{ r['status']|capitalize }}</span></td>
+      <td onclick="event.stopPropagation();">
+        {% if r['status']=='pending' %}
+        <form method="POST" action="/maintenance/toll/{{ r['id'] }}/approve" style="display:inline;"><button type="submit" title="Approve" style="background:none;border:none;color:var(--green);cursor:pointer;padding:2px;font-size:0.95rem;">&#9989;</button></form>
+        <form method="POST" action="/maintenance/toll/{{ r['id'] }}/reject" style="display:inline;"><button type="submit" title="Reject" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:0.95rem;">&#10060;</button></form>
+        {% endif %}
+        <form method="POST" action="/maintenance/toll/{{ r['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Delete this toll entry permanently?');">
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:0.9rem;">&#128465;</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No toll entries recorded for this selection.</div>
+  {% endif %}
+</div>
+
+{% for r in rows %}
+<div class="modal-overlay" id="tollDetail{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('tollDetail{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#128663; Toll Entry — {{ r['date'] }}{% if r['time'] %} {{ r['time'] }}{% endif %}</h3>
+    <div class="mt-detail-grid">
+      <div><div class="lbl">Vehicle</div>{{ r['vehicle_no'] }}</div>
+      <div><div class="lbl">Trip</div>{{ r['lr_number'] or '—' }}</div>
+      <div><div class="lbl">Toll Plaza</div>{{ r['toll_plaza'] }}</div>
+      <div><div class="lbl">Highway</div>{{ r['highway'] or '—' }}</div>
+      <div><div class="lbl">State</div>{{ r['state'] or '—' }}</div>
+      <div><div class="lbl">Amount</div>₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</div>
+      <div><div class="lbl">Source</div>{{ 'FASTag' if r['source']=='fastag' else 'Manual' }}</div>
+      <div><div class="lbl">Payment Mode</div>{{ r['payment_mode'] or '—' }}</div>
+      <div><div class="lbl">Status</div><span class="mt-type-badge" style="background:{{ status_colors[r['status']][0] }};color:{{ status_colors[r['status']][1] }};">{{ r['status']|capitalize }}</span></div>
+      {% if r['reference_no'] %}<div><div class="lbl">Reference No.</div>{{ r['reference_no'] }}</div>{% endif %}
+    </div>
+    {% if r['notes'] %}<div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:4px;">Notes</div><div style="font-size:0.85rem;margin-bottom:14px;">{{ r['notes'] }}</div>{% endif %}
+    {% if r['receipt_path'] %}<div style="margin-bottom:14px;"><a href="/static/{{ r['receipt_path'] }}" target="_blank" style="font-size:0.82rem;color:var(--accent);">&#128206; View Receipt</a></div>{% endif %}
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      {% if r['status']=='pending' %}
+      <form method="POST" action="/maintenance/toll/{{ r['id'] }}/approve"><button type="submit" style="background:var(--green);color:#fff;border:none;padding:9px 16px;border-radius:3px;cursor:pointer;">&#9989; Approve</button></form>
+      <form method="POST" action="/maintenance/toll/{{ r['id'] }}/reject"><button type="submit" class="btn-cancel">&#10060; Reject</button></form>
+      {% endif %}
+      <form method="POST" action="/maintenance/toll/{{ r['id'] }}/delete" onsubmit="return confirm('Delete this toll entry permanently?');">
+        <button type="submit" style="background:var(--red);color:#fff;border:none;padding:9px 16px;border-radius:3px;cursor:pointer;">&#128465; Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}

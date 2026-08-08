@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <title>{% block title %}Anil Transport Service{% endblock %}</title>
+{% if site_logo_path %}
+<link rel="icon" type="image/png" href="/static/{{ site_logo_path }}">
+<link rel="apple-touch-icon" href="/static/{{ site_logo_path }}">
+{% else %}
+<link rel="icon" href="data:,">
+{% endif %}
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <style>
   * { box-sizing: border-box; }

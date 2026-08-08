@@ -1,0 +1,192 @@
+<div class="modal-overlay" id="addTollModal">
+  <div class="modal-box mt-modal-box" style="width:900px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addTollModal').classList.remove('open')">&#10005;</button>
+    <h3 id="tollModalTitle">&#128663; Add Toll Entry</h3>
+
+    <div class="bat-mode-tabs" style="margin-bottom:18px;">
+      <div class="bat-mode-tab" id="tollTabManual" onclick="tollSetTab('manual')">
+        <div class="ic">&#9999;&#65039;</div>
+        <div><div class="lbl">Manual Entry</div><div class="sub">Log one toll transaction</div></div>
+      </div>
+      <div class="bat-mode-tab" id="tollTabExcel" onclick="tollSetTab('excel')">
+        <div class="ic">&#128196;</div>
+        <div><div class="lbl">Upload Excel</div><div class="sub">Bulk import from a FASTag statement</div></div>
+      </div>
+    </div>
+
+    <!-- MANUAL ENTRY -->
+    <div id="tollManualPane">
+      <form method="POST" action="/maintenance/toll/add" enctype="multipart/form-data">
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Vehicle *</label><input type="text" name="vehicle_no" list="vehicle-list" required></div>
+          <div class="mt-fld"><label>Trip (Optional)</label><input type="text" name="trip_lr" list="toll-trip-list" placeholder="LR number..."></div>
+          <div class="mt-fld"><label>Toll Plaza *</label><input type="text" name="toll_plaza" list="toll-plaza-list" required></div>
+          <div class="mt-fld"><label>Highway *</label><input type="text" name="highway" list="toll-highway-list" required></div>
+        </div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>State</label><input type="text" name="state" placeholder="e.g. Odisha"></div>
+          <div class="mt-fld"><label>Date *</label><input type="date" name="date" id="tollDate" required></div>
+          <div class="mt-fld"><label>Time *</label><input type="time" name="time" required></div>
+          <div class="mt-fld"><label>Amount (₹) *</label><input type="number" step="0.01" min="0" name="amount" required></div>
+        </div>
+        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Source *</label>
+            <select name="source" id="tollSource" onchange="tollSourceChange()">
+              <option value="manual">Manual</option>
+              <option value="fastag">FASTag</option>
+            </select>
+          </div>
+          <div class="mt-fld" id="tollPaymentModeWrap"><label>Payment Mode</label>
+            <select name="payment_mode">
+              <option value="">-- Select --</option>
+              <option value="Cash">Cash</option>
+              <option value="UPI">UPI</option>
+              <option value="Bank">Bank Transfer</option>
+            </select>
+          </div>
+          <div class="mt-fld"><label>Receipt (Optional)</label><input type="file" name="receipt" accept=".jpg,.jpeg,.png,.pdf"></div>
+        </div>
+        <div class="mt-fld"><label>Notes (Optional)</label><textarea name="notes" rows="2"></textarea></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;">
+          <button type="button" onclick="document.getElementById('addTollModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+          <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Toll Entry</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- UPLOAD EXCEL -->
+    <div id="tollExcelPane" style="display:none;">
+      <div class="toll-steps">
+        <div class="toll-step {{ 'done' if excel_token else 'active' }}"><span class="n">{{ '✓' if excel_token else '1' }}</span> Upload</div>
+        <div class="toll-step {{ 'active' if excel_token }}"><span class="n">2</span> Validate</div>
+        <div class="toll-step"><span class="n">3</span> Import</div>
+      </div>
+
+      {% if not excel_token %}
+      <div style="margin-bottom:14px;">
+        <a href="/maintenance/toll/template" style="display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--ink);">
+          <span style="font-size:1.3rem;">&#128190;</span>
+          <span><div style="font-weight:700;font-size:0.85rem;">Download Excel Template</div><div style="font-size:0.75rem;color:var(--steel);">Or upload a BOSS FASTag account statement export directly — both formats are auto-detected.</div></span>
+          <span style="margin-left:auto;color:var(--accent);">&#8681;</span>
+        </a>
+      </div>
+      {% if excel_error %}
+      <div style="background:#fdecea;border:1px solid rgba(198,40,40,0.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--red);">&#9888;&#65039; {{ excel_error }}</div>
+      {% endif %}
+      <form method="POST" action="/maintenance/toll/excel/preview" enctype="multipart/form-data" id="tollExcelForm">
+        <label for="tollExcelFile" id="tollDropZone" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed var(--line);border-radius:10px;padding:36px 20px;cursor:pointer;text-align:center;">
+          <span style="font-size:1.6rem;">&#9729;&#65039;</span>
+          <span style="font-weight:600;font-size:0.88rem;">Drag &amp; drop your file here, or click to browse</span>
+          <span style="font-size:0.75rem;color:var(--steel);">Supports .xlsx, .xls — Max 10MB</span>
+        </label>
+        <input type="file" id="tollExcelFile" name="excel_file" accept=".xlsx,.xls" style="display:none;" onchange="document.getElementById('tollExcelForm').submit();">
+      </form>
+      {% else %}
+      <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap;">
+        <div style="font-size:0.8rem;background:var(--paper);border-radius:6px;padding:6px 10px;">Detected format: <b>{{ 'BOSS FASTag Statement' if excel_format=='boss' else 'Manual Template' }}</b></div>
+        <div style="font-size:0.8rem;background:var(--paper);border-radius:6px;padding:6px 10px;">{{ excel_row_count }} row{{ 's' if excel_row_count != 1 }} read</div>
+      </div>
+      {% if excel_format == 'boss' %}
+      <div style="font-size:0.78rem;color:var(--steel);margin-bottom:10px;">This is a wallet-recharge statement — it has no plaza-level detail, so each row is recorded as toll spend against the vehicle it recharged. Account-credit rows (top-ups, internal transfers) are excluded below, not counted as toll.</div>
+      {% endif %}
+
+      <div style="font-size:0.85rem;font-weight:700;margin-bottom:8px;">Excel Preview <span style="font-weight:400;color:var(--steel);font-size:0.75rem;">(first 10 rows)</span></div>
+      <div style="overflow-x:auto;margin-bottom:14px;">
+      <table>
+        <tr><th>Vehicle</th><th>Date</th><th>Time</th><th>Toll Plaza / Description</th><th class="num">Amount</th><th>Source</th><th></th></tr>
+        {% for row in excel_rows %}
+        <tr>
+          <td>{{ row.vehicle_no or '—' }}</td><td>{{ row.date or '—' }}</td><td>{{ row.time or '—' }}</td>
+          <td>{{ row.toll_plaza or '—' }}</td><td class="num">₹{{ '{:,.0f}'.format(row.amount or 0) }}</td>
+          <td>{{ 'FASTag' if row.source=='fastag' else 'Manual' }}</td>
+          <td>{% if row.is_dup and row.changed %}<span class="mt-type-badge" style="background:#eaf1fb;color:#2a78d6;" title="Already imported, but this file's values differ from what's saved">Changed</span>{% elif row.is_dup %}<span class="mt-type-badge" style="background:#fff3e8;color:var(--accent);">Duplicate</span>{% elif row.valid %}<span class="mt-type-badge" style="background:#e8f5ee;color:var(--green);">Valid</span>{% else %}<span class="mt-type-badge" style="background:#fdecea;color:var(--red);" title="{{ row.errors|join(', ') }}">Invalid</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      </div>
+
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;font-size:0.82rem;">
+        <span>&#9989; <b style="color:var(--green);">{{ excel_valid_count }}</b> Valid Records <span style="color:var(--steel);">(₹{{ '{:,.0f}'.format(excel_valid_amount) }})</span></span>
+        <span>&#9888;&#65039; <b style="color:var(--accent);">{{ excel_dup_count }}</b> Duplicate Records</span>
+        {% if excel_changed_count %}<span>&#128260; <b style="color:#2a78d6;">{{ excel_changed_count }}</b> Changed Since Last Import</span>{% endif %}
+        <span>&#10060; <b style="color:var(--red);">{{ excel_invalid_count }}</b> Invalid Records</span>
+        {% if excel_credit_excl_count %}<span>&#8635; <b style="color:var(--steel);">{{ excel_credit_excl_count }}</b> Account Credits Excluded <span style="color:var(--steel);">(₹{{ '{:,.0f}'.format(excel_credit_excl_amount) }})</span></span>{% endif %}
+      </div>
+
+      <form method="POST" action="/maintenance/toll/excel/import">
+        <input type="hidden" name="token" value="{{ excel_token }}">
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;font-size:0.83rem;">
+          <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" name="auto_link_trips" checked> Auto-link with trips (by LR/Trip number, where given)</label>
+          <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" name="auto_approve"> Auto-approve valid manual entries</label>
+          <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" name="override_changed" {% if excel_changed_count %}checked{% endif %}> Override existing records if changed <span style="color:var(--steel);">— a duplicate reference number is never inserted twice; check this to update the {{ excel_changed_count }} row{{ 's' if excel_changed_count != 1 }} above whose values differ from what's already saved, instead of leaving them as-is</span></label>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <a href="/maintenance?tab=toll" class="btn-cancel" style="text-decoration:none;display:inline-flex;align-items:center;padding:9px 16px;">Cancel</a>
+          <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" {% if excel_valid_count + excel_changed_count == 0 %}disabled{% endif %}>Import {{ excel_valid_count }} New{% if excel_changed_count %} &amp; Update {{ excel_changed_count }}{% endif %}</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}</datalist>
+<datalist id="toll-plaza-list">{% for p in top_plazas %}<option value="{{ p.plaza }}">{% endfor %}
+  <option value="Chandikhole Toll Plaza"><option value="Sambalpur Toll Plaza"><option value="Rengali Toll Plaza">
+  <option value="Khordha Toll Plaza"><option value="Cuttack Toll Plaza"><option value="Jharsuguda Toll Plaza">
+</datalist>
+<datalist id="toll-highway-list"><option value="NH-16"><option value="NH-53"><option value="NH-49"><option value="NH-520"><option value="NH-163"></datalist>
+<datalist id="toll-trip-list"></datalist>
+
+<script>
+function tollSetTab(which) {
+  document.getElementById('tollManualPane').style.display = which === 'manual' ? '' : 'none';
+  document.getElementById('tollExcelPane').style.display = which === 'excel' ? '' : 'none';
+  document.getElementById('tollTabManual').classList.toggle('active', which === 'manual');
+  document.getElementById('tollTabExcel').classList.toggle('active', which === 'excel');
+  document.getElementById('tollModalTitle').innerHTML = which === 'manual' ? '&#128663; Add Toll Entry' : '&#128196; Upload Toll Entries (Excel)';
+}
+function tollSourceChange() {
+  var isFastag = document.getElementById('tollSource').value === 'fastag';
+  document.getElementById('tollPaymentModeWrap').style.display = isFastag ? 'none' : '';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var d = document.getElementById('tollDate');
+  if (d && !d.value) { d.valueAsDate = new Date(); }
+  tollSetTab('manual');
+  tollSourceChange();
+
+  var dropZone = document.getElementById('tollDropZone');
+  if (dropZone) {
+    ['dragover', 'dragenter'].forEach(function(evt) {
+      dropZone.addEventListener(evt, function(e) { e.preventDefault(); dropZone.style.borderColor = 'var(--accent)'; });
+    });
+    ['dragleave', 'drop'].forEach(function(evt) {
+      dropZone.addEventListener(evt, function(e) { e.preventDefault(); dropZone.style.borderColor = 'var(--line)'; });
+    });
+    dropZone.addEventListener('drop', function(e) {
+      var files = e.dataTransfer.files;
+      if (files.length) {
+        document.getElementById('tollExcelFile').files = files;
+        document.getElementById('tollExcelForm').submit();
+      }
+    });
+  }
+
+  {% if excel_token or excel_error %}
+  document.getElementById('addTollModal').classList.add('open');
+  tollSetTab('excel');
+  {% endif %}
+});
+</script>
+
+<style>
+.toll-steps { display:flex; align-items:center; gap:8px; margin-bottom:18px; }
+.toll-step { display:flex; align-items:center; gap:7px; font-size:0.78rem; font-weight:600; color:var(--steel); }
+.toll-step .n { width:20px; height:20px; border-radius:50%; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:0.72rem; flex-shrink:0; }
+.toll-step.active { color:var(--accent); }
+.toll-step.active .n { background:var(--accent); color:#fff; }
+.toll-step.done { color:var(--green); }
+.toll-step.done .n { background:var(--green); color:#fff; }
+.toll-step:not(:last-child)::after { content:''; width:24px; height:1.5px; background:var(--line); margin-left:4px; }
+</style>

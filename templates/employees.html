@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
+{% block title %}Employees{% endblock %}
+{% block extra_head %}
+{% endblock %}
+{% block content %}
+{% set tab_titles = {'overview':'Overview','salary':'Salary','attendance':'Attendance'} %}
+<div class="wrap" style="max-width:none; width:100%;">
+  <div class="mt-crumb"><a href="/salaries">Employees</a> &nbsp;&rsaquo;&nbsp; {{ tab_titles.get(tab, 'Overview') }}</div>
+  <div class="mt-head">
+    <div>
+      <h1>Employees</h1>
+      <div class="sub">
+        {% if tab == 'salary' %}Salary payments and outstanding advances — pay a salary or record an advance from that employee's own Ledger.
+        {% elif tab == 'attendance' %}Track employee daily attendance.
+        {% else %}Manage salaries, attendance and employee records.{% endif %}
+      </div>
+    </div>
+    {% if tab == 'overview' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addEmployeeModal').classList.add('open')">+ Add Employee</button>
+    {% elif tab == 'attendance' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('markAttendanceModal').classList.add('open')">+ Mark Attendance</button>
+    {% endif %}
+  </div>
+
+  <div class="mt-tabs">
+    <a class="mt-tab {{ 'active' if tab=='overview' }}" href="/salaries?tab=overview"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" style="vertical-align:-2px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="1.8"/></svg> Overview</a>
+    <a class="mt-tab {{ 'active' if tab=='salary' }}" href="/salaries?tab=salary">&#8377; Salary</a>
+    <a class="mt-tab {{ 'active' if tab=='attendance' }}" href="/salaries?tab=attendance"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" style="vertical-align:-2px;" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M3 9H21M8 2V6M16 2V6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg> Attendance</a>
+  </div>
+
+  {% if tab == 'overview' %}
+    {% include 'partials/_employees_overview.html' %}
+  {% elif tab == 'salary' %}
+    {% include 'partials/_employees_salary.html' %}
+  {% elif tab == 'attendance' %}
+    {% include 'partials/_employees_attendance.html' %}
+  {% endif %}
+</div>
+{% include 'partials/_employees_modals.html' %}
+{% endblock %}

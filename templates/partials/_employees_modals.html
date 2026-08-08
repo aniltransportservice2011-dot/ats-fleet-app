@@ -1,0 +1,102 @@
+<!-- ================= ADD EMPLOYEE ================= -->
+<div class="modal-overlay" id="addEmployeeModal">
+  <div class="modal-box mt-modal-box" style="width:900px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addEmployeeModal').classList.remove('open')">&#10005;</button>
+    <h3>&#128101; Add Employee</h3>
+    <form method="POST" action="/employees/add">
+      <input type="hidden" name="next" value="employees">
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Basic Information</div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Employee Name *</label><input type="text" name="name" required></div>
+        <div class="mt-fld"><label>Employee ID</label><input type="text" name="employee_code" placeholder="Auto-generated if blank"></div>
+        <div class="mt-fld"><label>Type *</label>
+          <select name="type" required><option value="Driver">Driver</option><option value="Staff">Staff</option></select>
+        </div>
+        <div class="mt-fld"><label>Role</label><input type="text" name="role" placeholder="e.g. Driver, Accountant, Clerk"></div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Mobile</label><input type="text" name="mobile"></div>
+        <div class="mt-fld"><label>Email</label><input type="email" name="email"></div>
+        <div class="mt-fld" style="grid-column:span 2;"><label>Address</label><input type="text" name="address"></div>
+      </div>
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Employment Information</div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Joining Date</label><input type="date" name="joining_date"></div>
+        <div class="mt-fld"><label>Date of Birth</label><input type="date" name="date_of_birth"></div>
+        <div class="mt-fld" style="grid-column:span 2;"><label>Emergency Contact</label><input type="text" name="emergency_contact" placeholder="Name and phone number"></div>
+      </div>
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Salary Information</div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Monthly Basic Salary</label><input type="number" step="0.01" name="basic_salary"></div>
+        <div class="mt-fld"><label>Bank Account</label><input type="text" name="bank_account"></div>
+        <div class="mt-fld"><label>IFSC Code</label><input type="text" name="ifsc_code"></div>
+        <div class="mt-fld"><label>UPI ID</label><input type="text" name="upi_id"></div>
+      </div>
+
+      <div style="font-size:0.72rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.03em;margin:14px 0 8px;">Documents</div>
+      <div class="mt-form-grid cols3">
+        <div class="mt-fld"><label>Aadhaar Number</label><input type="text" name="aadhaar"></div>
+        <div class="mt-fld"><label>PAN Number</label><input type="text" name="pan"></div>
+        <div class="mt-fld"><label>Driving License</label><input type="text" name="driving_license"></div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" onclick="document.getElementById('addEmployeeModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Employee</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ================= MARK ATTENDANCE ================= -->
+<div class="modal-overlay" id="markAttendanceModal">
+  <div class="modal-box mt-modal-box" style="width:560px;">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('markAttendanceModal').classList.remove('open')">&#10005;</button>
+    <h3>&#128197; Mark Attendance</h3>
+    <form method="POST" action="/attendance/mark">
+      <div class="mt-fld"><label>Employee *</label>
+        <select name="employee_id" id="markAttnEmpSelect" required>
+          <option value="">-- Select Employee --</option>
+          {% for e in all_employees_list %}<option value="{{ e.id }}">{{ e.name }} ({{ e.employee_code }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>Date *</label><input type="date" name="date" id="markAttnDate" required></div>
+        <div class="mt-fld"><label>Status *</label>
+          <select name="status" required>
+            <option value="Present">Present</option>
+            <option value="Absent">Absent</option>
+            <option value="Leave">Leave</option>
+            <option value="Half Day">Half Day</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-form-grid">
+        <div class="mt-fld"><label>In Time</label><input type="time" name="in_time"></div>
+        <div class="mt-fld"><label>Out Time</label><input type="time" name="out_time"></div>
+      </div>
+      <div class="mt-fld"><label>Remarks</label><textarea name="remarks" rows="2"></textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;">
+        <button type="button" onclick="document.getElementById('markAttendanceModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Attendance</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openMarkAttendance(empId, empName) {
+  document.getElementById('markAttnEmpSelect').value = empId;
+  if (!document.getElementById('markAttnDate').value) {
+    document.getElementById('markAttnDate').valueAsDate = new Date();
+  }
+  document.getElementById('markAttendanceModal').classList.add('open');
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var d = document.getElementById('markAttnDate');
+  if (d && !d.value) d.valueAsDate = new Date();
+});
+</script>
