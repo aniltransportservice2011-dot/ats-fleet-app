@@ -12,11 +12,27 @@ app.permanent_session_lifetime = datetime.timedelta(days=30)
 DB = 'fleet.db'
 INSURANCE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'insurance')
 os.makedirs(INSURANCE_UPLOAD_DIR, exist_ok=True)
+TOLL_RECEIPT_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'toll_receipts')
+os.makedirs(TOLL_RECEIPT_UPLOAD_DIR, exist_ok=True)
 
 def get_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     return conn
+
+@app.context_processor
+def inject_site_logo():
+    """Makes the uploaded company logo available to every template as `site_logo_path` (used for
+    the browser tab favicon in base.html) without every single route needing to fetch and pass it
+    itself — same file Settings > Company Profile already manages, so it updates automatically
+    whenever that's changed."""
+    try:
+        conn = get_db()
+        row = conn.execute("SELECT value FROM settings WHERE key='logo_path'").fetchone()
+        conn.close()
+        return {'site_logo_path': row['value'] if row and row['value'] else None}
+    except sqlite3.Error:
+        return {'site_logo_path': None}
 
 def _vehicle_active_idle_days(conn, vehicle_id, registration_date, date_from, date_to):
     """Active days = union of calendar days spanned by each trip's start..end_date (a trip stays
@@ -50,6 +66,26 @@ def _vehicle_active_idle_days(conn, vehicle_id, registration_date, date_from, da
     idle_days = max(total_days_v - active_days, 0)
     return active_days, idle_days, total_days_v
 
+def _toll_by_trip(conn, trip_ids):
+    """Real Toll Management amount linked to each trip_id, for the (usually few) trips that have
+    one — a BOSS/FASTag import almost never carries a trip number, so most trips won't appear
+    here. Callers needing a PER-TRIP figure (an invoice line, a customer's profit calc) should
+    fall back to that trip's own manual `toll` field when its id isn't in the returned dict,
+    rather than treating an unlinked trip as zero toll cost."""
+    trip_ids = [t for t in trip_ids if t]
+    if not trip_ids:
+        return {}
+    placeholders = ','.join('?' * len(trip_ids))
+    rows = conn.execute(f"SELECT trip_id, SUM(amount) as total FROM toll_entries WHERE trip_id IN ({placeholders}) GROUP BY trip_id",
+                         trip_ids).fetchall()
+    return {r['trip_id']: r['total'] for r in rows}
+
+def _trip_toll(t, toll_map):
+    """Real per-trip toll cost: the linked Toll Management total if this trip has one, else its
+    own manual estimate — never both, so the same real-world toll is never counted twice."""
+    linked = toll_map.get(t['id'])
+    return linked if linked is not None else (t['toll'] or 0)
+
 def _period_financials(conn, date_from, date_to):
     """Revenue/expense/profit breakdown for a date range, using the same charge
     columns as dashboard()/monthly_summary() so the numbers agree app-wide."""
@@ -57,7 +93,6 @@ def _period_financials(conn, date_from, date_to):
     revenue = sum(t['billed_amount'] or 0 for t in trips)
     fuel = sum(t['fuel_amount'] or 0 for t in trips)
     driver_adv = sum(t['driver_adv_amount'] or 0 for t in trips)
-    toll = sum(t['toll'] or 0 for t in trips)
     parking = sum(t['parking'] or 0 for t in trips)
     misc = sum((t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) +
                (t['fine'] or 0) + (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
@@ -65,7 +100,13 @@ def _period_financials(conn, date_from, date_to):
                (t['weighbridge_charges'] or 0) + (t['other_expense'] or 0) + (t['permit_charges'] or 0) for t in trips)
     owner_cost = sum((t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
                       for t in trips if t['type'] == 'Market')
-    maint = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
+    maint_all = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
+    # Toll Management (Maintenance > Toll) is the source of truth for period-level toll cost now —
+    # 'maint' below means "maintenance excluding toll" so a breakdown chart showing both a
+    # 'Maintenance' slice and a 'Toll' slice never double-counts the same rupee in both.
+    toll = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE category='Toll' AND date>=? AND date<=?",
+                        (date_from, date_to)).fetchone()[0]
+    maint = maint_all - toll
     overheads = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     salaries = conn.execute("SELECT COALESCE(SUM(amount),0) FROM salaries WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     total_expenses = fuel + driver_adv + toll + parking + misc + owner_cost + maint + overheads + salaries
@@ -205,7 +246,8 @@ def _accounts_rows(conn):
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) -
+        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
         (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
@@ -379,7 +421,11 @@ def dashboard():
 
     total_revenue = sum(t['billed_amount'] or 0 for t in trips)
     trip_count = len(trips)
-    total_charges_paid = sum((t['fuel_amount'] or 0)+(t['driver_adv_amount'] or 0)+(t['toll'] or 0)+
+    # Toll is deliberately NOT in this sum — Maintenance > Toll (toll_entries/maintenance
+    # category='Toll') is the source of truth for toll cost now, folded into maint_total below.
+    # Adding the old per-trip manual `toll` field here too would double-count the same real-world
+    # toll charge once it's been synced/imported through Toll Management.
+    total_charges_paid = sum((t['fuel_amount'] or 0)+(t['driver_adv_amount'] or 0)+
                               (t['agent_commission'] or 0)+(t['builty_expense'] or 0)+(t['conductor_expense'] or 0)+
                               (t['fine'] or 0)+(t['labour_charges'] or 0)+(t['parking'] or 0)+(t['puncture'] or 0)+
                               (t['urea'] or 0)+(t['loading_expense'] or 0)+(t['unloading_expense'] or 0)+
@@ -387,11 +433,14 @@ def dashboard():
     adj_revenue = total_revenue - total_charges_paid
 
     maint_total_query = "SELECT COALESCE(SUM(m.amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id WHERE m.date>=? AND m.date<=?"
+    maint_toll_query = "SELECT COALESCE(SUM(m.amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id WHERE m.category='Toll' AND m.date>=? AND m.date<=?"
     maint_total_params = [date_from, date_to]
     if vehicle_f:
         maint_total_query += " AND v.vehicle_no=?"
+        maint_toll_query += " AND v.vehicle_no=?"
         maint_total_params.append(vehicle_f)
     maint_total = conn.execute(maint_total_query, maint_total_params).fetchone()[0]
+    maint_toll_total = conn.execute(maint_toll_query, maint_total_params).fetchone()[0]
     salaries_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM salaries WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     overheads_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     total_expenses = total_charges_paid + maint_total + overheads_total
@@ -409,11 +458,12 @@ def dashboard():
 
     fuel_total = sum(t['fuel_amount'] or 0 for t in trips)
     driveradv_total = sum(t['driver_adv_amount'] or 0 for t in trips)
-    toll_total = sum(t['toll'] or 0 for t in trips)
-    other_exp_total = total_charges_paid - fuel_total - driveradv_total - toll_total
+    toll_total = maint_toll_total  # real Toll Management figure, not the old per-trip manual field
+    maint_other_total = maint_total - maint_toll_total  # rest of Maintenance, so this chart's slices don't overlap
+    other_exp_total = total_charges_paid - fuel_total - driveradv_total
 
     exp_items = [('Fuel', fuel_total, '#2a78d6'), ('Driver Advance', driveradv_total, '#eb6834'),
-                 ('Toll', toll_total, '#eda100'), ('Maintenance', maint_total, '#e34948'),
+                 ('Toll', toll_total, '#eda100'), ('Maintenance', maint_other_total, '#e34948'),
                  ('Salaries', salaries_total, '#1a9c5b'), ('Expenses', overheads_total, '#7a5ad6'),
                  ('Other', other_exp_total, '#4a3aa7')]
     exp_max = max([v for _, v, _ in exp_items], default=1) or 1
@@ -440,7 +490,8 @@ def dashboard():
     vendors_bal = conn.execute("""SELECT v.name,
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) -
+        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
         COALESCE(v.opening_balance,0) as balance
@@ -639,33 +690,333 @@ def vehicles_list():
                             compliance_by_vehicle=compliance_by_vehicle,
                             page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs)
 
+EMPLOYEE_AVATAR_PALETTE = [('#eaf1fb', '#2a78d6'), ('#fff3e8', 'var(--accent)'), ('#e8f5ee', 'var(--green)'),
+                           ('rgba(74,58,167,0.1)', '#4a3aa7'), ('#fdecea', 'var(--red)')]
+
+def _employee_avatar_colors(seed):
+    return EMPLOYEE_AVATAR_PALETTE[(seed or 0) % len(EMPLOYEE_AVATAR_PALETTE)]
+
+def _employee_initials(name):
+    parts = (name or '').split()
+    if not parts:
+        return '??'
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[1][0]).upper()
+
+def _employee_outstanding_advance(conn, name):
+    given = conn.execute("SELECT COALESCE(SUM(amount),0) FROM advances WHERE employee=? COLLATE NOCASE AND type='given'", (name,)).fetchone()[0]
+    repaid = conn.execute("SELECT COALESCE(SUM(amount),0) FROM advances WHERE employee=? COLLATE NOCASE AND type='repaid'", (name,)).fetchone()[0]
+    return given - repaid
+
+def _employee_attendance_stats(conn, employee_id, date_from, date_to):
+    """(present, absent, leave, half_day, working_days, pct) for one employee over an arbitrary
+    date range (not just a calendar month) — working_days is every day that got a status marked
+    at all (Present/Absent/Leave/Half Day) within the range, not the range's full length, since
+    not every day is necessarily marked yet."""
+    rows = conn.execute("SELECT status FROM attendance WHERE employee_id=? AND date>=? AND date<=?",
+                        (employee_id, date_from, date_to)).fetchall()
+    present = sum(1 for r in rows if r['status'] == 'Present')
+    absent = sum(1 for r in rows if r['status'] == 'Absent')
+    leave = sum(1 for r in rows if r['status'] == 'Leave')
+    half = sum(1 for r in rows if r['status'] == 'Half Day')
+    working = len(rows)
+    pct = round((present + 0.5 * half) / working * 100, 1) if working else None
+    return {'present': present, 'absent': absent, 'leave': leave, 'half_day': half,
+            'working_days': working, 'pct': pct}
+
+def _current_month_key():
+    return datetime.date.today().strftime('%Y-%m')
+
+def _employee_month_calendar(conn, employee_id, month_key):
+    """Weeks of 7 day-cells (Mon-Sun, blank-padded) for the attendance drawer's calendar grid,
+    each cell tagged with a one-letter status class the template maps to a colour: p/a/l/h/n."""
+    year, month = int(month_key[:4]), int(month_key[5:7])
+    first = datetime.date(year, month, 1)
+    days_in_month = calendar.monthrange(year, month)[1]
+    status_by_day = {r['date']: r for r in conn.execute(
+        "SELECT date, status, in_time, out_time FROM attendance WHERE employee_id=? AND substr(date,1,7)=?",
+        (employee_id, month_key)).fetchall()}
+    class_map = {'Present': 'p', 'Absent': 'a', 'Leave': 'l', 'Half Day': 'h'}
+    letter_map = {'Present': 'P', 'Absent': 'A', 'Leave': 'L', 'Half Day': 'HD'}
+    weeks = []
+    week = [None] * first.weekday()  # Monday=0
+    for d in range(1, days_in_month + 1):
+        date_str = f"{year:04d}-{month:02d}-{d:02d}"
+        rec = status_by_day.get(date_str)
+        week.append({'day': d, 'date': date_str,
+                      'cls': class_map.get(rec['status'], 'n') if rec else 'n',
+                      'letter': letter_map.get(rec['status'], '') if rec else '',
+                      'status': rec['status'] if rec else None,
+                      'in_time': rec['in_time'] if rec else None, 'out_time': rec['out_time'] if rec else None})
+        if len(week) == 7:
+            weeks.append(week)
+            week = []
+    if week:
+        while len(week) < 7:
+            week.append(None)
+        weeks.append(week)
+    return weeks
+
 @app.route('/salaries')
 def salaries_list():
     conn = get_db()
-    emp_f = request.args.get('employee', '')
-    type_f = request.args.get('emp_type', '')
-    query = "SELECT id, name, type, opening_balance FROM employees WHERE 1=1"
-    params = []
-    if emp_f:
-        query += " AND name = ?"
-        params.append(emp_f)
-    if type_f:
-        query += " AND type = ?"
-        params.append(type_f)
-    query += " ORDER BY name"
-    rows = conn.execute(query, params).fetchall()
-    rows_with_balance = []
-    for r in rows:
-        given = conn.execute("SELECT COALESCE(SUM(amount),0) FROM advances WHERE employee=? COLLATE NOCASE AND type='given'", (r['name'],)).fetchone()[0]
-        repaid = conn.execute("SELECT COALESCE(SUM(amount),0) FROM advances WHERE employee=? COLLATE NOCASE AND type='repaid'", (r['name'],)).fetchone()[0]
-        rows_with_balance.append({'id': r['id'], 'name': r['name'], 'type': r['type'],
-                                   'outstanding': given - repaid + (r['opening_balance'] or 0)})
-    employees = conn.execute("SELECT name FROM employees ORDER BY name").fetchall()
-    total_employees = len(rows_with_balance)
-    total_outstanding = sum(r['outstanding'] for r in rows_with_balance)
+    tab = request.args.get('tab', 'overview')
+    if tab == 'salary':
+        return _employees_salary_tab(conn)
+    if tab == 'attendance':
+        return _employees_attendance_tab(conn)
+    return _employees_overview_tab(conn)
+
+def _employees_overview_tab(conn):
+    default_from = datetime.date.today().replace(day=1).isoformat()
+    date_from = request.args.get('date_from') or default_from
+    date_to = request.args.get('date_to') or datetime.date.today().isoformat()
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    today = datetime.date.today().isoformat()
+
+    employees = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    total_employees = len(employees)
+    drivers = sum(1 for e in employees if (e['type'] or '') == 'Driver')
+    office_staff = total_employees - drivers
+
+    today_rows = {r['employee_id']: r['status'] for r in
+                  conn.execute("SELECT employee_id, status FROM attendance WHERE date=?", (today,)).fetchall()}
+    present_today = sum(1 for s in today_rows.values() if s == 'Present')
+    on_leave_today = sum(1 for s in today_rows.values() if s == 'Leave')
+
+    period_pcts = []
+    salary_status_by_emp = {}
+    latest_salary_by_emp = {}
+    for e in employees:
+        stats = _employee_attendance_stats(conn, e['id'], date_from, date_to)
+        if stats['pct'] is not None:
+            period_pcts.append(stats['pct'])
+        sal_rows = conn.execute("SELECT net_salary FROM salaries WHERE employee_id=? AND date IS NOT NULL AND date>=? AND date<=?",
+                                (e['id'], date_from, date_to)).fetchall()
+        salary_status_by_emp[e['id']] = 'paid' if sal_rows else None
+        latest_salary_by_emp[e['id']] = sum(s['net_salary'] or 0 for s in sal_rows)
+    overall_attendance_pct = round(sum(period_pcts) / len(period_pcts), 1) if period_pcts else 0
+
+    period_sal = conn.execute("""SELECT COALESCE(SUM(net_salary),0), COALESCE(SUM(CASE WHEN payment_status='paid' THEN net_salary ELSE 0 END),0)
+                                 FROM salaries WHERE date IS NOT NULL AND date>=? AND date<=?""", (date_from, date_to)).fetchone()
+    total_payroll = period_sal[0] or 0
+    paid_payroll = period_sal[1] or 0
+    pending_payroll = total_payroll - paid_payroll
+    total_outstanding_advances = sum(_employee_outstanding_advance(conn, e['name']) for e in employees)
+
+    # Department distribution + Drivers vs Office Staff share the same underlying split, shown two ways.
+    dept_counts = {}
+    for e in employees:
+        d = e['role'] or e['type'] or 'Other'
+        dept_counts[d] = dept_counts.get(d, 0) + 1
+    dept_dist = sorted([{'label': k, 'count': v} for k, v in dept_counts.items()], key=lambda x: -x['count'])
+    dept_max = max([d['count'] for d in dept_dist], default=1) or 1
+
+    # Salary distribution — net salary paid per employee within the selected period, top 6.
+    sal_dist = sorted([{'name': e['name'], 'amount': latest_salary_by_emp.get(e['id']) or 0} for e in employees
+                        if latest_salary_by_emp.get(e['id'])], key=lambda x: -x['amount'])[:6]
+    sal_dist_max = max([s['amount'] for s in sal_dist], default=1) or 1
+
+    # 6-month attendance trend (fleet average %, per calendar month — independent of the
+    # date_from/date_to filter above, which is a fixed trailing trend not a range selector).
+    trend = []
+    y_, m_ = datetime.date.today().year, datetime.date.today().month
+    for i in range(5, -1, -1):
+        mm = m_ - i; yy = y_
+        while mm <= 0:
+            mm += 12; yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        pcts = [p for e in employees if (p := _employee_attendance_stats(conn, e['id'], mf, mt)['pct']) is not None]
+        trend.append({'label': calendar.month_abbr[mm], 'pct': round(sum(pcts) / len(pcts), 1) if pcts else 0})
+    trend_max = max([t['pct'] for t in trend], default=1) or 1
+
+    rows = []
+    for e in employees:
+        stats = _employee_attendance_stats(conn, e['id'], date_from, date_to)
+        rows.append({
+            'id': e['id'], 'name': e['name'], 'employee_code': e['employee_code'] or f"EMP-{e['id']:03d}",
+            'role': e['role'] or e['type'] or '—', 'joining_date': e['joining_date'] or '—',
+            'attendance_pct': stats['pct'], 'salary_status': salary_status_by_emp.get(e['id']),
+            'net_salary': latest_salary_by_emp.get(e['id']),
+            'outstanding': _employee_outstanding_advance(conn, e['name']),
+            'status': e['status'] or 'Active',
+            'initials': _employee_initials(e['name']), 'avatar_colors': _employee_avatar_colors(e['id']),
+            # Full record, for the Edit Employee modal (pre-filled from this same row).
+            'type': e['type'], 'raw_role': e['role'], 'mobile': e['mobile'], 'email': e['email'],
+            'address': e['address'], 'date_of_birth': e['date_of_birth'], 'bank_account': e['bank_account'],
+            'ifsc_code': e['ifsc_code'], 'upi_id': e['upi_id'], 'emergency_contact': e['emergency_contact'],
+            'aadhaar': e['aadhaar'], 'pan': e['pan'], 'driving_license': e['driving_license'],
+            'basic_salary_raw': e['basic_salary'] or 0,
+        })
+
+    total_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(5, 10, 25, 50), default_per_page=5)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None); base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
     conn.close()
-    return render_template('salaries_list.html', rows=rows_with_balance, employees=employees, f_employee=emp_f, f_type=type_f,
-                            total_employees=total_employees, total_outstanding=total_outstanding, active='salaries')
+    return render_template('employees.html', tab='overview',
+        total_employees=total_employees, drivers=drivers, office_staff=office_staff,
+        present_today=present_today, on_leave_today=on_leave_today, overall_attendance_pct=overall_attendance_pct,
+        total_payroll=total_payroll, paid_payroll=paid_payroll, pending_payroll=pending_payroll,
+        total_outstanding_advances=total_outstanding_advances,
+        dept_dist=dept_dist, dept_max=dept_max, sal_dist=sal_dist, sal_dist_max=sal_dist_max,
+        trend=trend, trend_max=trend_max, drivers_pct=round(drivers/total_employees*100,1) if total_employees else 0,
+        rows=page_rows, total_count=total_count, page=page, total_pages=total_pages, per_page=per_page,
+        page_tokens=page_tokens, base_qs=base_qs, f_date_from=date_from, f_date_to=date_to, active='salaries')
+
+def _employees_salary_tab(conn):
+    """Salary is a plain summary/overview now — pay salaries, give advances, and record
+    repayments all happen on the classic per-employee Ledger page (/employee/<name>), the same
+    proven flow this always used. This tab just reports what happened in the selected period."""
+    default_from = datetime.date.today().replace(day=1).isoformat()
+    date_from = request.args.get('date_from') or default_from
+    date_to = request.args.get('date_to') or datetime.date.today().isoformat()
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    role_f = request.args.get('role', '')
+    search_f = request.args.get('search', '')
+
+    employees = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    if role_f:
+        employees = [e for e in employees if (e['role'] or e['type']) == role_f]
+    if search_f:
+        s = search_f.lower()
+        employees = [e for e in employees if s in (e['name'] or '').lower() or s in (e['employee_code'] or '').lower()]
+
+    rows = []
+    for e in employees:
+        sal_rows = conn.execute("""SELECT net_salary, date FROM salaries
+                                   WHERE employee_id=? AND date IS NOT NULL AND date>=? AND date<=? ORDER BY date DESC""",
+                                (e['id'], date_from, date_to)).fetchall()
+        rows.append({
+            'id': e['id'], 'name': e['name'], 'employee_code': e['employee_code'] or f"EMP-{e['id']:03d}",
+            'role': e['role'] or e['type'] or '—', 'total_paid': sum(s['net_salary'] or 0 for s in sal_rows),
+            'payment_count': len(sal_rows), 'last_paid_date': sal_rows[0]['date'] if sal_rows else None,
+            'outstanding': _employee_outstanding_advance(conn, e['name']),
+            'initials': _employee_initials(e['name']), 'avatar_colors': _employee_avatar_colors(e['id']),
+        })
+
+    total_payroll = sum(r['total_paid'] for r in rows)
+    employees_paid = sum(1 for r in rows if r['payment_count'] > 0)
+    total_outstanding_advances = sum(r['outstanding'] for r in rows)
+    avg_salary = round(total_payroll / employees_paid, 0) if employees_paid else 0
+
+    total_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(5, 10, 25, 50), default_per_page=5)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None); base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    roles = sorted(set((e['role'] or e['type'] or '') for e in conn.execute("SELECT role, type FROM employees").fetchall() if (e['role'] or e['type'])))
+
+    conn.close()
+    return render_template('employees.html', tab='salary',
+        rows=page_rows, total_count=total_count, total_payroll=total_payroll,
+        employees_paid=employees_paid, total_employees_all=len(employees),
+        avg_salary=avg_salary, total_outstanding_advances=total_outstanding_advances,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        f_date_from=date_from, f_date_to=date_to, roles=roles, f_role=role_f, f_search=search_f,
+        active='salaries')
+
+def _recent_month_keys(n):
+    out = []
+    y, m = datetime.date.today().year, datetime.date.today().month
+    for i in range(n):
+        mm = m - i; yy = y
+        while mm <= 0:
+            mm += 12; yy -= 1
+        out.append({'key': f"{yy:04d}-{mm:02d}", 'label': f"{calendar.month_name[mm]} {yy}"})
+    return out
+
+def _employees_attendance_tab(conn):
+    default_from = datetime.date.today().replace(day=1).isoformat()
+    date_from = request.args.get('date_from') or default_from
+    date_to = request.args.get('date_to') or datetime.date.today().isoformat()
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    role_f = request.args.get('role', '')
+    status_f = request.args.get('status', '')
+    search_f = request.args.get('search', '')
+    today = datetime.date.today().isoformat()
+
+    employees = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    if role_f:
+        employees = [e for e in employees if (e['role'] or e['type']) == role_f]
+    if search_f:
+        s = search_f.lower()
+        employees = [e for e in employees if s in (e['name'] or '').lower() or s in (e['employee_code'] or '').lower()]
+
+    today_rows = {r['employee_id']: r['status'] for r in
+                  conn.execute("SELECT employee_id, status FROM attendance WHERE date=?", (today,)).fetchall()}
+    present_kpi = sum(1 for s in today_rows.values() if s == 'Present')
+    absent_kpi = sum(1 for s in today_rows.values() if s == 'Absent')
+    leave_kpi = sum(1 for s in today_rows.values() if s == 'Leave')
+    half_kpi = sum(1 for s in today_rows.values() if s == 'Half Day')
+    # "Late" isn't its own status (Mark Attendance only offers Present/Absent/Leave/Half Day) — it's
+    # a Present row whose logged in_time is after this cutoff, a simple fixed threshold rather than
+    # a per-employee shift schedule this app doesn't model.
+    LATE_CUTOFF = '09:30'
+    late_kpi = conn.execute("SELECT COUNT(*) FROM attendance WHERE date=? AND status='Present' AND in_time IS NOT NULL AND in_time > ?",
+                            (today, LATE_CUTOFF)).fetchone()[0]
+
+    rows = []
+    all_pcts = []
+    for e in employees:
+        stats = _employee_attendance_stats(conn, e['id'], date_from, date_to)
+        if stats['pct'] is not None:
+            all_pcts.append(stats['pct'])
+        band = ('Good' if stats['pct'] is None or stats['pct'] >= 95 else
+                'Average' if stats['pct'] >= 85 else str(int(stats['pct'])) + '%' if stats['pct'] is not None else '—')
+        row = {'id': e['id'], 'name': e['name'], 'employee_code': e['employee_code'] or f"EMP-{e['id']:03d}",
+               'role': e['role'] or e['type'] or '—', 'initials': _employee_initials(e['name']),
+               'avatar_colors': _employee_avatar_colors(e['id']), 'today_status': today_rows.get(e['id']), **stats, 'band': band}
+        if status_f and row['today_status'] != status_f:
+            continue
+        rows.append(row)
+    overall_pct = round(sum(all_pcts) / len(all_pcts), 1) if all_pcts else 0
+
+    total_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(6, 10, 25, 50), default_per_page=6)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None); base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    roles = sorted(set((e['role'] or e['type'] or '') for e in conn.execute("SELECT role, type FROM employees").fetchall() if (e['role'] or e['type'])))
+    all_employees_list = [{'id': e['id'], 'name': e['name'], 'employee_code': e['employee_code'] or f"EMP-{e['id']:03d}"} for e in employees]
+    # The drawer's calendar is a fixed month grid — it can't render an arbitrary multi-month range,
+    # so it shows the calendar month containing the end of the selected period.
+    calendar_month_key = date_to[:7]
+
+    for r in page_rows:
+        r['calendar'] = _employee_month_calendar(conn, r['id'], calendar_month_key)
+        r['recent_history'] = conn.execute(
+            "SELECT date, status, in_time, out_time, remarks FROM attendance WHERE employee_id=? ORDER BY date DESC LIMIT 10",
+            (r['id'],)).fetchall()
+
+    conn.close()
+    return render_template('employees.html', tab='attendance',
+        rows=page_rows, total_count=total_count, present_kpi=present_kpi, absent_kpi=absent_kpi,
+        leave_kpi=leave_kpi, half_kpi=half_kpi, late_kpi=late_kpi, overall_pct=overall_pct,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        f_date_from=date_from, f_date_to=date_to, calendar_month_key=calendar_month_key,
+        roles=roles, f_role=role_f, f_status=status_f, f_search=search_f,
+        all_employees_list=all_employees_list, today=today, active='salaries')
 
 @app.route('/overheads')
 def overheads_list():
@@ -874,12 +1225,18 @@ def add_trip():
 def _save_trip_custom_items(conn, trip_id, form):
     """Replace a trip's custom "Others" line items (stored in invoice_items, the same table the
     per-trip invoice editor already uses) from the submitted other_desc/other_type/other_rate/other_qty
-    rows. Amount stored is rate*qty — the invoice-facing table only keeps the final amount."""
+    rows. Amount stored is rate*qty — the invoice-facing table only keeps the final amount.
+    An item can optionally be tagged with a Vendor (other_vendor) — e.g. diesel bought from a
+    second fuel vendor mid-trip, or a cash advance handled by a different party — in which case it
+    still appears on the trip's invoice exactly as before, but ALSO counts toward what that vendor
+    is owed, the same way fuel_amount/driver_adv_amount already do (see _accounts_rows,
+    _get_vendor_ledger_entries, and the matching Dashboard/Business Performance queries)."""
     conn.execute("DELETE FROM invoice_items WHERE trip_id=?", (trip_id,))
     descs = form.getlist('other_desc')
     types = form.getlist('other_type')
     rates = form.getlist('other_rate')
     qtys = form.getlist('other_qty')
+    vendor_names = form.getlist('other_vendor')
     for i, desc in enumerate(descs):
         desc = (desc or '').strip()
         if not desc:
@@ -893,8 +1250,10 @@ def _save_trip_custom_items(conn, trip_id, form):
         except ValueError:
             qty = 1
         item_type = types[i] if i < len(types) and types[i] in ('charge', 'deduction') else 'charge'
-        conn.execute("INSERT INTO invoice_items (trip_id, description, amount, item_type) VALUES (?,?,?,?)",
-                     (trip_id, desc, rate * (qty or 1), item_type))
+        vendor_name = (vendor_names[i].strip() if i < len(vendor_names) and vendor_names[i] else '')
+        vendor_id = get_or_create_vendor(conn, vendor_name) if vendor_name else None
+        conn.execute("INSERT INTO invoice_items (trip_id, description, amount, item_type, vendor_id) VALUES (?,?,?,?,?)",
+                     (trip_id, desc, rate * (qty or 1), item_type, vendor_id))
 
 def _get_autocomplete_lists():
     conn = get_db()
@@ -931,6 +1290,8 @@ def _maintenance_classify(category, service_type=None):
         return 'Permit & Fitness'
     if 'urea' in c or 'adblue' in c or 'def' in c:
         return 'Urea'
+    if 'toll' in c:
+        return 'Toll'
     if 'service' in c:
         return 'Service'
     return 'Other'
@@ -955,6 +1316,8 @@ def maintenance_list():
         return _maintenance_battery_tab(conn)
     if tab == 'urea':
         return _maintenance_urea_tab(conn)
+    if tab == 'toll':
+        return _maintenance_toll_tab(conn)
     if tab in MAINTENANCE_TAB_LABELS:
         return _maintenance_category_tab(conn, tab)
     return _maintenance_overview_tab(conn)
@@ -979,9 +1342,11 @@ def _maintenance_overview_tab(conn):
     total_unpaid = total_cost - total_paid
     vehicles_serviced = len(set(e['vehicle_id'] for e in period_entries))
 
-    cat_labels = ['Service', 'Tyres', 'Battery', 'Insurance', 'Permit & Fitness', 'Urea']
+    # Fitness & Permit are tracked on the Vehicles page's own Compliance system now (with their own
+    # renew/sync flow and cost path) — no longer duplicated here as a Maintenance Overview card.
+    cat_labels = ['Service', 'Tyres', 'Battery', 'Insurance', 'Urea', 'Toll']
     cat_slugs = {'Service': 'service', 'Tyres': 'tyres', 'Battery': 'battery', 'Insurance': 'insurance',
-                 'Permit & Fitness': 'permit', 'Urea': 'urea'}
+                 'Urea': 'urea', 'Toll': 'toll'}
     cat_data = {k: {'vehicles': set(), 'count': 0, 'cost': 0} for k in cat_labels}
     for e in period_entries:
         k = _maintenance_classify(e['category'], e['service_type'])
@@ -1212,6 +1577,156 @@ def _maintenance_urea_tab(conn):
         vehicles=vehicles, suppliers=suppliers, combined_names=combined_names,
         f_location=location_f, f_supplier=supplier_f, f_type=type_f, f_search=search_f,
         f_date_from=date_from, f_date_to=date_to, active='maintenance')
+
+TOLL_STATUS_COLORS = {  # background, text — same style as the compliance badges on Vehicles
+    'synced':   ('#e8f5ee', 'var(--green)'),
+    'approved': ('#eaf1fb', '#2a78d6'),
+    'pending':  ('#fff3e8', 'var(--accent)'),
+    'rejected': ('#fdecea', 'var(--red)'),
+}
+# A handful of real Odisha/national-highway toll plazas this fleet's own trips actually pass —
+# used only by the mock FASTag sync below, never shown as if it came from a live feed.
+FASTAG_MOCK_PLAZAS = [
+    ('Chandikhole Toll Plaza', 'NH-16', 'Odisha'), ('Sambalpur Toll Plaza', 'NH-53', 'Odisha'),
+    ('Rengali Toll Plaza', 'NH-520', 'Odisha'), ('Khordha Toll Plaza', 'NH-16', 'Odisha'),
+    ('Cuttack Toll Plaza', 'NH-16', 'Odisha'), ('Jharsuguda Toll Plaza', 'NH-49', 'Odisha'),
+]
+_TOLL_IMPORT_STASH = {}  # excel-preview token -> {'rows': [...], 'ts': datetime} — see toll_excel_preview
+
+def _save_toll_receipt(file_storage):
+    if not file_storage or not file_storage.filename:
+        return None
+    filename = secure_filename(file_storage.filename)
+    if not filename:
+        return None
+    unique = f"toll_{int(datetime.datetime.now().timestamp() * 1000)}_{filename}"
+    file_storage.save(os.path.join(TOLL_RECEIPT_UPLOAD_DIR, unique))
+    return f"uploads/toll_receipts/{unique}"
+
+def _toll_tab_base_context(conn):
+    """Everything the Toll tab needs to render — factored out from _maintenance_toll_tab so the
+    Excel preview/import routes (which also re-render this same tab, with extra wizard state
+    layered on top) build it identically instead of duplicating the query/KPI logic. Caller owns
+    the connection (opens and closes it) since the excel routes need it open a bit longer."""
+    vehicle_f = request.args.get('vehicle', '')
+    source_f = request.args.get('source', '')
+    status_f = request.args.get('status', '')
+    search_f = request.args.get('search', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+
+    # Toll Management is own-fleet only (Line/Local) — same scope as Compliance and Urea — a
+    # hired/Market vehicle's toll isn't this company's cost to track.
+    query = """SELECT te.*, v.vehicle_no, t.lr_number
+               FROM toll_entries te JOIN vehicles v ON te.vehicle_id=v.id
+               LEFT JOIN trips t ON te.trip_id=t.id
+               WHERE v.type IN ('Line','Local')"""
+    params = []
+    if vehicle_f:
+        query += " AND v.vehicle_no=?"; params.append(vehicle_f)
+    if source_f:
+        query += " AND te.source=?"; params.append(source_f)
+    if status_f:
+        query += " AND te.status=?"; params.append(status_f)
+    if search_f:
+        query += " AND (te.toll_plaza LIKE ? OR te.highway LIKE ? OR v.vehicle_no LIKE ?)"
+        params += [f"%{search_f}%"] * 3
+    if date_from:
+        query += " AND te.date>=?"; params.append(date_from)
+    if date_to:
+        query += " AND te.date<=?"; params.append(date_to)
+    query += " ORDER BY te.date DESC, COALESCE(te.time,'') DESC, te.id DESC"
+    all_rows = conn.execute(query, params).fetchall()
+
+    # KPIs come from the *unfiltered* own-fleet ledger — narrowing the table below with a filter
+    # shouldn't make the stat cards lie about the real totals.
+    full_ledger = conn.execute("""SELECT te.*, v.vehicle_no FROM toll_entries te
+                                  JOIN vehicles v ON te.vehicle_id=v.id
+                                  WHERE v.type IN ('Line','Local')""").fetchall()
+    today = datetime.date.today().isoformat()
+    month_start = datetime.date.today().replace(day=1).isoformat()
+    today_rows = [r for r in full_ledger if r['date'] == today]
+    month_rows = [r for r in full_ledger if r['date'] >= month_start]
+    today_total = sum(r['amount'] or 0 for r in today_rows)
+    month_total = sum(r['amount'] or 0 for r in month_rows)
+    fastag_rows = [r for r in full_ledger if r['source'] == 'fastag']
+    manual_rows = [r for r in full_ledger if r['source'] == 'manual']
+    fastag_total = sum(r['amount'] or 0 for r in fastag_rows)
+    manual_total = sum(r['amount'] or 0 for r in manual_rows)
+    grand_total = fastag_total + manual_total
+    fastag_pct = round(fastag_total / grand_total * 100, 1) if grand_total else 0
+    manual_pct = round(manual_total / grand_total * 100, 1) if grand_total else 0
+
+    trips_with_toll = len(set(r['trip_id'] for r in full_ledger if r['trip_id']))
+    denom = trips_with_toll or len(full_ledger)
+    avg_per_trip = round(grand_total / denom, 2) if denom else 0
+
+    plaza_totals = {}
+    for r in full_ledger:
+        plaza_totals[r['toll_plaza']] = plaza_totals.get(r['toll_plaza'], 0) + (r['amount'] or 0)
+    highest_plaza, highest_plaza_amt = max(plaza_totals.items(), key=lambda x: x[1]) if plaza_totals else (None, 0)
+    top_plazas = sorted([{'plaza': k, 'amount': v} for k, v in plaza_totals.items()], key=lambda x: -x['amount'])[:6]
+    plaza_max = max([p['amount'] for p in top_plazas], default=1) or 1
+
+    # Monthly trend, last 6 months — same month-bucket pattern as the Overview tab's cost trend.
+    trend = []
+    end_d = datetime.date.today()
+    y_, m_ = end_d.year, end_d.month
+    for i in range(5, -1, -1):
+        mm = m_ - i; yy = y_
+        while mm <= 0:
+            mm += 12; yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        cost = sum(r['amount'] or 0 for r in full_ledger if mf <= r['date'] <= mt)
+        trend.append({'label': calendar.month_abbr[mm], 'amount': cost})
+    trend_max = max([t['amount'] for t in trend], default=1) or 1
+
+    hwy_totals = {}
+    for r in full_ledger:
+        hwy = r['highway'] or 'Unspecified'
+        hwy_totals[hwy] = hwy_totals.get(hwy, 0) + (r['amount'] or 0)
+    hwy_dist = sorted([{'highway': k, 'amount': v, 'pct': round(v / grand_total * 100, 1) if grand_total else 0}
+                        for k, v in hwy_totals.items()], key=lambda x: -x['amount'])[:6]
+
+    veh_totals = {}
+    for r in full_ledger:
+        veh_totals[r['vehicle_no']] = veh_totals.get(r['vehicle_no'], 0) + (r['amount'] or 0)
+    top_vehicles = sorted([{'vehicle_no': k, 'amount': v} for k, v in veh_totals.items()], key=lambda x: -x['amount'])[:6]
+    veh_max = max([v['amount'] for v in top_vehicles], default=1) or 1
+
+    total_count = len(all_rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = all_rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None); base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    last_sync_row = conn.execute("SELECT value FROM settings WHERE key='toll_fastag_last_sync'").fetchone()
+
+    return dict(
+        rows=page_rows, total_count=total_count,
+        today_total=today_total, today_count=len(today_rows), month_total=month_total, month_count=len(month_rows),
+        fastag_total=fastag_total, fastag_count=len(fastag_rows), fastag_pct=fastag_pct,
+        manual_total=manual_total, manual_count=len(manual_rows), manual_pct=manual_pct,
+        avg_per_trip=avg_per_trip, highest_plaza=highest_plaza, highest_plaza_amt=highest_plaza_amt,
+        trend=trend, trend_max=trend_max, top_plazas=top_plazas, plaza_max=plaza_max, hwy_dist=hwy_dist,
+        top_vehicles=top_vehicles, veh_max=veh_max, grand_total=grand_total,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=own_vehicles, last_sync_at=(last_sync_row['value'] if last_sync_row else None),
+        f_vehicle=vehicle_f, f_source=source_f, f_status=status_f, f_search=search_f,
+        f_date_from=date_from, f_date_to=date_to, status_colors=TOLL_STATUS_COLORS)
+
+def _maintenance_toll_tab(conn):
+    """Toll Management — own fleet only. Every real toll charge (FASTag-synced or manually
+    logged) also lands in the shared `maintenance` table (category='Toll') so it flows into the
+    Overview cost rollup and Ledger automatically, same as Urea/Battery/etc. already do."""
+    ctx = _toll_tab_base_context(conn)
+    conn.close()
+    return render_template('maintenance.html', tab='toll', active='maintenance', **ctx)
 
 def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', active='maintenance', base_path='/maintenance'):
     label = MAINTENANCE_TAB_LABELS[tab_slug]
@@ -2302,6 +2817,427 @@ def delete_urea(txn_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='urea'))
 
+@app.route('/maintenance/toll/add', methods=['POST'])
+def add_toll():
+    conn = get_db()
+    f = request.form
+    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type IN ('Line','Local')",
+                        ((f.get('vehicle_no') or '').strip(),)).fetchone()
+    vehicle_id = row['id'] if row else None
+    if not vehicle_id:
+        # Toll Management is own-fleet only — unlike Urea/Battery, this never silently creates a
+        # new vehicle record from a typo'd or hired vehicle number.
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='toll'))
+
+    trip_id = None
+    lr = (f.get('trip_lr') or '').strip()
+    if lr:
+        lr_key = lr.split('|')[0].strip()  # datalist value is "LR_NUMBER | vehicle_no | date"
+        trow = conn.execute("SELECT id FROM trips WHERE lr_number = ? COLLATE NOCASE ORDER BY date DESC LIMIT 1", (lr_key,)).fetchone()
+        trip_id = trow['id'] if trow else None
+
+    date = f.get('date') or datetime.date.today().isoformat()
+    time_ = f.get('time') or None
+    amount = float(f.get('amount') or 0)
+    source = f.get('source') if f.get('source') in ('fastag', 'manual') else 'manual'
+    payment_mode = f.get('payment_mode') or None
+    status = 'synced' if source == 'fastag' else 'pending'
+    notes = f.get('notes') or None
+    receipt_path = _save_toll_receipt(request.files.get('receipt'))
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes)
+                            VALUES (?,?,?,?,?,?)""", (date, vehicle_id, 'Toll', amount, amount, notes))
+    conn.execute("""INSERT INTO toll_entries (date, time, vehicle_id, trip_id, toll_plaza, highway, state,
+                    amount, source, payment_mode, status, receipt_path, notes, maintenance_id, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 (date, time_, vehicle_id, trip_id, f.get('toll_plaza'), f.get('highway') or None,
+                  f.get('state') or None, amount, source, payment_mode, status, receipt_path, notes,
+                  cur_m.lastrowid, now))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='toll'))
+
+@app.route('/maintenance/toll/<int:entry_id>/delete', methods=['POST'])
+def delete_toll(entry_id):
+    conn = get_db()
+    e = conn.execute("SELECT maintenance_id FROM toll_entries WHERE id=?", (entry_id,)).fetchone()
+    if e and e['maintenance_id']:
+        conn.execute("DELETE FROM maintenance WHERE id=?", (e['maintenance_id'],))
+    conn.execute("DELETE FROM toll_entries WHERE id=?", (entry_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='toll'))
+
+@app.route('/maintenance/toll/<int:entry_id>/approve', methods=['POST'])
+def approve_toll(entry_id):
+    conn = get_db()
+    conn.execute("UPDATE toll_entries SET status='approved' WHERE id=? AND status='pending'", (entry_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='toll'))
+
+@app.route('/maintenance/toll/<int:entry_id>/reject', methods=['POST'])
+def reject_toll(entry_id):
+    conn = get_db()
+    conn.execute("UPDATE toll_entries SET status='rejected' WHERE id=? AND status='pending'", (entry_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='toll'))
+
+@app.route('/maintenance/toll/sync-fastag', methods=['POST'])
+def sync_fastag_toll():
+    """Mock FASTag sync — no live FASTag/bank API is wired up yet, so this fills in a small batch
+    of plausible-looking new transactions the same deterministic-mock way the Compliance providers
+    do (providers/*.py): reseeded once per hour, so clicking again inside the same hour is a no-op
+    instead of piling up duplicate rows — an earlier mock provider polluted the live DB twice before
+    this guard existed (see compliance_service.py). Swap this for a real BOSS/FASTag statement feed
+    (or just use the Excel import above, which already reads real BOSS exports) once one exists."""
+    import random
+    conn = get_db()
+    vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    if not vehicles:
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='toll'))
+    now = datetime.datetime.now()
+    # Anchored to the top of the hour (not the exact click time) so every field the ref_no is
+    # built from — including txn_time below — is byte-identical across repeated clicks inside the
+    # same hour. Deriving txn_time from wall-clock `now` instead of this anchor was the bug: it
+    # made ref_no change every second, so the dedup check below never matched and every click kept
+    # inserting a fresh-looking "new" batch — this already happened live, see the cleanup note in
+    # the route's docstring history / conversation log.
+    hour_anchor = now.replace(minute=0, second=0, microsecond=0)
+    rnd = random.Random(int(now.strftime('%Y%m%d%H')))
+    inserted = 0
+    for _ in range(rnd.randint(2, 5)):
+        v = rnd.choice(vehicles)
+        plaza, hwy, state = rnd.choice(FASTAG_MOCK_PLAZAS)
+        amount = rnd.choice([65, 85, 110, 145, 175, 210, 280, 350])
+        txn_time = hour_anchor - datetime.timedelta(minutes=rnd.randint(5, 600))
+        ref_no = f"FT{txn_time.strftime('%y%m%d%H%M%S')}{v['id']}"
+        if conn.execute("SELECT 1 FROM toll_entries WHERE reference_no=?", (ref_no,)).fetchone():
+            continue
+        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount)
+                                VALUES (?,?,?,?,?)""", (txn_time.strftime('%Y-%m-%d'), v['id'], 'Toll', amount, amount))
+        conn.execute("""INSERT INTO toll_entries (date, time, vehicle_id, toll_plaza, highway, state, amount,
+                        source, payment_mode, status, reference_no, maintenance_id, created_at)
+                        VALUES (?,?,?,?,?,?,?, 'fastag', 'FASTag Wallet', 'synced', ?, ?, ?)""",
+                     (txn_time.strftime('%Y-%m-%d'), txn_time.strftime('%H:%M'), v['id'], plaza, hwy, state,
+                      amount, ref_no, cur_m.lastrowid, now.strftime('%Y-%m-%d %H:%M:%S')))
+        inserted += 1
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('toll_fastag_last_sync', ?)",
+                 (now.strftime('%Y-%m-%d %H:%M:%S'),))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='toll', synced=inserted))
+
+@app.route('/maintenance/toll/template')
+def toll_excel_template():
+    from flask import send_file
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Toll Entries'
+    headers = ['Vehicle Number', 'Trip Number', 'Date', 'Time', 'Toll Plaza', 'Highway', 'State', 'Amount',
+               'Source', 'Payment Mode', 'Reference Number', 'Notes']
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = PatternFill('solid', fgColor='1A1A1A')
+    ws.append(['OD14AD0117', 'TRIP-1524', '2026-08-07', '10:35', 'Chandikhole Toll Plaza', 'NH-16', 'Odisha',
+                425, 'FASTag', '', 'FT260807103512', ''])
+    ws.append(['OD14AE1122', '', '2026-08-06', '23:05', 'Durg Expressway Toll', 'NH-53', 'Chhattisgarh',
+                560, 'Manual', 'Cash', '', ''])
+    widths = [16, 14, 12, 10, 26, 10, 14, 10, 10, 14, 18, 22]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='Toll_Entry_Template.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+# Transaction-type keywords that mean "money moved but a vehicle did NOT cross a toll plaza" —
+# wallet top-ups, internal transfers between accounts, recoveries/reversals of an earlier
+# misdirected transfer, refunds, manual balance adjustments, and the statement's own running-total
+# rows. None of these are a toll charge and must never be counted as one.
+def _parse_toll_excel(file_storage, conn):
+    """Auto-detects and parses either of two supported layouts:
+      1. A BlackBuck BOSS account statement export (Transaction Time / Nature (C/D) / Amount /
+         From/To / Description / Truck Number / TransactionId / Opening Balance / Closing Balance).
+         BlackBuck's Top-Up Plan makes the SAME toll amount show up three times in this ledger —
+         once as the real charge, and twice more as bookkeeping around it:
+           (a) Debit, From/To=Wallet, Description contains "FasTag Recharge" — the vehicle's
+               actual toll cost. This is the ONLY row type counted as toll spend.
+           (b) Credit, From/To=BlackBuck, Description contains "BlackBuck transfer" — a temporary
+               advance funding (a), not a second toll. Always ignored.
+           (c) Debit, From/To=BOSS Account, Description contains "Recovery of Amount transferred"
+               — BOSS recovering the advance from (b) back out. Also not a toll. Always ignored.
+         Also ignored: UPI Top-Up, Wallet Transfer, Refund, Adjustment, Opening/Closing Balance
+         rows, and any row with no Truck Number — none of those are a vehicle's toll cost either.
+      2. The plain manual template this page's 'Download Template' link provides (Vehicle Number /
+         Trip Number / Date / Time / Toll Plaza / Highway / State / Amount / Source / Payment Mode /
+         Reference Number / Notes).
+    Returns (fmt, parsed_rows, skipped_count, skipped_amount) — parsed_rows only contains rows that
+    passed the toll/non-toll classification; everything else (BlackBuck advances, BOSS recoveries,
+    top-ups, transfers, refunds, balance rows) is excluded outright, never entering Vehicle Toll
+    Cost / Monthly Toll Reports / Fleet Analytics, matching 'never count these as toll expense'."""
+    import openpyxl
+    wb = openpyxl.load_workbook(file_storage, data_only=True)
+    ws = wb.active
+
+    own_vehicles = {v['vehicle_no'].upper(): v['id'] for v in
+                     conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local')").fetchall()}
+    # Keyed (not just a set) so a re-import can tell whether a duplicate TransactionId's row
+    # actually changed since it was saved — a re-upload with a corrected amount/date/etc. should
+    # offer to override the existing record, not just get silently skipped as "already imported".
+    existing_by_ref = {r['reference_no']: dict(r) for r in conn.execute(
+        "SELECT id, reference_no, vehicle_id, date, time, toll_plaza, amount FROM toll_entries WHERE reference_no IS NOT NULL AND reference_no != ''").fetchall()}
+    existing_keys = {(r['vehicle_id'], r['date'], r['toll_plaza'], round(r['amount'] or 0, 2)) for r in
+                      conn.execute("SELECT vehicle_id, date, toll_plaza, amount FROM toll_entries").fetchall()}
+    # Rows already seen earlier IN THIS SAME FILE — grows as we classify, so a repeated
+    # TransactionId within one upload is caught too, not just duplicates of already-saved data.
+    seen_refs_in_batch = set()
+
+    def _dup_and_changed(ref_no, vehicle_id, date_str, time_str, plaza, amount):
+        """Returns (is_dup, changed, existing_id) for a row's reference number."""
+        existing = existing_by_ref.get(ref_no) if ref_no else None
+        if existing:
+            changed = (existing['vehicle_id'] != vehicle_id or existing['date'] != date_str or
+                       existing['time'] != time_str or existing['toll_plaza'] != plaza or
+                       round(existing['amount'] or 0, 2) != round(amount, 2))
+            return True, changed, existing['id']
+        if ref_no and ref_no in seen_refs_in_batch:
+            return True, False, None  # dup within this same file — nothing saved to diff against
+        return False, False, None
+
+    boss_header_row = None
+    for i, row in enumerate(ws.iter_rows(min_row=1, max_row=40, values_only=True), 1):
+        cells = [str(c).strip().lower() if c is not None else '' for c in row]
+        if 'transaction time' in cells and any('nature' in c for c in cells):
+            boss_header_row = i
+            break
+
+    parsed = []
+    skipped_count = 0
+    skipped_amount = 0.0
+
+    if boss_header_row:
+        fmt = 'boss'
+        for row in ws.iter_rows(min_row=boss_header_row + 1, values_only=True):
+            if row is None or row[0] is None:
+                continue
+            txn_time_raw, nature, amount_raw, from_to, desc, truck_no = row[0], row[1], row[2], row[3], row[4], row[5]
+            txn_id = row[6] if len(row) > 6 else None
+            nature = str(nature).strip().lower() if nature else ''
+            desc = str(desc or '').strip()
+            desc_l = desc.lower()
+            from_to_l = str(from_to or '').strip().lower()
+            truck_no = str(truck_no or '').strip().upper()
+            try:
+                amount = float(amount_raw or 0)
+            except (TypeError, ValueError):
+                amount = 0
+
+            # The ONE allow-listed shape of a real toll charge — every other combination
+            # (BlackBuck advance credits, BOSS recovery debits, top-ups, transfers, refunds,
+            # adjustments, balance rows, anything with no truck number) is excluded, not just
+            # hidden from the total.
+            is_toll_charge = (nature == 'debit' and from_to_l == 'wallet' and 'fastag recharge' in desc_l
+                               and bool(truck_no) and amount > 0)
+            if not is_toll_charge:
+                skipped_count += 1
+                if nature == 'debit':
+                    skipped_amount += amount  # Recovery-type debits still counted as excluded spend
+                continue
+
+            try:
+                dt = datetime.datetime.strptime(str(txn_time_raw).strip(), '%d %b %y %I:%M %p')
+                date_str, time_str = dt.strftime('%Y-%m-%d'), dt.strftime('%H:%M')
+            except (ValueError, TypeError):
+                date_str, time_str = '', ''
+            vehicle_id = own_vehicles.get(truck_no)
+            ref_no = str(txn_id or '').strip()
+            toll_plaza = desc or 'FASTag Recharge'
+
+            entry = {'vehicle_no': truck_no, 'vehicle_id': vehicle_id, 'trip_no': '', 'date': date_str,
+                     'time': time_str, 'toll_plaza': toll_plaza, 'highway': '', 'state': '',
+                     'amount': amount, 'source': 'fastag', 'payment_mode': 'FASTag Wallet',
+                     'reference_no': ref_no, 'notes': desc}
+            errs = []
+            if not vehicle_id: errs.append('Vehicle not in Fleet ERP')
+            if not date_str: errs.append('Unrecognised transaction time')
+            entry['errors'] = errs
+            # Duplicate key is TransactionId alone, per spec — if it already exists (in the DB, or
+            # earlier in this same file), skip it rather than ever double-counting a toll. If the
+            # existing saved row's own fields differ from this one, flag it as 'changed' so the
+            # import step can offer to override instead of just leaving the stale data in place.
+            is_dup, changed, existing_id = _dup_and_changed(ref_no, vehicle_id, date_str, time_str, toll_plaza, amount)
+            entry['is_dup'] = is_dup
+            entry['changed'] = changed
+            entry['existing_id'] = existing_id
+            entry['valid'] = (len(errs) == 0)
+            if entry['valid'] and not entry['is_dup'] and ref_no:
+                seen_refs_in_batch.add(ref_no)
+            parsed.append(entry)
+    else:
+        fmt = 'template'
+        header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])
+        header = [str(c).strip().lower() if c is not None else '' for c in header_row]
+        colmap = {h: i for i, h in enumerate(header)}
+        def get(row, key):
+            idx = colmap.get(key)
+            return row[idx] if idx is not None and idx < len(row) else None
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row is None or all(c in (None, '') for c in row):
+                continue
+            vno = str(get(row, 'vehicle number') or '').strip()
+            trip_no = str(get(row, 'trip number') or '').strip()
+            date_val = get(row, 'date')
+            date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val or '').strip()
+            time_val = get(row, 'time')
+            time_str = time_val.strftime('%H:%M') if hasattr(time_val, 'strftime') else str(time_val or '').strip()
+            plaza = str(get(row, 'toll plaza') or '').strip()
+            highway = str(get(row, 'highway') or '').strip()
+            state = str(get(row, 'state') or '').strip()
+            try:
+                amount = float(get(row, 'amount') or 0)
+            except (TypeError, ValueError):
+                amount = 0
+            source_raw = str(get(row, 'source') or 'Manual').strip()
+            source = 'fastag' if source_raw.lower().startswith('fast') else 'manual'
+            payment_mode = str(get(row, 'payment mode') or '').strip()
+            ref_no = str(get(row, 'reference number') or '').strip()
+            notes = str(get(row, 'notes') or '').strip()
+
+            # Rule: zero/blank amount is ignored outright, same as the BOSS-format branch.
+            if amount <= 0:
+                skipped_count += 1
+                continue
+
+            vehicle_id = own_vehicles.get(vno.upper())
+            entry = {'vehicle_no': vno, 'vehicle_id': vehicle_id, 'trip_no': trip_no, 'date': date_str,
+                     'time': time_str, 'toll_plaza': plaza, 'highway': highway, 'state': state, 'amount': amount,
+                     'source': source, 'payment_mode': payment_mode, 'reference_no': ref_no, 'notes': notes}
+            errs = []
+            if not vno: errs.append('Missing vehicle number')
+            elif not vehicle_id: errs.append('Vehicle not in Fleet ERP')
+            if not date_str: errs.append('Missing date')
+            if not plaza: errs.append('Missing toll plaza (Warning)')  # non-blocking, see below
+            blocking_errs = [e for e in errs if not e.endswith('(Warning)')]
+            legacy_key = (vehicle_id, date_str, plaza, round(amount, 2))
+            is_dup, changed, existing_id = _dup_and_changed(ref_no, vehicle_id, date_str, time_str, plaza, amount)
+            if not is_dup and vehicle_id and date_str and plaza and legacy_key in existing_keys:
+                is_dup = True  # no reference number to compare — same old best-effort key match
+            entry['errors'] = errs
+            entry['is_dup'] = is_dup
+            entry['changed'] = changed
+            entry['existing_id'] = existing_id
+            entry['valid'] = (len(blocking_errs) == 0)
+            if entry['valid'] and not entry['is_dup'] and ref_no:
+                seen_refs_in_batch.add(ref_no)
+            parsed.append(entry)
+
+    return fmt, parsed, skipped_count, skipped_amount
+
+@app.route('/maintenance/toll/excel/preview', methods=['POST'])
+def toll_excel_preview():
+    import uuid
+    conn = get_db()
+    file_storage = request.files.get('excel_file')
+    if not file_storage or not file_storage.filename:
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='toll'))
+    try:
+        fmt, parsed, credit_excl_count, credit_excl_amount = _parse_toll_excel(file_storage, conn)
+    except Exception:
+        ctx = _toll_tab_base_context(conn)
+        conn.close()
+        return render_template('maintenance.html', tab='toll', active='maintenance',
+            excel_error="Couldn't read that file — make sure it's a .xlsx export from BOSS FASTag, or the downloaded template.",
+            **ctx)
+
+    token = uuid.uuid4().hex
+    _TOLL_IMPORT_STASH[token] = {'rows': parsed, 'ts': datetime.datetime.now()}
+    stale = [k for k, v in _TOLL_IMPORT_STASH.items() if (datetime.datetime.now() - v['ts']).total_seconds() > 1800]
+    for k in stale:
+        _TOLL_IMPORT_STASH.pop(k, None)
+
+    valid_count = sum(1 for r in parsed if r['valid'] and not r['is_dup'])
+    dup_count = sum(1 for r in parsed if r['is_dup'])
+    changed_count = sum(1 for r in parsed if r['is_dup'] and r.get('changed'))
+    invalid_count = sum(1 for r in parsed if not r['valid'])
+    valid_amount = sum(r['amount'] for r in parsed if r['valid'] and not r['is_dup'])
+
+    ctx = _toll_tab_base_context(conn)
+    conn.close()
+    return render_template('maintenance.html', tab='toll', active='maintenance',
+        excel_token=token, excel_format=fmt, excel_rows=parsed[:10], excel_row_count=len(parsed),
+        excel_valid_count=valid_count, excel_dup_count=dup_count, excel_changed_count=changed_count,
+        excel_invalid_count=invalid_count, excel_valid_amount=valid_amount, excel_credit_excl_count=credit_excl_count,
+        excel_credit_excl_amount=credit_excl_amount, **ctx)
+
+@app.route('/maintenance/toll/excel/import', methods=['POST'])
+def toll_excel_import():
+    token = request.form.get('token')
+    auto_link_trips = request.form.get('auto_link_trips') == 'on'
+    auto_approve = request.form.get('auto_approve') == 'on'
+    # A duplicate TransactionId is NEVER re-inserted as a second row — that would double-count a
+    # toll (or a recharge) that already exists. The only choice a re-import offers is whether a
+    # duplicate whose own fields actually changed since it was saved (amount corrected, wrong
+    # vehicle fixed, etc.) should overwrite the existing record, or be left alone.
+    override_changed = request.form.get('override_changed') == 'on'
+    stash = _TOLL_IMPORT_STASH.pop(token, None)
+    conn = get_db()
+    imported = 0
+    updated = 0
+    if stash:
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        for row in stash['rows']:
+            if not row['valid']:
+                continue
+            trip_id = None
+            if auto_link_trips and row.get('trip_no'):
+                trow = conn.execute("SELECT id FROM trips WHERE lr_number=? COLLATE NOCASE ORDER BY date DESC LIMIT 1",
+                                     (row['trip_no'],)).fetchone()
+                trip_id = trow['id'] if trow else None
+
+            if row['is_dup']:
+                if row.get('changed') and override_changed and row.get('existing_id'):
+                    existing = conn.execute("SELECT maintenance_id FROM toll_entries WHERE id=?",
+                                             (row['existing_id'],)).fetchone()
+                    conn.execute("""UPDATE toll_entries SET date=?, time=?, vehicle_id=?, trip_id=?, toll_plaza=?,
+                                    highway=?, state=?, amount=?, payment_mode=?, notes=? WHERE id=?""",
+                                 (row['date'], row['time'] or None, row['vehicle_id'], trip_id, row['toll_plaza'],
+                                  row['highway'] or None, row['state'] or None, row['amount'],
+                                  row['payment_mode'] or None, row['notes'] or None, row['existing_id']))
+                    if existing and existing['maintenance_id']:
+                        conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, notes=?
+                                        WHERE id=?""",
+                                     (row['date'], row['vehicle_id'], row['amount'], row['amount'],
+                                      row['notes'] or None, existing['maintenance_id']))
+                    updated += 1
+                continue  # unchanged duplicate, or changed-but-override-not-requested: leave as-is
+
+            status = 'synced' if row['source'] == 'fastag' else ('approved' if auto_approve else 'pending')
+            cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes)
+                                    VALUES (?,?,?,?,?,?)""",
+                                  (row['date'], row['vehicle_id'], 'Toll', row['amount'], row['amount'], row['notes'] or None))
+            conn.execute("""INSERT INTO toll_entries (date, time, vehicle_id, trip_id, toll_plaza, highway, state,
+                            amount, source, payment_mode, status, reference_no, notes, maintenance_id, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                         (row['date'], row['time'] or None, row['vehicle_id'], trip_id, row['toll_plaza'],
+                          row['highway'] or None, row['state'] or None, row['amount'], row['source'],
+                          row['payment_mode'] or None, status, row['reference_no'] or None, row['notes'] or None,
+                          cur_m.lastrowid, now))
+            imported += 1
+        conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='toll', imported=imported, updated=updated))
+
 @app.route('/maintenance/insurance/add', methods=['POST'])
 def add_insurance():
     conn = get_db()
@@ -2588,7 +3524,7 @@ def vendor_ledger(vendor_id):
 
 def _export_ledger_entries(name, entries):
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Font, PatternFill, Alignment
     from flask import send_file
     import io
     wb = Workbook()
@@ -2598,14 +3534,21 @@ def _export_ledger_entries(name, entries):
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=1, column=i, value=h)
         c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1B2A4A")
+    # Every column wraps within its own cell instead of Excel's default single-line display, which
+    # was crowding/overlapping neighbouring columns whenever Detail (or anything else) ran long.
+    wrap_top = Alignment(wrap_text=True, vertical='top')
+    wrap_top_right = Alignment(wrap_text=True, vertical='top', horizontal='right')
     for r_idx, e in enumerate(entries, 2):
-        ws.cell(row=r_idx, column=1, value=e['date'])
-        ws.cell(row=r_idx, column=2, value=e.get('kind', ''))
-        ws.cell(row=r_idx, column=3, value=e['detail'])
-        ws.cell(row=r_idx, column=4, value=e.get('ref', ''))
-        ws.cell(row=r_idx, column=5, value=e['debit'] or None)
-        ws.cell(row=r_idx, column=6, value=e['credit'] or None)
-        ws.cell(row=r_idx, column=7, value=e['balance'])
+        ws.cell(row=r_idx, column=1, value=e['date']).alignment = wrap_top
+        ws.cell(row=r_idx, column=2, value=e.get('kind', '')).alignment = wrap_top
+        ws.cell(row=r_idx, column=3, value=e['detail']).alignment = wrap_top
+        ws.cell(row=r_idx, column=4, value=e.get('ref', '')).alignment = wrap_top
+        ws.cell(row=r_idx, column=5, value=e['debit'] or None).alignment = wrap_top_right
+        ws.cell(row=r_idx, column=6, value=e['credit'] or None).alignment = wrap_top_right
+        ws.cell(row=r_idx, column=7, value=e['balance']).alignment = wrap_top_right
+    widths = {'A': 12, 'B': 14, 'C': 46, 'D': 20, 'E': 14, 'F': 14, 'G': 14}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
     buf = io.BytesIO()
     wb.save(buf); buf.seek(0)
     safe_name = "".join(c for c in name if c.isalnum() or c in " _-")[:40]
@@ -2657,7 +3600,10 @@ def _get_party_ledger_entries(party_id):
                          'debit': max(ob, 0), 'credit': max(-ob, 0), 'kind': 'Opening Balance', 'ref': '', 'vehicle_type': ''})
     for t in trips:
         original_received = (t['payment_received'] or 0) - trip_alloc.get(t['id'], 0)
-        entries.append({'date': t['date'], 'detail': f"Trip: {_lr_label(t['lr_number'], t['id'])} — {t['from_loc']} → {t['to_loc']}",
+        # Short place names (same _clean_loc used on Route Analytics), not the full stored address
+        # — a trip's from/to can be a 200+ character pasted address, which has no business being
+        # spelled out in full on every ledger row.
+        entries.append({'date': t['date'], 'detail': f"Trip: {_lr_label(t['lr_number'], t['id'])} — {_clean_loc(t['from_loc'])} → {_clean_loc(t['to_loc'])}",
                          'debit': t['billed_amount'] or 0, 'credit': original_received + (t['party_advance'] or 0),
                          'kind': 'Trip Bill', 'ref': trip_invoice_no.get(t['id']) or t['lr_number'] or '', 'vehicle_type': t['type'] or ''})
     for p in payments:
@@ -2697,17 +3643,36 @@ def _get_vendor_ledger_entries(vendor_id):
                              LEFT JOIN batteries b ON b.maintenance_id=m.id
                              LEFT JOIN insurance_policies ip ON ip.maintenance_id=m.id
                              WHERE m.vendor_id=? ORDER BY m.date""", (vendor_id,)).fetchall()
-    fuel = conn.execute("""SELECT date, fuel_amount, type FROM trips WHERE fuel_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
-    adv = conn.execute("""SELECT date, driver_adv_amount, type FROM trips WHERE driver_adv_vendor_id=? ORDER BY date""", (vendor_id,)).fetchall()
+    fuel = conn.execute("""SELECT t.id, t.date, t.fuel_amount, t.type, v.vehicle_no
+                           FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                           WHERE t.fuel_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
+    adv = conn.execute("""SELECT t.id, t.date, t.driver_adv_amount, t.type, v.vehicle_no
+                          FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                          WHERE t.driver_adv_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
     owner_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.rate_type, t.fixed_rate_amount, t.owner_rate,
                                   t.quantity, t.paid_to_owner, t.type, v.vehicle_no
                                   FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                                   WHERE t.owner_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
+    # Trip "Others" items explicitly tagged with this vendor (e.g. a second fuel top-up or an
+    # advance handled by someone other than the trip's usual fuel/advance vendor) — same table the
+    # trip's own invoice reads from, just also attributed to a vendor here.
+    other_items = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, t.date, t.lr_number, t.id as trip_id,
+                                  v.vehicle_no, t.type FROM invoice_items ii JOIN trips t ON ii.trip_id=t.id
+                                  LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                                  WHERE ii.vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
     # Ledger-allocated portion of each owner-hire trip's paid_to_owner (see party-side comment above).
     trip_alloc = {}
     for row in conn.execute("""SELECT pa.trip_id, SUM(pa.amount) as amt FROM payment_allocations pa
                                JOIN trips t ON pa.trip_id=t.id WHERE t.owner_vendor_id=? GROUP BY pa.trip_id""", (vendor_id,)).fetchall():
         trip_alloc[row['trip_id']] = row['amt'] or 0
+    # Real invoice number for a trip, if one's been generated — same lookup the party side uses.
+    # Fuel/Driver Advance/owner-hire rows below identify themselves by vehicle number first (the
+    # more useful identifier day-to-day); when a trip has no vehicle logged, the invoice number is
+    # shown instead so the row is never left with no way to trace it back to a real trip.
+    trip_invoice_no = {}
+    for row in conn.execute("SELECT trip_id, invoice_number FROM invoices WHERE trip_id IS NOT NULL").fetchall():
+        if row['invoice_number']:
+            trip_invoice_no[row['trip_id']] = row['invoice_number']
     payments = conn.execute("""SELECT id, date, amount, allocated_amount, mode, reference_id, remarks FROM payments
                                 WHERE vendor_id=? AND payment_type='paid' ORDER BY date""", (vendor_id,)).fetchall()
     entries = []
@@ -2716,35 +3681,52 @@ def _get_vendor_ledger_entries(vendor_id):
         entries.append({'date': vendor['opening_balance_date'] or vendor['since_date'] or '', 'detail': 'Opening Balance',
                          'debit': max(ob, 0), 'credit': max(-ob, 0), 'kind': 'Opening Balance', 'ref': '', 'vehicle_type': ''})
     for m in maint:
+        # Just what's needed to identify the entry — category (Battery/Tyre/Service/etc.), which
+        # vehicle, and the one specific reference that applies (a tyre position, a battery number,
+        # a policy number — never more than one, since a row is only ever one of those). The
+        # invoice number goes in Ref, not piled into Detail — that column already exists for it.
         label = m['service_type'] or m['tyre_action'] or m['category'] or 'Maintenance'
         detail = f"Maintenance: {label}" + (f" — {m['vehicle_no']}" if m['vehicle_no'] else '')
-        if m['tyre_id']:
-            detail += f" (Tyre {m['tyre_id']})"
-        if m['battery_no']:
-            detail += f" ({m['battery_no']})"
-        if m['policy_number']:
-            detail += f" (Policy {m['policy_number']})"
-        if m['invoice_no']:
-            detail += f" [Inv #{m['invoice_no']}]"
+        specific_ref = (f"Tyre {m['tyre_id']}" if m['tyre_id'] else
+                        m['battery_no'] if m['battery_no'] else
+                        f"Policy {m['policy_number']}" if m['policy_number'] else '')
+        if specific_ref:
+            detail += f" ({specific_ref})"
         entries.append({'date': m['date'], 'detail': detail,
                          'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0,
-                         'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': ''})
+                         'kind': 'Expense Adj.', 'ref': m['invoice_no'] or '', 'vehicle_type': ''})
     for f in fuel:
-        entries.append({'date': f['date'], 'detail': 'Fuel', 'debit': 0, 'credit': f['fuel_amount'] or 0,
-                         'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': f['type'] or ''})
+        ident = f['vehicle_no'] or trip_invoice_no.get(f['id'], '')
+        detail = 'Fuel' + (f" — {ident}" if ident else '')
+        entries.append({'date': f['date'], 'detail': detail, 'debit': 0, 'credit': f['fuel_amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(f['id'], ''), 'vehicle_type': f['type'] or ''})
     for a in adv:
-        entries.append({'date': a['date'], 'detail': 'Driver Advance', 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
-                         'kind': 'Expense Adj.', 'ref': '', 'vehicle_type': a['type'] or ''})
+        ident = a['vehicle_no'] or trip_invoice_no.get(a['id'], '')
+        detail = 'Driver Advance' + (f" — {ident}" if ident else '')
+        entries.append({'date': a['date'], 'detail': detail, 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(a['id'], ''), 'vehicle_type': a['type'] or ''})
     for o in owner_trips:
         owed = o['fixed_rate_amount'] if o['rate_type']=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
             original_paid = (o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0)
             detail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire"
-            if o['vehicle_no']:
-                detail += f" ({o['vehicle_no']})"
+            ident = o['vehicle_no'] or trip_invoice_no.get(o['id'], '')
+            if ident:
+                detail += f" ({ident})"
             entries.append({'date': o['date'], 'detail': detail,
                              'debit': original_paid, 'credit': owed,
-                             'kind': 'Trip Bill', 'ref': o['lr_number'] or '', 'vehicle_type': o['type'] or ''})
+                             'kind': 'Trip Bill', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or ''})
+    for it in other_items:
+        ident = it['vehicle_no'] or trip_invoice_no.get(it['trip_id'], '')
+        detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}" + (f" ({ident})" if ident else '')
+        amt = it['amount'] or 0
+        # 'charge' = vendor supplied something, we owe them more (credit side, same convention as
+        # Fuel/Driver Advance above); 'deduction' reduces what's owed (debit side).
+        entries.append({'date': it['date'], 'detail': detail,
+                         'debit': amt if it['item_type'] == 'deduction' else 0,
+                         'credit': amt if it['item_type'] == 'charge' else 0,
+                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(it['trip_id']) or it['lr_number'] or '',
+                         'vehicle_type': it['type'] or ''})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment made')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
@@ -2790,6 +3772,7 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
     from reportlab.lib.units import inch
     from reportlab.lib import colors
     from flask import send_file
+    from xml.sax.saxutils import escape as esc
     import io
 
     buf = io.BytesIO()
@@ -2799,6 +3782,16 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
     sub_style = ParagraphStyle('S', parent=styles['Normal'], fontSize=8.5, textColor=colors.HexColor('#5A6B8C'), alignment=1)
     title_style = ParagraphStyle('T', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#1B2A4A'))
     label_style = ParagraphStyle('L', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#5A6B8C'))
+    # Every text column below is wrapped in this instead of passed as a raw string — a raw string
+    # in a reportlab Table cell never wraps, it just overflows into the next column (that was the
+    # "Detail overriding the other columns" bug), so a long trip detail line or party name needs
+    # this to stay inside its own column and grow the row's height instead.
+    cell_style = ParagraphStyle('CE', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#1A1A1A'), leading=10)
+    num_style = ParagraphStyle('CN', parent=cell_style, alignment=2)  # right-aligned, same wrap behaviour
+    def cell(text):
+        return Paragraph(esc(str(text)), cell_style) if text else ''
+    def num_cell(text):
+        return Paragraph(esc(str(text)), num_style) if text else ''
 
     story = [Paragraph("ANIL TRANSPORT SERVICE", company_style),
              Paragraph("Head Off.: Shop No. D/8, Nirmal Market Power House Road, Rourkela - 769001", sub_style),
@@ -2809,23 +3802,24 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
     story.append(line_table)
     story.append(Spacer(1, 14))
 
-    story.append(Paragraph(f"Statement of Account — {name} ({role})", title_style))
-    contact_line = " &nbsp;|&nbsp; ".join([p for p in [contact, email, address] if p])
+    story.append(Paragraph(f"Statement of Account — {esc(name)} ({esc(role)})", title_style))
+    contact_line = " &nbsp;|&nbsp; ".join([esc(p) for p in [contact, email, address] if p])
     if contact_line:
         story.append(Paragraph(contact_line, label_style))
     story.append(Spacer(1, 14))
 
     rows = [['Date', 'Type', 'Detail', 'Ref', 'Debit (Rs.)', 'Credit (Rs.)', 'Balance (Rs.)']]
     for e in entries:
-        rows.append([e['date'] or '', e.get('kind', ''), e['detail'] or '', e.get('ref', ''),
-                     f"{e['debit']:,.0f}" if e['debit'] else '', f"{e['credit']:,.0f}" if e['credit'] else '',
-                     f"{e['balance']:,.0f}"])
-    t = Table(rows, colWidths=[0.75*inch, 0.85*inch, 2.15*inch, 0.85*inch, 0.85*inch, 0.85*inch, 0.9*inch])
+        rows.append([cell(e['date'] or ''), cell(e.get('kind', '')), cell(e['detail'] or ''), cell(e.get('ref', '')),
+                     num_cell(f"{e['debit']:,.0f}") if e['debit'] else '', num_cell(f"{e['credit']:,.0f}") if e['credit'] else '',
+                     num_cell(f"{e['balance']:,.0f}")])
+    t = Table(rows, colWidths=[0.75*inch, 0.85*inch, 2.15*inch, 0.85*inch, 0.85*inch, 0.85*inch, 0.9*inch], repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A4A')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
         ('ALIGN', (4,0), (6,-1), 'RIGHT'),
         ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#DDE3EC')),
         ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5),
@@ -3053,10 +4047,254 @@ def edit_maintenance(m_id):
 @app.route('/salaries/delete/<int:s_id>', methods=['POST'])
 def delete_salary(s_id):
     conn = get_db()
+    conn.execute("DELETE FROM salary_items WHERE salary_id=?", (s_id,))
     conn.execute("DELETE FROM salaries WHERE id=?", (s_id,))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list'))
+
+@app.route('/employees/<int:employee_id>/edit', methods=['POST'])
+def edit_employee(employee_id):
+    conn = get_db()
+    f = request.form
+    conn.execute("""UPDATE employees SET name=?, type=?, role=?, mobile=?, email=?, address=?, joining_date=?,
+                    date_of_birth=?, bank_account=?, ifsc_code=?, upi_id=?, emergency_contact=?, aadhaar=?, pan=?,
+                    driving_license=?, basic_salary=? WHERE id=?""",
+                 (f.get('name'), f.get('type'), f.get('role'), f.get('mobile') or None, f.get('email') or None,
+                  f.get('address') or None, f.get('joining_date') or None, f.get('date_of_birth') or None,
+                  f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
+                  f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
+                  f.get('driving_license') or None, float(f.get('basic_salary') or 0), employee_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab=request.form.get('return_tab') or 'overview'))
+
+@app.route('/employees/<int:employee_id>/deactivate', methods=['POST'])
+def deactivate_employee(employee_id):
+    conn = get_db()
+    row = conn.execute("SELECT status FROM employees WHERE id=?", (employee_id,)).fetchone()
+    new_status = 'Inactive' if (row and row['status'] != 'Inactive') else 'Active'
+    conn.execute("UPDATE employees SET status=? WHERE id=?", (new_status, employee_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list'))
+
+@app.route('/salaries/process-payroll', methods=['POST'])
+def process_payroll():
+    """Bulk-generates this month's salary record for every active employee who doesn't already
+    have one — starting from their on-file basic_salary, no allowances/deductions yet (those get
+    added via Edit Salary afterward). Never overwrites a month that's already been generated.
+    Employees with no basic_salary on file are skipped rather than given a Rs.0 record that would
+    just look broken — Edit Employee is where that gets set, and the redirect flags exactly who
+    was skipped so it's obvious why they didn't get a payslip this run."""
+    conn = get_db()
+    month_key = request.form.get('month') or _current_month_key()
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    employees = conn.execute("SELECT id, name, basic_salary FROM employees WHERE status='Active' OR status IS NULL").fetchall()
+    created = 0
+    skipped_no_salary = []
+    for e in employees:
+        existing = conn.execute("SELECT id FROM salaries WHERE employee_id=? AND month_key=?", (e['id'], month_key)).fetchone()
+        if existing:
+            continue
+        basic = e['basic_salary'] or 0
+        if basic <= 0:
+            skipped_no_salary.append(e['name'])
+            continue
+        conn.execute("""INSERT INTO salaries (employee, month, amount, date, created_at, employee_id, month_key,
+                        basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'pending')""",
+                     (e['name'], month_key, basic, None, now, e['id'], month_key, basic, basic, basic))
+        created += 1
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab='salary', month=month_key, processed=created,
+                             skipped=','.join(skipped_no_salary) if skipped_no_salary else None))
+
+@app.route('/employees/<int:employee_id>/salary/<month_key>/save', methods=['POST'])
+def save_employee_salary(employee_id, month_key):
+    """Upsert this employee's salary for this month — replaces its allowance/deduction line items
+    wholesale with what was submitted (simplest correct way to handle add/remove rows in one form)
+    and recomputes gross/net from them, rather than trusting a client-side total."""
+    conn = get_db()
+    f = request.form
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    basic = float(f.get('basic_salary') or 0)
+
+    descs = f.getlist('item_desc')
+    amounts = f.getlist('item_amount')
+    types = f.getlist('item_type')
+    items = []
+    for i, desc in enumerate(descs):
+        desc = (desc or '').strip()
+        if not desc:
+            continue
+        try:
+            amt = float(amounts[i]) if i < len(amounts) and amounts[i] else 0
+        except ValueError:
+            amt = 0
+        item_type = types[i] if i < len(types) and types[i] in ('allowance', 'deduction') else 'allowance'
+        items.append((desc, amt, item_type))
+
+    allowances_total = sum(a for _, a, t in items if t == 'allowance')
+    deductions_total = sum(a for _, a, t in items if t == 'deduction')
+    advance_recovery = float(f.get('advance_recovery') or 0)
+    gross = basic + allowances_total
+    net = gross - deductions_total - advance_recovery
+
+    existing = conn.execute("SELECT id, payment_status FROM salaries WHERE employee_id=? AND month_key=?",
+                            (employee_id, month_key)).fetchone()
+    if existing:
+        salary_id = existing['id']
+        conn.execute("""UPDATE salaries SET basic_salary=?, gross_salary=?, total_deductions=?, advance_recovery=?,
+                        net_salary=?, amount=?, month=?, remarks=? WHERE id=?""",
+                     (basic, gross, deductions_total, advance_recovery, net, net, month_key, f.get('remarks') or None, salary_id))
+        conn.execute("DELETE FROM salary_items WHERE salary_id=?", (salary_id,))
+    else:
+        emp_name = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()['name']
+        cur = conn.execute("""INSERT INTO salaries (employee, month, amount, date, created_at, employee_id, month_key,
+                              basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status, remarks)
+                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending', ?)""",
+                     (emp_name, month_key, net, None, now, employee_id, month_key, basic, gross,
+                      deductions_total, advance_recovery, net, f.get('remarks') or None))
+        salary_id = cur.lastrowid
+    for desc, amt, item_type in items:
+        conn.execute("INSERT INTO salary_items (salary_id, item_type, description, amount) VALUES (?,?,?,?)",
+                     (salary_id, item_type, desc, amt))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab='salary', month=month_key))
+
+@app.route('/employees/<int:employee_id>/advance/add', methods=['POST'])
+def add_employee_advance(employee_id):
+    """Give Advance / Record Repayment, callable from any Employees-module drawer — same
+    'advances' table the original standalone Advances page already used, so both stay in sync."""
+    conn = get_db()
+    f = request.form
+    emp = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
+    if emp:
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at) VALUES (?,?,?,?,?,?)",
+                     (emp['name'], f.get('date') or datetime.date.today().isoformat(), float(f.get('amount') or 0),
+                      f.get('type') if f.get('type') in ('given', 'repaid') else 'given', f.get('notes') or None, now))
+        conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab=f.get('return_tab') or 'overview'))
+
+@app.route('/salaries/<int:salary_id>/mark-paid', methods=['POST'])
+def mark_salary_paid(salary_id):
+    conn = get_db()
+    now = datetime.datetime.now()
+    conn.execute("""UPDATE salaries SET payment_status='paid', payment_date=?, payment_mode=?, transaction_id=?, paid_by=?
+                    WHERE id=?""",
+                 (request.form.get('payment_date') or now.strftime('%Y-%m-%d'), request.form.get('payment_mode') or None,
+                  request.form.get('transaction_id') or None, request.form.get('paid_by') or 'Admin', salary_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab='salary'))
+
+@app.route('/salaries/bulk-mark-paid', methods=['POST'])
+def bulk_mark_salary_paid():
+    conn = get_db()
+    ids = request.form.getlist('salary_ids')
+    now = datetime.datetime.now().strftime('%Y-%m-%d')
+    for sid in ids:
+        conn.execute("UPDATE salaries SET payment_status='paid', payment_date=? WHERE id=?", (now, sid))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab='salary'))
+
+@app.route('/attendance/mark', methods=['POST'])
+def mark_attendance():
+    """Single-employee, single-date attendance entry — UNIQUE(employee_id, date) means re-marking
+    the same day just overwrites it instead of creating a second row."""
+    conn = get_db()
+    f = request.form
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("""INSERT INTO attendance (employee_id, date, status, in_time, out_time, remarks, marked_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, in_time=excluded.in_time,
+                    out_time=excluded.out_time, remarks=excluded.remarks, marked_by=excluded.marked_by""",
+                 (f.get('employee_id'), f.get('date'), f.get('status'), f.get('in_time') or None, f.get('out_time') or None,
+                  f.get('remarks') or None, 'Admin', now))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab='attendance', month=(f.get('date') or '')[:7]))
+
+@app.route('/attendance/bulk-mark', methods=['POST'])
+def bulk_mark_attendance():
+    """Bulk toolbar action — marks the same status for every selected employee on one date, e.g.
+    marking a whole crew Present for today in one click."""
+    conn = get_db()
+    f = request.form
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    date = f.get('date') or datetime.date.today().isoformat()
+    status = f.get('status')
+    emp_ids = f.getlist('employee_ids')
+    for eid in emp_ids:
+        conn.execute("""INSERT INTO attendance (employee_id, date, status, marked_by, created_at) VALUES (?,?,?,?,?)
+                        ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, marked_by=excluded.marked_by""",
+                     (eid, date, status, 'Admin', now))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('salaries_list', tab='attendance', month=date[:7]))
+
+@app.route('/salaries/<int:salary_id>/payslip')
+def download_payslip(salary_id):
+    from flask import send_file
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from xml.sax.saxutils import escape as esc
+    import io
+
+    conn = get_db()
+    sal = conn.execute("""SELECT s.*, e.name, e.employee_code, e.role, e.type, e.bank_account, e.ifsc_code
+                          FROM salaries s JOIN employees e ON s.employee_id=e.id WHERE s.id=?""", (salary_id,)).fetchone()
+    if not sal:
+        conn.close()
+        return redirect(url_for('salaries_list', tab='salary'))
+    items = conn.execute("SELECT item_type, description, amount FROM salary_items WHERE salary_id=?", (salary_id,)).fetchall()
+    conn.close()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, topMargin=0.6*inch, bottomMargin=0.6*inch)
+    styles = getSampleStyleSheet()
+    company_style = ParagraphStyle('C', parent=styles['Title'], fontSize=17, textColor=colors.HexColor('#1B2A4A'), alignment=1)
+    title_style = ParagraphStyle('T', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#1B2A4A'))
+    label_style = ParagraphStyle('L', parent=styles['Normal'], fontSize=9.5, textColor=colors.HexColor('#5A6B8C'))
+
+    story = [Paragraph("ANIL TRANSPORT SERVICE", company_style), Spacer(1, 6),
+             Paragraph(f"Payslip — {sal['month_key']}", title_style), Spacer(1, 10),
+             Paragraph(f"<b>{esc(sal['name'])}</b> ({esc(sal['employee_code'] or '')}) — {esc(sal['role'] or sal['type'] or '')}", label_style),
+             Spacer(1, 14)]
+
+    rows = [['Basic Salary', f"Rs. {sal['basic_salary'] or 0:,.0f}"]]
+    for it in items:
+        prefix = '+ ' if it['item_type'] == 'allowance' else '- '
+        rows.append([esc(it['description']), f"{prefix}Rs. {it['amount']:,.0f}"])
+    if sal['advance_recovery']:
+        rows.append(['Advance Recovery', f"- Rs. {sal['advance_recovery']:,.0f}"])
+    rows.append(['NET SALARY', f"Rs. {sal['net_salary'] or 0:,.0f}"])
+    t = Table(rows, colWidths=[4.5*inch, 2.4*inch])
+    t.setStyle(TableStyle([
+        ('FONTSIZE', (0,0), (-1,-1), 9.5), ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+        ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#DDE3EC')),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#EAF6EE')), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,-1), (-1,-1), 11), ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 14))
+    story.append(Paragraph(f"Payment Status: <b>{esc((sal['payment_status'] or 'pending').title())}</b>" +
+                            (f" &nbsp;|&nbsp; Paid on {esc(sal['payment_date'])}" if sal['payment_date'] else ''), label_style))
+    if sal['bank_account']:
+        story.append(Paragraph(f"Bank A/C: {esc(sal['bank_account'])} &nbsp;|&nbsp; IFSC: {esc(sal['ifsc_code'] or '')}", label_style))
+    doc.build(story)
+    buf.seek(0)
+    safe_name = "".join(c for c in sal['name'] if c.isalnum() or c in " _-")[:30]
+    return send_file(buf, as_attachment=True, download_name=f'payslip_{safe_name}_{sal["month_key"]}.pdf', mimetype='application/pdf')
 
 @app.route('/overheads/delete/<int:o_id>', methods=['POST'])
 def delete_overhead(o_id):
@@ -3422,43 +4660,24 @@ def vehicle_compliance_sync(vehicle_id):
     conn.close()
     return redirect(url_for('vehicles_list', tab='all'))
 
-@app.route('/employee/<employee>', methods=['GET', 'POST'])
-def employee_ledger(employee):
-    import datetime
-    conn = get_db()
-    if request.method == 'POST':
-        f = request.form
-        entry_kind = f.get('entry_kind')
-        tx_date = f.get('date')
-        amount = float(f.get('amount') or 0)
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        if entry_kind == 'salary':
-            month_label = datetime.datetime.strptime(tx_date, '%Y-%m-%d').strftime('%b %Y') if tx_date else ''
-            conn.execute("INSERT INTO salaries (employee, month, amount, date, created_at) VALUES (?,?,?,?,?)",
-                         (employee, month_label, amount, tx_date, now))
-        else:
-            conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at) VALUES (?,?,?,?,?,?)",
-                         (employee, tx_date, amount, entry_kind, f.get('notes'), now))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('employee_ledger', employee=employee))
-
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-
-    sal_query = "SELECT date, amount, created_at FROM salaries WHERE employee=?"
-    sal_params = [employee]
+def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
+    """Opening Balance / Salary Paid / Advance Given / Advance Repaid, running-balance ledger for
+    one employee (by name, matching how `salaries`/`advances` are still keyed) — the same proven
+    formula the standalone Employee Ledger page has always used, now reusable from the Employees
+    module's drawers too instead of only living on that separate page."""
+    sal_query = "SELECT date, amount, created_at FROM salaries WHERE employee=? COLLATE NOCASE"
+    sal_params = [employee_name]
     if date_from: sal_query += " AND date >= ?"; sal_params.append(date_from)
     if date_to: sal_query += " AND date <= ?"; sal_params.append(date_to)
     salaries = conn.execute(sal_query, sal_params).fetchall()
 
-    adv_query = "SELECT date, amount, type, notes, created_at FROM advances WHERE employee=?"
-    adv_params = [employee]
+    adv_query = "SELECT date, amount, type, notes, created_at FROM advances WHERE employee=? COLLATE NOCASE"
+    adv_params = [employee_name]
     if date_from: adv_query += " AND date >= ?"; adv_params.append(date_from)
     if date_to: adv_query += " AND date <= ?"; adv_params.append(date_to)
     advances = conn.execute(adv_query, adv_params).fetchall()
-    emp_row = conn.execute("SELECT opening_balance, opening_balance_date FROM employees WHERE name=? COLLATE NOCASE", (employee,)).fetchone()
-    conn.close()
+    emp_row = conn.execute("SELECT opening_balance, opening_balance_date FROM employees WHERE name=? COLLATE NOCASE",
+                           (employee_name,)).fetchone()
 
     entries = []
     if emp_row and emp_row['opening_balance']:
@@ -3467,8 +4686,9 @@ def employee_ledger(employee):
                          'debit': max(ob, 0), 'credit': max(-ob, 0), 'notes': 'Carried over balance',
                          'created_at': '', 'affects_advance': True})
     for s in salaries:
-        entries.append({'date': s['date'], 'entry_type': 'Salary Paid', 'debit': 0, 'credit': s['amount'] or 0,
-                         'notes': '', 'created_at': s['created_at'], 'affects_advance': False})
+        if s['amount']:
+            entries.append({'date': s['date'], 'entry_type': 'Salary Paid', 'debit': 0, 'credit': s['amount'] or 0,
+                             'notes': '', 'created_at': s['created_at'], 'affects_advance': False})
     for a in advances:
         if a['type'] == 'given':
             entries.append({'date': a['date'], 'entry_type': 'Advance Given', 'debit': a['amount'] or 0, 'credit': 0,
@@ -3485,11 +4705,50 @@ def employee_ledger(employee):
         e['running_advance_balance'] = advance_balance
     entries.reverse()
 
-    total_salary_paid = sum(e['credit'] for e in entries if e['entry_type']=='Salary Paid')
-    return render_template('employee_ledger.html', employee=employee, entries=entries,
-                            advance_balance=advance_balance, total_salary_paid=total_salary_paid,
-                            opening_balance=emp_row['opening_balance'] if emp_row else 0,
-                            opening_balance_date=emp_row['opening_balance_date'] if emp_row else '',
+    total_salary_paid = sum(e['credit'] for e in entries if e['entry_type'] == 'Salary Paid')
+    return {'entries': entries, 'advance_balance': advance_balance, 'total_salary_paid': total_salary_paid,
+            'opening_balance': emp_row['opening_balance'] if emp_row else 0,
+            'opening_balance_date': emp_row['opening_balance_date'] if emp_row else ''}
+
+@app.route('/employee/<employee>', methods=['GET', 'POST'])
+def employee_ledger(employee):
+    import datetime
+    conn = get_db()
+    if request.method == 'POST':
+        f = request.form
+        entry_kind = f.get('entry_kind')
+        tx_date = f.get('date')
+        amount = float(f.get('amount') or 0)
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if entry_kind == 'salary':
+            month_label = datetime.datetime.strptime(tx_date, '%Y-%m-%d').strftime('%b %Y') if tx_date else ''
+            month_key = tx_date[:7] if tx_date else ''
+            emp_row = conn.execute("SELECT id, basic_salary FROM employees WHERE name=? COLLATE NOCASE", (employee,)).fetchone()
+            emp_id = emp_row['id'] if emp_row else None
+            basic = emp_row['basic_salary'] if emp_row and emp_row['basic_salary'] else amount
+            conn.execute("""INSERT INTO salaries
+                             (employee, month, amount, date, created_at,
+                              employee_id, month_key, basic_salary, gross_salary, total_deductions,
+                              advance_recovery, net_salary, payment_status, payment_date, payment_mode, remarks)
+                             VALUES (?,?,?,?,?, ?,?,?,?,0, 0,?,'paid',?,?,?)""",
+                         (employee, month_label, amount, tx_date, now,
+                          emp_id, month_key, basic, amount, amount, tx_date,
+                          f.get('payment_mode') or '', f.get('notes') or ''))
+        else:
+            conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at) VALUES (?,?,?,?,?,?)",
+                         (employee, tx_date, amount, entry_kind, f.get('notes'), now))
+        conn.commit()
+        conn.close()
+        return redirect(url_for('employee_ledger', employee=employee))
+
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    led = _employee_ledger_entries(conn, employee, date_from, date_to)
+    conn.close()
+    return render_template('employee_ledger.html', employee=employee, entries=led['entries'],
+                            advance_balance=led['advance_balance'], total_salary_paid=led['total_salary_paid'],
+                            opening_balance=led['opening_balance'],
+                            opening_balance_date=led['opening_balance_date'],
                             f_date_from=date_from, f_date_to=date_to, active='salaries')
 
 @app.route('/employee/<employee>/opening-balance', methods=['POST'])
@@ -3528,11 +4787,14 @@ def performance():
     date_to = request.args.get('date_to', '2026-07-31')
 
     # ---------- Driver Performance (same calculation as the original Driver Performance page) ----------
+    # Toll excluded from driver-level cost — Toll Management (FASTag/BOSS) tracks cost per
+    # vehicle/wallet, not per driver, so there's no real figure to attribute here (a shared
+    # vehicle's toll can't be split by who happened to be driving that trip).
     driver_query = """SELECT driver_name,
         COUNT(*) as trip_count,
         SUM(billed_amount) as total_billed,
         SUM(fuel_amount) as total_fuel,
-        SUM(COALESCE(driver_payment,0)+COALESCE(toll,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
+        SUM(COALESCE(driver_payment,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
         MAX(date) as last_trip
         FROM trips WHERE driver_name IS NOT NULL AND driver_name != ''"""
     dparams = []
@@ -3574,11 +4836,14 @@ def performance():
     driver_trend_max = max([m['trips'] for m in driver_monthly], default=1) or 1
 
     # ---------- Vehicle Performance (new, mirrors the driver calculation style) ----------
+    # Toll excluded here too — the per-vehicle maint_cost query below already pulls every
+    # maintenance row for this vehicle (no category filter), which now includes Toll Management's
+    # real cost; adding trips.toll on top of that would double-count the same rupee.
     vehicle_query = """SELECT v.id, v.vehicle_no, v.type,
         COUNT(t.id) as trip_count,
         COALESCE(SUM(t.billed_amount),0) as total_billed,
         COALESCE(SUM(t.fuel_amount),0) as total_fuel,
-        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.toll,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
+        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
         MAX(t.date) as last_trip
         FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type IN ('Line','Local')"""
     vparams = []
@@ -3672,7 +4937,7 @@ def export_performance():
 
     driver_query = """SELECT driver_name, COUNT(*) as trip_count, SUM(billed_amount) as total_billed,
         SUM(fuel_amount) as total_fuel,
-        SUM(COALESCE(driver_payment,0)+COALESCE(toll,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
+        SUM(COALESCE(driver_payment,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
         MAX(date) as last_trip
         FROM trips WHERE driver_name IS NOT NULL AND driver_name != ''"""
     dparams = []
@@ -3683,9 +4948,12 @@ def export_performance():
     driver_query += " GROUP BY driver_name ORDER BY total_billed DESC"
     driver_raw = conn.execute(driver_query, dparams).fetchall()
 
+    # Toll excluded from both queries above/below — Toll Management can't be attributed per driver,
+    # and the per-vehicle maint_cost query already carries it (unfiltered maintenance sum), so
+    # adding trips.toll here would either be unattributable or double-counted.
     vehicle_query = """SELECT v.id, v.vehicle_no, v.type, COUNT(t.id) as trip_count,
         COALESCE(SUM(t.billed_amount),0) as total_billed, COALESCE(SUM(t.fuel_amount),0) as total_fuel,
-        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.toll,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
+        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
         MAX(t.date) as last_trip
         FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type IN ('Line','Local')"""
     vparams = []
@@ -3749,9 +5017,26 @@ def add_employee():
         etype = f.get('type')
         existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
         if not existing:
-            conn.execute("INSERT INTO employees (name, type) VALUES (?,?)", (name, etype))
+            cur = conn.execute("""INSERT INTO employees (name, type, employee_code, role, mobile, email, address,
+                                  joining_date, date_of_birth, bank_account, ifsc_code, upi_id, emergency_contact,
+                                  aadhaar, pan, driving_license, status, basic_salary)
+                                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active', ?)""",
+                                (name, etype, f.get('employee_code') or None, f.get('role') or etype,
+                                 f.get('mobile') or None, f.get('email') or None, f.get('address') or None,
+                                 f.get('joining_date') or None, f.get('date_of_birth') or None,
+                                 f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
+                                 f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
+                                 f.get('driving_license') or None, float(f.get('basic_salary') or 0)))
+            new_id = cur.lastrowid
+            if not f.get('employee_code'):
+                conn.execute("UPDATE employees SET employee_code=? WHERE id=?",
+                             (f"{'DR' if etype=='Driver' else 'ST'}-{new_id:03d}", new_id))
             conn.commit()
+        # 'next' lets the Add Employee modal (which lives on the tabbed Employees page) return the
+        # admin to that page instead of the old standalone employee_ledger detail view.
         conn.close()
+        if request.form.get('next') == 'employees':
+            return redirect(url_for('salaries_list', tab='overview'))
         return redirect(url_for('employee_ledger', employee=name))
     conn.close()
     return render_template('add_employee.html', active='salaries')
@@ -3979,7 +5264,7 @@ def upload_company_logo():
     return redirect(url_for('settings_page', tab='company'))
 
 def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
-                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0, extra_items=None):
+                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0, extra_items=None, toll_map=None):
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -3998,7 +5283,9 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         line_items.append({
             'trip': t, 'freight': freight,
             'loading': t['loading_charge'] or 0, 'unloading': t['unloading_charge'] or 0,
-            'permit': t['permit_charges'] or 0, 'toll': t['toll'] or 0,
+            # Real Toll Management amount for this trip if it has one linked, else the trip's own
+            # manual estimate — never both, so the same real toll isn't billed twice.
+            'permit': t['permit_charges'] or 0, 'toll': _trip_toll(t, toll_map or {}),
             'weighment': t['weight_charges'] or 0, 'driver_bata': t['driver_payment'] or 0,
             'gps': t['gps_cost'] or 0, 'other': t['other_charges'] or 0,
             'fuel_given': t['fuel_amount'] or 0, 'driver_adv_given': t['driver_adv_amount'] or 0,
@@ -4513,6 +5800,7 @@ def invoice_center_generate():
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
 
     s = _get_invoice_settings(conn)
+    toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
 
     if invoice_type == 'tax':
         total_gst_rate = float(gst_rate_input) if gst_rate_input else (float(s['cgst_rate'] or 0) + float(s['sgst_rate'] or 0))
@@ -4527,7 +5815,7 @@ def invoice_center_generate():
         # Preview never touches the DB or the invoice-number counter — it's just a look at the PDF.
         buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
                                   cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
-                                  tds_rate=tds_rate, extra_items=extra_items)
+                                  tds_rate=tds_rate, extra_items=extra_items, toll_map=toll_map)
         conn.close()
         return send_file(buf, download_name=f'preview-{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
@@ -4554,7 +5842,7 @@ def invoice_center_generate():
 
     buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
-                              tds_rate=tds_rate, extra_items=extra_items)
+                              tds_rate=tds_rate, extra_items=extra_items, toll_map=toll_map)
     return send_file(buf, as_attachment=True, download_name=f'{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices/generated')
@@ -4657,6 +5945,7 @@ def invoice_batch_pdf(batch_id):
     if trip_ids:
         for it in conn.execute(f"SELECT description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall():
             extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+    toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
     conn.close()
 
     cgst_rate = sgst_rate = round((batch['gst_rate'] or 0) / 2, 4) if batch['invoice_type'] == 'tax' else 0
@@ -4664,7 +5953,7 @@ def invoice_batch_pdf(batch_id):
                               batch['due_date'], batch['payment_status'], batch['remarks'],
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate,
                               extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0,
-                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items)
+                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map)
     return send_file(buf, as_attachment=True, download_name=f'{batch["invoice_number"].replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices')
@@ -5216,7 +6505,7 @@ def route_analytics():
     all_routes_list = sorted(set(f"{_clean_loc(r['from_loc'])} → {_clean_loc(r['to_loc'])}" for r in all_routes_rows
                                   if r['from_loc'] and r['to_loc']))
 
-    trip_query = """SELECT from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
+    trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
                     toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
                     puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
                     other_expense, permit_charges, fixed_rate_amount, owner_rate, quantity
@@ -5226,6 +6515,7 @@ def route_analytics():
         trip_query += " AND type=?"
         params.append(type_f)
     trips = conn.execute(trip_query, params).fetchall()
+    route_toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
 
     # ---------- Shared per-route revenue/cost/profit (both tabs draw from this) ----------
     groups = {}
@@ -5236,7 +6526,7 @@ def route_analytics():
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
         d['revenue'] += t['billed_amount'] or 0
-        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0) +
+        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
                 (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                 (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -5370,7 +6660,7 @@ def export_route_analytics():
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
-    trip_query = """SELECT from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
+    trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
                     toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
                     puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
                     other_expense, permit_charges, fixed_rate_amount, owner_rate, quantity
@@ -5380,6 +6670,7 @@ def export_route_analytics():
         trip_query += " AND type=?"
         params.append(type_f)
     trips = conn.execute(trip_query, params).fetchall()
+    route_toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
     conn.close()
 
     groups = {}
@@ -5391,7 +6682,7 @@ def export_route_analytics():
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
         d['revenue'] += t['billed_amount'] or 0
-        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0) +
+        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
                 (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                 (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -5508,7 +6799,7 @@ def fleet_utilization():
     most_idle = sorted(rows, key=lambda r: r['idle_days'], reverse=True)[:5]
 
     # ---------- Empty runs (same formulas as the old Empty Runs page — LR number starting with "Empty") ----------
-    eq = """SELECT t.date, v.vehicle_no, t.from_loc, t.to_loc, t.fuel_amount, t.toll
+    eq = """SELECT t.id, t.date, v.vehicle_no, t.from_loc, t.to_loc, t.fuel_amount, t.toll
             FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
             WHERE t.lr_number LIKE 'Empty%'"""
     eparams = []
@@ -5520,8 +6811,9 @@ def fleet_utilization():
         eq += " AND v.vehicle_no = ?"; eparams.append(vehicle_f)
     eq += " ORDER BY t.date DESC"
     empty_rows = conn.execute(eq, eparams).fetchall()
+    empty_toll_map = _toll_by_trip(conn, [r['id'] for r in empty_rows])
     total_fuel = sum(r['fuel_amount'] or 0 for r in empty_rows)
-    total_toll = sum(r['toll'] or 0 for r in empty_rows)
+    total_toll = sum(_trip_toll(r, empty_toll_map) for r in empty_rows)
     total_empty_cost = total_fuel + total_toll
     empty_run_trips = len(empty_rows)
 
@@ -5692,8 +6984,11 @@ def edit_trip(trip_id):
     if not trip:
         conn.close()
         return redirect(url_for('trips_list'))
-    custom_item_rows = conn.execute("SELECT description, amount, item_type FROM invoice_items WHERE trip_id=?", (trip_id,)).fetchall()
-    custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1}
+    custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
+                                       FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
+                                       WHERE ii.trip_id=?""", (trip_id,)).fetchall()
+    custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
+                      'vendor_name': r['vendor_name'] or ''}
                      for r in custom_item_rows]
     conn.close()
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
@@ -5749,7 +7044,8 @@ def business_performance():
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) -
+        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
         (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
@@ -5796,13 +7092,14 @@ def business_performance():
 
     # Top customers by revenue (period).
     party_period = {}
+    curr_toll_map = _toll_by_trip(conn, [t['id'] for t in curr['trips']])
     for t in curr['trips']:
         if not t['party_id']:
             continue
         d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0, 'trips': 0})
         d['revenue'] += t['billed_amount'] or 0
         d['trips'] += 1
-        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0)
+        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, curr_toll_map) + (t['parking'] or 0)
         if t['type'] == 'Market':
             direct += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
@@ -5897,7 +7194,10 @@ def business_performance():
 
     day_expense = {}
     for t in curr['trips']:
-        direct = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0) +
+        # Toll excluded here on purpose — the maintenance-by-date sum just below already carries
+        # Toll Management's real toll cost (category='Toll' rows), dated per entry; adding a
+        # per-trip toll figure too would double-count it, same reasoning as Dashboard's total.
+        direct = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['parking'] or 0) +
                   (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                   (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                   (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -6057,7 +7357,8 @@ def export_business_performance():
         (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
         (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
         (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) -
+        (SELECT COALESCE(SUM(CASE WHEN rate_type='FIXED' THEN fixed_rate_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
+        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
         (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
         (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
         (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
@@ -6075,12 +7376,13 @@ def export_business_performance():
     operating_ratio = round(curr['total_expenses'] / curr['revenue'] * 100, 2) if curr['revenue'] else 0
 
     party_period = {}
+    export_toll_map = _toll_by_trip(conn, [t['id'] for t in curr['trips']])
     for t in curr['trips']:
         if not t['party_id']:
             continue
         d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0})
         d['revenue'] += t['billed_amount'] or 0
-        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['toll'] or 0) + (t['parking'] or 0)
+        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, export_toll_map) + (t['parking'] or 0)
         if t['type'] == 'Market':
             direct += (t['fixed_rate_amount'] or 0) if t['rate_type'] == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct

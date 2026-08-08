@@ -1,0 +1,155 @@
+<div class="mt-kpi-row">
+  <div class="mt-kpi"><div><div class="lbl">Present</div><div class="val">{{ present_kpi }}</div><div class="sub">Today</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#9989;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Absent</div><div class="val">{{ absent_kpi }}</div><div class="sub">Today</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#10060;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Leave</div><div class="val">{{ leave_kpi }}</div><div class="sub">Today</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128197;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Half Day</div><div class="val">{{ half_kpi }}</div><div class="sub">Today</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#9203;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Late</div><div class="val">{{ late_kpi }}</div><div class="sub">After 9:30 AM</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128336;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Attendance %</div><div class="val">{{ overall_pct }}%</div><div class="sub">Selected Period</div></div><div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128202;</div></div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="attendance">
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <div class="field"><label>Role</label>
+    <select name="role"><option value="">All Roles</option>
+      {% for r in roles %}<option value="{{ r }}" {% if f_role==r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Today's Status</label>
+    <select name="status"><option value="">All Status</option>
+      <option value="Present" {% if f_status=='Present' %}selected{% endif %}>Present</option>
+      <option value="Absent" {% if f_status=='Absent' %}selected{% endif %}>Absent</option>
+      <option value="Leave" {% if f_status=='Leave' %}selected{% endif %}>Leave</option>
+      <option value="Half Day" {% if f_status=='Half Day' %}selected{% endif %}>Half Day</option>
+    </select>
+  </div>
+  <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Employee name, ID..."></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/salaries?tab=attendance">Clear</a>
+</form>
+
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+  {% for st, lbl, icon in [('Present','Mark Present','&#9989;'),('Absent','Mark Absent','&#10060;'),('Leave','Mark Leave','&#128197;'),('Half Day','Mark Half Day','&#9203;')] %}
+  <form method="POST" action="/attendance/bulk-mark" onsubmit="return attnBulkSubmit(this)">
+    <input type="hidden" name="date" value="{{ today }}">
+    <input type="hidden" name="status" value="{{ st }}">
+    <div class="bulk-ids-{{ loop.index }}"></div>
+    <button type="submit" class="btn-cancel" style="font-size:0.78rem;">{{ icon|safe }} {{ lbl }}</button>
+  </form>
+  {% endfor %}
+</div>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Attendance ({{ total_count }}) — {{ f_date_from }} to {{ f_date_to }}</div></div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th><input type="checkbox" id="selAllAttn" onclick="document.querySelectorAll('.attn-chk').forEach(c=>c.checked=this.checked); syncBulkIds();"></th>
+        <th>Employee</th><th>Role</th><th class="num">Present</th><th class="num">Absent</th><th class="num">Leave</th><th class="num">Half Day</th><th class="num">Working Days</th><th>Attendance %</th><th>Today</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('attnDrawer{{ r.id }}').classList.add('open')">
+      <td onclick="event.stopPropagation();"><input type="checkbox" class="attn-chk" value="{{ r.id }}" onclick="syncBulkIds()"></td>
+      <td>
+        <div class="emp-name-cell">
+          <div class="emp-avatar" style="background:{{ r.avatar_colors[0] }};color:{{ r.avatar_colors[1] }};">{{ r.initials }}</div>
+          <div><div class="nm">{{ r.name }}</div><div class="code">{{ r.employee_code }}</div></div>
+        </div>
+      </td>
+      <td>{{ r.role }}</td>
+      <td class="num" style="color:var(--green);">{{ r.present }}</td>
+      <td class="num" style="color:var(--red);">{{ r.absent }}</td>
+      <td class="num">{{ r.leave }}</td>
+      <td class="num">{{ r.half_day }}</td>
+      <td class="num">{{ r.working_days }}</td>
+      <td><span class="mt-type-badge" style="background:{% if r.pct is none or r.pct>=95 %}#e8f5ee;color:var(--green){% elif r.pct>=85 %}#fff3e8;color:var(--accent){% else %}#fdecea;color:var(--red){% endif %};">{{ r.pct ~ '%' if r.pct is not none else '—' }}</span></td>
+      <td>{% if r.today_status %}<span class="mt-type-badge" style="background:{% if r.today_status=='Present' %}#e8f5ee;color:var(--green){% elif r.today_status=='Absent' %}#fdecea;color:var(--red){% elif r.today_status=='Leave' %}#fff3e8;color:var(--accent){% else %}rgba(74,58,167,0.1);color:#4a3aa7{% endif %};">{{ r.today_status }}</span>{% else %}<span style="color:var(--steel);">—</span>{% endif %}</td>
+      <td onclick="event.stopPropagation();">
+        <button type="button" title="View" style="background:none;border:none;color:var(--steel);cursor:pointer;" onclick="document.getElementById('attnDrawer{{ r.id }}').classList.add('open')">&#128197;</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('attnPager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No employees match this selection.</div>
+  {% endif %}
+</div>
+
+{% for r in rows %}
+<div class="drawer-overlay" id="attnDrawer{{ r.id }}">
+  <div class="drawer-panel">
+    <div class="drawer-hd">
+      <button type="button" class="drawer-close" onclick="document.getElementById('attnDrawer{{ r.id }}').classList.remove('open')">&#10005;</button>
+      <div class="drawer-id-row">
+        <div class="emp-avatar lg" style="background:{{ r.avatar_colors[0] }};color:{{ r.avatar_colors[1] }};">{{ r.initials }}</div>
+        <div>
+          <div style="font-weight:700;font-size:1.05rem;">{{ r.name }}</div>
+          <div style="font-size:0.8rem;color:var(--steel);">{{ r.role }} &middot; {{ r.employee_code }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-stat-grid">
+        <div class="drawer-stat"><div class="n">{{ r.pct ~ '%' if r.pct is not none else '—' }}</div><div class="l">Attendance</div></div>
+        <div class="drawer-stat"><div class="n" style="color:var(--green);">{{ r.present }}</div><div class="l">Present</div></div>
+        <div class="drawer-stat"><div class="n" style="color:var(--red);">{{ r.absent }}</div><div class="l">Absent</div></div>
+      </div>
+      <div class="drawer-section">
+        <div class="sec-ttl">Attendance Calendar — {{ calendar_month_key }}</div>
+        <div class="cal-grid">
+          <div class="cal-day-hd">M</div><div class="cal-day-hd">T</div><div class="cal-day-hd">W</div><div class="cal-day-hd">T</div><div class="cal-day-hd">F</div><div class="cal-day-hd">S</div><div class="cal-day-hd">S</div>
+          {% for week in r.calendar %}
+            {% for cell in week %}
+              {% if cell %}
+              <div class="cal-cell {{ cell.cls }}" title="{{ cell.status or 'Not marked' }}">{{ cell.day }}</div>
+              {% else %}
+              <div class="cal-cell blank"></div>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        </div>
+        <div class="cal-legend">
+          <span><i style="background:#e8f5ee;"></i>Present</span>
+          <span><i style="background:#fdecea;"></i>Absent</span>
+          <span><i style="background:#fff3e8;"></i>Leave</span>
+          <span><i style="background:rgba(74,58,167,0.1);"></i>Half Day</span>
+          <span><i style="background:var(--paper);"></i>Not Marked</span>
+        </div>
+      </div>
+      <div class="drawer-section">
+        <div class="sec-ttl">Recent History</div>
+        {% for h in r.recent_history %}
+        <div class="drawer-field-row"><span class="k">{{ h.date }}</span><span class="v">{{ h.status }}{% if h.in_time %} &middot; {{ h.in_time }}{% endif %}</span></div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="drawer-ftr">
+      <button type="button" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;"
+              onclick="document.getElementById('attnDrawer{{ r.id }}').classList.remove('open'); openMarkAttendance({{ r.id }}, '{{ r.name|e }}')">Edit Attendance</button>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+function syncBulkIds() {
+  var ids = Array.from(document.querySelectorAll('.attn-chk:checked')).map(c => c.value);
+  document.querySelectorAll('[class^="bulk-ids-"]').forEach(function(container) {
+    container.innerHTML = '';
+    ids.forEach(function(id) {
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'employee_ids'; inp.value = id;
+      container.appendChild(inp);
+    });
+  });
+}
+function attnBulkSubmit(form) {
+  if (!form.querySelector('input[name="employee_ids"]')) {
+    alert('Select at least one employee first.');
+    return false;
+  }
+  return true;
+}
+</script>

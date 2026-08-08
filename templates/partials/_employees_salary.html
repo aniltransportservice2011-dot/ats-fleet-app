@@ -1,0 +1,56 @@
+<div class="mt-kpi-row">
+  <div class="mt-kpi"><div><div class="lbl">Total Payroll</div><div class="val">₹{{ '{:,.0f}'.format(total_payroll) }}</div><div class="sub">Selected Period</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#8377;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Employees Paid</div><div class="val">{{ employees_paid }} / {{ total_employees_all }}</div><div class="sub">Selected Period</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128101;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Avg Salary</div><div class="val">₹{{ '{:,.0f}'.format(avg_salary) }}</div><div class="sub">Across paid employees</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128200;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Outstanding Advance</div><div class="val">₹{{ '{:,.0f}'.format(total_outstanding_advances) }}</div><div class="sub">To be recovered</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#128179;</div></div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="salary">
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <div class="field"><label>Role</label>
+    <select name="role"><option value="">All Roles</option>
+      {% for r in roles %}<option value="{{ r }}" {% if f_role==r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Search</label><input type="text" name="search" value="{{ f_search }}" placeholder="Employee name, ID..."></div>
+  <button type="submit">Apply Filters</button>
+  <a class="clear" href="/salaries?tab=salary">Clear</a>
+</form>
+
+<div style="background:#eaf1fb;border:1px solid rgba(42,120,214,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
+  &#128161; To pay a salary, or give/repay an advance, open that employee's Ledger — click any row, or the &#128220; icon.
+</div>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Salary Summary ({{ total_count }})</div></div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Employee</th><th>Role</th><th class="num">Total Paid</th><th class="num">Payments</th><th>Last Paid</th><th class="num">Outstanding Advance</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}'">
+      <td>
+        <div class="emp-name-cell">
+          <div class="emp-avatar" style="background:{{ r.avatar_colors[0] }};color:{{ r.avatar_colors[1] }};">{{ r.initials }}</div>
+          <div><div class="nm">{{ r.name }}</div><div class="code">{{ r.employee_code }}</div></div>
+        </div>
+      </td>
+      <td>{{ r.role }}</td>
+      <td class="num"><b>₹{{ '{:,.0f}'.format(r.total_paid) }}</b></td>
+      <td class="num">{{ r.payment_count }}</td>
+      <td>{{ r.last_paid_date or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
+      <td onclick="event.stopPropagation();">
+        <a href="/employee/{{ r.name|urlencode }}" title="Open Ledger — Pay Salary / Give Advance / Record Repayment" style="color:var(--accent);font-weight:600;text-decoration:none;font-size:0.78rem;">&#128220; Ledger</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('salPager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No employees match this selection.</div>
+  {% endif %}
+</div>

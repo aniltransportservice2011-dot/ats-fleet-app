@@ -1,0 +1,32 @@
+<div class="drawer-section">
+  <div class="sec-ttl">Advance &amp; Ledger</div>
+  <div class="drawer-stat-grid" style="grid-template-columns:repeat(3,1fr);">
+    <div class="drawer-stat"><div class="n" style="color:{{ 'var(--red)' if r.advance_balance > 0 else 'var(--green)' }};">₹{{ '{:,.0f}'.format(r.advance_balance) }}</div><div class="l">Outstanding</div></div>
+    <div class="drawer-stat"><div class="n">₹{{ '{:,.0f}'.format(r.opening_balance or 0) }}</div><div class="l">Opening Balance</div></div>
+    <div class="drawer-stat"><div class="n">₹{{ '{:,.0f}'.format(r.total_salary_paid) }}</div><div class="l">Total Paid</div></div>
+  </div>
+
+  {% if r.ledger_entries %}
+  <div style="overflow-x:auto;margin-bottom:12px;">
+  <table style="font-size:0.76rem;">
+    <tr><th>Date</th><th>Entry</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr>
+    {% for e in r.ledger_entries %}
+    <tr>
+      <td>{{ e.date }}</td>
+      <td>{{ e.entry_type }}{% if e.notes %} <span style="color:var(--steel);">({{ e.notes }})</span>{% endif %}</td>
+      <td class="num">{% if e.debit %}₹{{ '{:,.0f}'.format(e.debit) }}{% endif %}</td>
+      <td class="num">{% if e.credit %}₹{{ '{:,.0f}'.format(e.credit) }}{% endif %}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(e.running_advance_balance) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:14px;font-size:0.78rem;">No transactions yet.</div>
+  {% endif %}
+
+  <div style="display:flex;gap:8px;">
+    <button type="button" class="btn-cancel" style="font-size:0.74rem;flex:1;" onclick="openAdvanceForm({{ r.id }}, '{{ r.name|e }}', 'given')">+ Give Advance</button>
+    <button type="button" class="btn-cancel" style="font-size:0.74rem;flex:1;" onclick="openAdvanceForm({{ r.id }}, '{{ r.name|e }}', 'repaid')">+ Record Repayment</button>
+  </div>
+</div>

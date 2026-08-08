@@ -347,6 +347,59 @@ button.submit:active { transform: translateY(1px); box-shadow: none; }
   .bat-mode-tab .lbl { font-weight:700; font-size:0.85rem; }
   .bat-mode-tab .sub { font-size:0.72rem; color:var(--steel); }
 
+  /* ---------- Employees module: avatars + right-side detail drawer ---------- */
+  .emp-avatar { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+                font-weight:700; font-size:0.8rem; flex-shrink:0; }
+  .emp-avatar.lg { width:60px; height:60px; font-size:1.15rem; border-radius:14px; }
+  .emp-name-cell { display:flex; align-items:center; gap:10px; }
+  .emp-name-cell .nm { font-weight:600; }
+  .emp-name-cell .code { font-size:0.72rem; color:var(--steel); }
+  .emp-kpi-row-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+  @media (max-width:1000px) { .emp-kpi-row-4 { grid-template-columns:1fr 1fr; } }
+
+  /* Right-side sliding drawer — a fixed panel instead of a centered modal, for the "click a row,
+     see everything about it without leaving the page" pattern used across all 3 Employees tabs. */
+  .drawer-overlay { position:fixed; inset:0; background:rgba(20,26,40,0.35); z-index:1000;
+                     opacity:0; pointer-events:none; transition:opacity 0.2s ease; }
+  .drawer-overlay.open { opacity:1; pointer-events:auto; }
+  .drawer-panel { position:fixed; top:0; right:0; height:100vh; width:420px; max-width:92vw; background:var(--white);
+                  box-shadow:-8px 0 28px rgba(20,26,40,0.18); transform:translateX(100%); transition:transform 0.25s ease;
+                  display:flex; flex-direction:column; z-index:1001; }
+  .drawer-overlay.open .drawer-panel { transform:translateX(0); }
+  .drawer-hd { padding:20px 22px 0; flex-shrink:0; position:relative; }
+  .drawer-close { position:absolute; top:18px; right:18px; background:none; border:none; font-size:1.1rem; color:var(--steel); cursor:pointer; }
+  .drawer-id-row { display:flex; align-items:center; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+  .drawer-tabs { display:flex; gap:4px; padding:10px 22px 0; border-bottom:1px solid var(--line); flex-shrink:0; }
+  .drawer-tab { padding:9px 12px; font-size:0.8rem; font-weight:600; color:var(--steel); cursor:pointer; border-bottom:2px solid transparent; }
+  .drawer-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .drawer-body { flex:1; overflow-y:auto; padding:18px 22px 22px; }
+  .drawer-section { margin-bottom:18px; }
+  .drawer-section .sec-ttl { font-size:0.72rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:10px; }
+  .drawer-field-row { display:flex; align-items:center; gap:10px; padding:7px 0; font-size:0.84rem; border-bottom:1px solid var(--paper); }
+  .drawer-field-row .ic { color:var(--steel); width:16px; flex-shrink:0; }
+  .drawer-field-row .k { color:var(--steel); min-width:110px; flex-shrink:0; }
+  .drawer-field-row .v { font-weight:600; margin-left:auto; text-align:right; }
+  .drawer-stat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
+  .drawer-stat { background:var(--paper); border-radius:8px; padding:10px; text-align:center; }
+  .drawer-stat .n { font-size:1.15rem; font-weight:800; }
+  .drawer-stat .l { font-size:0.68rem; color:var(--steel); margin-top:2px; }
+  .drawer-ftr { padding:14px 22px; border-top:1px solid var(--line); display:flex; gap:10px; flex-shrink:0; flex-wrap:wrap; }
+  .drawer-ftr button, .drawer-ftr a { flex:1; min-width:120px; text-align:center; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+  .cal-day-hd { text-align:center; font-size:0.68rem; color:var(--steel); font-weight:700; padding:4px 0; }
+  .cal-cell { aspect-ratio:1; border-radius:6px; display:flex; align-items:center; justify-content:center;
+              font-size:0.72rem; font-weight:600; cursor:pointer; border:1px solid transparent; }
+  .cal-cell.blank { visibility:hidden; }
+  .cal-cell.p { background:#e8f5ee; color:var(--green); }
+  .cal-cell.a { background:#fdecea; color:var(--red); }
+  .cal-cell.l { background:#fff3e8; color:var(--accent); }
+  .cal-cell.h { background:rgba(74,58,167,0.1); color:#4a3aa7; }
+  .cal-cell.n { background:var(--paper); color:var(--steel); }
+  .cal-cell.selected { border-color:var(--ink); }
+  .cal-legend { display:flex; gap:10px; flex-wrap:wrap; font-size:0.68rem; color:var(--steel); margin-top:8px; }
+  .cal-legend span { display:flex; align-items:center; gap:4px; }
+  .cal-legend i { width:8px; height:8px; border-radius:2px; display:inline-block; }
+
   .ins-modal-hd { padding:22px 24px 4px; flex-shrink:0; position:relative; }
   .ins-modal-hd h3 { margin:0 0 2px; font-size:1.08rem; }
   .ins-modal-hd .sub { font-size:0.78rem; color:var(--steel); }

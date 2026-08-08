@@ -215,13 +215,14 @@
           <div style="padding:6px 18px 16px;">
             <table class="tf-others-table" id="tfOthersTable">
               <thead>
-                <tr><th style="width:26px;">#</th><th>Description</th><th style="width:120px;">Type</th><th style="width:110px;">Amount / Rate (&#8377;)</th><th style="width:100px;">Quantity (MT/Nos)</th><th style="width:100px;">Total (&#8377;)</th><th style="width:36px;"></th></tr>
+                <tr><th style="width:26px;">#</th><th style="width:170px;">Description</th><th style="width:110px;">Type</th><th style="width:100px;">Amount / Rate (&#8377;)</th><th style="width:90px;">Quantity (MT/Nos)</th><th style="width:190px;">Vendor (Optional)</th><th style="width:100px;">Total (&#8377;)</th><th style="width:36px;"></th></tr>
               </thead>
               <tbody id="tfOthersBody"></tbody>
             </table>
             <div class="tf-others-empty" id="tfOthersEmpty">No other items added yet.<br>Click "Add Item" to add custom charges or expenses.</div>
             <div style="text-align:right;font-size:0.85rem;margin-top:6px;">Total Others: <b id="sumOthers">₹0.00</b></div>
           </div>
+          <div class="tf-others-note" style="border-top:none;padding-top:0;">Set a Vendor on a row (e.g. a second fuel stop, or an advance handled by someone else) to also track that amount against that vendor's own ledger balance — it still appears on this trip's invoice either way.</div>
           <div class="tf-others-note">These items appear on the generated invoice for this trip. They do not change the Billed Amount used in the ledger.</div>
         </div>
       </div>
@@ -288,22 +289,23 @@
 var tfItemCount = 0;
 var tfExistingItems = {{ custom_items|tojson }};
 
-function tfRowHtml(idx, desc, type, rate, qty) {
+function tfRowHtml(idx, desc, type, rate, qty, vendor) {
   return '<tr data-idx="' + idx + '">' +
     '<td style="padding-top:9px;">' + (idx + 1) + '</td>' +
     '<td><input type="text" name="other_desc" value="' + (desc||'').replace(/"/g,'&quot;') + '" placeholder="e.g. Weighbridge slip"></td>' +
     '<td><select name="other_type"><option value="charge"' + (type==='charge' ? ' selected' : '') + '>Addition</option><option value="deduction"' + (type==='deduction' ? ' selected' : '') + '>Deduction</option></select></td>' +
     '<td><input type="number" step="0.01" class="tf-other-rate" name="other_rate" value="' + (rate||0) + '"></td>' +
     '<td><input type="number" step="0.01" class="tf-other-qty" name="other_qty" value="' + (qty||1) + '"></td>' +
+    '<td><input type="text" name="other_vendor" value="' + (vendor||'').replace(/"/g,'&quot;') + '" list="combined-list" placeholder="Blank = no vendor"></td>' +
     '<td><span class="tf-others-total">₹0.00</span></td>' +
     '<td><button type="button" class="tf-others-remove" onclick="tfRemoveItemRow(this)" title="Remove">&#128465;</button></td>' +
   '</tr>';
 }
 
-function tfAddItemRow(desc, type, rate, qty) {
+function tfAddItemRow(desc, type, rate, qty, vendor) {
   var tbody = document.getElementById('tfOthersBody');
   var row = document.createElement('tbody');
-  row.innerHTML = tfRowHtml(tfItemCount, desc, type, rate, qty);
+  row.innerHTML = tfRowHtml(tfItemCount, desc, type, rate, qty, vendor);
   tbody.appendChild(row.firstChild);
   tfItemCount++;
   tfToggleEmpty();
@@ -393,7 +395,7 @@ function tfToggleEmptyTrip() {
 
 (function() {
   tfExistingItems.forEach(function(it) {
-    tfAddItemRow(it.description, it.item_type, it.rate, it.quantity);
+    tfAddItemRow(it.description, it.item_type, it.rate, it.quantity, it.vendor_name);
   });
   tfToggleEmpty();
   tfToggleEmptyTrip();
