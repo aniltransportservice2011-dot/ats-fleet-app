@@ -30,7 +30,7 @@
   <table>
     <tr><th>Employee</th><th>Role</th><th class="num">Total Paid</th><th class="num">Payments</th><th>Last Paid</th><th class="num">Outstanding Advance</th><th></th></tr>
     {% for r in rows %}
-    <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}'">
+    <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}?from_tab=salary'">
       <td>
         <div class="emp-name-cell">
           <div class="emp-avatar" style="background:{{ r.avatar_colors[0] }};color:{{ r.avatar_colors[1] }};">{{ r.initials }}</div>
@@ -43,7 +43,7 @@
       <td>{{ r.last_paid_date or '—' }}</td>
       <td class="num">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
       <td onclick="event.stopPropagation();">
-        <a href="/employee/{{ r.name|urlencode }}" title="Open Ledger — Pay Salary / Give Advance / Record Repayment" style="color:var(--accent);font-weight:600;text-decoration:none;font-size:0.78rem;">&#128220; Ledger</a>
+        <a href="/employee/{{ r.name|urlencode }}?from_tab=salary" title="Open Ledger — Pay Salary / Give Advance / Record Repayment" style="color:var(--accent);font-weight:600;text-decoration:none;font-size:0.78rem;">&#128220; Ledger</a>
       </td>
     </tr>
     {% endfor %}

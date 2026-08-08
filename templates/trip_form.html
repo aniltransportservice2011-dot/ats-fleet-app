@@ -37,6 +37,7 @@
   .tf-field label .req { color:var(--red); }
   .tf-field input, .tf-field select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px; font-size:0.88rem; font-family:inherit; box-sizing:border-box; background:var(--white); }
   .tf-field input:focus, .tf-field select:focus { outline:none; border-color:var(--accent); }
+  .tf-field input:disabled { background:var(--paper); color:var(--steel); cursor:not-allowed; }
   .tf-hint { grid-column:1/-1; font-size:0.76rem; color:var(--steel); margin-top:-6px; }
 
   .tf-others-table { width:100%; border-collapse:collapse; margin-bottom:2px; }
@@ -82,7 +83,7 @@
           <span class="tf-switch-track"></span>
         </span>
       </label>
-      <a href="/trips" class="tf-btn-outline">&larr; Back to Trips</a>
+      <a href="{{ return_to or '/trips' }}" class="tf-btn-outline">&larr; {{ 'Back to Ledger' if return_to else 'Back to Trips' }}</a>
       <button type="submit" form="tripForm" class="tf-btn-primary">&#128190; {{ 'Update Trip' if mode=='edit' else 'Save Trip' }}</button>
     </div>
   </div>
@@ -91,6 +92,7 @@
   </div>
 
   <form method="POST" id="tripForm">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
     <div class="tf-layout">
       <div>
         <!-- 1. TRIP INFORMATION -->
@@ -100,7 +102,7 @@
           </div>
           <div class="tf-section-body">
             <div class="tf-field"><label>Trip Date <span class="req">*</span></label><input type="date" name="date" value="{{ t.get('date','') }}" required></div>
-            <div class="tf-field"><label>LR Number</label><input type="text" name="lr_number" value="{{ t.get('lr_number','') or '' }}" placeholder="Enter LR Number"></div>
+            <div class="tf-field"><label>LR Number <span class="req">*</span></label><input type="text" name="lr_number" value="{{ t.get('lr_number','') or '' }}" placeholder="Enter LR Number" required></div>
             <div class="tf-field"><label>Vehicle No <span class="req">*</span></label><input type="text" name="vehicle_no" value="{{ t.get('vehicle_no','') or '' }}" list="vehicle-list" required></div>
             <div class="tf-field"><label>Type <span class="req">*</span></label>
               <select name="type">
@@ -121,8 +123,8 @@
             <div class="tf-field"><label>From</label><input type="text" name="from_loc" value="{{ t.get('from_loc','') or '' }}" placeholder="From Location"></div>
             <div class="tf-field"><label>To</label><input type="text" name="to_loc" value="{{ t.get('to_loc','') or '' }}" placeholder="To Location"></div>
             <div class="tf-field tf-cargo-fld"><label>Quantity (MT)</label><input type="number" step="0.01" class="tf-calc" name="quantity" value="{{ t.get('quantity',0) or 0 }}"></div>
-            <div class="tf-field tf-cargo-fld"><label>Rate (per unit)</label><input type="number" step="0.01" class="tf-calc" name="rate" value="{{ t.get('rate',0) or 0 }}"></div>
-            <div class="tf-field tf-cargo-fld"><label>Fixed Rate Amount <span style="text-transform:none;font-weight:400;">(if Charge Type = Fixed)</span></label><input type="number" step="0.01" class="tf-calc" name="fixed_rate_amount" value="{{ t.get('fixed_rate_amount',0) or 0 }}"></div>
+            <div class="tf-field tf-cargo-fld" id="tfRateFld"><label>Rate (per unit)</label><input type="number" step="0.01" class="tf-calc" name="rate" value="{{ t.get('rate',0) or 0 }}"></div>
+            <div class="tf-field tf-cargo-fld" id="tfFixedFld"><label>Fixed Rate Amount</label><input type="number" step="0.01" class="tf-calc" name="fixed_rate_amount" value="{{ t.get('fixed_rate_amount',0) or 0 }}"></div>
           </div>
         </div>
 
@@ -171,11 +173,12 @@
           <div class="tf-section-body">
             <div class="tf-field"><label>Fuel</label><input type="number" step="0.01" name="fuel_amount" value="{{ t.get('fuel_amount',0) or 0 }}"></div>
             <div class="tf-field"><label>Fuel Vendor</label><input type="text" name="fuel_vendor" value="{{ t.get('fuel_vendor_name','') or '' }}" list="combined-list" placeholder="Blank = paid directly"></div>
+            <div class="tf-field"><label>Fuel Filled (Litres)</label><input type="text" name="fuel_liters" value="{{ t.get('fuel_liters','') or '' }}" placeholder="e.g. 120"></div>
+            <div class="tf-field"><label>Fuel Price (per Litre)</label><input type="number" step="0.01" name="fuel_price" value="{{ t.get('fuel_price',0) or 0 }}"></div>
             <div class="tf-field"><label>Driver Advance</label><input type="number" step="0.01" name="driver_adv_amount" value="{{ t.get('driver_adv_amount',0) or 0 }}"></div>
             <div class="tf-field"><label>Driver Adv. Vendor</label><input type="text" name="driver_adv_vendor" value="{{ t.get('driveradv_vendor_name','') or '' }}" list="combined-list"></div>
             <div class="tf-field"><label>Agent Commission</label><input type="number" step="0.01" name="agent_commission" value="{{ t.get('agent_commission',0) or 0 }}"></div>
             <div class="tf-field"><label>Builty Expense</label><input type="number" step="0.01" name="builty_expense" value="{{ t.get('builty_expense',0) or 0 }}"></div>
-            <div class="tf-field"><label>Conductor Expense</label><input type="number" step="0.01" name="conductor_expense" value="{{ t.get('conductor_expense',0) or 0 }}"></div>
             <div class="tf-field"><label>Fine</label><input type="number" step="0.01" name="fine" value="{{ t.get('fine',0) or 0 }}"></div>
             <div class="tf-field"><label>Labour Charges</label><input type="number" step="0.01" name="labour_charges" value="{{ t.get('labour_charges',0) or 0 }}"></div>
             <div class="tf-field"><label>Parking</label><input type="number" step="0.01" name="parking" value="{{ t.get('parking',0) or 0 }}"></div>
@@ -184,7 +187,6 @@
             <div class="tf-field"><label>Urea</label><input type="number" step="0.01" name="urea" value="{{ t.get('urea',0) or 0 }}"></div>
             <div class="tf-field"><label>Loading Expense</label><input type="number" step="0.01" name="loading_expense" value="{{ t.get('loading_expense',0) or 0 }}"></div>
             <div class="tf-field"><label>Unloading Expense</label><input type="number" step="0.01" name="unloading_expense" value="{{ t.get('unloading_expense',0) or 0 }}"></div>
-            <div class="tf-field"><label>Wear &amp; Tear</label><input type="number" step="0.01" name="wear_tear" value="{{ t.get('wear_tear',0) or 0 }}"></div>
             <div class="tf-field"><label>Weighbridge Charges</label><input type="number" step="0.01" name="weighbridge_charges" value="{{ t.get('weighbridge_charges',0) or 0 }}"></div>
             <div class="tf-field"><label>Other Expense</label><input type="number" step="0.01" name="other_expense" value="{{ t.get('other_expense',0) or 0 }}"></div>
             <div class="tf-field"><label>Misc Vendor</label><input type="text" name="misc_vendor" value="{{ t.get('misc_vendor_name','') or '' }}" list="combined-list"></div>
@@ -199,10 +201,17 @@
           </div>
           <div class="tf-section-body">
             <div class="tf-field"><label>Owner Name</label><input type="text" name="owner_name" value="{{ t.get('owner_name','') or '' }}" list="combined-list"></div>
-            <div class="tf-field"><label>Owner Rate (per unit)</label><input type="number" step="0.01" class="tf-calc" name="owner_rate" value="{{ t.get('owner_rate',0) or 0 }}"></div>
-            <div class="tf-field"><label>Owner Amount <span style="text-transform:none;font-weight:400;">(Quantity &times; Owner Rate)</span></label><input type="text" value="₹0.00" id="ownerAmountField" disabled style="background:var(--paper);font-weight:700;"></div>
+            <div class="tf-field"><label>Owner Charge Type</label>
+              <select name="owner_rate_type">
+                <option value="PER_MT" {% if t.get('owner_rate_type','PER_MT')=='PER_MT' %}selected{% endif %}>Per MT</option>
+                <option value="FIXED" {% if t.get('owner_rate_type')=='FIXED' %}selected{% endif %}>Fixed</option>
+              </select>
+            </div>
+            <div class="tf-field" id="tfOwnerRateFld"><label>Owner Rate (per unit)</label><input type="number" step="0.01" class="tf-calc" name="owner_rate" value="{{ t.get('owner_rate',0) or 0 }}"></div>
+            <div class="tf-field" id="tfOwnerFixedFld"><label>Owner Fixed Amount</label><input type="number" step="0.01" class="tf-calc" name="owner_fixed_amount" value="{{ t.get('owner_fixed_amount',0) or 0 }}"></div>
+            <div class="tf-field"><label>Owner Amount <span style="text-transform:none;font-weight:400;">(calculated)</span></label><input type="text" value="₹0.00" id="ownerAmountField" disabled style="background:var(--paper);font-weight:700;"></div>
             <div class="tf-field"><label>Advance / Paid to Owner</label><input type="number" step="0.01" name="paid_to_owner" value="{{ t.get('paid_to_owner',0) or 0 }}"></div>
-            <div class="tf-hint">Owner Amount is what you owe this vehicle's owner for the trip — Quantity comes from Trip Information above. Advance/Paid to Owner is how much of that you've already settled, tracked separately in the owner's ledger.</div>
+            <div class="tf-hint">Owner Amount is what you owe this vehicle's owner for the trip — Per MT uses Quantity (from Trip Information above) &times; Owner Rate, Fixed uses Owner Fixed Amount directly. This can be set independently of the party's own Charge Type above. Advance/Paid to Owner is how much of that you've already settled, tracked separately in the owner's ledger.</div>
           </div>
         </div>
 
@@ -275,7 +284,7 @@
     </div>
 
     <div class="tf-bottom-bar">
-      <a href="/trips" class="tf-btn-outline">Cancel</a>
+      <a href="{{ return_to or '/trips' }}" class="tf-btn-outline">Cancel</a>
       <button type="submit" class="tf-btn-primary">&#10003; {{ 'Update Trip' if mode=='edit' else 'Save Trip' }}</button>
     </div>
   </form>
@@ -348,6 +357,11 @@ function tfRecalc() {
   var freight = rateType === 'FIXED' ? fixedAmt : quantity * rate;
   var net = freight + additions - deductions;
 
+  // Charge Type = Fixed → enable Fixed Rate Amount and disable Rate (per unit), and vice versa —
+  // both fields stay visible (never hidden), only the one that doesn't apply is greyed out.
+  document.querySelector('#tfRateFld input').disabled = rateType === 'FIXED';
+  document.querySelector('#tfFixedFld input').disabled = rateType !== 'FIXED';
+
   document.getElementById('sumAdditions').textContent = '₹' + additions.toFixed(2);
   document.getElementById('sumDeductions').textContent = '₹' + deductions.toFixed(2);
   document.getElementById('sumOthers').textContent = '₹' + othersNet.toFixed(2);
@@ -362,8 +376,14 @@ function tfRecalc() {
   document.getElementById('marketOwnerSection').style.display = isMarket ? '' : 'none';
   document.getElementById('profitCard').style.display = isMarket ? '' : 'none';
 
+  // Owner's Charge Type is independent of the party's above — a trip can be billed to the party
+  // Per MT while the owner is paid a Fixed amount, or vice versa.
+  var ownerRateType = document.querySelector('select[name="owner_rate_type"]').value;
   var ownerRate = tfNum(document.querySelector('input[name="owner_rate"]'));
-  var ownerAmount = quantity * ownerRate;
+  var ownerFixedAmt = tfNum(document.querySelector('input[name="owner_fixed_amount"]'));
+  var ownerAmount = ownerRateType === 'FIXED' ? ownerFixedAmt : quantity * ownerRate;
+  document.querySelector('#tfOwnerRateFld input').disabled = ownerRateType === 'FIXED';
+  document.querySelector('#tfOwnerFixedFld input').disabled = ownerRateType !== 'FIXED';
   document.getElementById('sumOwnerAmount').textContent = '₹' + ownerAmount.toFixed(2);
   document.getElementById('ownerAmountField').value = '₹' + ownerAmount.toFixed(2);
 
