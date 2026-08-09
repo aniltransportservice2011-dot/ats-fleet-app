@@ -200,7 +200,7 @@
     <table>
       <tr><th>Date</th><th>Type</th><th>Details</th><th>Ref / Document</th><th class="num">Debit (₹)</th><th class="num">Credit (₹)</th><th class="num">Balance (₹)</th></tr>
       {% for e in entries %}
-      <tr{% if e.link %} class="clickable-row" onclick="window.location='{{ e.link }}?return_to={{ return_to|urlencode }}'" title="Open this {{ 'trip' if 'Trip' in e.kind else 'record' }}"{% endif %}>
+      <tr{% if e.link %} class="clickable-row" onclick="toggleDetailPanel('{{ e.link }}')" title="View details (read-only) — click again to close"{% endif %}>
         <td style="white-space:nowrap;">{{ e.date }}</td>
         <td><span class="lg2-type-badge" style="{{ kind_colors(e.kind) }}">{{ e.kind }}</span></td>
         <td>{{ e.detail.split(' — ')[0] }}{% if ' — ' in e.detail %}<div class="lg2-detail-sub">{{ e.detail.split(' — ',1)[1] }}</div>{% endif %}{% if e.link %} <span style="color:var(--steel);font-size:0.72rem;">&#8594;</span>{% endif %}</td>

@@ -90,9 +90,24 @@
     width:0; flex-shrink:0; background:var(--paper); border-left:1px solid var(--line);
     overflow-y:auto; overflow-x:hidden; transition:width 0.25s ease; height:100vh; position:sticky; top:0;
   }
-  .detail-panel.open { width:520px; }
-  .detail-panel-inner { width:520px; padding:24px 28px; }
+  .detail-panel.open { width:600px; max-width:92vw; }
+  .detail-panel-inner { width:600px; max-width:92vw; padding:24px 28px 40px; }
   .detail-panel-close { position:absolute; top:20px; right:20px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); }
+  /* Read-only detail views (Trip/Maintenance/Payment, opened from a Ledger row) — same
+     sectioned-card look everywhere, grey uppercase label over a bold value, never an editable
+     input, since the whole point is "look, don't touch". */
+  .dp-title-row { display:flex; align-items:center; gap:10px; margin:0 0 4px; padding-right:34px; }
+  .dp-title-row h2 { margin:0; font-size:1.25rem; }
+  .dp-readonly-badge { background:var(--paper); color:var(--steel); font-size:0.66rem; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; padding:3px 10px; border-radius:10px; border:1px solid var(--line); }
+  .dp-sub { color:var(--steel); font-size:0.82rem; margin-bottom:20px; }
+  .dp-section { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .dp-section-ttl { font-size:0.76rem; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--steel); margin-bottom:14px; }
+  .dp-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px 20px; }
+  .dp-grid.cols3 { grid-template-columns:1fr 1fr 1fr; }
+  .dp-fld .lbl { font-size:0.68rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:4px; }
+  .dp-fld .val { font-size:0.9rem; font-weight:700; color:var(--ink); word-break:break-word; }
+  .dp-fld .val.muted { color:var(--steel); font-weight:600; }
+  .dp-empty-note { text-align:center; color:var(--steel); font-size:0.85rem; padding:6px 0; }
 </style>
 {% block extra_head %}{% endblock %}
 <script>
@@ -284,6 +299,7 @@
   function openDetailPanel(url) {
     var panel = document.getElementById('detailPanel');
     var inner = document.getElementById('detailPanelInner');
+    panel.dataset.url = url;
     inner.innerHTML = '<div style="padding:40px;text-align:center;color:var(--steel);">Loading...</div>';
     panel.classList.add('open');
     fetch(url, { headers: { 'X-Soft-Nav': '1' } })
@@ -307,9 +323,24 @@
   window.openDetailPanel = openDetailPanel;
 
   function closeDetailPanel() {
-    document.getElementById('detailPanel').classList.remove('open');
+    var panel = document.getElementById('detailPanel');
+    panel.classList.remove('open');
+    delete panel.dataset.url;
   }
   window.closeDetailPanel = closeDetailPanel;
+
+  // Clicking the row that's already open in the side panel closes it again instead of just
+  // re-fetching the same content — same "click to open, click again to close" a user expects
+  // from any expandable row.
+  function toggleDetailPanel(url) {
+    var panel = document.getElementById('detailPanel');
+    if (panel.classList.contains('open') && panel.dataset.url === url) {
+      closeDetailPanel();
+    } else {
+      openDetailPanel(url);
+    }
+  }
+  window.toggleDetailPanel = toggleDetailPanel;
 
   function toggleSidebar() {
     var sidebar = document.querySelector('.sidebar');

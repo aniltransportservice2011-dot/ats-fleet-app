@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Payment Details{% endblock %}
+{% block content %}
+<div class="dp-title-row">
+  <h2>Payment Details</h2>
+  <span class="dp-readonly-badge">Read Only</span>
+</div>
+<div class="dp-sub">{{ 'Received from' if p['payment_type']=='received' else 'Paid to' }} {{ entity_name or '—' }}</div>
+
+<div class="dp-section">
+  <div class="dp-section-ttl">Overview</div>
+  <div class="dp-grid">
+    <div class="dp-fld"><div class="lbl">Date</div><div class="val">{{ p['date'] or '—' }}</div></div>
+    <div class="dp-fld"><div class="lbl">Type</div><div class="val">{{ 'Payment Received' if p['payment_type']=='received' else 'Payment Made' }}</div></div>
+    <div class="dp-fld"><div class="lbl">{{ 'Party' if entity_type=='party' else 'Vendor' }}</div><div class="val">{{ entity_name or '—' }}</div></div>
+    <div class="dp-fld"><div class="lbl">Mode</div><div class="val">{{ p['mode'] or '—' }}</div></div>
+    <div class="dp-fld"><div class="lbl">Reference No.</div><div class="val">{{ p['reference_id'] or '—' }}</div></div>
+    <div class="dp-fld"><div class="lbl">Total Amount</div><div class="val">₹{{ '{:,.0f}'.format(p['amount'] or 0) }}</div></div>
+  </div>
+</div>
+
+<div class="dp-section">
+  <div class="dp-section-ttl">Allocation</div>
+  <div class="dp-grid cols3">
+    <div class="dp-fld"><div class="lbl">Allocated</div><div class="val">₹{{ '{:,.0f}'.format(p['allocated_amount'] or 0) }}</div></div>
+    <div class="dp-fld"><div class="lbl">Unallocated</div><div class="val" style="color:{% if leftover > 0 %}var(--accent){% else %}var(--steel){% endif %};">₹{{ '{:,.0f}'.format(leftover) }}</div></div>
+    <div class="dp-fld"><div class="lbl">Trips Covered</div><div class="val">{{ allocations|length }}</div></div>
+  </div>
+  {% if allocations %}
+  <div style="overflow-x:auto;margin-top:14px;">
+  <table>
+    <tr><th>LR Number</th><th>Route</th><th class="num">Amount</th></tr>
+    {% for a in allocations %}
+    <tr>
+      <td>{{ a['lr_number'] or ('Trip #' ~ a['trip_id']) }}</td>
+      <td>{{ a['from_loc'] or '—' }} &rarr; {{ a['to_loc'] or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(a['amount'] or 0) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <div class="dp-empty-note">Not allocated to any specific trip.</div>
+  {% endif %}
+</div>
+
+<div class="dp-section">
+  <div class="dp-section-ttl">Remarks</div>
+  <div class="{% if p['remarks'] %}dp-fld{% else %}dp-empty-note{% endif %}">
+    {% if p['remarks'] %}<div class="val" style="font-weight:500;">{{ p['remarks'] }}</div>{% else %}No remarks for this payment.{% endif %}
+  </div>
+</div>
+
+{% if entity_type and entity_id %}
+<a href="/ledger/{{ entity_type }}/{{ entity_id }}" class="add-btn" style="width:100%;justify-content:center;margin-top:6px;">&#128220; View Full Ledger</a>
+{% endif %}
+{% endblock %}
