@@ -3612,18 +3612,20 @@ def _get_party_ledger_entries(party_id):
         entries.append({'date': t['date'], 'detail': f"Trip: {_lr_label(t['lr_number'], t['id'])} — {_clean_loc(t['from_loc'])} → {_clean_loc(t['to_loc'])}",
                          'debit': t['billed_amount'] or 0, 'credit': original_received + (t['party_advance'] or 0),
                          'kind': 'Trip Bill', 'ref': trip_invoice_no.get(t['id']) or t['lr_number'] or '', 'vehicle_type': t['type'] or '',
-                         'link': url_for('edit_trip', trip_id=t['id'])})
+                         'link': url_for('trip_view', trip_id=t['id'])})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment received')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
                                  JOIN trips t ON pa.trip_id=t.id WHERE pa.payment_id=? ORDER BY pa.id""", (p['id'],)).fetchall()
         for a in allocs:
             entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to {a['lr_number'] or 'trip'}",
-                             'debit': 0, 'credit': a['amount'], 'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
+                             'debit': 0, 'credit': a['amount'], 'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': '',
+                             'link': url_for('payment_view', payment_id=p['id'])})
         leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
         if leftover > 0.004 or not allocs:
             entries.append({'date': p['date'], 'detail': base_detail, 'debit': 0, 'credit': max(leftover, 0),
-                             'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
+                             'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': '',
+                             'link': url_for('payment_view', payment_id=p['id'])})
     conn.close()
     if linked_vendor:
         # Same organization also acts as a vendor (fuel/maintenance/owner-hire) — pull those in too,
@@ -3704,19 +3706,19 @@ def _get_vendor_ledger_entries(vendor_id):
         entries.append({'date': m['date'], 'detail': detail,
                          'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': m['invoice_no'] or '', 'vehicle_type': '',
-                         'link': url_for('edit_maintenance', m_id=m['id'])})
+                         'link': url_for('maintenance_view', m_id=m['id'])})
     for f in fuel:
         ident = f['vehicle_no'] or trip_invoice_no.get(f['id'], '')
         detail = 'Fuel' + (f" — {ident}" if ident else '')
         entries.append({'date': f['date'], 'detail': detail, 'debit': 0, 'credit': f['fuel_amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(f['id'], ''), 'vehicle_type': f['type'] or '',
-                         'link': url_for('edit_trip', trip_id=f['id'])})
+                         'link': url_for('trip_view', trip_id=f['id'])})
     for a in adv:
         ident = a['vehicle_no'] or trip_invoice_no.get(a['id'], '')
         detail = 'Driver Advance' + (f" — {ident}" if ident else '')
         entries.append({'date': a['date'], 'detail': detail, 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(a['id'], ''), 'vehicle_type': a['type'] or '',
-                         'link': url_for('edit_trip', trip_id=a['id'])})
+                         'link': url_for('trip_view', trip_id=a['id'])})
     for o in owner_trips:
         owed = o['owner_fixed_amount'] if (o['owner_rate_type'] or 'PER_MT')=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
@@ -3728,7 +3730,7 @@ def _get_vendor_ledger_entries(vendor_id):
             entries.append({'date': o['date'], 'detail': detail,
                              'debit': original_paid, 'credit': owed,
                              'kind': 'Trip Bill', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
-                             'link': url_for('edit_trip', trip_id=o['id'])})
+                             'link': url_for('trip_view', trip_id=o['id'])})
     for it in other_items:
         ident = it['vehicle_no'] or trip_invoice_no.get(it['trip_id'], '')
         detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}" + (f" ({ident})" if ident else '')
@@ -3739,18 +3741,20 @@ def _get_vendor_ledger_entries(vendor_id):
                          'debit': amt if it['item_type'] == 'deduction' else 0,
                          'credit': amt if it['item_type'] == 'charge' else 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(it['trip_id']) or it['lr_number'] or '',
-                         'vehicle_type': it['type'] or '', 'link': url_for('edit_trip', trip_id=it['trip_id'])})
+                         'vehicle_type': it['type'] or '', 'link': url_for('trip_view', trip_id=it['trip_id'])})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment made')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
                                  JOIN trips t ON pa.trip_id=t.id WHERE pa.payment_id=? ORDER BY pa.id""", (p['id'],)).fetchall()
         for a in allocs:
             entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to {a['lr_number'] or 'trip'}",
-                             'debit': a['amount'], 'credit': 0, 'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
+                             'debit': a['amount'], 'credit': 0, 'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': '',
+                             'link': url_for('payment_view', payment_id=p['id'])})
         leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
         if leftover > 0.004 or not allocs:
             entries.append({'date': p['date'], 'detail': base_detail, 'debit': max(leftover, 0), 'credit': 0,
-                             'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': ''})
+                             'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': '',
+                             'link': url_for('payment_view', payment_id=p['id'])})
     conn.close()
     entries.sort(key=lambda x: x['date'] or '')
     balance = 0
@@ -3935,6 +3939,36 @@ def add_vendor_payment(vendor_id):
     conn.close()
     return render_template('add_payment.html', name=vendor['name'], role='Vendor', action_url=f'/payment/vendor/{vendor_id}', active='accounts')
 
+@app.route('/payments/<int:payment_id>/view')
+def payment_view(payment_id):
+    """Read-only payment detail — opened from a Ledger row's Payment In/Out entry in the slide-in
+    side panel. Payments have no dedicated edit page (they're recorded once via Add Payment and
+    never revised), so this is purely a look-don't-touch summary plus the trips it was allocated
+    against, with a link back to that party/vendor's full ledger."""
+    conn = get_db()
+    p = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+    if not p:
+        conn.close()
+        return redirect(url_for('accounts'))
+    entity_name = None
+    entity_type = None
+    entity_id = None
+    if p['party_id']:
+        row = conn.execute("SELECT name FROM parties WHERE id=?", (p['party_id'],)).fetchone()
+        entity_name = row['name'] if row else None
+        entity_type, entity_id = 'party', p['party_id']
+    elif p['vendor_id']:
+        row = conn.execute("SELECT name FROM vendors WHERE id=?", (p['vendor_id'],)).fetchone()
+        entity_name = row['name'] if row else None
+        entity_type, entity_id = 'vendor', p['vendor_id']
+    allocations = conn.execute("""SELECT pa.amount, t.lr_number, t.id as trip_id, t.from_loc, t.to_loc
+                                  FROM payment_allocations pa JOIN trips t ON pa.trip_id=t.id
+                                  WHERE pa.payment_id=? ORDER BY pa.id""", (payment_id,)).fetchall()
+    conn.close()
+    leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
+    return render_template('payment_view.html', p=p, entity_name=entity_name, entity_type=entity_type,
+                            entity_id=entity_id, allocations=allocations, leftover=max(leftover, 0), active='accounts')
+
 @app.route('/salaries/add', methods=['GET', 'POST'])
 def add_salary():
     import datetime
@@ -4058,6 +4092,19 @@ def edit_maintenance(m_id):
     conn.close()
     return render_template('edit_maintenance.html', m=m, vehicles=vehicles, combined_names=combined_names,
                             return_to=request.args.get('return_to', ''), active='maintenance')
+
+@app.route('/maintenance/<int:m_id>/view')
+def maintenance_view(m_id):
+    """Read-only maintenance detail — opened from a Ledger row in the slide-in side panel instead
+    of routing to the editable maintenance form."""
+    conn = get_db()
+    m = conn.execute("""SELECT mt.*, v.vehicle_no, ve.name as vendor_name FROM maintenance mt
+                        LEFT JOIN vehicles v ON mt.vehicle_id=v.id
+                        LEFT JOIN vendors ve ON mt.vendor_id=ve.id WHERE mt.id=?""", (m_id,)).fetchone()
+    conn.close()
+    if not m:
+        return redirect(url_for('maintenance_list'))
+    return render_template('maintenance_view.html', m=m, active='maintenance')
 
 @app.route('/salaries/delete/<int:s_id>', methods=['POST'])
 def delete_salary(s_id):
@@ -7099,6 +7146,40 @@ def edit_trip(trip_id):
     return render_template('trip_form.html', mode='edit', t=dict(trip), custom_items=custom_items,
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                             employees=employees, return_to=request.args.get('return_to', ''), active='trips')
+
+@app.route('/trips/<int:trip_id>/view')
+def trip_view(trip_id):
+    """Read-only trip detail — opened from a Ledger row's Trip Bill entry in the slide-in side
+    panel (see openDetailPanel in base.html), instead of routing to the editable Trip form. Same
+    fields as trip_form.html/edit_trip, just displayed rather than edited; a footer link still
+    goes to the real Edit Trip page for anyone who does need to make a change."""
+    conn = get_db()
+    trip = conn.execute("""SELECT t.*, v.vehicle_no, p.name as party_name,
+                           fv.name as fuel_vendor_name, dv.name as driveradv_vendor_name, mv.name as misc_vendor_name
+                           FROM trips t
+                           LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                           LEFT JOIN parties p ON t.party_id=p.id
+                           LEFT JOIN vendors fv ON t.fuel_vendor_id=fv.id
+                           LEFT JOIN vendors dv ON t.driver_adv_vendor_id=dv.id
+                           LEFT JOIN vendors mv ON t.misc_vendor_id=mv.id
+                           WHERE t.id=?""", (trip_id,)).fetchone()
+    if not trip:
+        conn.close()
+        return redirect(url_for('trips_list'))
+    custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
+                                       FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
+                                       WHERE ii.trip_id=?""", (trip_id,)).fetchall()
+    conn.close()
+    t = dict(trip)
+    is_market = t.get('type') == 'Market'
+    owner_amount = 0
+    if is_market:
+        if (t.get('owner_rate_type') or 'PER_MT') == 'FIXED':
+            owner_amount = t.get('owner_fixed_amount') or 0
+        else:
+            owner_amount = (t.get('owner_rate') or 0) * (t.get('quantity') or 0)
+    return render_template('trip_view.html', t=t, custom_items=custom_item_rows, is_market=is_market,
+                            owner_amount=owner_amount, active='accounts')
 
 @app.route('/business-performance')
 def business_performance():
