@@ -1,99 +1,432 @@
 {% extends "base.html" %}
+{% import 'partials/_pager.html' as pager %}
+{% macro cat_icon(name) -%}
+{%- if name == 'building' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h1M15 7h1M8 11h1M15 11h1M8 15h1M15 15h1"/><path d="M10 21v-4h4v4"/></svg>
+{%- elif name == 'bolt' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>
+{%- elif name == 'wifi' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 8.5a16 16 0 0 1 20 0"/><path d="M5.5 12.5a11 11 0 0 1 13 0"/><path d="M9 16.5a6 6 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+{%- elif name == 'box' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 8 12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+{%- elif name == 'monitor' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="13" rx="1.5"/><path d="M8 21h8M12 17v4"/></svg>
+{%- elif name == 'fuel' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 21V6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v15"/><path d="M4 11h8"/><path d="M12 8h2.5L17 10.5V17a1.5 1.5 0 0 0 3 0v-5l-2.5-2.5"/><path d="M2 21h12"/></svg>
+{%- elif name == 'cup' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"/><path d="M17 9h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 4c0 1-1 1-1 2M12 4c0 1-1 1-1 2"/></svg>
+{%- elif name == 'bank' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 10 12 4l9 6"/><path d="M4 10h16v2H4z"/><path d="M5 12v7M9 12v7M15 12v7M19 12v7"/><path d="M3 21h18"/></svg>
+{%- elif name == 'road' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3 4 21"/><path d="M16 3l4 18"/><path d="M12 4v3M12 11v3M12 18v3"/></svg>
+{%- elif name == 'car' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13l1.5-5A2 2 0 0 1 6.4 6.5h11.2a2 2 0 0 1 1.9 1.5L21 13"/><rect x="2.5" y="13" width="19" height="5" rx="1.5"/><circle cx="7" cy="18" r="1.5"/><circle cx="17" cy="18" r="1.5"/></svg>
+{%- elif name == 'phone' -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="2" width="10" height="20" rx="1.5"/><path d="M11 18h2"/></svg>
+{%- else -%}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l3 3v17H6z"/><path d="M15 2v3h3"/><path d="M9 12h6M9 15h6M9 9h3"/></svg>
+{%- endif -%}
+{%- endmacro %}
 {% block title %}Expenses{% endblock %}
 {% block extra_head %}
 <style>
-.modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
-.modal-overlay.open { display:flex; }
-.modal-box { position:relative; background:var(--white); border-radius:8px; padding:24px; width:460px; max-width:90vw; max-height:85vh; overflow-y:auto; }
+/* Modal field styling — .modal-overlay/.modal-box themselves come from base.html, but the
+   form-field layout inside them has always been defined per-page (see e.g. maintenance's own
+   modal styles), not globally, so this page needs its own copy same as every other modal page. */
 .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
 .modal-box label { font-size:0.78rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.03em; display:block; margin-bottom:4px; font-weight:600; }
-.modal-box input, .modal-box select, .modal-box textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; }
+.modal-box input, .modal-box select, .modal-box textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:3px; font-size:0.9rem; margin-bottom:14px; font-family:inherit; box-sizing:border-box; }
 .modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
-.section-label { font-size:0.72rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.06em; text-align:center; margin:16px 0 12px; border-top:1px solid var(--line); padding-top:14px; }
+.section-label { font-size:0.72rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.06em; margin:4px 0 12px; border-top:1px solid var(--line); padding-top:14px; }
 .detail-row { padding:6px 0; border-bottom:1px solid var(--line); font-size:0.88rem; }
 .detail-row .lbl { color:var(--steel); font-size:0.72rem; text-transform:uppercase; }
-.summary-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }
-.summary-card { background:var(--white); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
-.summary-card .lbl { font-size:0.78rem; color:var(--steel); }
-.summary-card .val { font-size:1.3rem; font-weight:700; margin-top:2px; }
+
+.oh-layout { display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start; }
+@media (max-width:1100px) { .oh-layout { grid-template-columns:1fr; } }
+.oh-side { display:flex; flex-direction:column; gap:16px; }
+.oh-icon-box { width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.oh-icon-box svg { width:15px; height:15px; }
+.oh-legend { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+.oh-legend-row { display:flex; align-items:center; gap:8px; font-size:0.78rem; }
+.oh-legend-dot { width:9px; height:9px; border-radius:2px; flex-shrink:0; }
+.oh-legend-row .lbl { flex:1; color:var(--ink); }
+.oh-legend-row .amt { font-weight:700; }
+.oh-legend-row .pct { color:var(--steel); width:38px; text-align:right; }
+.oh-due-badge { display:inline-block; padding:2px 8px; border-radius:8px; font-size:0.66rem; font-weight:700; white-space:nowrap; }
+.oh-bill-row { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+.oh-bill-row:last-child { border-bottom:none; }
+.oh-bill-row .ic { width:32px; height:32px; border-radius:8px; background:var(--paper); color:var(--steel); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.oh-bill-row .ic svg { width:15px; height:15px; }
+.oh-bill-row .info { flex:1; min-width:0; }
+.oh-bill-row .info .name { font-weight:600; font-size:0.82rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.oh-bill-row .info .meta { font-size:0.7rem; color:var(--steel); }
+.oh-row-actions { display:flex; gap:4px; }
+.oh-row-actions button { background:none; border:none; cursor:pointer; color:var(--steel); padding:3px; border-radius:5px; display:flex; }
+.oh-row-actions button:hover { color:var(--accent); background:var(--paper); }
+.oh-row-actions button.danger:hover { color:var(--red); }
+.oh-row-actions svg { width:16px; height:16px; }
+.oh-empty { text-align:center; color:var(--steel); font-size:0.85rem; padding:20px 0; }
+.oh-recurring-toggle { display:flex; align-items:center; gap:8px; margin:2px 0 14px; }
+.oh-recurring-toggle input { width:auto; margin:0; }
+.oh-status-radio { display:flex; gap:10px; margin-bottom:14px; }
+.oh-status-radio label { display:flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:600; text-transform:none; letter-spacing:0; color:var(--ink); cursor:pointer; }
+.oh-status-radio input { width:auto; margin:0; }
 </style>
 {% endblock %}
 {% block content %}
-<div class="wrap">
-  <h1>Expenses <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Expense</button></h1>
-
-  <form class="filter-bar" method="GET">
-    <div class="field"><label>Category</label>
-      <select name="category"><option value="">All</option>
-        {% for c in categories %}<option value="{{ c['category'] }}" {% if f_category==c['category'] %}selected{% endif %}>{{ c['category'] }}</option>{% endfor %}
-      </select>
+<div class="wrap" style="max-width:none; width:100%;">
+  <div class="mt-head">
+    <div><h1>Expenses</h1><div class="sub">Track and manage all business expenses in one place</div></div>
+    <div style="display:flex;gap:10px;">
+      <a class="download-btn" href="/overheads/export?{{ request.query_string.decode() }}">&#8681; Export</a>
+      <button type="button" class="add-btn" onclick="document.getElementById('addModal').classList.add('open')">+ Add Expense</button>
     </div>
-    <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-    <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
-    <button type="submit">Apply</button>
-    <a class="clear" href="/overheads">Clear</a>
-  </form>
-
-  <div class="summary-cards">
-    <div class="summary-card"><div class="lbl">Total Expenses</div><div class="val">{{ total_count }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Amount</div><div class="val">₹{{ '{:,.0f}'.format(total_amount) }}</div></div>
-    <div class="summary-card"><div class="lbl">This Month</div><div class="val">₹{{ '{:,.0f}'.format(this_month_amount) }}</div></div>
-    <div class="summary-card"><div class="lbl">Avg. Per Month</div><div class="val">₹{{ '{:,.0f}'.format(avg_per_month) }}</div></div>
   </div>
 
-  <table>
-    <tr><th>Date</th><th>Category</th><th>Payment Mode</th><th class="num">Amount</th><th></th></tr>
-    {% for r in rows %}
-    <tr class="clickable-row" onclick="document.getElementById('ohModal{{ loop.index }}').classList.add('open')">
-      <td>{{ r['date'] }}</td><td>{{ r['category'] }}</td><td>{{ r['payment_mode'] or '—' }}</td><td class="num">₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</td>
-      <td onclick="event.stopPropagation();"><form method="POST" action="/overheads/delete/{{ r['id'] }}" style="display:inline;" onsubmit="return confirm('Delete this entry permanently?');"><button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button></form></td>
-    </tr>
-    {% endfor %}
-  </table>
+  <div class="mt-kpi-row">
+    <div class="mt-kpi">
+      <div><div class="lbl">Total Expenses</div><div class="val">₹{{ '{:,.0f}'.format(total_amount) }}</div><div class="sub">All Time</div></div>
+      <div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128188;</div>
+    </div>
+    <div class="mt-kpi">
+      <div><div class="lbl">This Month</div><div class="val">₹{{ '{:,.0f}'.format(this_month_amount) }}</div><div class="sub">{{ month_labels_full }}</div></div>
+      <div class="mt-kpi-icon" style="background:#e8f5ee;color:#1a9c5b;">&#128200;</div>
+    </div>
+    <div class="mt-kpi">
+      <div><div class="lbl">Pending Bills</div><div class="val">₹{{ '{:,.0f}'.format(pending_amount) }}</div><div class="sub">{{ pending_count }} Bill{{ 's' if pending_count != 1 }}</div></div>
+      <div class="mt-kpi-icon" style="background:#fff6e8;color:#eda100;">&#128203;</div>
+    </div>
+    <div class="mt-kpi">
+      <div><div class="lbl">Recurring (Monthly)</div><div class="val">₹{{ '{:,.0f}'.format(recurring_monthly_amount) }}</div><div class="sub">{{ recurring_count }} Expense{{ 's' if recurring_count != 1 }}</div></div>
+      <div class="mt-kpi-icon" style="background:#f1ecfb;color:#7a5ad6;">&#128260;</div>
+    </div>
+    <div class="mt-kpi">
+      <div><div class="lbl">Avg Monthly Expense</div><div class="val">₹{{ '{:,.0f}'.format(avg_monthly_expense) }}</div><div class="sub">Last 6 Months</div></div>
+      <div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128202;</div>
+    </div>
+    <div class="mt-kpi">
+      <div><div class="lbl">Categories</div><div class="val">{{ active_categories }}</div><div class="sub">Active</div></div>
+      <div class="mt-kpi-icon" style="background:#f1ecfb;color:#7a5ad6;">&#128204;</div>
+    </div>
+  </div>
+
+  <div class="oh-layout">
+    <div>
+      <div class="mt-tabs">
+        <a class="mt-tab {{ 'active' if tab=='all' }}" href="?tab=all">All Expenses</a>
+        <a class="mt-tab {{ 'active' if tab=='recurring' }}" href="?tab=recurring">Recurring Expenses</a>
+        <a class="mt-tab {{ 'active' if tab=='vendor' }}" href="?tab=vendor">Vendor Summary</a>
+        <a class="mt-tab {{ 'active' if tab=='category' }}" href="?tab=category">Category Summary</a>
+      </div>
+
+      <form class="filter-bar" method="GET">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <div class="field"><label>Category</label>
+          <select name="category"><option value="">All Categories</option>
+            {% for c in categories %}<option value="{{ c['category'] }}" {% if f_category==c['category'] %}selected{% endif %}>{{ c['category'] }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field"><label>Vendor</label>
+          <select name="vendor"><option value="">All Vendors</option>
+            {% for v in vendors %}<option value="{{ v['vendor'] }}" {% if f_vendor==v['vendor'] %}selected{% endif %}>{{ v['vendor'] }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field"><label>Payment Mode</label>
+          <select name="payment_mode"><option value="">All Modes</option>
+            {% for m in ['Cash','Bank Transfer','UPI','Online','Credit Card','Cheque'] %}<option value="{{ m }}" {% if f_payment_mode==m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field"><label>Status</label>
+          <select name="status"><option value="">All Status</option>
+            <option value="Paid" {% if f_status=='Paid' %}selected{% endif %}>Paid</option>
+            <option value="Pending" {% if f_status=='Pending' %}selected{% endif %}>Pending</option>
+          </select>
+        </div>
+        <div class="field"><label>From</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+        <div class="field"><label>To</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+        <button type="submit">Apply</button>
+        <a class="clear" href="/overheads?tab={{ tab }}">Clear</a>
+      </form>
+
+      {% if tab in ['all', 'recurring'] %}
+      <div class="mt-panel">
+        <div class="mt-panel-head"><span class="ttl">Expenses List ({{ total_count_filtered }})</span></div>
+        {% if rows %}
+        <div style="overflow-x:auto;">
+        <table>
+          <tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Payment Mode</th><th>Status</th><th class="num">Amount</th><th>Actions</th></tr>
+          {% for r in rows %}
+          <tr class="clickable-row" onclick="document.getElementById('ohView{{ r.id }}').classList.add('open')">
+            <td>{{ r.date }}</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div class="oh-icon-box" style="background:{{ r.icon_bg }};color:{{ r.icon_color }};">{{ cat_icon(r.icon) }}</div>
+                {{ r.category or 'Uncategorized' }}
+              </div>
+            </td>
+            <td>{{ r.vendor or '—' }}</td>
+            <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ r.description or '' }}">{{ r.description or '—' }}</td>
+            <td>{{ r.payment_mode or '—' }}</td>
+            <td><span class="status-pill" style="background:{% if r.status=='Paid' %}#e8f5ee;color:var(--green){% else %}#fff6e8;color:var(--accent){% endif %};">{{ r.status }}{% if r.status=='Pending' and r.days_left is not none %} &middot; {% if r.days_left < 0 %}{{ -r.days_left }}d overdue{% elif r.days_left == 0 %}Due Today{% else %}{{ r.days_left }}d left{% endif %}{% endif %}</span></td>
+            <td class="num">₹{{ '{:,.0f}'.format(r.amount or 0) }}</td>
+            <td onclick="event.stopPropagation();">
+              <div class="oh-row-actions">
+                <form method="POST" action="/overheads/delete/{{ r.id }}" style="display:inline;" onsubmit="return confirm('Delete this expense permanently?');">
+                  <button type="submit" title="Delete" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        </div>
+        {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+        {% else %}
+        <div class="oh-empty">No expenses match these filters.</div>
+        {% endif %}
+      </div>
+
+      {% elif tab == 'vendor' %}
+      <div class="mt-panel">
+        <div class="mt-panel-head"><span class="ttl">Vendor Summary</span></div>
+        {% if vendor_summary_rows %}
+        <table>
+          <tr><th>Vendor</th><th class="num">Expenses</th><th>Last Expense</th><th class="num">Total Amount</th></tr>
+          {% for v in vendor_summary_rows %}
+          <tr><td>{{ v.vendor }}</td><td class="num">{{ v.count }}</td><td>{{ v.last_date or '—' }}</td><td class="num">₹{{ '{:,.0f}'.format(v.amount) }}</td></tr>
+          {% endfor %}
+        </table>
+        {% else %}<div class="oh-empty">No expenses recorded yet.</div>{% endif %}
+      </div>
+
+      {% elif tab == 'category' %}
+      <div class="mt-panel">
+        <div class="mt-panel-head"><span class="ttl">Category Summary</span></div>
+        {% if category_summary_rows %}
+        <table>
+          <tr><th>Category</th><th class="num">Expenses</th><th class="num">Total Amount</th><th class="num">% of Total</th></tr>
+          {% for c in category_summary_rows %}
+          <tr>
+            <td><div style="display:flex;align-items:center;gap:8px;"><div class="oh-icon-box" style="background:{{ c.icon_bg }};color:{{ c.icon_color }};">{{ cat_icon(c.icon) }}</div>{{ c.category }}</div></td>
+            <td class="num">{{ c.count }}</td><td class="num">₹{{ '{:,.0f}'.format(c.amount) }}</td><td class="num">{{ c.pct }}%</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% else %}<div class="oh-empty">No expenses recorded yet.</div>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="oh-side">
+      <div class="mt-panel">
+        <div class="mt-panel-head"><span class="ttl">Upcoming Payments</span><a href="?tab=all&status=Pending" style="font-size:0.72rem;color:var(--accent);font-weight:700;text-decoration:none;">View All</a></div>
+        {% if upcoming %}
+        {% for u in upcoming %}
+        <div class="oh-bill-row">
+          <div class="ic" style="background:{{ u.icon_bg }};color:{{ u.icon_color }};">{{ cat_icon(u.icon) }}</div>
+          <div class="info">
+            <div class="name">{{ u.category or 'Uncategorized' }}{% if u.vendor %} &middot; {{ u.vendor }}{% endif %}</div>
+            <div class="meta">Due {{ u.due_date }}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;font-size:0.82rem;">₹{{ '{:,.0f}'.format(u.amount or 0) }}</div>
+            <span class="oh-due-badge" style="background:{% if u.days_left < 0 %}#fdecea;color:var(--red){% elif u.days_left == 0 %}#fdecea;color:var(--red){% elif u.days_left <= 3 %}#fff6e8;color:var(--accent){% else %}#e8f5ee;color:var(--green){% endif %};">{% if u.days_left < 0 %}{{ -u.days_left }}d Overdue{% elif u.days_left == 0 %}Due Today{% else %}Due in {{ u.days_left }} Day{{ 's' if u.days_left != 1 }}{% endif %}</span>
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oh-empty">No pending bills — you're all caught up.</div>
+        {% endif %}
+      </div>
+
+      <div class="mt-panel">
+        <div class="mt-panel-head"><span class="ttl">Top Expense Categories</span><span style="font-size:0.7rem;color:var(--steel);">This Month</span></div>
+        {% if top_categories_total > 0 %}
+        <div class="mt-donut-wrap" style="justify-content:center;">
+          <div class="mt-donut" style="background:{{ top_categories_gradient }};">
+            <div class="mt-donut-inner"><div class="num">₹{{ '{:,.0f}'.format(top_categories_total) }}</div><div class="lbl">Total</div></div>
+          </div>
+        </div>
+        <div class="oh-legend">
+          {% for l in top_categories_legend %}
+          <div class="oh-legend-row"><span class="oh-legend-dot" style="background:{{ l.color }};"></span><span class="lbl">{{ l.label }}</span><span class="pct">{{ l.pct }}%</span></div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="oh-empty">No expenses recorded this month.</div>
+        {% endif %}
+      </div>
+
+      <div class="mt-panel">
+        <div class="mt-panel-head"><span class="ttl">Recent Bills / Attachments</span><a href="?tab=all" style="font-size:0.72rem;color:var(--accent);font-weight:700;text-decoration:none;">View All</a></div>
+        {% if recent_bills %}
+        {% for b in recent_bills %}
+        <div class="oh-bill-row">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l3 3v17H6z"/><path d="M15 2v3h3"/></svg></div>
+          <div class="info">
+            <div class="name">{{ b.category or 'Expense' }} — {{ b.receipt_number }}</div>
+            <div class="meta">{{ b.date }}</div>
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oh-empty">No receipts/invoice numbers on file yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-row-3" style="margin-top:18px;">
+    <div class="mt-panel">
+      <div class="mt-panel-head"><span class="ttl">Expense Trend</span><span style="font-size:0.7rem;color:var(--steel);">{{ current_year }}</span></div>
+      {% set max_amt = (trend_points|map(attribute='amount')|list)|max %}
+      {% set max_amt = max_amt if max_amt and max_amt > 0 else 1 %}
+      <svg viewBox="0 0 320 150" width="100%" style="overflow:visible;">
+        <line x1="10" y1="120" x2="310" y2="120" stroke="var(--line)"/>
+        {% for p in trend_points %}
+        {% set px = 20 + loop.index0 * 25 %}
+        {% set py = (120 - (p.amount / max_amt * 95))|round(1) %}
+        {% if not loop.first %}<polyline points="{{ prev_px }},{{ prev_py }} {{ px }},{{ py }}" fill="none" stroke="var(--accent)" stroke-width="2"/>{% endif %}
+        <circle cx="{{ px }}" cy="{{ py }}" r="2.5" fill="var(--accent)"/>
+        {% if loop.index0 % 2 == 0 %}<text x="{{ px }}" y="134" font-size="8" text-anchor="middle" fill="var(--steel)">{{ p.label }}</text>{% endif %}
+        {% set prev_px = px %}{% set prev_py = py %}
+        {% endfor %}
+      </svg>
+    </div>
+
+    <div class="mt-panel">
+      <div class="mt-panel-head"><span class="ttl">Payment Mode Breakdown</span></div>
+      {% if mode_legend and (mode_legend|map(attribute='amount')|sum) > 0 %}
+      <div class="mt-donut-wrap" style="justify-content:center;">
+        <div class="mt-donut" style="background:{{ mode_gradient }};">
+          <div class="mt-donut-inner"><div class="num">₹{{ '{:,.0f}'.format(total_amount) }}</div><div class="lbl">Total</div></div>
+        </div>
+      </div>
+      <div class="oh-legend">
+        {% for l in mode_legend %}
+        <div class="oh-legend-row"><span class="oh-legend-dot" style="background:{{ l.color }};border-radius:50%;"></span><span class="lbl">{{ l.label }}</span><span class="amt">₹{{ '{:,.0f}'.format(l.amount) }}</span><span class="pct">({{ l.pct }}%)</span></div>
+        {% endfor %}
+      </div>
+      {% else %}<div class="oh-empty">No expenses recorded yet.</div>{% endif %}
+    </div>
+
+    <div class="mt-panel">
+      <div class="mt-panel-head"><span class="ttl">Expense by Status</span></div>
+      {% if total_amount > 0 %}
+      <div class="mt-donut-wrap" style="justify-content:center;">
+        <div class="mt-donut" style="background:{{ status_gradient }};">
+          <div class="mt-donut-inner"><div class="num">₹{{ '{:,.0f}'.format(total_amount) }}</div><div class="lbl">Total</div></div>
+        </div>
+      </div>
+      <div class="oh-legend">
+        {% for l in status_legend %}
+        <div class="oh-legend-row"><span class="oh-legend-dot" style="background:{{ l.color }};border-radius:50%;"></span><span class="lbl">{{ l.label }}</span><span class="amt">₹{{ '{:,.0f}'.format(l.amount) }}</span><span class="pct">({{ l.pct }}%)</span></div>
+        {% endfor %}
+      </div>
+      {% else %}<div class="oh-empty">No expenses recorded yet.</div>{% endif %}
+    </div>
+  </div>
 </div>
 
+<!-- View (read-only) modal per row -->
 {% for r in rows %}
-<div class="modal-overlay" id="ohModal{{ loop.index }}">
-  <div class="modal-box">
-    <button type="button" class="modal-close-x" onclick="document.getElementById('ohModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
-    <h3>{{ r['category'] }} — {{ r['date'] }}</h3>
-    <div class="detail-row"><div class="lbl">Amount</div>₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</div>
-    <div class="detail-row"><div class="lbl">Payment Mode</div>{{ r['payment_mode'] or '—' }}</div>
-    <div class="detail-row"><div class="lbl">Receipt / Invoice No.</div>{{ r['receipt_number'] or '—' }}</div>
-    <div class="detail-row" style="border-bottom:none;"><div class="lbl">Notes</div>{{ r['notes'] or 'No notes for this entry' }}</div>
+<div class="modal-overlay" id="ohView{{ r.id }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('ohView{{ r.id }}').classList.remove('open')">&#10005;</button>
+    <h3>{{ r.category or 'Expense' }} — {{ r.date }}</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 20px;">
+      <div class="detail-row"><div class="lbl">Amount</div>₹{{ '{:,.0f}'.format(r.amount or 0) }}</div>
+      <div class="detail-row"><div class="lbl">Vendor</div>{{ r.vendor or '—' }}</div>
+      <div class="detail-row"><div class="lbl">Payment Mode</div>{{ r.payment_mode or '—' }}</div>
+      <div class="detail-row"><div class="lbl">Status</div>{{ r.status }}{% if r.status=='Pending' %} — Due {{ r.due_date or r.date }}{% endif %}</div>
+      <div class="detail-row"><div class="lbl">Recurring</div>{% if r.is_recurring %}Yes — {{ r.recurring_frequency or 'Monthly' }}{% else %}No{% endif %}</div>
+      <div class="detail-row"><div class="lbl">Receipt / Invoice No.</div>{{ r.receipt_number or '—' }}</div>
+    </div>
+    <div class="detail-row"><div class="lbl">Description</div>{{ r.description or '—' }}</div>
+    <div class="detail-row" style="border-bottom:none;"><div class="lbl">Notes</div>{{ r.notes or 'No notes for this entry' }}</div>
     <div class="modal-actions">
-      <button type="button" onclick="document.getElementById('ohModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Close</button>
+      <button type="button" onclick="document.getElementById('ohView{{ r.id }}').classList.remove('open')" class="btn-cancel">Close</button>
+      <button type="button" class="add-btn" onclick="document.getElementById('ohView{{ r.id }}').classList.remove('open');document.getElementById('ohEdit{{ r.id }}').classList.add('open');">&#9998; Edit</button>
     </div>
   </div>
 </div>
 {% endfor %}
 
+<!-- Edit modal per row -->
+{% for r in rows %}
+<div class="modal-overlay" id="ohEdit{{ r.id }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('ohEdit{{ r.id }}').classList.remove('open')">&#10005;</button>
+    <h3>Edit Expense</h3>
+    <form method="POST" action="/overheads/edit/{{ r.id }}">
+      <div class="mt-form-grid cols3">
+        <div class="mt-fld"><label>Date</label><input type="date" name="date" value="{{ r.date }}" required></div>
+        <div class="mt-fld"><label>Category</label><input type="text" name="category" value="{{ r.category or '' }}" placeholder="e.g. Office Rent" required list="ohCategoryList"></div>
+        <div class="mt-fld"><label>Vendor</label><input type="text" name="vendor" value="{{ r.vendor or '' }}" placeholder="e.g. ABC Properties" list="ohVendorList"></div>
+        <div class="mt-fld"><label>Amount</label><input type="number" step="0.01" name="amount" value="{{ r.amount }}" required></div>
+        <div class="mt-fld"><label>Payment Mode</label>
+          <select name="payment_mode">
+            <option value="">Select Mode</option>
+            {% for m in ['Cash','Bank Transfer','UPI','Online','Credit Card','Cheque'] %}<option value="{{ m }}" {% if r.payment_mode==m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld"><label>Receipt / Invoice No.</label><input type="text" name="receipt_number" value="{{ r.receipt_number or '' }}" placeholder="Optional"></div>
+        <div class="mt-fld" style="grid-column:1/-1;"><label>Description</label><textarea name="description" rows="2" placeholder="What this expense was for">{{ r.description or '' }}</textarea></div>
+        <div class="mt-fld"><label>Status</label>
+          <div class="oh-status-radio">
+            <label><input type="radio" name="status" value="Paid" {% if r.status != 'Pending' %}checked{% endif %} onchange="document.getElementById('ohDueWrap{{ r.id }}').style.display='none';">Paid</label>
+            <label><input type="radio" name="status" value="Pending" {% if r.status == 'Pending' %}checked{% endif %} onchange="document.getElementById('ohDueWrap{{ r.id }}').style.display='block';">Pending</label>
+          </div>
+        </div>
+        <div class="mt-fld" id="ohDueWrap{{ r.id }}" style="display:{% if r.status=='Pending' %}block{% else %}none{% endif %};"><label>Due Date</label><input type="date" name="due_date" value="{{ r.due_date or '' }}"></div>
+        <div class="mt-fld">
+          <div class="oh-recurring-toggle" style="margin-top:20px;">
+            <input type="checkbox" name="is_recurring" id="ohRec{{ r.id }}" {% if r.is_recurring %}checked{% endif %} onchange="document.getElementById('ohFreqWrap{{ r.id }}').style.display=this.checked?'block':'none';">
+            <label for="ohRec{{ r.id }}" style="margin:0;text-transform:none;font-size:0.85rem;font-weight:600;color:var(--ink);">Recurring expense</label>
+          </div>
+        </div>
+        <div class="mt-fld" id="ohFreqWrap{{ r.id }}" style="display:{% if r.is_recurring %}block{% else %}none{% endif %};"><label>Frequency</label>
+          <select name="recurring_frequency">
+            {% for f in ['Monthly','Weekly','Quarterly','Yearly'] %}<option value="{{ f }}" {% if r.recurring_frequency==f %}selected{% endif %}>{{ f }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld" style="grid-column:1/-1;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Add any notes here...">{{ r.notes or '' }}</textarea></div>
+      </div>
+      <button type="submit" class="modal-save-btn">Save Changes</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<datalist id="ohVendorList">{% for v in vendors %}<option value="{{ v['vendor'] }}">{% endfor %}</datalist>
+<datalist id="ohCategoryList">{% for c in categories %}<option value="{{ c['category'] }}">{% endfor %}</datalist>
+
 <div class="modal-overlay" id="addModal">
-  <div class="modal-box">
+  <div class="modal-box mt-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('addModal').classList.remove('open')">&#10005;</button>
     <h3>Add Expense</h3>
     <form method="POST" action="/overheads/add">
-      <label>Date</label>
-      <input type="date" name="date" required>
-      <label>Category</label>
-      <input type="text" name="category" placeholder="e.g. Rent, Electricity, Salaries" required>
-      <label>Amount</label>
-      <input type="number" step="0.01" name="amount" required>
-      <label>Description</label>
-      <textarea name="description_" rows="2" placeholder="Optional"></textarea>
-      <div class="section-label">Additional Details</div>
-      <label>Payment Mode</label>
-      <select name="payment_mode">
-        <option value="">Select Mode</option>
-        <option value="Cash">Cash</option>
-        <option value="Bank Transfer">Bank Transfer</option>
-        <option value="UPI">UPI</option>
-        <option value="Cheque">Cheque</option>
-      </select>
-      <label>Receipt / Invoice No.</label>
-      <input type="text" name="receipt_number" placeholder="Optional">
-      <label>Notes</label>
-      <textarea name="notes" rows="3" placeholder="Add any notes here..."></textarea>
+      <div class="mt-form-grid cols3">
+        <div class="mt-fld"><label>Date</label><input type="date" name="date" value="{{ today_str }}" required></div>
+        <div class="mt-fld"><label>Category</label><input type="text" name="category" placeholder="e.g. Office Rent" required list="ohCategoryList"></div>
+        <div class="mt-fld"><label>Vendor</label><input type="text" name="vendor" placeholder="e.g. ABC Properties" list="ohVendorList"></div>
+        <div class="mt-fld"><label>Amount</label><input type="number" step="0.01" name="amount" required></div>
+        <div class="mt-fld"><label>Payment Mode</label>
+          <select name="payment_mode">
+            <option value="">Select Mode</option>
+            {% for m in ['Cash','Bank Transfer','UPI','Online','Credit Card','Cheque'] %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld"><label>Receipt / Invoice No.</label><input type="text" name="receipt_number" placeholder="Optional"></div>
+        <div class="mt-fld" style="grid-column:1/-1;"><label>Description</label><textarea name="description" rows="2" placeholder="What this expense was for"></textarea></div>
+        <div class="mt-fld"><label>Status</label>
+          <div class="oh-status-radio">
+            <label><input type="radio" name="status" value="Paid" checked onchange="document.getElementById('ohDueWrapAdd').style.display='none';">Paid</label>
+            <label><input type="radio" name="status" value="Pending" onchange="document.getElementById('ohDueWrapAdd').style.display='block';">Pending</label>
+          </div>
+        </div>
+        <div class="mt-fld" id="ohDueWrapAdd" style="display:none;"><label>Due Date</label><input type="date" name="due_date"></div>
+        <div class="mt-fld">
+          <div class="oh-recurring-toggle" style="margin-top:20px;">
+            <input type="checkbox" name="is_recurring" id="ohRecAdd" onchange="document.getElementById('ohFreqWrapAdd').style.display=this.checked?'block':'none';">
+            <label for="ohRecAdd" style="margin:0;text-transform:none;font-size:0.85rem;font-weight:600;color:var(--ink);">Recurring expense</label>
+          </div>
+        </div>
+        <div class="mt-fld" id="ohFreqWrapAdd" style="display:none;"><label>Frequency</label>
+          <select name="recurring_frequency">
+            {% for f in ['Monthly','Weekly','Quarterly','Yearly'] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="mt-fld" style="grid-column:1/-1;"><label>Notes</label><textarea name="notes" rows="2" placeholder="Add any notes here..."></textarea></div>
+      </div>
       <button type="submit" class="modal-save-btn">Save Expense</button>
     </form>
   </div>

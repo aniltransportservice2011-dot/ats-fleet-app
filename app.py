@@ -3,8 +3,10 @@ import sqlite3
 import datetime
 import calendar
 import os
+import requests
 from werkzeug.utils import secure_filename
 import compliance_service as cs
+from providers.echallan_client import fetch_rc
 
 app = Flask(__name__)
 app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
@@ -598,6 +600,24 @@ def vehicles_compliance_sync_all():
     return redirect(url_for('vehicles_list', tab='all', synced=summary['synced'],
                              changed=summary['changed'], failed=summary['failed']))
 
+@app.route('/vehicles/<int:v_id>/rc-lookup')
+def vehicle_rc_lookup(v_id):
+    """On-demand, click-to-fetch RC detail view — hits the live eChallan API right now and
+    renders every field it returns, read-only. Does not touch the vehicles table itself; the
+    same key/data now also feeds the Fitness/PUC/Permit compliance sync (see
+    compliance_service.sync_vehicle + providers/echallan_client.py) but this page never
+    writes anything — it's a pure read."""
+    conn = get_db()
+    v = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE id=?", (v_id,)).fetchone()
+    if not v:
+        conn.close()
+        return redirect(url_for('vehicles_list'))
+    key_row = conn.execute("SELECT value FROM settings WHERE key='rc_lookup_api_key'").fetchone()
+    api_key = key_row['value'] if key_row else ''
+    conn.close()
+    result = fetch_rc(v['vehicle_no'], api_key)
+    return render_template('vehicle_rc_view.html', v=v, result=result, active='vehicles')
+
 @app.route('/vehicles')
 def vehicles_list():
     conn = get_db()
@@ -1018,40 +1038,303 @@ def _employees_attendance_tab(conn):
         roles=roles, f_role=role_f, f_status=status_f, f_search=search_f,
         all_employees_list=all_employees_list, today=today, active='salaries')
 
+# Icon/color per category — matched by keyword against whatever free-text category the user
+# typed (this app never restricts categories to a fixed list), falling back to a plain
+# "receipt" icon for anything unrecognized. icon key matches an <svg> defined once in
+# overheads_list.html rather than duplicating markup per row.
+_EXPENSE_CATEGORY_ICONS = [
+    (('rent',), 'building', '#eaf1fb', '#2a78d6'),
+    (('electric', 'power'), 'bolt', '#fff6e8', '#eda100'),
+    (('internet', 'wifi', 'broadband'), 'wifi', '#eaf1fb', '#2a78d6'),
+    (('supplies', 'stationery'), 'box', '#e8f5ee', '#1a9c5b'),
+    (('software', 'subscription', 'saas', 'zoho', 'license'), 'monitor', '#f1ecfb', '#7a5ad6'),
+    (('fuel', 'diesel', 'petrol', 'generator'), 'fuel', '#fdecea', '#e34948'),
+    (('tea', 'snack', 'pantry', 'food'), 'cup', '#fff6e8', '#eda100'),
+    (('bank', 'emi', 'loan', 'interest', 'charges'), 'bank', '#eceff3', '#5a6478'),
+    (('toll',), 'road', '#eaf1fb', '#2a78d6'),
+    (('travel', 'conveyance', 'taxi'), 'car', '#f1ecfb', '#7a5ad6'),
+    (('phone', 'mobile', 'telephone'), 'phone', '#eaf1fb', '#2a78d6'),
+]
+_EXPENSE_ICON_DEFAULT = ('receipt', '#eceff3', '#5a6478')
+EXPENSE_PALETTE = ['#2a78d6', '#1a9c5b', '#7a5ad6', '#eda100', '#e34948', '#17a2b8', '#c05621', '#5a6478']
+
+
+def _expense_category_visual(cat):
+    c = (cat or '').lower()
+    for keys, icon, bg, color in _EXPENSE_CATEGORY_ICONS:
+        if any(k in c for k in keys):
+            return icon, bg, color
+    return _EXPENSE_ICON_DEFAULT
+
+
+def _conic_gradient(segments):
+    """segments: [(label, amount, color), ...]. Returns (css_gradient_string, legend) where
+    legend adds each segment's % share — same conic-gradient-donut technique already used on
+    Dashboard/Route Analytics, just generalized here from 2 fixed segments to N dynamic ones."""
+    total = sum(s[1] for s in segments) or 1
+    stops = []
+    legend = []
+    cum = 0.0
+    for label, amt, color in segments:
+        start = cum / total * 100
+        cum += amt
+        end = cum / total * 100
+        stops.append(f"{color} {start:.2f}% {end:.2f}%")
+        legend.append({'label': label, 'amount': amt, 'pct': round(amt / total * 100, 1), 'color': color})
+    gradient = 'conic-gradient(' + ', '.join(stops) + ')' if any(s[1] > 0 for s in segments) else 'conic-gradient(var(--paper) 0% 100%)'
+    return gradient, legend
+
+
 @app.route('/overheads')
 def overheads_list():
     conn = get_db()
+    tab = request.args.get('tab', 'all')
     cat_f = request.args.get('category', '')
+    vendor_f = request.args.get('vendor', '')
+    mode_f = request.args.get('payment_mode', '')
+    status_f = request.args.get('status', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
-    query = "SELECT id, date, category, amount, notes, payment_mode, receipt_number FROM overheads WHERE 1=1"
+
+    query = """SELECT id, date, category, amount, notes, payment_mode, receipt_number,
+               vendor, description, COALESCE(status,'Paid') as status, COALESCE(is_recurring,0) as is_recurring,
+               recurring_frequency, due_date FROM overheads WHERE 1=1"""
     params = []
     if cat_f:
         query += " AND category = ?"
         params.append(cat_f)
+    if vendor_f:
+        query += " AND vendor = ?"
+        params.append(vendor_f)
+    if mode_f:
+        query += " AND payment_mode = ?"
+        params.append(mode_f)
+    if status_f:
+        query += " AND COALESCE(status,'Paid') = ?"
+        params.append(status_f)
     if date_from:
         query += " AND date >= ?"
         params.append(date_from)
     if date_to:
         query += " AND date <= ?"
         params.append(date_to)
-    query += " ORDER BY date DESC"
-    rows = conn.execute(query, params).fetchall()
-    categories = conn.execute("SELECT DISTINCT category FROM overheads ORDER BY category").fetchall()
+    if tab == 'recurring':
+        query += " AND COALESCE(is_recurring,0) = 1"
+    query += " ORDER BY date DESC, id DESC"
+    raw_rows = conn.execute(query, params).fetchall()
 
-    total_amount = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads").fetchone()[0]
-    total_count = conn.execute("SELECT COUNT(*) FROM overheads").fetchone()[0]
-    import datetime
-    this_month = datetime.datetime.now().strftime('%Y-%m')
-    this_month_amount = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads WHERE substr(date,1,7)=?", (this_month,)).fetchone()[0]
-    month_count = conn.execute("SELECT COUNT(DISTINCT substr(date,1,7)) FROM overheads").fetchone()[0]
-    avg_per_month = total_amount / month_count if month_count > 0 else 0
+    today = datetime.date.today()
+    rows = []
+    for r in raw_rows:
+        d = dict(r)
+        icon, bg, color = _expense_category_visual(d['category'])
+        d['icon'], d['icon_bg'], d['icon_color'] = icon, bg, color
+        days_left = None
+        if d['status'] == 'Pending' and (d['due_date'] or d['date']):
+            try:
+                dd = datetime.datetime.strptime(d['due_date'] or d['date'], '%Y-%m-%d').date()
+                days_left = (dd - today).days
+            except ValueError:
+                days_left = None
+        d['days_left'] = days_left
+        rows.append(d)
+
+    categories = conn.execute("SELECT DISTINCT category FROM overheads WHERE category IS NOT NULL AND category != '' ORDER BY category").fetchall()
+    vendors = conn.execute("SELECT DISTINCT vendor FROM overheads WHERE vendor IS NOT NULL AND vendor != '' ORDER BY vendor").fetchall()
+
+    all_rows = conn.execute("""SELECT date, amount, category, vendor, payment_mode, COALESCE(status,'Paid') as status,
+                               COALESCE(is_recurring,0) as is_recurring, recurring_frequency, receipt_number, due_date
+                               FROM overheads""").fetchall()
+
+    total_amount = sum(r['amount'] or 0 for r in all_rows)
+    total_count = len(all_rows)
+
+    this_month_key = today.strftime('%Y-%m')
+    this_month_amount = sum(r['amount'] or 0 for r in all_rows if (r['date'] or '')[:7] == this_month_key)
+
+    pending_rows_all = [r for r in all_rows if r['status'] == 'Pending']
+    pending_amount = sum(r['amount'] or 0 for r in pending_rows_all)
+    pending_count = len(pending_rows_all)
+
+    recurring_rows = [r for r in all_rows if r['is_recurring']]
+    recurring_monthly_amount = sum(r['amount'] or 0 for r in recurring_rows if (r['recurring_frequency'] or 'Monthly') == 'Monthly')
+    recurring_count = len(recurring_rows)
+
+    # Last 6 calendar months (this month + previous 5), for the running average.
+    month_keys = []
+    y, m = today.year, today.month
+    for _ in range(6):
+        month_keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    last6_amount = sum(r['amount'] or 0 for r in all_rows if (r['date'] or '')[:7] in month_keys)
+    avg_monthly_expense = last6_amount / 6
+
+    active_categories = len(categories)
+
+    # Upcoming Payments — pending bills, soonest due date first.
+    upcoming = []
+    for r in pending_rows_all:
+        due = r['due_date'] or r['date']
+        try:
+            dd = datetime.datetime.strptime(due, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            continue
+        icon, bg, color = _expense_category_visual(r['category'])
+        upcoming.append({'category': r['category'], 'vendor': r['vendor'], 'amount': r['amount'],
+                          'due_date': due, 'days_left': (dd - today).days,
+                          'icon': icon, 'icon_bg': bg, 'icon_color': color})
+    upcoming.sort(key=lambda u: u['days_left'])
+
+    # Top Expense Categories (this month) — donut + legend, top 4 + "Others".
+    month_rows = [r for r in all_rows if (r['date'] or '')[:7] == this_month_key]
+    cat_totals = {}
+    for r in month_rows:
+        key = r['category'] or 'Uncategorized'
+        cat_totals[key] = cat_totals.get(key, 0) + (r['amount'] or 0)
+    cat_sorted = sorted(cat_totals.items(), key=lambda kv: -kv[1])
+    cat_segments = [(label, amt, EXPENSE_PALETTE[i % len(EXPENSE_PALETTE)]) for i, (label, amt) in enumerate(cat_sorted[:4])]
+    if len(cat_sorted) > 4:
+        others_amt = sum(amt for _, amt in cat_sorted[4:])
+        cat_segments.append(('Others', others_amt, '#c9cfdc'))
+    top_categories_gradient, top_categories_legend = _conic_gradient(cat_segments)
+    top_categories_total = sum(amt for _, amt in cat_sorted)
+
+    # Recent Bills / Attachments — most recent entries that have a receipt/invoice number on file.
+    recent_bills = [r for r in raw_rows if r['receipt_number']][:3]
+
+    # Expense Trend — monthly totals for the current calendar year.
+    year = today.year
+    trend_totals = {f"{year:04d}-{mo:02d}": 0.0 for mo in range(1, 13)}
+    for r in all_rows:
+        key = (r['date'] or '')[:7]
+        if key in trend_totals:
+            trend_totals[key] += (r['amount'] or 0)
+    month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    trend_points = [{'label': month_labels[i], 'amount': trend_totals[f"{year:04d}-{i+1:02d}"]} for i in range(12)]
+
+    # Payment Mode Breakdown — donut across all-time entries.
+    mode_totals = {}
+    for r in all_rows:
+        key = r['payment_mode'] or 'Unspecified'
+        mode_totals[key] = mode_totals.get(key, 0) + (r['amount'] or 0)
+    mode_sorted = sorted(mode_totals.items(), key=lambda kv: -kv[1])
+    mode_segments = [(label, amt, EXPENSE_PALETTE[i % len(EXPENSE_PALETTE)]) for i, (label, amt) in enumerate(mode_sorted)]
+    mode_gradient, mode_legend = _conic_gradient(mode_segments)
+
+    # Expense by Status — donut, Paid vs Pending.
+    paid_amount = total_amount - pending_amount
+    status_segments = [('Paid', paid_amount, '#1a9c5b'), ('Pending', pending_amount, '#eda100')]
+    status_gradient, status_legend = _conic_gradient(status_segments)
+
+    # Vendor Summary / Category Summary tabs — simple aggregates, same all-time rows.
+    vendor_summary = {}
+    for r in all_rows:
+        key = r['vendor'] or 'Unspecified'
+        if key not in vendor_summary:
+            vendor_summary[key] = {'vendor': key, 'amount': 0, 'count': 0, 'last_date': None}
+        vendor_summary[key]['amount'] += (r['amount'] or 0)
+        vendor_summary[key]['count'] += 1
+        if not vendor_summary[key]['last_date'] or (r['date'] or '') > vendor_summary[key]['last_date']:
+            vendor_summary[key]['last_date'] = r['date']
+    vendor_summary_rows = sorted(vendor_summary.values(), key=lambda v: -v['amount'])
+
+    category_summary = {}
+    for r in all_rows:
+        key = r['category'] or 'Uncategorized'
+        if key not in category_summary:
+            icon, bg, color = _expense_category_visual(key)
+            category_summary[key] = {'category': key, 'amount': 0, 'count': 0, 'icon': icon, 'icon_bg': bg, 'icon_color': color}
+        category_summary[key]['amount'] += (r['amount'] or 0)
+        category_summary[key]['count'] += 1
+    category_summary_rows = sorted(category_summary.values(), key=lambda c: -c['amount'])
+    for c in category_summary_rows:
+        c['pct'] = round(c['amount'] / total_amount * 100, 1) if total_amount else 0
+
+    total_count_filtered = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count_filtered,
+                                             per_page_options=(8, 25, 50, 100), default_per_page=8)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
 
     conn.close()
-    return render_template('overheads_list.html', rows=rows, categories=categories,
-                            f_category=cat_f, f_date_from=date_from, f_date_to=date_to,
-                            total_amount=total_amount, total_count=total_count,
-                            this_month_amount=this_month_amount, avg_per_month=avg_per_month, active='overheads')
+    return render_template(
+        'overheads_list.html', rows=page_rows, categories=categories, vendors=vendors,
+        tab=tab, f_category=cat_f, f_vendor=vendor_f, f_payment_mode=mode_f, f_status=status_f,
+        f_date_from=date_from, f_date_to=date_to,
+        total_amount=total_amount, total_count=total_count, this_month_amount=this_month_amount,
+        pending_amount=pending_amount, pending_count=pending_count,
+        recurring_monthly_amount=recurring_monthly_amount, recurring_count=recurring_count,
+        avg_monthly_expense=avg_monthly_expense, active_categories=active_categories,
+        upcoming=upcoming[:4], top_categories_gradient=top_categories_gradient,
+        top_categories_legend=top_categories_legend, top_categories_total=top_categories_total,
+        recent_bills=recent_bills, trend_points=trend_points,
+        mode_gradient=mode_gradient, mode_legend=mode_legend,
+        status_gradient=status_gradient, status_legend=status_legend,
+        vendor_summary_rows=vendor_summary_rows, category_summary_rows=category_summary_rows,
+        page=page, per_page=per_page, total_pages=total_pages, page_tokens=page_tokens, base_qs=base_qs,
+        total_count_filtered=total_count_filtered,
+        current_year=today.year, today_str=today.isoformat(), month_labels_full=today.strftime('%b %Y'),
+        active='overheads')
+
+@app.route('/overheads/export')
+def export_overheads():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from flask import send_file
+    import io
+    conn = get_db()
+    cat_f = request.args.get('category', '')
+    vendor_f = request.args.get('vendor', '')
+    mode_f = request.args.get('payment_mode', '')
+    status_f = request.args.get('status', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    tab = request.args.get('tab', 'all')
+    query = """SELECT date, category, vendor, description, payment_mode, COALESCE(status,'Paid') as status,
+               amount, receipt_number, COALESCE(is_recurring,0) as is_recurring, recurring_frequency
+               FROM overheads WHERE 1=1"""
+    params = []
+    if cat_f: query += " AND category = ?"; params.append(cat_f)
+    if vendor_f: query += " AND vendor = ?"; params.append(vendor_f)
+    if mode_f: query += " AND payment_mode = ?"; params.append(mode_f)
+    if status_f: query += " AND COALESCE(status,'Paid') = ?"; params.append(status_f)
+    if date_from: query += " AND date >= ?"; params.append(date_from)
+    if date_to: query += " AND date <= ?"; params.append(date_to)
+    if tab == 'recurring': query += " AND COALESCE(is_recurring,0) = 1"
+    query += " ORDER BY date DESC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Expenses"
+    headers = ["Date", "Category", "Vendor", "Description", "Payment Mode", "Status", "Amount",
+               "Receipt / Invoice No.", "Recurring", "Frequency"]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1B2A4A")
+    for r_idx, r in enumerate(rows, 2):
+        ws.cell(row=r_idx, column=1, value=r['date'])
+        ws.cell(row=r_idx, column=2, value=r['category'])
+        ws.cell(row=r_idx, column=3, value=r['vendor'])
+        ws.cell(row=r_idx, column=4, value=r['description'])
+        ws.cell(row=r_idx, column=5, value=r['payment_mode'])
+        ws.cell(row=r_idx, column=6, value=r['status'])
+        ws.cell(row=r_idx, column=7, value=r['amount'])
+        ws.cell(row=r_idx, column=8, value=r['receipt_number'])
+        ws.cell(row=r_idx, column=9, value='Yes' if r['is_recurring'] else 'No')
+        ws.cell(row=r_idx, column=10, value=r['recurring_frequency'])
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name='expenses_export.xlsx',
+                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 @app.route('/trips')
 def trips_list():
@@ -3999,15 +4282,36 @@ def add_overhead():
     conn = get_db()
     if request.method == 'POST':
         f = request.form
-        conn.execute("""INSERT INTO overheads (date, category, amount, notes, payment_mode, receipt_number)
-                        VALUES (?,?,?,?,?,?)""",
+        is_recurring = 1 if f.get('is_recurring') == 'on' else 0
+        status = f.get('status') or 'Paid'
+        conn.execute("""INSERT INTO overheads (date, category, amount, notes, payment_mode, receipt_number,
+                        vendor, description, status, is_recurring, recurring_frequency, due_date)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
-                      f.get('payment_mode'), f.get('receipt_number')))
+                      f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
+                      status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
+                      f.get('due_date') if status == 'Pending' else None))
         conn.commit()
         conn.close()
         return redirect(url_for('overheads_list'))
     conn.close()
     return render_template('add_overhead.html', active='overheads')
+
+@app.route('/overheads/edit/<int:o_id>', methods=['POST'])
+def edit_overhead(o_id):
+    conn = get_db()
+    f = request.form
+    is_recurring = 1 if f.get('is_recurring') == 'on' else 0
+    status = f.get('status') or 'Paid'
+    conn.execute("""UPDATE overheads SET date=?, category=?, amount=?, notes=?, payment_mode=?, receipt_number=?,
+                    vendor=?, description=?, status=?, is_recurring=?, recurring_frequency=?, due_date=? WHERE id=?""",
+                 (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
+                  f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
+                  status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
+                  f.get('due_date') if status == 'Pending' else None, o_id))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('overheads_list'))
 
 @app.route('/trips/delete/<int:trip_id>', methods=['POST'])
 def delete_trip(trip_id):
@@ -5439,7 +5743,7 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         from xml.sax.saxutils import escape
         return escape(str(text)) if text else ''
 
-    invoice_titles = {'party': 'INVOICE', 'vehicle_owner': 'INVOICE', 'tax': 'INVOICE', 'bill': 'INVOICE'}
+    invoice_titles = {'party': 'INVOICE', 'vehicle_owner': 'FREIGHT BILL', 'tax': 'INVOICE', 'bill': 'INVOICE'}
     is_single = len(line_items) == 1
 
     def section_box(title, rows_data, col_widths, header_bg=LIGHTBG):
@@ -5528,10 +5832,14 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     bill_name_lines = [f"<b>{esc(entity['name'])}</b>" if entity else '—']
     if entity and entity['address']:
         bill_name_lines.append(esc(entity['address']))
+    # A vehicle owner bill runs the opposite direction of every other invoice type — the owner is
+    # who WE owe money to, not who owes us — so "BILL TO" (implying they're being asked to pay)
+    # is backwards here. "PAY TO" makes the direction of money correct at a glance.
+    bill_box_label = 'PAYABLE TO' if invoice_type == 'vehicle_owner' else 'BILL TO'
     def make_bill_box(width):
         body = Table([[Paragraph('<br/>'.join(bill_name_lines), cell_val_style)]], colWidths=[width - 0.2*inch])
         body.setStyle(TableStyle([('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
-        return section_box('BILL TO', [[body]], [width])
+        return section_box(bill_box_label, [[body]], [width])
 
     if is_single:
         t = line_items[0]['trip']
@@ -6401,7 +6709,8 @@ ALL_SETTING_KEYS = [
     'invoice_prefix', 'next_invoice_number',
     'cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
-    'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'
+    'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number',
+    'rc_lookup_api_key'
 ]
 
 MODULE_LIST = ['Dashboard', 'Trips', 'Maintenance', 'Vehicles', 'Invoices', 'Payments',
@@ -6435,6 +6744,7 @@ def settings_page():
                     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit'],
             'rcm': ['rcm_clause'],
             'sms': ['twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'],
+            'rc_lookup': ['rc_lookup_api_key'],
         }
         if form_type in field_groups:
             for key in field_groups[form_type]:
