@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}{{ v['vehicle_no'] }}{% endblock %}
+{% block extra_head %}
+<style>
+.veh-detail-head { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; }
+.veh-detail-top { display:flex; gap:18px; align-items:flex-start; }
+.veh-photo { width:64px; height:64px; border-radius:12px; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:1.8rem; flex-shrink:0; }
+.veh-detail-title { font-size:1.3rem; font-weight:800; display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.veh-detail-row { display:flex; gap:28px; flex-wrap:wrap; margin-bottom:10px; }
+.veh-detail-row .lbl { font-size:0.7rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; }
+.veh-detail-row .v { font-size:0.88rem; font-weight:700; margin-top:2px; }
+.veh-sync-box { text-align:right; }
+.veh-sync-box .sub { font-size:0.72rem; color:var(--steel); margin-top:6px; }
+.veh-stat-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
+@media (max-width:1200px) { .veh-stat-row { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:700px) { .veh-stat-row { grid-template-columns:repeat(2,1fr); } }
+.veh-stat-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+.veh-stat-card a { text-decoration:none; color:inherit; display:block; }
+.veh-stat-card .hd { display:flex; align-items:center; gap:8px; font-size:0.78rem; font-weight:700; color:var(--steel); margin-bottom:8px; }
+.veh-stat-card .hd .ic { width:26px; height:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.veh-stat-card .exp { font-size:0.85rem; font-weight:700; margin-top:6px; }
+.veh-stat-card .days { font-size:0.72rem; color:var(--steel); }
+.veh-echallan-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+@media (max-width:700px) { .veh-echallan-stats { grid-template-columns:repeat(2,1fr); } }
+.veh-echallan-stats .veh-stat-card .hd { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px; }
+.veh-echallan-stats .veh-stat-card .big { font-size:1.4rem; font-weight:800; }
+.veh-echallan-stats .veh-stat-card .sub2 { font-size:0.74rem; color:var(--steel); margin-top:2px; }
+.veh-detail-layout { display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start; }
+@media (max-width:1100px) { .veh-detail-layout { grid-template-columns:1fr; } }
+.veh-ins-main { display:grid; grid-template-columns:1.6fr 1fr; gap:16px; margin-bottom:18px; }
+@media (max-width:900px) { .veh-ins-main { grid-template-columns:1fr; } }
+.veh-ins-card { border:1px solid var(--line); border-radius:10px; padding:16px; }
+.veh-ins-card .insurer { font-weight:800; font-size:1.02rem; margin-bottom:14px; }
+.veh-ins-status-card { border:1px solid var(--line); border-radius:10px; padding:16px; text-align:center; }
+.veh-ins-status-card .pct-bar { height:8px; background:var(--paper); border-radius:4px; overflow:hidden; margin:10px 0; }
+.veh-ins-status-card .pct-bar .fill { height:100%; border-radius:4px; }
+.veh-reminder-item { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:0.82rem; }
+.veh-reminder-item:last-child { border-bottom:none; }
+.veh-reminder-item .bar { width:3px; height:32px; border-radius:2px; flex-shrink:0; }
+.veh-reminder-item .txt { flex:1; }
+.veh-reminder-item .txt .d { font-size:0.72rem; color:var(--steel); }
+.veh-reminder-item .days { font-weight:700; font-size:0.8rem; white-space:nowrap; }
+.veh-qa-list a, .veh-qa-list button { display:flex; align-items:center; gap:8px; width:100%; padding:9px 4px; background:none; border:none; border-bottom:1px solid var(--line); text-align:left; font-size:0.84rem; font-weight:600; color:var(--ink); cursor:pointer; text-decoration:none; }
+.veh-qa-list a:last-child, .veh-qa-list button:last-child { border-bottom:none; }
+.veh-qa-list a:hover, .veh-qa-list button:hover { color:var(--accent); }
+.veh-history-item { display:flex; gap:14px; padding:10px 0; border-bottom:1px solid var(--line); font-size:0.84rem; }
+.veh-history-item:last-child { border-bottom:none; }
+.veh-history-item .date { color:var(--steel); font-size:0.76rem; white-space:nowrap; min-width:90px; }
+
+/* eChallan tab — expandable challan rows, same pattern as the old standalone Challan panel. */
+.chl-list-row { border:1px solid var(--line); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+.chl-list-head { display:flex; align-items:center; gap:12px; padding:10px 12px; cursor:pointer; font-size:0.82rem; }
+.chl-list-head:hover { background:var(--paper); }
+.chl-list-head .chev { color:var(--steel); font-size:0.7rem; width:12px; }
+.chl-list-head .no { font-weight:700; flex:1.4; display:flex; align-items:center; gap:6px; }
+.chl-list-head .no .warn { color:var(--red); }
+.chl-list-head .dt { flex:1.1; color:var(--steel); }
+.chl-list-head .amt { flex:0.7; font-weight:700; }
+.chl-list-body { display:none; padding:14px; border-top:1px solid var(--line); background:var(--paper); }
+.chl-list-row.open .chl-list-body { display:block; }
+.chl-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+.chl-detail-grid h4 { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--steel); margin:0 0 8px; }
+.chl-detail-grid .row { display:flex; justify-content:space-between; padding:4px 0; font-size:0.82rem; border-bottom:1px solid var(--line); }
+.chl-detail-grid .row .k { color:var(--steel); }
+.chl-detail-grid .row .v { font-weight:600; text-align:right; }
+</style>
+{% endblock %}
+{% block content %}
+{% set tab_titles = {'insurance':'Insurance','permit':'Permit','fitness':'Fitness','puc':'PUC','echallan':'eChallan','history':'History'} %}
+{% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
+<div id="main-content" class="wrap" style="max-width:none; width:100%;">
+  <div class="mt-crumb"><a href="/vehicles">Vehicles</a> &nbsp;&rsaquo;&nbsp; {{ v['vehicle_no'] }} &nbsp;&rsaquo;&nbsp; {{ tab_titles[tab] }}</div>
+  <a href="/vehicles" class="back" style="margin:10px 0 16px;display:inline-flex;">&#8592; Back to Vehicles</a>
+
+  <div class="veh-detail-head mt-panel">
+    <div class="veh-detail-top">
+      <div class="veh-photo">&#128667;</div>
+      <div>
+        <div class="veh-detail-title">{{ v['vehicle_no'] }}
+          <span class="status-pill" style="background:{% if (v['status'] or 'Active')=='Active' %}#e8f5ee;color:var(--green){% elif v['status']=='In Maintenance' %}#fff3e8;color:var(--accent){% else %}var(--paper);color:var(--steel){% endif %};">{{ v['status'] or 'Active' }}</span>
+        </div>
+        <div class="veh-detail-row">
+          <div><div class="lbl">Vehicle Type</div><div class="v">{{ v['type'] }}</div></div>
+          <div><div class="lbl">Manufacturer</div><div class="v">{{ (rc_data.rc_maker_desc if rc_data else none) or '—' }}</div></div>
+          <div><div class="lbl">Model</div><div class="v">{{ (rc_data.rc_maker_model if rc_data else none) or '—' }}</div></div>
+          <div><div class="lbl">Fuel Type</div><div class="v">{{ (rc_data.rc_fuel_desc if rc_data else none) or '—' }}</div></div>
+          <div><div class="lbl">Year</div><div class="v">{{ rc_year or (v['registration_date'][:4] if v['registration_date'] else '—') }}</div></div>
+          <div><div class="lbl">Vehicle Age</div><div class="v">{% if age_years is not none %}{{ age_years }} Years{% else %}—{% endif %}</div></div>
+        </div>
+        <div class="veh-detail-row" style="margin-bottom:0;">
+          <div><div class="lbl">Chassis No.</div><div class="v">{{ v['chassis_number'] or '—' }}</div></div>
+          <div><div class="lbl">Engine No.</div><div class="v">{{ v['engine_number'] or '—' }}</div></div>
+          <div><div class="lbl">Registration Date</div><div class="v">{{ v['registration_date'] or '—' }}</div></div>
+          <div><div class="lbl">Owner</div><div class="v">{{ company_name }}</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="veh-sync-box">
+      <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
+        <button type="submit" class="download-btn">&#8635; Sync Latest Data</button>
+      </form>
+      <div class="sub">Last synced: {{ v['rc_last_synced'] or 'Never' }}</div>
+    </div>
+  </div>
+
+  <div class="veh-stat-row">
+    <div class="veh-stat-card">
+      <a href="?tab=insurance">
+        <div class="hd"><span class="ic" style="background:#eaf1fb;color:#2a78d6;">&#128737;&#65039;</span>Insurance</div>
+        {% if comp_row %}
+        <span class="comp-badge" style="background:{{ comp_colors[comp_row.insurance.status][0] }};color:{{ comp_colors[comp_row.insurance.status][1] }};">{{ comp_row.insurance.status if comp_row.insurance.status != 'Unknown' else 'No Data' }}</span>
+        {% if comp_row.insurance.expiry %}<div class="exp">Expires on {{ comp_row.insurance.expiry }}</div><div class="days">{% if comp_row.insurance.days_left is not none %}{% if comp_row.insurance.days_left < 0 %}{{ -comp_row.insurance.days_left }} days overdue{% else %}({{ comp_row.insurance.days_left }} days left){% endif %}{% endif %}</div>{% endif %}
+        {% else %}<span class="comp-badge" style="background:var(--paper);color:var(--steel);">—</span>{% endif %}
+      </a>
+    </div>
+    <div class="veh-stat-card">
+      <a href="?tab=permit">
+        <div class="hd"><span class="ic" style="background:#f1ecfb;color:#7a5ad6;">&#128196;</span>Permit</div>
+        {% if comp_row %}
+        <span class="comp-badge" style="background:{{ comp_colors[comp_row.permit.status][0] }};color:{{ comp_colors[comp_row.permit.status][1] }};">{{ comp_row.permit.status if comp_row.permit.status != 'Unknown' else 'No Data' }}</span>
+        {% if comp_row.permit.expiry %}<div class="exp">Expires on {{ comp_row.permit.expiry }}</div><div class="days">{% if comp_row.permit.days_left is not none %}{% if comp_row.permit.days_left < 0 %}{{ -comp_row.permit.days_left }} days overdue{% else %}({{ comp_row.permit.days_left }} days left){% endif %}{% endif %}</div>{% endif %}
+        {% else %}<span class="comp-badge" style="background:var(--paper);color:var(--steel);">—</span>{% endif %}
+      </a>
+    </div>
+    <div class="veh-stat-card">
+      <a href="?tab=fitness">
+        <div class="hd"><span class="ic" style="background:#eaf1fb;color:#2a78d6;">&#128737;&#65039;</span>Fitness</div>
+        {% if comp_row %}
+        <span class="comp-badge" style="background:{{ comp_colors[comp_row.fitness.status][0] }};color:{{ comp_colors[comp_row.fitness.status][1] }};">{{ comp_row.fitness.status if comp_row.fitness.status != 'Unknown' else 'No Data' }}</span>
+        {% if comp_row.fitness.expiry %}<div class="exp">Expires on {{ comp_row.fitness.expiry }}</div><div class="days">{% if comp_row.fitness.days_left is not none %}{% if comp_row.fitness.days_left < 0 %}{{ -comp_row.fitness.days_left }} days overdue{% else %}({{ comp_row.fitness.days_left }} days left){% endif %}{% endif %}</div>{% endif %}
+        {% else %}<span class="comp-badge" style="background:var(--paper);color:var(--steel);">—</span>{% endif %}
+      </a>
+    </div>
+    <div class="veh-stat-card">
+      <a href="?tab=puc">
+        <div class="hd"><span class="ic" style="background:#e8f5ee;color:#1a9c5b;">&#9989;</span>PUC</div>
+        {% if comp_row %}
+        <span class="comp-badge" style="background:{{ comp_colors[comp_row.puc.status][0] }};color:{{ comp_colors[comp_row.puc.status][1] }};">{{ comp_row.puc.status if comp_row.puc.status != 'Unknown' else 'No Data' }}</span>
+        {% if comp_row.puc.expiry %}<div class="exp">Expires on {{ comp_row.puc.expiry }}</div><div class="days">{% if comp_row.puc.days_left is not none %}{% if comp_row.puc.days_left < 0 %}{{ -comp_row.puc.days_left }} days overdue{% else %}({{ comp_row.puc.days_left }} days left){% endif %}{% endif %}</div>{% endif %}
+        {% else %}<span class="comp-badge" style="background:var(--paper);color:var(--steel);">—</span>{% endif %}
+      </a>
+    </div>
+    <div class="veh-stat-card">
+      <a href="?tab=echallan">
+        <div class="hd"><span class="ic" style="background:#fdecea;color:var(--red);">&#9888;&#65039;</span>eChallan</div>
+        {% if (v['challan_count'] or 0) > 0 %}
+        <span class="comp-badge" style="background:#fdecea;color:var(--red);">{{ v['challan_count'] }} Pending</span>
+        <div class="exp">Total Amount</div><div class="days">₹{{ '{:,.0f}'.format(v['challan_amount'] or 0) }}</div>
+        {% else %}
+        <span class="comp-badge" style="background:#e8f5ee;color:var(--green);">No Challan</span>
+        {% endif %}
+      </a>
+    </div>
+  </div>
+
+  <div class="veh-detail-layout">
+    <div>
+      <div class="mt-tabs">
+        <a class="mt-tab {{ 'active' if tab=='insurance' }}" href="?tab=insurance">&#128737;&#65039; Insurance</a>
+        <a class="mt-tab {{ 'active' if tab=='permit' }}" href="?tab=permit">&#128196; Permit</a>
+        <a class="mt-tab {{ 'active' if tab=='fitness' }}" href="?tab=fitness">&#128737;&#65039; Fitness</a>
+        <a class="mt-tab {{ 'active' if tab=='puc' }}" href="?tab=puc">&#9989; PUC</a>
+        <a class="mt-tab {{ 'active' if tab=='echallan' }}" href="?tab=echallan">&#9888;&#65039; eChallan{% if v['challan_count'] %} ({{ v['challan_count'] }}){% endif %}</a>
+        <a class="mt-tab {{ 'active' if tab=='history' }}" href="?tab=history">&#128337; History</a>
+      </div>
+
+      {% if tab == 'insurance' %}
+        {% if active_insurance %}
+        <div class="veh-ins-main">
+          <div class="veh-ins-card">
+            <div class="insurer">{{ active_insurance.insurer_name or 'Unknown Insurer' }}</div>
+            <div class="mt-detail-grid">
+              <div><div class="lbl">Policy Number</div>{{ active_insurance.policy_number or '—' }}</div>
+              <div><div class="lbl">Policy Type</div>{{ active_insurance.insurance_type or '—' }}</div>
+              <div><div class="lbl">Policy Start Date</div>{{ active_insurance.start_date or '—' }}</div>
+              <div><div class="lbl">Policy End Date</div>{{ active_insurance.expiry_date or '—' }}</div>
+              <div><div class="lbl">IDV (Insured Declared Value)</div>{% if active_insurance.idv %}₹{{ '{:,.0f}'.format(active_insurance.idv) }}{% else %}—{% endif %}</div>
+              <div><div class="lbl">Premium</div>{% if active_insurance.premium_amount %}₹{{ '{:,.0f}'.format(active_insurance.premium_amount) }}{% else %}—{% endif %}</div>
+            </div>
+          </div>
+          <div class="veh-ins-status-card">
+            {% set st = comp_row.insurance.status if comp_row else 'Unknown' %}
+            <span class="comp-badge" style="background:{{ comp_colors[st][0] }};color:{{ comp_colors[st][1] }};">{{ st if st != 'Unknown' else 'No Data' }}</span>
+            {% if comp_row and comp_row.insurance.days_left is not none %}<div style="font-size:0.8rem;color:var(--steel);margin-top:6px;">{% if comp_row.insurance.days_left < 0 %}{{ -comp_row.insurance.days_left }} days overdue{% else %}{{ comp_row.insurance.days_left }} days left{% endif %}</div>{% endif %}
+            <div style="font-size:0.78rem;color:var(--steel);margin-top:10px;">Expires on</div>
+            <div style="font-weight:700;">{{ active_insurance.expiry_date or '—' }}</div>
+            {% if active_insurance.policy_doc_path %}<a href="/static/{{ active_insurance.policy_doc_path }}" target="_blank" class="add-btn" style="width:100%;justify-content:center;margin-top:12px;">&#128196; View Policy Document</a>{% endif %}
+          </div>
+        </div>
+        {% else %}
+        <div class="mt-panel" style="text-align:center;color:var(--steel);padding:30px;">No insurance policy on file for this vehicle yet.</div>
+        {% endif %}
+
+        {% if insurance_rows %}
+        <div class="mt-panel">
+          <div class="mt-panel-head"><div class="ttl">Insurance History</div></div>
+          <div style="overflow-x:auto;">
+          <table>
+            <tr><th>Policy Number</th><th>Insurer</th><th>Type</th><th>Start Date</th><th>End Date</th><th class="num">IDV</th><th>Status</th></tr>
+            {% for ip in insurance_rows %}
+            <tr>
+              <td>{{ ip.policy_number or '—' }}</td><td>{{ ip.insurer_name or '—' }}</td><td>{{ ip.insurance_type or '—' }}</td>
+              <td>{{ ip.start_date or '—' }}</td><td>{{ ip.expiry_date or '—' }}</td>
+              <td class="num">{% if ip.idv %}₹{{ '{:,.0f}'.format(ip.idv) }}{% else %}—{% endif %}</td>
+              <td><span class="mt-status-badge" style="background:{% if ip.expiry_date and ip.expiry_date >= today_str %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{% if ip.expiry_date and ip.expiry_date >= today_str %}Active{% else %}Expired{% endif %}</span></td>
+            </tr>
+            {% endfor %}
+          </table>
+          </div>
+        </div>
+        {% endif %}
+        <div style="background:rgba(42,120,214,0.08);border:1px solid rgba(42,120,214,0.2);border-radius:8px;padding:10px 16px;font-size:0.8rem;color:var(--ink);">
+          &#8505;&#65039; Insurance details created from an eChallan/VAHAN sync are marked accordingly in Notes — please verify and upload the latest policy document.
+        </div>
+
+      {% elif tab == 'permit' %}
+      <div class="mt-panel">
+        {% if comp_row %}
+        <div class="mt-detail-grid">
+          <div><div class="lbl">Status</div>{{ comp_row.permit.status if comp_row.permit.status != 'Unknown' else 'No Data' }}</div>
+          <div><div class="lbl">Valid Upto</div>{{ comp_row.permit.expiry or '—' }}</div>
+          <div><div class="lbl">Permit No.</div>{{ comp_row.permit.document_number or '—' }}</div>
+          <div><div class="lbl">Permit Type</div>{{ comp_row.permit.permit_subtype or '—' }}</div>
+          <div><div class="lbl">Days Left</div>{% if comp_row.permit.days_left is not none %}{% if comp_row.permit.days_left < 0 %}{{ -comp_row.permit.days_left }} days overdue{% else %}{{ comp_row.permit.days_left }} days{% endif %}{% else %}—{% endif %}</div>
+          <div><div class="lbl">Last Synced</div>{{ comp_row.permit.last_sync_time or '—' }}</div>
+        </div>
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:30px;">No permit data tracked for this vehicle.</div>
+        {% endif %}
+      </div>
+
+      {% elif tab == 'fitness' %}
+      <div class="mt-panel">
+        {% if comp_row %}
+        <div class="mt-detail-grid">
+          <div><div class="lbl">Status</div>{{ comp_row.fitness.status if comp_row.fitness.status != 'Unknown' else 'No Data' }}</div>
+          <div><div class="lbl">Valid Upto</div>{{ comp_row.fitness.expiry or '—' }}</div>
+          <div><div class="lbl">Certificate No.</div>{{ comp_row.fitness.document_number or '—' }}</div>
+          <div><div class="lbl">Days Left</div>{% if comp_row.fitness.days_left is not none %}{% if comp_row.fitness.days_left < 0 %}{{ -comp_row.fitness.days_left }} days overdue{% else %}{{ comp_row.fitness.days_left }} days{% endif %}{% else %}—{% endif %}</div>
+          <div><div class="lbl">Last Synced</div>{{ comp_row.fitness.last_sync_time or '—' }}</div>
+        </div>
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:30px;">No fitness data tracked for this vehicle.</div>
+        {% endif %}
+      </div>
+
+      {% elif tab == 'puc' %}
+      <div class="mt-panel">
+        {% if comp_row %}
+        <div class="mt-detail-grid">
+          <div><div class="lbl">Status</div>{{ comp_row.puc.status if comp_row.puc.status != 'Unknown' else 'No Data' }}</div>
+          <div><div class="lbl">Valid Upto</div>{{ comp_row.puc.expiry or '—' }}</div>
+          <div><div class="lbl">Certificate No.</div>{{ comp_row.puc.document_number or '—' }}</div>
+          <div><div class="lbl">Days Left</div>{% if comp_row.puc.days_left is not none %}{% if comp_row.puc.days_left < 0 %}{{ -comp_row.puc.days_left }} days overdue{% else %}{{ comp_row.puc.days_left }} days{% endif %}{% else %}—{% endif %}</div>
+          <div><div class="lbl">Last Synced</div>{{ comp_row.puc.last_sync_time or '—' }}</div>
+        </div>
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:30px;">No PUC data tracked for this vehicle.</div>
+        {% endif %}
+      </div>
+
+      {% elif tab == 'echallan' %}
+      <div class="veh-echallan-stats">
+        <div class="veh-stat-card"><div class="hd">Total Challans</div><div class="big">{{ challans|length }}</div></div>
+        <div class="veh-stat-card"><div class="hd">Total Amount</div><div class="big">₹{{ '{:,.0f}'.format(challan_pending_amount + challan_paid_amount) }}</div></div>
+        <div class="veh-stat-card"><div class="hd">Pending</div><div class="big" style="color:var(--red);">{{ challan_pending_n }}</div><div class="sub2">₹{{ '{:,.0f}'.format(challan_pending_amount) }}</div></div>
+        <div class="veh-stat-card"><div class="hd">Paid</div><div class="big" style="color:var(--green);">{{ challan_paid_n }}</div><div class="sub2">₹{{ '{:,.0f}'.format(challan_paid_amount) }}</div></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+        <form method="POST" action="/vehicles/{{ v['id'] }}/sync-challans-now"><button type="submit" class="download-btn">&#8635; Sync eChallan Data</button></form>
+      </div>
+      <div class="mt-panel">
+        {% if challans %}
+        {% for c in challans %}
+        <div class="chl-list-row" id="chlRow{{ loop.index }}">
+          <div class="chl-list-head" onclick="document.getElementById('chlRow{{ loop.index }}').classList.toggle('open')">
+            <span class="chev">&#9660;</span>
+            <span class="no"><span class="warn">&#9888;</span> {{ c.challan_no or '—' }}</span>
+            <span class="dt">{{ c.date_display }}{% if c.time_display %}, {{ c.time_display }}{% endif %}</span>
+            <span class="amt">₹{{ '{:,.0f}'.format(c.fine_imposed or 0) }}</span>
+            <span class="comp-badge" style="background:{% if (c.challan_status or '').lower() != 'pending' %}#e8f5ee;color:var(--green){% else %}#fff6e8;color:var(--accent){% endif %};">{{ c.challan_status or 'Pending' }}</span>
+          </div>
+          <div class="chl-list-body">
+            {% if c.offence_list %}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+              {% for o in c.offence_list %}
+              <span class="comp-badge" style="background:rgba(42,120,214,0.1);color:#2a78d6;" title="{{ o.name }}">MV Act {{ o.act }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+            <div class="chl-detail-grid">
+              <div>
+                <h4>Challan Information</h4>
+                <div class="row"><span class="k">Location</span><span class="v">{{ c.challan_place or '—' }}</span></div>
+                <div class="row"><span class="k">RTO District</span><span class="v">{{ c.rto_distric_name or '—' }}</span></div>
+                <div class="row"><span class="k">Department</span><span class="v">{{ c.department or '—' }}</span></div>
+                <div class="row" style="border-bottom:none;"><span class="k">Document Impounded</span><span class="v">{{ c.document_impounded or 'None' }}</span></div>
+              </div>
+              <div>
+                <h4>Offence Details</h4>
+                {% for o in c.offence_list %}
+                <div class="row"><span class="k">{{ o.act }}</span><span class="v">{{ o.name }}</span></div>
+                {% endfor %}
+                <div class="row" style="border-bottom:none;"><span class="k">Fine Amount</span><span class="v">₹{{ '{:,.0f}'.format(c.fine_imposed or 0) }}</span></div>
+              </div>
+              <div>
+                <h4>People</h4>
+                <div class="row"><span class="k">Driver Name</span><span class="v">{{ c.driver_name or '—' }}</span></div>
+                <div class="row"><span class="k">Name of Violator</span><span class="v">{{ c.name_of_violator or '—' }}</span></div>
+                <div class="row" style="border-bottom:none;"><span class="k">Owner Name</span><span class="v">{{ c.owner_name or '—' }}</span></div>
+              </div>
+              <div>
+                <h4>Court Status</h4>
+                <div class="row"><span class="k">Sent to Court</span><span class="v">{{ c.sent_to_reg_court or 'No' }}</span></div>
+                <div class="row"><span class="k">Virtual Court</span><span class="v">{{ c.sent_to_virtual_court or 'No' }}</span></div>
+                <div class="row" style="border-bottom:none;"><span class="k">Court Name</span><span class="v">{{ c.court_name or '—' }}</span></div>
+              </div>
+            </div>
+            {% if c.remark %}
+            <div style="margin-top:12px;font-size:0.8rem;color:var(--steel);"><b style="color:var(--ink);">Remark:</b> {{ c.remark }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:30px;">No challans on file for this vehicle.</div>
+        {% endif %}
+      </div>
+
+      {% elif tab == 'history' %}
+      <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">History</div></div>
+        {% if history %}
+        {% for h in history %}
+        <div class="veh-history-item"><div class="date">{{ h.date }}</div><div>{{ h.text }}</div></div>
+        {% endfor %}
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:30px;">No recorded history yet.</div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="veh-side">
+      <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Upcoming Reminders</div></div>
+        {% if reminders %}
+        {% for r in reminders[:5] %}
+        <div class="veh-reminder-item">
+          <div class="bar" style="background:{% if r.days_left < 0 or r.days_left <= 7 %}var(--red){% elif r.days_left <= 30 %}var(--accent){% else %}var(--green){% endif %};"></div>
+          <div class="txt">{{ r.label }}<div class="d">{{ r.expiry }}</div></div>
+          <div class="days" style="color:{% if r.days_left < 0 or r.days_left <= 7 %}var(--red){% elif r.days_left <= 30 %}var(--accent){% else %}var(--green){% endif %};">{% if r.days_left < 0 %}{{ -r.days_left }}d overdue{% else %}{{ r.days_left }}d left{% endif %}</div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="text-align:center;color:var(--steel);padding:16px;font-size:0.82rem;">Nothing tracked yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Quick Actions</div></div>
+        <div class="veh-qa-list">
+          <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now"><button type="submit">&#8635; Sync Latest Data</button></form>
+          <button type="button" onclick="toggleDetailPanel('/vehicles/{{ v['id'] }}/rc-lookup')">&#128269; View RC Details</button>
+          <a href="/vehicles">&#8592; Back to Vehicles</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

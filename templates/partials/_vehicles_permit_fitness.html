@@ -1,0 +1,55 @@
+<div class="mt-kpi-row" style="grid-template-columns:repeat(4,1fr);">
+  <div class="mt-kpi"><div><div class="lbl">Vehicles Tracked</div><div class="val">{{ total_vehicles_tracked }}</div><div class="sub">Own fleet (non-Market)</div></div><div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128196;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Fitness Expiring</div><div class="val" style="color:{% if fitness_expiring %}var(--accent){% endif %};">{{ fitness_expiring }}</div><div class="sub">In 30 days</div></div><div class="mt-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#8986;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Permit Expiring</div><div class="val" style="color:{% if permit_expiring %}var(--accent){% endif %};">{{ permit_expiring }}</div><div class="sub">In 30 days</div></div><div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#8986;</div></div>
+  <div class="mt-kpi"><div><div class="lbl">Expired</div><div class="val" style="color:{% if expired_count %}var(--red){% endif %};">{{ expired_count }}</div><div class="sub">Immediate action</div></div><div class="mt-kpi-icon" style="background:#fdecea;color:var(--red);">&#10060;</div></div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="permit">
+  <div class="field"><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in all_vehicle_nos %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Status</label>
+    <select name="status"><option value="">All Status</option>
+      {% for st in ['Valid','Expiring Soon','Expired'] %}<option value="{{ st }}" {% if f_status==st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+    </select>
+  </div>
+  <button type="submit">Apply</button>
+  <a class="clear" href="/vehicles?tab=permit">Clear</a>
+</form>
+
+<div class="mt-panel">
+  <div class="mt-panel-head"><div class="ttl">Fitness &amp; Permit — {{ total_vehicles_tracked }} vehicle{{ 's' if total_vehicles_tracked != 1 }}</div></div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Vehicle</th><th>Fitness</th><th>Permit</th><th>Document Numbers</th><th>Status</th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('viewPermitModal{{ loop.index }}').classList.add('open')">
+      <td><b>{{ r.vehicle_no }}</b></td>
+      <td>
+        <span class="comp-badge" style="background:{{ comp_colors[r.fitness.status][0] }};color:{{ comp_colors[r.fitness.status][1] }};">{{ r.fitness.status if r.fitness.status != 'Unknown' else 'No Data' }}</span>
+        {% if r.fitness.expiry %}<div style="font-size:0.72rem;color:var(--steel);margin-top:3px;">{{ r.fitness.expiry }}</div>{% endif %}
+      </td>
+      <td>
+        <span class="comp-badge" style="background:{{ comp_colors[r.permit.status][0] }};color:{{ comp_colors[r.permit.status][1] }};">{{ r.permit.status if r.permit.status != 'Unknown' else 'No Data' }}</span>
+        {% if r.permit.expiry %}<div style="font-size:0.72rem;color:var(--steel);margin-top:3px;">{{ r.permit.expiry }}</div>{% endif %}
+      </td>
+      <td style="font-size:0.8rem;">
+        {% if r.fitness.document_number %}FC: {{ r.fitness.document_number }}<br>{% endif %}
+        {% if r.permit.document_number %}Permit: {{ r.permit.document_number }}{% endif %}
+        {% if not r.fitness.document_number and not r.permit.document_number %}—{% endif %}
+      </td>
+      <td><span class="mt-status-badge" style="background:{{ comp_colors[r.worst_status][0] }};color:{{ comp_colors[r.worst_status][1] }};">{{ r.worst_status if r.worst_status != 'Unknown' else 'No Data' }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No vehicles match this selection.</div>
+  {% endif %}
+</div>

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block extra_head %}
+<style>
+.chl-tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:14px 0 16px; }
+.chl-tab { padding:9px 4px; margin-right:18px; font-size:0.84rem; font-weight:700; color:var(--steel); border-bottom:2px solid transparent; cursor:pointer; background:none; border-top:none; border-left:none; border-right:none; }
+.chl-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.chl-stat-row { display:flex; gap:28px; margin-bottom:4px; flex-wrap:wrap; }
+.chl-stat .lbl { font-size:0.72rem; color:var(--steel); }
+.chl-stat .val { font-size:1.05rem; font-weight:800; }
+.chl-list-row { border:1px solid var(--line); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+.chl-list-head { display:flex; align-items:center; gap:12px; padding:10px 12px; cursor:pointer; font-size:0.82rem; }
+.chl-list-head:hover { background:var(--paper); }
+.chl-list-head .chev { color:var(--steel); font-size:0.7rem; width:12px; }
+.chl-list-head .no { font-weight:700; flex:1.4; display:flex; align-items:center; gap:6px; }
+.chl-list-head .no .warn { color:var(--red); }
+.chl-list-head .dt { flex:1.1; color:var(--steel); }
+.chl-list-head .amt { flex:0.7; font-weight:700; }
+.chl-list-body { display:none; padding:14px; border-top:1px solid var(--line); background:var(--paper); }
+.chl-list-row.open .chl-list-body { display:block; }
+.chl-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+.chl-detail-grid h4 { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--steel); margin:0 0 8px; }
+.chl-detail-grid .row { display:flex; justify-content:space-between; padding:4px 0; font-size:0.82rem; border-bottom:1px solid var(--line); }
+.chl-detail-grid .row .k { color:var(--steel); }
+.chl-detail-grid .row .v { font-weight:600; text-align:right; }
+</style>
+{% endblock %}
+{% block content %}
+<div id="main-content">
+  <div class="dp-title-row">
+    <h2>Challan Details</h2>
+  </div>
+  <div class="dp-sub" style="display:flex;align-items:center;gap:10px;">
+    <b style="color:var(--ink);">{{ v['vehicle_no'] }}</b>
+    {% if v['challan_count'] and v['challan_count'] > 0 %}
+    <span class="comp-badge" style="background:#fdecea;color:var(--red);">&#9888; Challan Detected</span>
+    {% else %}
+    <span class="comp-badge" style="background:#e8f5ee;color:var(--green);">&#10003; No Challan</span>
+    {% endif %}
+  </div>
+
+  <div class="chl-stat-row">
+    <div class="chl-stat"><div class="lbl">Total Pending Amount</div><div class="val">₹{{ '{:,.0f}'.format(v['challan_amount'] or 0) }}</div></div>
+    <div class="chl-stat"><div class="lbl">Total Challans</div><div class="val">{{ v['challan_count'] or 0 }}</div></div>
+  </div>
+
+  <div class="chl-tabs">
+    <button type="button" class="chl-tab active" onclick="chlShowTab('list', this)">Challan List</button>
+    <button type="button" class="chl-tab" onclick="chlShowTab('summary', this)">Summary</button>
+  </div>
+
+  <div id="chlPaneList">
+    {% if challans %}
+      {% for c in challans %}
+      <div class="chl-list-row" id="chlRow{{ c['id'] }}">
+        <div class="chl-list-head" onclick="document.getElementById('chlRow{{ c['id'] }}').classList.toggle('open')">
+          <span class="chev">&#9660;</span>
+          <span class="no"><span class="warn">&#9888;</span> {{ c['challan_no'] or '—' }}</span>
+          <span class="dt">{{ c['challan_date'] or '—' }}{% if c['challan_time'] %}, {{ c['challan_time'] }}{% endif %}</span>
+          <span class="amt">₹{{ '{:,.0f}'.format(c['amount'] or 0) }}</span>
+          <span class="comp-badge" style="background:{% if c['status']=='Paid' %}#e8f5ee;color:var(--green){% else %}#fff6e8;color:var(--accent){% endif %};">{{ c['status'] or 'Pending' }}</span>
+        </div>
+        <div class="chl-list-body">
+          <div class="chl-detail-grid">
+            <div>
+              <h4>Challan Information</h4>
+              <div class="row"><span class="k">Challan No.</span><span class="v">{{ c['challan_no'] or '—' }}</span></div>
+              <div class="row"><span class="k">Challan Date</span><span class="v">{{ c['challan_date'] or '—' }}{% if c['challan_time'] %}, {{ c['challan_time'] }}{% endif %}</span></div>
+              <div class="row"><span class="k">Offence Date</span><span class="v">{{ c['offence_date'] or '—' }}</span></div>
+              <div class="row"><span class="k">Offence Time</span><span class="v">{{ c['offence_time'] or '—' }}</span></div>
+              <div class="row"><span class="k">Offence Place</span><span class="v">{{ c['offence_place'] or '—' }}</span></div>
+              <div class="row" style="border-bottom:none;"><span class="k">Violator Name</span><span class="v">{{ c['violator_name'] or '—' }}</span></div>
+            </div>
+            <div>
+              <h4>Offence Details</h4>
+              <div class="row"><span class="k">Offence</span><span class="v">{{ c['offence'] or '—' }}</span></div>
+              <div class="row"><span class="k">Section</span><span class="v">{{ c['section'] or '—' }}</span></div>
+              <div class="row"><span class="k">Challan Amount</span><span class="v">₹{{ '{:,.0f}'.format(c['amount'] or 0) }}</span></div>
+              <div class="row"><span class="k">Court Fee</span><span class="v">₹{{ '{:,.0f}'.format(c['court_fee'] or 0) }}</span></div>
+              <div class="row"><span class="k">Total Amount</span><span class="v">₹{{ '{:,.0f}'.format(c['total_amount'] or c['amount'] or 0) }}</span></div>
+              <div class="row" style="border-bottom:none;"><span class="k">Status</span><span class="v">{{ c['status'] or 'Pending' }}</span></div>
+              {% if c['document_url'] %}
+              <a href="{{ c['document_url'] }}" target="_blank" class="add-btn" style="margin-top:10px;width:100%;justify-content:center;">&#128196; View Challan Document</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      <div class="dp-sub" style="margin-top:10px;">Challan status and amount are as per the latest data available from the eChallan system{% if v['challan_last_synced'] %} — last synced {{ v['challan_last_synced'] }}{% endif %}.</div>
+    {% else %}
+    <div class="dp-empty-note">
+      &#9989; No challans on file for {{ v['vehicle_no'] }}.<br>
+      <span style="font-size:0.78rem;">Challan data is populated by the automatic sync — nothing has been synced yet.</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <div id="chlPaneSummary" style="display:none;">
+    {% if challans %}
+    {% set pending = challans|selectattr('status', 'equalto', 'Pending')|list %}
+    {% set paid = challans|rejectattr('status', 'equalto', 'Pending')|list %}
+    <div class="dp-section">
+      <div class="dp-grid cols3">
+        <div class="dp-fld"><div class="lbl">Total Challans</div><div class="val">{{ challans|length }}</div></div>
+        <div class="dp-fld"><div class="lbl">Pending</div><div class="val" style="color:var(--red);">{{ pending|length }}</div></div>
+        <div class="dp-fld"><div class="lbl">Paid</div><div class="val" style="color:var(--green);">{{ paid|length }}</div></div>
+        <div class="dp-fld"><div class="lbl">Pending Amount</div><div class="val">₹{{ '{:,.0f}'.format(pending|sum(attribute='amount') or 0) }}</div></div>
+        <div class="dp-fld"><div class="lbl">Paid Amount</div><div class="val">₹{{ '{:,.0f}'.format(paid|sum(attribute='amount') or 0) }}</div></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="dp-empty-note">No data to summarize yet.</div>
+    {% endif %}
+  </div>
+
+  <a href="/vehicles" class="add-btn" style="width:100%;justify-content:center;margin-top:16px;">&#8592; Back to Vehicles</a>
+</div>
+<script>
+function chlShowTab(name, btn) {
+  document.getElementById('chlPaneList').style.display = name === 'list' ? '' : 'none';
+  document.getElementById('chlPaneSummary').style.display = name === 'summary' ? '' : 'none';
+  btn.parentElement.querySelectorAll('.chl-tab').forEach(function(t) { t.classList.remove('active'); });
+  btn.classList.add('active');
+}
+</script>
+{% endblock %}

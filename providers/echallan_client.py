@@ -19,6 +19,7 @@ import datetime
 import requests
 
 RC_LOOKUP_URL = 'https://api.echallan.app/vahanfin/vehicle'
+CHALLAN_LOOKUP_URL = 'https://api.echallan.app/vahanfin/echallan'
 
 
 def fetch_rc(vehicle_no, api_key):
@@ -71,6 +72,62 @@ def fetch_rc(vehicle_no, api_key):
         return {'ok': False, 'error': 'No data returned for this vehicle.', 'data': None}
 
     return {'ok': True, 'error': None, 'data': payload}
+
+
+def fetch_challans(vehicle_no, api_key):
+    """Calls the eChallan Challan Lookup endpoint (a different endpoint from fetch_rc — pending/
+    disposed traffic challans, not RC/registration data). Returns {'ok': bool, 'error': str|None,
+    'data': dict|None} — 'data' is the raw payload: {'challans': [...], 'pending_count': int,
+    'disposed_count': int, 'total_count': int, '_billing': {...}}, exactly as the API returns it."""
+    if not api_key:
+        return {'ok': False, 'error': 'No RC Lookup API key configured. Add one in Settings > Vehicle RC Lookup.', 'data': None}
+    try:
+        resp = requests.get(
+            CHALLAN_LOOKUP_URL,
+            params={'rc_no': vehicle_no, 'refresh': 'false', 'dispose': 'false'},
+            headers={'X-API-Key': api_key},
+            timeout=20,
+        )
+        payload = resp.json()
+    except requests.exceptions.RequestException as e:
+        return {'ok': False, 'error': f'Could not reach the challan lookup service ({e}).', 'data': None}
+    except ValueError:
+        return {'ok': False, 'error': 'Challan lookup service returned an unreadable response.', 'data': None}
+
+    if not isinstance(payload, dict):
+        return {'ok': False, 'error': 'Unexpected response from challan lookup service.', 'data': None}
+
+    if resp.status_code == 401 or payload.get('error'):
+        msg = payload.get('error') or payload.get('message') or 'Invalid or unauthorized API key.'
+        return {'ok': False, 'error': f'{msg} Check the key in Settings > Vehicle RC Lookup.', 'data': None}
+
+    if payload.get('status') == 'error':
+        return {'ok': False, 'error': payload.get('message') or 'Challan lookup failed.', 'data': None}
+
+    if payload.get('verification_pending') or payload.get('provider_unavailable'):
+        return {'ok': False, 'error': payload.get('message') or 'This vehicle is being verified with the RTO service. Please check back shortly.', 'data': None}
+
+    if 'challans' not in payload:
+        return {'ok': False, 'error': 'No challan data returned for this vehicle.', 'data': None}
+
+    return {'ok': True, 'error': None, 'data': payload}
+
+
+def parse_challan_date(value):
+    """eChallan's challan_date_time has been observed in two shapes: 'DD-MM-YYYY HH:MM:SS'
+    (the format shown in the API's own example responses) and ISO 8601 with a trailing 'Z'
+    (what live calls have actually returned). Tries both rather than trusting either
+    documentation or one live sample alone. Returns (date_iso, time_str) or (None, None) if
+    neither matches."""
+    if not value:
+        return None, None
+    for fmt in ('%d-%m-%Y %H:%M:%S', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S.%fZ'):
+        try:
+            dt = datetime.datetime.strptime(value, fmt)
+            return dt.date().isoformat(), dt.strftime('%I:%M %p')
+        except ValueError:
+            continue
+    return None, None
 
 
 def parse_rc_date(value):

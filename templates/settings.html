@@ -475,7 +475,7 @@
 
     <div class="card">
       <div class="card-head">
-        <div><h3>Vehicle RC Lookup (eChallan API)</h3><div class="sub">Lets the Vehicles page fetch live RC details (registration, insurance, fitness, PUC, permit) straight from the government database on demand.</div></div>
+        <div><h3>Vehicle RC Lookup (eChallan API)</h3><div class="sub">Backs the Vehicles page's RC details, Insurance/Fitness/PUC/Permit compliance, and eChallan data — all read from a local cache that the sync schedule below keeps current.</div></div>
         <button type="button" class="edit-toggle-btn" onclick="document.getElementById('rcEditModal').classList.add('open')">Edit</button>
       </div>
       <div class="kv-grid" id="rcView">
@@ -486,7 +486,7 @@
           </span>
         </div>
       </div>
-      <div style="font-size:11px;color:var(--steel);margin-top:10px;">Each lookup is billed by the eChallan API provider (credit-based) — it only runs when you click "View RC Details" on a vehicle, never automatically.</div>
+      <div style="font-size:11px;color:var(--steel);margin-top:10px;">Each lookup is billed by the eChallan API provider (credit-based) — vehicle pages themselves never call it; only the scheduled sync (below) and any manual "Sync Latest Data" / "Sync eChallan Data" click do.</div>
       <div class="modal-overlay" id="rcEditModal">
         <div class="modal-box ur-modal-box">
           <button type="button" class="modal-close-x" onclick="document.getElementById('rcEditModal').classList.remove('open')">&#10005;</button>
@@ -495,6 +495,47 @@
             <input type="hidden" name="form_type" value="rc_lookup">
             <div><label>API Key</label><input type="text" name="rc_lookup_api_key" value="{{ s['rc_lookup_api_key'] }}" placeholder="eChallan_..."></div>
             <button type="submit" class="modal-save-btn">Save API Key</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>Sync Schedule</h3><div class="sub">How often the RC cache and eChallan data refresh automatically in the background. Changing these takes effect on the next scheduled check — no restart needed.</div></div>
+        <button type="button" class="edit-toggle-btn" onclick="document.getElementById('syncScheduleEditModal').classList.add('open')">Edit</button>
+      </div>
+      <div class="kv-grid">
+        <div><div class="lbl">RC / Compliance Sync</div>Every {{ s['rc_sync_interval_days'] or 15 }} day{{ 's' if (s['rc_sync_interval_days'] or 15)|int != 1 }}</div>
+        <div><div class="lbl">eChallan Sync</div>Every {{ s['challan_sync_interval_days'] or 3 }} day{{ 's' if (s['challan_sync_interval_days'] or 3)|int != 1 }}</div>
+      </div>
+      {% if recent_sync_log %}
+      <div style="margin-top:14px;">
+        <div class="lbl" style="font-size:11px;color:var(--steel);margin-bottom:6px;">RECENT SYNC RUNS</div>
+        <table style="font-size:0.78rem;">
+          <tr><th>Job</th><th>Started</th><th class="num">Synced</th><th class="num">Failed</th></tr>
+          {% for l in recent_sync_log %}
+          <tr>
+            <td>{{ 'RC / Compliance' if l['job_name']=='rc_sync' else 'eChallan' }}</td>
+            <td>{{ l['started_at'] }}</td>
+            <td class="num">{{ l['synced_count'] }}</td>
+            <td class="num" style="color:{% if l['failed_count'] %}var(--red){% endif %};">{{ l['failed_count'] }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% else %}
+      <div style="font-size:11px;color:var(--steel);margin-top:10px;">No sync has run yet.</div>
+      {% endif %}
+      <div class="modal-overlay" id="syncScheduleEditModal">
+        <div class="modal-box ur-modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('syncScheduleEditModal').classList.remove('open')">&#10005;</button>
+          <h3>Edit Sync Schedule</h3>
+          <form method="POST" action="/settings?tab=users">
+            <input type="hidden" name="form_type" value="sync_schedule">
+            <div><label>RC / Compliance Sync (days)</label><input type="number" min="1" name="rc_sync_interval_days" value="{{ s['rc_sync_interval_days'] or 15 }}"></div>
+            <div><label>eChallan Sync (days)</label><input type="number" min="1" name="challan_sync_interval_days" value="{{ s['challan_sync_interval_days'] or 3 }}"></div>
+            <button type="submit" class="modal-save-btn">Save Schedule</button>
           </form>
         </div>
       </div>

@@ -1,0 +1,59 @@
+{% for r in rows %}
+<div class="modal-overlay" id="viewPermitModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('viewPermitModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#128196; Fitness &amp; Permit — {{ r.vehicle_no }}
+      <span class="mt-status-badge" style="background:{{ comp_colors[r.worst_status][0] }};color:{{ comp_colors[r.worst_status][1] }};">{{ r.worst_status if r.worst_status != 'Unknown' else 'No Data' }}</span>
+    </h3>
+    <div class="mt-detail-grid">
+      <div><div class="lbl">Fitness Status</div>{{ r.fitness.status if r.fitness.status != 'Unknown' else 'No Data' }}</div>
+      <div><div class="lbl">Fitness Valid Upto</div>{{ r.fitness.expiry or '—' }}</div>
+      <div><div class="lbl">Fitness Certificate No.</div>{{ r.fitness.document_number or '—' }}</div>
+      <div><div class="lbl">Fitness Days Left</div>{% if r.fitness.days_left is not none %}{% if r.fitness.days_left < 0 %}{{ -r.fitness.days_left }} days overdue{% else %}{{ r.fitness.days_left }} days{% endif %}{% else %}—{% endif %}</div>
+      <div><div class="lbl">Permit Status</div>{{ r.permit.status if r.permit.status != 'Unknown' else 'No Data' }}</div>
+      <div><div class="lbl">Permit Valid Upto</div>{{ r.permit.expiry or '—' }}</div>
+      <div><div class="lbl">Permit No.</div>{{ r.permit.document_number or '—' }}</div>
+      <div><div class="lbl">Permit Type</div>{{ r.permit.permit_subtype or '—' }}</div>
+    </div>
+
+    {% if r.rc_fit_upto or r.rc_permit_valid_upto %}
+    <div style="border-top:1px solid var(--line);margin-top:4px;padding-top:12px;margin-bottom:16px;">
+      <div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:6px;">eChallan Reference (read-only cross-check)</div>
+      <div class="mt-detail-grid">
+        <div><div class="lbl">RC Fitness Valid Upto</div>{{ r.rc_fit_upto or '—' }}</div>
+        <div><div class="lbl">RC Permit Valid Upto</div>{{ r.rc_permit_valid_upto or '—' }}</div>
+      </div>
+      <div style="font-size:0.7rem;color:var(--steel);margin-top:4px;">Synced {{ r.rc_last_synced or 'never' }} — this is a reference from the eChallan cache, not the record above.</div>
+    </div>
+    {% else %}
+    <div style="font-size:0.78rem;color:var(--steel);margin-bottom:16px;">No eChallan cache synced yet for this vehicle.</div>
+    {% endif %}
+
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <button type="button" onclick="document.getElementById('viewPermitModal{{ loop.index }}').classList.remove('open');document.getElementById('editPermitModal{{ loop.index }}').classList.add('open');" class="btn-cancel">&#9998; Edit</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editPermitModal{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('editPermitModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#9998; Edit Fitness &amp; Permit — {{ r.vehicle_no }}</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px;margin-bottom:22px;">
+      <form method="POST" action="/vehicles/{{ r.id }}/compliance/fitness/renew" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="mt-fld"><label>Fitness Certificate No.</label><input type="text" name="document_number" value="{{ r.fitness.document_number or '' }}"></div>
+        <div class="mt-fld"><label>Fitness Valid Upto</label><input type="date" name="valid_upto" value="{{ r.fitness.expiry or '' }}" required></div>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;align-self:flex-start;">Save Fitness</button>
+      </form>
+      <form method="POST" action="/vehicles/{{ r.id }}/compliance/permit/renew" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="mt-fld"><label>Permit No.</label><input type="text" name="document_number" value="{{ r.permit.document_number or '' }}"></div>
+        <div class="mt-fld"><label>Permit Valid Upto</label><input type="date" name="valid_upto" value="{{ r.permit.expiry or '' }}" required></div>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;align-self:flex-start;">Save Permit</button>
+      </form>
+    </div>
+    <div style="display:flex;justify-content:flex-end;">
+      <button type="button" onclick="document.getElementById('editPermitModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Close</button>
+    </div>
+  </div>
+</div>
+{% endfor %}
