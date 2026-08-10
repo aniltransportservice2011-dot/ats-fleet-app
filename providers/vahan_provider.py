@@ -1,27 +1,40 @@
 """
 VAHAN provider — vehicle registration & fitness certificate lookups.
 
-No real government VAHAN API key is configured anywhere in this project, so `fetch()` always
-returns a deterministic mock response for now (see ComplianceProvider.is_live()). The response
-shape is exactly what a real integration would need to return, so swapping the mock body below
-for a real `requests.get(...)` call is the only change needed later — nothing in
-compliance_service.py or the UI has to change.
+No real government VAHAN API key is configured anywhere in this project. Instead, when the
+eChallan RC Lookup key (Settings > Vehicle RC Lookup) is configured, fetch() uses that as the
+real, live data source for fitness — see providers/echallan_client.py for why one shared client
+backs all three of VAHAN/PUC/Permit. Without a key, fetch() falls back to the same deterministic
+mock response as before.
 """
 import datetime
 import hashlib
 from providers.base_provider import ComplianceProvider
+from providers.echallan_client import fetch_rc, parse_rc_date
 
 
 class VahanProvider(ComplianceProvider):
     provider_key = 'vahan'
     label = 'VAHAN (Vehicle Registration)'
 
-    def fetch(self, vehicle_no, document_number=None):
-        if self.is_live():
-            # TODO: real integration point. Once VAHAN_API_KEY / base_url are configured,
-            # replace this block with the actual HTTP call and map its response into the
-            # same dict shape returned below.
-            raise NotImplementedError('VAHAN live API not yet integrated — remove this branch once it is.')
+    def fetch(self, vehicle_no, document_number=None, api_key=None, rc_result=None):
+        if rc_result is not None or api_key:
+            # rc_result lets a caller pass in one already-fetched eChallan response so this
+            # doesn't make its own HTTP call — see compliance_service.sync_vehicle(), which
+            # fetches once per vehicle and hands the same result to all 3 providers instead of
+            # each of Fitness/PUC/Permit paying for its own separate API credit.
+            result = rc_result if rc_result is not None else fetch_rc(vehicle_no, api_key)
+            if not result['ok']:
+                raise RuntimeError(result['error'])
+            d = result['data']
+            return {
+                'status': 'Valid' if d.get('rc_status') == 'ACTIVE' else 'Unknown',
+                'expiry': parse_rc_date(d.get('rc_fit_upto')),
+                'document_number': document_number,
+                'issuing_authority': d.get('rc_registered_at'),
+                'last_updated': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'source': 'live',
+            }
 
         # Deterministic mock: same vehicle always gets the same simulated expiry, so the UI
         # doesn't flicker between syncs, but different vehicles clearly differ from each other.

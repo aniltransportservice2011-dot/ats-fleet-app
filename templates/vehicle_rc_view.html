@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+<div id="main-content">
+  <div class="dp-title-row">
+    <h2>RC Details — {{ v['vehicle_no'] }}</h2>
+    <span class="dp-readonly-badge">Live Lookup</span>
+  </div>
+  <div class="dp-sub">Fetched on demand from the eChallan Vehicle RC Lookup API</div>
+
+  {% if not result.ok %}
+  <div class="dp-section">
+    <div class="dp-empty-note">
+      &#9888; {{ result.error }}
+    </div>
+  </div>
+  {% else %}
+  {% set d = result.data %}
+
+  <div class="dp-section">
+    <div class="dp-section-ttl">Registration &amp; Status</div>
+    <div class="dp-grid cols3">
+      <div class="dp-fld"><div class="lbl">Registration No.</div><div class="val">{{ d.rc_regn_no or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Status</div><div class="val" style="color:{% if d.rc_status=='ACTIVE' %}var(--green){% else %}var(--red){% endif %};font-weight:700;">{{ d.rc_status or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Status As On</div><div class="val">{{ d.rc_status_as_on or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Registration Date</div><div class="val">{{ d.rc_regn_dt or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Registration Valid Upto</div><div class="val">{{ d.rc_regn_upto or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Registered At</div><div class="val">{{ d.rc_registered_at or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">RTO Code</div><div class="val">{{ d.rto_cd or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">State</div><div class="val">{{ d.state_cd or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Blacklist Status</div><div class="val {% if not d.rc_blacklist_status %}muted{% endif %}">{{ d.rc_blacklist_status or 'None' }}</div></div>
+    </div>
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-ttl">Owner &amp; Financer</div>
+    <div class="dp-grid cols3">
+      <div class="dp-fld"><div class="lbl">Owner Name</div><div class="val">{{ d.rc_owner_name or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Owner Serial No.</div><div class="val">{{ d.rc_owner_sr or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Owner Category</div><div class="val">{{ d.rc_owner_cd_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Ownership Type</div><div class="val">{{ d.rc_own_catg_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Financer</div><div class="val {% if not d.rc_financer %}muted{% endif %}">{{ d.rc_financer or 'None' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Present Address</div><div class="val">{{ d.rc_present_address or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Permanent Address</div><div class="val">{{ d.rc_permanent_address or '—' }}</div></div>
+    </div>
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-ttl">Vehicle Specifications</div>
+    <div class="dp-grid cols3">
+      <div class="dp-fld"><div class="lbl">Maker</div><div class="val">{{ d.rc_maker_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Model</div><div class="val">{{ d.rc_maker_model or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Manufactured</div><div class="val">{{ d.rc_manu_month_yr or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Body Type</div><div class="val">{{ d.rc_body_type_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Colour</div><div class="val">{{ d.rc_color or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Fuel Type</div><div class="val">{{ d.rc_fuel_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Cubic Capacity</div><div class="val">{{ d.rc_cubic_cap or '—' }} cc</div></div>
+      <div class="dp-fld"><div class="lbl">No. of Cylinders</div><div class="val">{{ d.rc_no_cyl or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Seating Capacity</div><div class="val">{{ d.rc_seat_cap or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Sleeper Capacity</div><div class="val">{{ d.rc_sleeper_cap or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Standing Capacity</div><div class="val">{{ d.rc_stand_cap or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Unladen Weight</div><div class="val">{{ d.rc_unld_wt or '—' }} kg</div></div>
+      <div class="dp-fld"><div class="lbl">Gross Vehicle Weight</div><div class="val">{{ d.rc_gvw or '—' }} kg</div></div>
+      <div class="dp-fld"><div class="lbl">Wheelbase</div><div class="val">{{ d.rc_wheelbase or '—' }} mm</div></div>
+      <div class="dp-fld"><div class="lbl">No. of Axles</div><div class="val">{{ d.rc_no_of_axle or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Vehicle Class</div><div class="val">{{ d.rc_vh_class_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Vehicle Category</div><div class="val">{{ d.rc_vch_catg_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Emission Norms</div><div class="val">{{ d.rc_norms_desc or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Chassis No.</div><div class="val">{{ d.rc_chasi_no or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Engine No.</div><div class="val">{{ d.rc_eng_no or '—' }}</div></div>
+    </div>
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-ttl">Compliance Dates</div>
+    <div class="dp-grid cols3">
+      <div class="dp-fld"><div class="lbl">Fitness Valid Upto</div><div class="val">{{ d.rc_fit_upto or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Insurance Valid Upto</div><div class="val">{{ d.rc_insurance_upto or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Insurance Company</div><div class="val">{{ d.rc_insurance_comp or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Insurance Policy No.</div><div class="val">{{ d.rc_insurance_policy_no or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">PUC Valid Upto</div><div class="val">{{ d.rc_pucc_upto or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">PUC No.</div><div class="val">{{ d.rc_pucc_no or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Tax Valid Upto</div><div class="val">{{ d.rc_tax_upto or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Tax Mode</div><div class="val">{{ d.rc_tax_mode or '—' }}</div></div>
+    </div>
+  </div>
+
+  <div class="dp-section">
+    <div class="dp-section-ttl">Permit Details</div>
+    <div class="dp-grid cols3">
+      <div class="dp-fld"><div class="lbl">Permit No.</div><div class="val">{{ d.rc_permit_no or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Permit Type</div><div class="val">{{ d.rc_permit_type or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Permit Category</div><div class="val">{{ d.rc_permit_catg or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Issuing Authority</div><div class="val">{{ d.rc_permit_issuing_authority or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Issue Date</div><div class="val">{{ d.rc_permit_issue_dt or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Valid From</div><div class="val">{{ d.rc_permit_valid_from or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">Valid Upto</div><div class="val">{{ d.rc_permit_valid_upto or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">National Permit Issued By</div><div class="val {% if not d.rc_np_issued_by %}muted{% endif %}">{{ d.rc_np_issued_by or '—' }}</div></div>
+      <div class="dp-fld"><div class="lbl">National Permit Upto</div><div class="val {% if not d.rc_np_upto %}muted{% endif %}">{{ d.rc_np_upto or '—' }}</div></div>
+    </div>
+  </div>
+
+  {% if d._billing %}
+  <div class="dp-sub" style="margin-top:14px;">Source: eChallan API &middot; 1 credit used &middot; {{ d._billing.remaining_credits }} credits remaining</div>
+  {% endif %}
+  {% endif %}
+
+  <a href="/vehicles" class="add-btn" style="width:100%;justify-content:center;margin-top:16px;">&#8592; Back to Vehicles</a>
+</div>
+{% endblock %}

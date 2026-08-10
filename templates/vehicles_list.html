@@ -135,7 +135,7 @@
       <div class="mt-panel">
         <div style="overflow-x:auto;">
         <table>
-          <tr><th>Vehicle No</th><th>Type</th><th>Chassis No.</th><th>Engine No.</th><th>Insurance</th><th>Fitness</th><th>PUC</th><th>Permit</th><th>Status</th></tr>
+          <tr><th>Vehicle No</th><th>Type</th><th>Chassis No.</th><th>Engine No.</th><th>Insurance</th><th>Fitness</th><th>PUC</th><th>Permit</th><th>Status</th><th>RC Lookup</th></tr>
           {% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
           {% for r in rows %}
           {% set st = r['status'] or 'Active' %}
@@ -161,6 +161,13 @@
               <form method="POST" action="/vehicles/toggle_status/{{ r['id'] }}?tab=all" style="display:inline;" onsubmit="return confirm('Mark {{ r['vehicle_no'] }} as {{ next_st }}?');">
                 <button type="submit" class="status-pill" title="Click to mark {{ next_st }}" style="border:none;cursor:pointer;background:{% if st=='Active' %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{{ st }}</button>
               </form>
+              {% endif %}
+            </td>
+            <td onclick="event.stopPropagation();">
+              {% if r['type'] in ['Line', 'Local'] %}
+              <button type="button" class="download-btn" style="padding:6px 10px;font-size:0.78rem;" title="Fetch live RC details from eChallan" onclick="toggleDetailPanel('/vehicles/{{ r['id'] }}/rc-lookup')">&#128269; RC</button>
+              {% else %}
+              <span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
               {% endif %}
             </td>
           </tr>

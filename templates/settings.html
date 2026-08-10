@@ -472,6 +472,33 @@
         </div>
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><h3>Vehicle RC Lookup (eChallan API)</h3><div class="sub">Lets the Vehicles page fetch live RC details (registration, insurance, fitness, PUC, permit) straight from the government database on demand.</div></div>
+        <button type="button" class="edit-toggle-btn" onclick="document.getElementById('rcEditModal').classList.add('open')">Edit</button>
+      </div>
+      <div class="kv-grid" id="rcView">
+        <div><div class="lbl">API Key</div>{{ ('••••••••' ~ s['rc_lookup_api_key'][-6:]) if s['rc_lookup_api_key'] else '—' }}</div>
+        <div><div class="lbl">Status</div>
+          <span class="toggle-badge {{ 'on' if s['rc_lookup_api_key'] else 'off' }}">
+            {{ 'Configured' if s['rc_lookup_api_key'] else 'Not Configured' }}
+          </span>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--steel);margin-top:10px;">Each lookup is billed by the eChallan API provider (credit-based) — it only runs when you click "View RC Details" on a vehicle, never automatically.</div>
+      <div class="modal-overlay" id="rcEditModal">
+        <div class="modal-box ur-modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('rcEditModal').classList.remove('open')">&#10005;</button>
+          <h3>Edit Vehicle RC Lookup API</h3>
+          <form method="POST" action="/settings?tab=users">
+            <input type="hidden" name="form_type" value="rc_lookup">
+            <div><label>API Key</label><input type="text" name="rc_lookup_api_key" value="{{ s['rc_lookup_api_key'] }}" placeholder="eChallan_..."></div>
+            <button type="submit" class="modal-save-btn">Save API Key</button>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

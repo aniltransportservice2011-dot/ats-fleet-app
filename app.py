@@ -3,8 +3,10 @@ import sqlite3
 import datetime
 import calendar
 import os
+import requests
 from werkzeug.utils import secure_filename
 import compliance_service as cs
+from providers.echallan_client import fetch_rc
 
 app = Flask(__name__)
 app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
@@ -597,6 +599,24 @@ def vehicles_compliance_sync_all():
     conn.close()
     return redirect(url_for('vehicles_list', tab='all', synced=summary['synced'],
                              changed=summary['changed'], failed=summary['failed']))
+
+@app.route('/vehicles/<int:v_id>/rc-lookup')
+def vehicle_rc_lookup(v_id):
+    """On-demand, click-to-fetch RC detail view — hits the live eChallan API right now and
+    renders every field it returns, read-only. Does not touch the vehicles table itself; the
+    same key/data now also feeds the Fitness/PUC/Permit compliance sync (see
+    compliance_service.sync_vehicle + providers/echallan_client.py) but this page never
+    writes anything — it's a pure read."""
+    conn = get_db()
+    v = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE id=?", (v_id,)).fetchone()
+    if not v:
+        conn.close()
+        return redirect(url_for('vehicles_list'))
+    key_row = conn.execute("SELECT value FROM settings WHERE key='rc_lookup_api_key'").fetchone()
+    api_key = key_row['value'] if key_row else ''
+    conn.close()
+    result = fetch_rc(v['vehicle_no'], api_key)
+    return render_template('vehicle_rc_view.html', v=v, result=result, active='vehicles')
 
 @app.route('/vehicles')
 def vehicles_list():
@@ -5439,7 +5459,7 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         from xml.sax.saxutils import escape
         return escape(str(text)) if text else ''
 
-    invoice_titles = {'party': 'INVOICE', 'vehicle_owner': 'INVOICE', 'tax': 'INVOICE', 'bill': 'INVOICE'}
+    invoice_titles = {'party': 'INVOICE', 'vehicle_owner': 'FREIGHT BILL', 'tax': 'INVOICE', 'bill': 'INVOICE'}
     is_single = len(line_items) == 1
 
     def section_box(title, rows_data, col_widths, header_bg=LIGHTBG):
@@ -5528,10 +5548,14 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     bill_name_lines = [f"<b>{esc(entity['name'])}</b>" if entity else '—']
     if entity and entity['address']:
         bill_name_lines.append(esc(entity['address']))
+    # A vehicle owner bill runs the opposite direction of every other invoice type — the owner is
+    # who WE owe money to, not who owes us — so "BILL TO" (implying they're being asked to pay)
+    # is backwards here. "PAY TO" makes the direction of money correct at a glance.
+    bill_box_label = 'PAYABLE TO' if invoice_type == 'vehicle_owner' else 'BILL TO'
     def make_bill_box(width):
         body = Table([[Paragraph('<br/>'.join(bill_name_lines), cell_val_style)]], colWidths=[width - 0.2*inch])
         body.setStyle(TableStyle([('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
-        return section_box('BILL TO', [[body]], [width])
+        return section_box(bill_box_label, [[body]], [width])
 
     if is_single:
         t = line_items[0]['trip']
@@ -6401,7 +6425,8 @@ ALL_SETTING_KEYS = [
     'invoice_prefix', 'next_invoice_number',
     'cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
-    'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'
+    'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number',
+    'rc_lookup_api_key'
 ]
 
 MODULE_LIST = ['Dashboard', 'Trips', 'Maintenance', 'Vehicles', 'Invoices', 'Payments',
@@ -6435,6 +6460,7 @@ def settings_page():
                     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit'],
             'rcm': ['rcm_clause'],
             'sms': ['twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'],
+            'rc_lookup': ['rc_lookup_api_key'],
         }
         if form_type in field_groups:
             for key in field_groups[form_type]:

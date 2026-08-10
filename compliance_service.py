@@ -22,6 +22,7 @@ import datetime
 from providers.vahan_provider import VahanProvider
 from providers.puc_provider import PucProvider
 from providers.permit_provider import PermitProvider
+from providers.echallan_client import fetch_rc
 
 # One provider instance per compliance_type this service actually syncs. Insurance is
 # deliberately absent — see providers/insurance_provider.py.
@@ -101,6 +102,16 @@ def sync_vehicle(conn, vehicle_id):
     vehicle = conn.execute("SELECT id, vehicle_no, insurance_expiry FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if not vehicle:
         return {}
+    # Real key, if configured (Settings > Vehicle RC Lookup) — same key the on-demand RC
+    # Lookup button uses. Each provider falls back to its mock when this is empty, so nothing
+    # changes for installs that haven't configured it.
+    key_row = conn.execute("SELECT value FROM settings WHERE key='rc_lookup_api_key'").fetchone()
+    rc_api_key = key_row['value'] if key_row else ''
+    # One eChallan call per vehicle, shared by all 3 providers below — the API already returns
+    # fitness+puc+permit together, so calling it separately per provider would burn 3 credits
+    # per vehicle instead of 1. Left None when no key is configured, which each provider reads
+    # as "use mock data" exactly as before.
+    rc_result = fetch_rc(vehicle['vehicle_no'], rc_api_key) if rc_api_key else None
     results = {}
     for ctype, provider in _PROVIDERS.items():
         existing = conn.execute(
@@ -108,7 +119,8 @@ def sync_vehicle(conn, vehicle_id):
             (vehicle_id, ctype)).fetchone()
         old_expiry = existing['valid_upto'] if existing else None
         try:
-            data = provider.fetch(vehicle['vehicle_no'], document_number=existing['document_number'] if existing else None)
+            data = provider.fetch(vehicle['vehicle_no'], document_number=existing['document_number'] if existing else None,
+                                   rc_result=rc_result)
             new_expiry = data.get('expiry')
             now = _now()
             if existing:
