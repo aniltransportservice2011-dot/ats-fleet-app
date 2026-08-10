@@ -199,6 +199,17 @@ function insShowFileName(input, id) {
     <div style="font-size:0.85rem;color:var(--ink);margin-bottom:16px;">{{ r['notes'] }}</div>
     {% endif %}
 
+    {% if r['rc_insurance_upto'] or r['rc_insurance_comp'] %}
+    <div style="border-top:1px solid var(--line);margin-top:4px;padding-top:12px;margin-bottom:16px;">
+      <div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:6px;">eChallan Reference (read-only cross-check)</div>
+      <div class="mt-detail-grid">
+        <div><div class="lbl">RC Insurance Valid Upto</div>{{ r['rc_insurance_upto'] or '—' }}</div>
+        <div><div class="lbl">RC Insurance Company</div>{{ r['rc_insurance_comp'] or '—' }}</div>
+      </div>
+      <div style="font-size:0.7rem;color:var(--steel);margin-top:4px;">Synced {{ r['rc_last_synced'] or 'never' }} — this is a reference from the eChallan cache, not the policy record above.</div>
+    </div>
+    {% endif %}
+
     <div style="display:flex;justify-content:flex-end;gap:10px;">
       <button type="button" onclick="document.getElementById('viewInsuranceModal{{ loop.index }}').classList.remove('open');document.getElementById('editInsuranceModal{{ loop.index }}').classList.add('open');" class="btn-cancel">&#9998; Edit</button>
       <form method="POST" action="/maintenance/insurance/{{ r['id'] }}/delete" onsubmit="return confirm('Delete this insurance policy permanently?');">

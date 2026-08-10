@@ -3,10 +3,11 @@ import sqlite3
 import datetime
 import calendar
 import os
+import json
 import requests
 from werkzeug.utils import secure_filename
 import compliance_service as cs
-from providers.echallan_client import fetch_rc
+from providers.echallan_client import fetch_rc, parse_challan_date
 
 app = Flask(__name__)
 app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
@@ -602,11 +603,137 @@ def vehicles_compliance_sync_all():
 
 @app.route('/vehicles/<int:v_id>/rc-lookup')
 def vehicle_rc_lookup(v_id):
-    """On-demand, click-to-fetch RC detail view — hits the live eChallan API right now and
-    renders every field it returns, read-only. Does not touch the vehicles table itself; the
-    same key/data now also feeds the Fitness/PUC/Permit compliance sync (see
-    compliance_service.sync_vehicle + providers/echallan_client.py) but this page never
-    writes anything — it's a pure read."""
+    """Read-only RC detail view — reads whatever the last automatic sync cached into
+    vehicles.rc_synced_data/rc_last_synced. Does NOT call the live eChallan API on click
+    anymore; the API is only ever called by the scheduled 15-day sync job (see
+    scheduler.py's run_rc_sync + providers/echallan_client.py), so opening this view is
+    always instant and free. If nothing has been synced yet, this shows that honestly
+    rather than fabricating data or silently hitting the API."""
+    conn = get_db()
+    v = conn.execute("SELECT id, vehicle_no, rc_synced_data, rc_last_synced FROM vehicles WHERE id=?", (v_id,)).fetchone()
+    conn.close()
+    if not v:
+        return redirect(url_for('vehicles_list'))
+    if v['rc_synced_data']:
+        try:
+            result = {'ok': True, 'error': None, 'data': json.loads(v['rc_synced_data'])}
+        except ValueError:
+            result = {'ok': False, 'error': 'Cached RC data could not be read — it will be refreshed on the next automatic sync.', 'data': None}
+    else:
+        result = {'ok': False, 'error': 'Not synced yet. This vehicle will be fetched automatically on the next scheduled sync (every 15 days).', 'data': None}
+    return render_template('vehicle_rc_view.html', v=v, result=result, active='vehicles', rc_last_synced=v['rc_last_synced'])
+
+@app.route('/vehicles/<int:v_id>/challans')
+def vehicle_challan_detail(v_id):
+    """Old standalone Challan Details panel — superseded by the eChallan tab on the vehicle
+    detail page (see vehicle_detail() + its 'echallan' tab). Kept as a redirect so any
+    old bookmark/link still lands somewhere useful."""
+    return redirect(url_for('vehicle_detail', v_id=v_id, tab='echallan'))
+
+def _rc_month_year(value):
+    """eChallan's rc_manu_month_yr comes as 'M/YYYY' (e.g. '2/2023') — just the year for the
+    header's 'Year' field, since that's the only part actually meaningful there."""
+    if not value or '/' not in value:
+        return None
+    return value.split('/')[-1]
+
+@app.route('/vehicles/<int:v_id>')
+def vehicle_detail(v_id):
+    """Full per-vehicle detail page — everything about one vehicle in one place, replacing the
+    old modal-based row view. Every tab reads straight from tables already populated elsewhere
+    in the app (vehicle_compliance, insurance_policies, vehicle_challans, the eChallan RC
+    cache) — this page itself never calls a live API; only the "Sync Latest Data" button does,
+    same cache-then-read pattern as the rest of this integration."""
+    conn = get_db()
+    v = conn.execute("SELECT * FROM vehicles WHERE id=?", (v_id,)).fetchone()
+    if not v:
+        conn.close()
+        return redirect(url_for('vehicles_list'))
+
+    rc_data = json.loads(v['rc_synced_data']) if v['rc_synced_data'] else None
+    age_years = _vehicle_age_years(v['registration_date'])
+
+    comp_row = None
+    if v['type'] != 'Market':
+        comp_row = cs.refresh_compliance(conn)
+        comp_row = next((c for c in comp_row if c['vehicle_id'] == v_id), None)
+
+    insurance_rows = conn.execute("""SELECT ip.*, ve.name as insurer_name FROM insurance_policies ip
+                                     LEFT JOIN vendors ve ON ip.insurer_id=ve.id
+                                     WHERE ip.vehicle_id=? ORDER BY COALESCE(ip.expiry_date,'') DESC, ip.id DESC""", (v_id,)).fetchall()
+    # "Active" = the one whose expiry is furthest out / most current — insurance_rows is already
+    # sorted that way, so the first row (if any) is the one to show as the current policy.
+    active_insurance = insurance_rows[0] if insurance_rows else None
+
+    challan_rows = conn.execute("SELECT * FROM vehicle_challans WHERE vehicle_id=? ORDER BY challan_date_time DESC", (v_id,)).fetchall()
+    challans = []
+    for c in challan_rows:
+        d = dict(c)
+        date_iso, time_str = parse_challan_date(d.get('challan_date_time'))
+        d['date_display'] = date_iso or (d.get('challan_date_time') or '—')
+        d['time_display'] = time_str
+        try:
+            d['offence_list'] = json.loads(d['offence_details']) if d.get('offence_details') else []
+        except ValueError:
+            d['offence_list'] = []
+        challans.append(d)
+    challan_pending_amount = sum(c['fine_imposed'] or 0 for c in challans if (c['challan_status'] or '').lower() == 'pending')
+    challan_paid_amount = sum(c['fine_imposed'] or 0 for c in challans if (c['challan_status'] or '').lower() != 'pending')
+    challan_pending_n = sum(1 for c in challans if (c['challan_status'] or '').lower() == 'pending')
+    challan_paid_n = len(challans) - challan_pending_n
+
+    # Upcoming Reminders — every tracked expiry with a real date, soonest first.
+    reminders = []
+    if comp_row:
+        for ctype, label in [('insurance', 'Insurance Expiry'), ('permit', 'Permit Expiry'),
+                              ('fitness', 'Fitness Expiry'), ('puc', 'PUC Expiry')]:
+            info = comp_row[ctype]
+            if info['expiry'] and info['days_left'] is not None:
+                reminders.append({'label': label, 'expiry': info['expiry'], 'days_left': info['days_left']})
+        reminders.sort(key=lambda r: r['days_left'])
+
+    # History — a real, factual timeline from whatever timestamps this app actually has;
+    # nothing invented. Insurance policy start/end dates + each compliance type's last sync +
+    # the RC cache's own last-synced time.
+    history = []
+    for ip in insurance_rows:
+        if ip['start_date']:
+            history.append({'date': ip['start_date'], 'text': f"Insurance policy started — {ip['insurer_name'] or 'Unknown insurer'} ({ip['policy_number'] or 'no policy no.'})"})
+        if ip['expiry_date']:
+            history.append({'date': ip['expiry_date'], 'text': f"Insurance policy {'expires' if ip['expiry_date'] >= datetime.date.today().isoformat() else 'expired'} — {ip['insurer_name'] or 'Unknown insurer'}"})
+    if comp_row:
+        for ctype, label in [('fitness', 'Fitness'), ('puc', 'PUC'), ('permit', 'Permit')]:
+            info = comp_row[ctype]
+            if info.get('last_sync_time'):
+                history.append({'date': info['last_sync_time'][:10], 'text': f"{label} record synced ({info.get('sync_status') or 'Synced'})"})
+    if v['rc_last_synced']:
+        history.append({'date': v['rc_last_synced'][:10], 'text': 'eChallan RC data synced'})
+    history.sort(key=lambda h: h['date'], reverse=True)
+
+    company_name_row = conn.execute("SELECT value FROM settings WHERE key='company_name'").fetchone()
+    company_name = company_name_row['value'] if company_name_row else 'Anil Transport Service'
+
+    tab = request.args.get('tab', 'insurance')
+    if tab not in ('insurance', 'permit', 'fitness', 'puc', 'echallan', 'history'):
+        tab = 'insurance'
+
+    conn.close()
+    return render_template('vehicle_detail.html', v=v, rc_data=rc_data, age_years=age_years,
+                            comp_row=comp_row, insurance_rows=insurance_rows, active_insurance=active_insurance,
+                            challans=challans, challan_pending_amount=challan_pending_amount, challan_paid_amount=challan_paid_amount,
+                            challan_pending_n=challan_pending_n, challan_paid_n=challan_paid_n,
+                            reminders=reminders, history=history,
+                            company_name=company_name, rc_year=_rc_month_year(rc_data.get('rc_manu_month_yr')) if rc_data else None,
+                            today_str=datetime.date.today().isoformat(), tab=tab, active='vehicles')
+
+@app.route('/vehicles/<int:v_id>/sync-now', methods=['POST'])
+def vehicle_sync_now(v_id):
+    """The detail page's "Sync Latest Data" button — a real, on-demand, one-vehicle eChallan
+    call (unlike every read path elsewhere on this page, which is cache-only). Not wired to
+    anything automatic; a user has to actually click it. Reuses the exact same backfill logic
+    the 15-day scheduled job uses (scheduler.py), so a manual sync and a scheduled one leave
+    the data in an identical shape."""
+    from scheduler import _backfill_from_rc
     conn = get_db()
     v = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE id=?", (v_id,)).fetchone()
     if not v:
@@ -614,24 +741,158 @@ def vehicle_rc_lookup(v_id):
         return redirect(url_for('vehicles_list'))
     key_row = conn.execute("SELECT value FROM settings WHERE key='rc_lookup_api_key'").fetchone()
     api_key = key_row['value'] if key_row else ''
+    if api_key:
+        result = fetch_rc(v['vehicle_no'], api_key)
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if result['ok']:
+            conn.execute("UPDATE vehicles SET rc_synced_data=?, rc_last_synced=? WHERE id=?",
+                         (json.dumps(result['data']), now, v_id))
+            _backfill_from_rc(conn, v_id, v['vehicle_no'], result['data'], now)
+            conn.commit()
     conn.close()
-    result = fetch_rc(v['vehicle_no'], api_key)
-    return render_template('vehicle_rc_view.html', v=v, result=result, active='vehicles')
+    return redirect(url_for('vehicle_detail', v_id=v_id))
+
+@app.route('/vehicles/<int:v_id>/sync-challans-now', methods=['POST'])
+def vehicle_sync_challans_now(v_id):
+    """The eChallan tab's own "Sync eChallan Data" button — a real, on-demand, one-vehicle
+    challan lookup call, separate from "Sync Latest Data" (RC). Reuses the same
+    replace-this-vehicle's-rows logic the scheduled challan_sync job uses."""
+    from providers.echallan_client import fetch_challans, parse_challan_date
+    conn = get_db()
+    v = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE id=?", (v_id,)).fetchone()
+    if not v:
+        conn.close()
+        return redirect(url_for('vehicles_list'))
+    key_row = conn.execute("SELECT value FROM settings WHERE key='rc_lookup_api_key'").fetchone()
+    api_key = key_row['value'] if key_row else ''
+    if api_key:
+        result = fetch_challans(v['vehicle_no'], api_key)
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if result['ok']:
+            data = result['data']
+            challans = data.get('challans') or []
+            conn.execute("DELETE FROM vehicle_challans WHERE vehicle_id=?", (v_id,))
+            pending_amount = 0.0
+            for c in challans:
+                fine = c.get('fine_imposed')
+                try:
+                    fine_val = float(fine) if fine not in (None, '') else None
+                except (TypeError, ValueError):
+                    fine_val = None
+                if (c.get('challan_status') or '').lower() == 'pending' and fine_val:
+                    pending_amount += fine_val
+                conn.execute("""INSERT INTO vehicle_challans
+                    (vehicle_id, api_id, challan_no, challan_date_time, challan_place, challan_status,
+                     fine_imposed, amount_of_fine_imposed, department, driver_name, name_of_violator,
+                     owner_name, dl_no, document_impounded, remark, rto_distric_name, state_code,
+                     court_name, court_address, date_of_proceeding, sent_to_court_on, sent_to_reg_court,
+                     sent_to_virtual_court, offence_details, source_created_at, source_updated_at, last_synced)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (v_id, c.get('_id'), c.get('challan_no'), c.get('challan_date_time'), c.get('challan_place'),
+                     c.get('challan_status'), fine_val, c.get('amount_of_fine_imposed'), c.get('department'),
+                     c.get('driver_name'), c.get('name_of_violator'), c.get('owner_name'), c.get('dl_no'),
+                     c.get('document_impounded'), c.get('remark'), c.get('rto_distric_name'), c.get('state_code'),
+                     c.get('court_name'), c.get('court_address'), c.get('date_of_proceeding'),
+                     c.get('sent_to_court_on'), c.get('sent_to_reg_court'), c.get('sent_to_virtual_court'),
+                     json.dumps(c.get('offence_details') or []), c.get('createdAt'), c.get('updatedAt'), now))
+            pending_count = data.get('pending_count', sum(1 for c in challans if (c.get('challan_status') or '').lower() == 'pending'))
+            conn.execute("UPDATE vehicles SET challan_count=?, challan_amount=?, challan_last_synced=? WHERE id=?",
+                         (pending_count, pending_amount, now, v_id))
+            conn.commit()
+    conn.close()
+    return redirect(url_for('vehicle_detail', v_id=v_id, tab='echallan'))
+
+def _rc_cache_ref(vehicle_row, field):
+    """Pulls one field out of a vehicle's cached eChallan RC data (vehicles.rc_synced_data),
+    for the read-only "eChallan reference" line shown on the Insurance and Permit & Fitness
+    tabs. Never the authoritative value — those tabs' own tables (insurance_policies /
+    vehicle_compliance) stay the real source; this is a cross-check display, not a second
+    place edits are made. Returns None if nothing has synced yet."""
+    raw = vehicle_row['rc_synced_data'] if vehicle_row else None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data.get(field)
+
+def _vehicles_permit_fitness_tab(conn):
+    """Vehicle-centric Fitness & Permit compliance tab — same read-only-view-then-edit row
+    interaction as the Insurance tab, but backed by vehicle_compliance (compliance_service.py)
+    instead of a dedicated policies table, and reusing the existing manual-renew route
+    (vehicle_compliance_renew) that already keeps vehicle_compliance and vehicles.*_expiry in
+    sync — so editing here never creates a second, disagreeing source of truth."""
+    vehicle_f = request.args.get('vehicle', '')
+    status_f = request.args.get('status', '')
+
+    veh_rows = conn.execute("""SELECT id, vehicle_no, type, fitness_expiry, permit_valid_upto,
+                               rc_synced_data, rc_last_synced FROM vehicles
+                               WHERE type IS NOT NULL AND type != 'Market' ORDER BY vehicle_no""").fetchall()
+    comp_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
+
+    comp_colors = {'Valid': ('#e8f5ee', 'var(--green)'), 'Expiring Soon': ('#fff3e8', 'var(--accent)'),
+                   'Expired': ('#fdecea', 'var(--red)'), 'Unknown': ('var(--paper)', 'var(--steel)')}
+
+    rows = []
+    for v in veh_rows:
+        comp = comp_by_vehicle.get(v['id'])
+        fitness = comp['fitness'] if comp else {'status': 'Unknown', 'expiry': v['fitness_expiry'], 'days_left': None, 'document_number': None}
+        permit = comp['permit'] if comp else {'status': 'Unknown', 'expiry': v['permit_valid_upto'], 'days_left': None, 'document_number': None, 'permit_subtype': None}
+        worst_status = 'Expired' if 'Expired' in (fitness['status'], permit['status']) else \
+                       'Expiring Soon' if 'Expiring Soon' in (fitness['status'], permit['status']) else \
+                       fitness['status'] if fitness['status'] == permit['status'] else 'Unknown'
+        rows.append({
+            'id': v['id'], 'vehicle_no': v['vehicle_no'], 'type': v['type'],
+            'fitness': fitness, 'permit': permit, 'worst_status': worst_status,
+            'rc_fit_upto': _rc_cache_ref(v, 'rc_fit_upto'), 'rc_permit_valid_upto': _rc_cache_ref(v, 'rc_permit_valid_upto'),
+            'rc_last_synced': v['rc_last_synced'],
+        })
+
+    if vehicle_f:
+        rows = [r for r in rows if r['vehicle_no'] == vehicle_f]
+    if status_f:
+        rows = [r for r in rows if r['worst_status'] == status_f]
+
+    total_count = len(veh_rows)
+    fitness_expiring = sum(1 for r in rows if r['fitness']['status'] == 'Expiring Soon')
+    permit_expiring = sum(1 for r in rows if r['permit']['status'] == 'Expiring Soon')
+    expired_count = sum(1 for r in rows if r['worst_status'] == 'Expired')
+
+    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+
+    total_pages_count = len(rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_pages_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None)
+    base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    conn.close()
+    return render_template('vehicles_list.html', tab='permit', rows=page_rows, comp_colors=comp_colors,
+                            f_vehicle=vehicle_f, f_status=status_f, all_vehicle_nos=all_vehicle_nos,
+                            active='vehicles', total_vehicles_tracked=total_count,
+                            fitness_expiring=fitness_expiring, permit_expiring=permit_expiring, expired_count=expired_count,
+                            page=page, per_page=per_page, total_pages=total_pages, page_tokens=page_tokens, base_qs=base_qs)
 
 @app.route('/vehicles')
 def vehicles_list():
+    # The old Insurance / Permit & Fitness sub-tabs on this list page are gone — that detail
+    # now lives on the per-vehicle detail page (see vehicle_detail() below). Any bookmarked
+    # link to the old tabs just falls through to the plain list.
     conn = get_db()
-    tab = request.args.get('tab', 'all')
-    if tab == 'insurance':
-        return _maintenance_insurance_tab(conn, template='vehicles_list.html', active='vehicles', base_path='/vehicles')
-    if tab == 'permit':
-        return _maintenance_category_tab(conn, 'permit', template='vehicles_list.html', active='vehicles', base_path='/vehicles')
     type_f = request.args.get('type', '')
     status_f = request.args.get('status', '')
     vehicle_f = request.args.get('vehicle', '')
+    age_f = request.args.get('age', '')
     query = """SELECT v.id, v.vehicle_no, v.type, v.registration_date, v.capacity_mt,
                v.insurance_expiry, v.fitness_expiry, v.puc_valid_upto, v.permit_valid_upto,
                v.status, v.body_type, v.notes, v.chassis_number, v.engine_number,
+               v.rc_last_synced, v.challan_count, v.challan_amount,
                (SELECT COUNT(*) FROM trips WHERE vehicle_id=v.id) as trip_count,
                (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE vehicle_id=v.id) as total_billed
                FROM vehicles v WHERE v.type IS NOT NULL"""
@@ -646,7 +907,35 @@ def vehicles_list():
         query += " AND v.vehicle_no = ?"
         params.append(vehicle_f)
     query += " ORDER BY v.type, v.vehicle_no"
-    all_rows = conn.execute(query, params).fetchall()
+    all_rows_raw = conn.execute(query, params).fetchall()
+
+    # Age is computed, never stored — attach it to a plain dict per row so the template/filter
+    # can use it like any other column. Age-bucket filter applied here (post-query) since it's
+    # derived, not a real SQL column.
+    all_rows = []
+    for r in all_rows_raw:
+        d = dict(r)
+        d['age_years'] = _vehicle_age_years(d['registration_date'])
+        if age_f == 'under3' and not (d['age_years'] is not None and d['age_years'] < 3):
+            continue
+        if age_f == '3to6' and not (d['age_years'] is not None and 3 <= d['age_years'] < 6):
+            continue
+        if age_f == 'over6' and not (d['age_years'] is not None and d['age_years'] >= 6):
+            continue
+        all_rows.append(d)
+
+    # Column-header sorting (Age / Challan) — both computed/derived fields, so sorted here in
+    # Python rather than in SQL. Rows with no age on file always sort to the bottom regardless
+    # of direction, since "unknown" isn't meaningfully "oldest" or "youngest".
+    sort_f = request.args.get('sort', '')
+    dir_f = request.args.get('dir', 'asc')
+    if sort_f == 'age':
+        known = [r for r in all_rows if r['age_years'] is not None]
+        unknown = [r for r in all_rows if r['age_years'] is None]
+        known.sort(key=lambda r: r['age_years'], reverse=(dir_f == 'desc'))
+        all_rows = known + unknown
+    elif sort_f == 'challan':
+        all_rows.sort(key=lambda r: (r['challan_amount'] or 0), reverse=(dir_f == 'desc'))
 
     # Real, vehicle-level compliance snapshot for the overview cards + sidebar — every count
     # below is derived straight from the (filtered) vehicles table, never fabricated.
@@ -682,6 +971,13 @@ def vehicles_list():
         body_type_counts[bt] = body_type_counts.get(bt, 0) + 1
     body_type_dist = sorted(body_type_counts.items(), key=lambda kv: -kv[1])
 
+    # Challan alert strip — real counts from vehicles.challan_count/challan_amount (populated by
+    # the 15-day auto-sync, see scheduler.py's run_rc_sync). Zero/empty on every vehicle until
+    # that sync has actually run at least once — the banner below only renders when > 0, so a
+    # fresh install never shows a fabricated "pending challans" claim.
+    challan_vehicles_count = sum(1 for r in all_rows if (r['challan_count'] or 0) > 0)
+    challan_total_amount = sum(r['challan_amount'] or 0 for r in all_rows if (r['challan_count'] or 0) > 0)
+
     total_count = len(all_rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
@@ -702,12 +998,13 @@ def vehicles_list():
 
     conn.close()
     return render_template('vehicles_list.html', tab='all', rows=page_rows, f_type=type_f, f_status=status_f,
-                            f_vehicle=vehicle_f, all_vehicle_nos=all_vehicle_nos, active='vehicles',
+                            f_vehicle=vehicle_f, f_age=age_f, f_sort=sort_f, f_dir=dir_f, all_vehicle_nos=all_vehicle_nos, active='vehicles',
                             total_vehicles=total_vehicles, active_count=active_count, maint_count=maint_count,
                             inactive_count=inactive_count, ins_expiring=ins_expiring, puc_expiring=puc_expiring,
                             permit_expiring=permit_expiring, fit_expiring=fit_expiring,
                             compliance_overview=compliance_overview, body_type_dist=body_type_dist,
                             compliance_by_vehicle=compliance_by_vehicle,
+                            challan_vehicles_count=challan_vehicles_count, challan_total_amount=challan_total_amount,
                             page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs)
 
 EMPLOYEE_AVATAR_PALETTE = [('#eaf1fb', '#2a78d6'), ('#fff3e8', 'var(--accent)'), ('#e8f5ee', 'var(--green)'),
@@ -2365,6 +2662,20 @@ def _maintenance_battery_tab(conn):
 
 INSURANCE_TYPES = ['Comprehensive', 'Third Party', 'Transit Insurance']
 
+def _vehicle_age_years(registration_date):
+    """Age in years (1 decimal place) computed from vehicles.registration_date, or None if that
+    field is blank/unparseable — never fabricated, the Age column just shows '—' in that case."""
+    if not registration_date:
+        return None
+    try:
+        d = datetime.datetime.strptime(registration_date, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+    days = (datetime.date.today() - d).days
+    if days < 0:
+        return None
+    return round(days / 365.25, 1)
+
 def _expiry_bucket(date_str):
     """'expired' / 'expiring' (within 30 days) / 'ok' / None for any yyyy-mm-dd expiry-style date
     field — the same 30-day window used for insurance policies, applied to vehicle-level dates
@@ -2430,10 +2741,17 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
 
-    raw_rows = conn.execute("""SELECT ip.*, v.vehicle_no, ve.name as insurer_name FROM insurance_policies ip
+    raw_rows = conn.execute("""SELECT ip.*, v.vehicle_no, ve.name as insurer_name,
+                               v.rc_synced_data, v.rc_last_synced FROM insurance_policies ip
                                LEFT JOIN vehicles v ON ip.vehicle_id=v.id LEFT JOIN vendors ve ON ip.insurer_id=ve.id
                                ORDER BY ip.id DESC""").fetchall()
     all_rows = [_insurance_enrich(r) for r in raw_rows]
+    # eChallan reference (read-only cross-check) — never the authoritative value, insurance_policies
+    # stays the real source of truth. See _rc_cache_ref's docstring.
+    for r, raw in zip(all_rows, raw_rows):
+        r['rc_insurance_upto'] = _rc_cache_ref(raw, 'rc_insurance_upto')
+        r['rc_insurance_comp'] = _rc_cache_ref(raw, 'rc_insurance_comp')
+        r['rc_last_synced'] = raw['rc_last_synced']
 
     # Insurance entries logged the old free-text way (before this tab existed) live only in
     # `maintenance`, with no policy_number/expiry/etc — surface them too so this list's totals
@@ -6581,6 +6899,23 @@ def inject_current_year():
     """Sidebar footer copyright year — computed, not hardcoded, so it never goes stale."""
     return {'current_year': datetime.datetime.now().year}
 
+@app.context_processor
+def inject_challan_alerts():
+    """Powers the topbar notification bell on every page — real vehicles with a pending
+    challan count, not a fabricated example. Cheap query (only non-Market vehicles, only the
+    3 fields needed), so it's fine to run on every request rather than caching."""
+    if 'user_id' not in session:
+        return {'challan_alert_vehicles': [], 'challan_alert_count': 0}
+    try:
+        conn = get_db()
+        rows = conn.execute("""SELECT id, vehicle_no, challan_count, challan_amount FROM vehicles
+                               WHERE type IS NOT NULL AND type != 'Market' AND COALESCE(challan_count,0) > 0
+                               ORDER BY challan_amount DESC""").fetchall()
+        conn.close()
+        return {'challan_alert_vehicles': rows, 'challan_alert_count': len(rows)}
+    except Exception:
+        return {'challan_alert_vehicles': [], 'challan_alert_count': 0}
+
 @app.before_request
 def require_login():
     exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp']
@@ -6710,7 +7045,7 @@ ALL_SETTING_KEYS = [
     'cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
     'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number',
-    'rc_lookup_api_key'
+    'rc_lookup_api_key', 'rc_sync_interval_days', 'challan_sync_interval_days'
 ]
 
 MODULE_LIST = ['Dashboard', 'Trips', 'Maintenance', 'Vehicles', 'Invoices', 'Payments',
@@ -6745,6 +7080,7 @@ def settings_page():
             'rcm': ['rcm_clause'],
             'sms': ['twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'],
             'rc_lookup': ['rc_lookup_api_key'],
+            'sync_schedule': ['rc_sync_interval_days', 'challan_sync_interval_days'],
         }
         if form_type in field_groups:
             for key in field_groups[form_type]:
@@ -6764,6 +7100,7 @@ def settings_page():
     access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
                                   LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
     s = _get_all_settings(conn)
+    recent_sync_log = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 8").fetchall()
     conn.close()
 
     active_settings_tab = request.args.get('tab', 'company')
@@ -6772,7 +7109,8 @@ def settings_page():
                             users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                             limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
                             access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
-                            s=s, invoice_example=invoice_example, active='settings', active_settings_tab=active_settings_tab)
+                            s=s, invoice_example=invoice_example, recent_sync_log=recent_sync_log,
+                            active='settings', active_settings_tab=active_settings_tab)
 
 def _get_all_settings(conn):
     s = {}
@@ -8020,5 +8358,11 @@ if __name__ == '__main__':
         import logging
         logging.basicConfig(level=logging.INFO)
         from scheduler import start_scheduler
-        start_scheduler(get_db)
+        # RC sync + Challan sync (eChallan) are independent opt-ins — ENABLE_RC_SYNC=1 /
+        # ENABLE_CHALLAN_SYNC=1 — since unlike the compliance job they spend real paid API
+        # credits. Their actual cadence (in days) is a Settings value, not fixed here — see
+        # scheduler.py's run_sync_tick. Off by default; not enabled here, per instruction not
+        # to trigger any live eChallan calls yet.
+        start_scheduler(get_db, enable_rc_sync=(os.environ.get('ENABLE_RC_SYNC') == '1'),
+                         enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
     app.run(debug=True, port=5050)

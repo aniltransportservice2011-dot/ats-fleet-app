@@ -42,6 +42,20 @@
   .theme-switch input:checked + .theme-switch-track::before { transform:translateX(17px); }
   .topbar-icon { position:relative; cursor:pointer; color:var(--steel); font-size:1.1rem; }
   .topbar-icon .dot { position:absolute; top:-2px; right:-2px; width:8px; height:8px; background:var(--red); border-radius:50%; border:1.5px solid var(--white); }
+  .notif-badge { position:absolute; top:-6px; right:-8px; background:var(--red); color:#fff; font-size:0.6rem; font-weight:800; min-width:16px; height:16px; border-radius:8px; display:flex; align-items:center; justify-content:center; padding:0 3px; border:1.5px solid var(--white); }
+  .notif-wrap { position:relative; }
+  .notif-dropdown { display:none; position:absolute; right:0; top:calc(100% + 10px); width:320px; background:var(--white); border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 30px rgba(20,33,61,0.15); z-index:200; overflow:hidden; }
+  .notif-dropdown.open { display:block; }
+  .notif-dropdown-head { padding:12px 14px; border-bottom:1px solid var(--line); font-weight:700; font-size:0.85rem; }
+  .notif-dropdown-list { max-height:320px; overflow-y:auto; }
+  .notif-item { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); text-decoration:none; color:var(--ink); }
+  .notif-item:last-child { border-bottom:none; }
+  .notif-item:hover { background:var(--paper); }
+  .notif-item .ic { width:30px; height:30px; border-radius:8px; background:#fdecea; color:var(--red); display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:0.9rem; }
+  .notif-item .txt { flex:1; min-width:0; }
+  .notif-item .txt .t1 { font-weight:700; font-size:0.82rem; }
+  .notif-item .txt .t2 { font-size:0.72rem; color:var(--steel); }
+  .notif-empty { padding:20px 14px; text-align:center; color:var(--steel); font-size:0.82rem; }
   .topbar-user { display:flex; align-items:center; gap:8px; }
   .topbar-user .avatar { width:32px; height:32px; border-radius:50%; background:#14213d; color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.8rem; font-weight:700; flex-shrink:0; }
   .topbar-user .info { font-size:0.8rem; line-height:1.2; }
@@ -208,7 +222,27 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/></svg>
           </span>
         </label>
-        <div class="topbar-icon" title="Notifications">&#128276;<span class="dot"></span></div>
+        <div class="notif-wrap">
+          <div class="topbar-icon" title="Notifications" onclick="toggleNotifDropdown(event)">&#128276;{% if challan_alert_count %}<span class="notif-badge">{{ challan_alert_count }}</span>{% endif %}</div>
+          <div class="notif-dropdown" id="notifDropdown">
+            <div class="notif-dropdown-head">Notifications{% if challan_alert_count %} ({{ challan_alert_count }}){% endif %}</div>
+            <div class="notif-dropdown-list">
+              {% if challan_alert_vehicles %}
+              {% for cv in challan_alert_vehicles %}
+              <a class="notif-item" href="/vehicles/{{ cv['id'] }}?tab=echallan">
+                <div class="ic">&#9888;&#65039;</div>
+                <div class="txt">
+                  <div class="t1">Challan generated — {{ cv['vehicle_no'] }}</div>
+                  <div class="t2">{{ cv['challan_count'] }} pending &middot; ₹{{ '{:,.0f}'.format(cv['challan_amount'] or 0) }}</div>
+                </div>
+              </a>
+              {% endfor %}
+              {% else %}
+              <div class="notif-empty">No new notifications.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
         <div class="topbar-user">
           <div class="avatar">{{ session.get('username','?')[:2]|upper }}</div>
           <div class="info"><div class="name">{{ session.get('username','Guest') }}</div><div class="role">{{ 'Administrator' if session.get('is_admin') else 'Staff' }}</div></div>
@@ -341,6 +375,16 @@
     }
   }
   window.toggleDetailPanel = toggleDetailPanel;
+
+  function toggleNotifDropdown(evt) {
+    evt.stopPropagation();
+    document.getElementById('notifDropdown').classList.toggle('open');
+  }
+  window.toggleNotifDropdown = toggleNotifDropdown;
+  document.addEventListener('click', function() {
+    var d = document.getElementById('notifDropdown');
+    if (d) d.classList.remove('open');
+  });
 
   function toggleSidebar() {
     var sidebar = document.querySelector('.sidebar');
