@@ -35,7 +35,13 @@
 .lg2-edit-btn { background:none; border:1px solid var(--line); padding:6px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; display:inline-flex; align-items:center; gap:6px; }
 .lg2-edit-btn:hover { border-color:var(--accent); color:var(--accent); }
 
-.lg2-kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+/* minmax(0,1fr), not bare 1fr — a bare 1fr track can't shrink below its content's intrinsic
+   width, so when the read-only detail panel opens and narrows .main-content, this row (and
+   .lg2-filters/.lg2-bottom-row below) would blow out past their container and force a stray
+   horizontal scrollbar on the whole page instead of actually compressing to fit. The @media
+   breakpoint alone doesn't save it either, since it reacts to the viewport, not to a sibling
+   panel eating into this container's own width. */
+.lg2-kpi-row { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:18px; }
 @media (max-width:900px) { .lg2-kpi-row { grid-template-columns:1fr 1fr; } }
 .lg2-kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; justify-content:space-between; align-items:flex-start; }
 .lg2-kpi .lbl { font-size:0.78rem; color:var(--steel); margin-bottom:6px; }
@@ -50,7 +56,7 @@
 .lg2-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
 .lg2-tab:hover:not(.active) { color:var(--ink); }
 
-.lg2-filters { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:14px; align-items:end; }
+.lg2-filters { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) auto; gap:14px; align-items:end; }
 @media (max-width:1100px) { .lg2-filters { grid-template-columns:1fr 1fr; } }
 .lg2-filters label { display:block; font-size:0.72rem; font-weight:700; color:var(--ink); margin-bottom:6px; }
 .lg2-filters input, .lg2-filters select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px; font-size:0.85rem; box-sizing:border-box; }
@@ -61,7 +67,7 @@
 .lg2-panel-head .cnt { background:var(--paper); color:var(--steel); font-size:0.72rem; font-weight:700; padding:2px 9px; border-radius:10px; }
 .lg2-type-badge { display:inline-block; padding:3px 10px; border-radius:8px; font-size:0.72rem; font-weight:700; white-space:nowrap; }
 .lg2-detail-sub { color:var(--steel); font-size:0.76rem; margin-top:2px; }
-.lg2-bottom-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:16px; }
+.lg2-bottom-row { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:16px; }
 @media (max-width:900px) { .lg2-bottom-row { grid-template-columns:1fr 1fr; } }
 .lg2-bottom-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:15px 16px; display:flex; justify-content:space-between; align-items:center; }
 .lg2-bottom-card .lbl { font-size:0.78rem; color:var(--steel); }
@@ -200,7 +206,7 @@
     <table>
       <tr><th>Date</th><th>Type</th><th>Details</th><th>Ref / Document</th><th class="num">Debit (₹)</th><th class="num">Credit (₹)</th><th class="num">Balance (₹)</th></tr>
       {% for e in entries %}
-      <tr{% if e.link %} class="clickable-row" onclick="toggleDetailPanel('{{ e.link }}')" title="View details (read-only) — click again to close"{% endif %}>
+      <tr{% if e.link %} class="clickable-row" onclick="openRecordModal('{{ e.link }}')" title="View details (read-only)"{% endif %}>
         <td style="white-space:nowrap;">{{ e.date }}</td>
         <td><span class="lg2-type-badge" style="{{ kind_colors(e.kind) }}">{{ e.kind }}</span></td>
         <td>{{ e.detail.split(' — ')[0] }}{% if ' — ' in e.detail %}<div class="lg2-detail-sub">{{ e.detail.split(' — ',1)[1] }}</div>{% endif %}{% if e.link %} <span style="color:var(--steel);font-size:0.72rem;">&#8594;</span>{% endif %}</td>
@@ -212,6 +218,12 @@
       {% endfor %}
     </table>
     </div>
+    <script>
+      // Powers the Record Detail popup's prev/next arrows (see openRecordModal/navRecordModal
+      // in base.html) — only this page's clickable rows, in the same top-to-bottom order shown
+      // here, so stepping through the popup matches what's visually on screen.
+      window.LEDGER_DETAIL_LINKS = [{% for e in entries %}{% if e.link %}{{ e.link|tojson }},{% endif %}{% endfor %}];
+    </script>
     {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
     {% else %}
     <div style="text-align:center;color:var(--steel);padding:30px;">No transactions found for this {{ role|lower }}.</div>

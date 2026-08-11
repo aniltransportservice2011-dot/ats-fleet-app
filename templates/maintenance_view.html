@@ -1,48 +1,90 @@
 {% extends "base.html" %}
 {% block title %}Maintenance Details{% endblock %}
 {% block content %}
-<div class="dp-title-row">
-  <h2>Maintenance Details</h2>
-  <span class="dp-readonly-badge">Read Only</span>
+{% set balance = (m['amount'] or 0) - (m['paid_amount'] or 0) %}
+<div class="rd-hd">
+  <div class="rd-hd-left">
+    <h2>Maintenance Details</h2>
+    <span class="rd-badge">{{ m['category'] or 'Maintenance' }}</span>
+  </div>
+  <div class="rd-hd-right">
+    <button type="button" class="rd-nav-btn" id="rdPrevBtn" onclick="navRecordModal(-1)" title="Previous record">&#8592;</button>
+    <button type="button" class="rd-nav-btn" id="rdNextBtn" onclick="navRecordModal(1)" title="Next record">&#8594;</button>
+    <button type="button" class="rd-close-btn" onclick="closeRecordModal()">&#10005;</button>
+  </div>
 </div>
-<div class="dp-sub">{{ m['category'] or 'Maintenance' }} — {{ m['vehicle_no'] or 'No vehicle' }}</div>
+<div class="rd-sub">
+  <span>REF / DOCUMENT: {{ m['invoice_no'] or ('Maintenance #%d' % m['id']) }}</span>
+  {% if m['date'] %}<span class="rd-date-badge">&#128197; {{ m['date'] }}</span>{% endif %}
+</div>
 
-<div class="dp-section">
-  <div class="dp-section-ttl">Overview</div>
-  <div class="dp-grid">
-    <div class="dp-fld"><div class="lbl">Date</div><div class="val">{{ m['date'] or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Vehicle No</div><div class="val">{{ m['vehicle_no'] or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Category</div><div class="val">{{ m['category'] or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Vendor</div><div class="val">{{ m['vendor_name'] or '—' }}</div></div>
+<div class="rd-body">
+  <div class="rd-card-row" style="grid-template-columns:1fr;">
+    <div class="rd-card">
+      <div class="rd-card-icon">&#128667;</div>
+      <div>
+        <div class="rd-card-ttl">{{ m['vehicle_no'] or 'No vehicle' }}
+          {% if m['veh_status'] %}<span class="rd-badge" style="background:{% if m['veh_status']=='Active' %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{{ m['veh_status'] }}</span>{% endif %}
+        </div>
+        <div class="rd-card-sub">{{ m['veh_body_type'] or 'Vehicle' }} &middot; Vendor: {{ m['vendor_name'] or '—' }}</div>
+        {% if m['veh_id'] %}<a class="rd-card-link" href="/vehicles/{{ m['veh_id'] }}">View Vehicle &rarr;</a>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="rd-stat-row" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div><div><div class="lbl">Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(m['amount'] or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#e8f5ee;color:var(--green);">&#10003;</div><div><div class="lbl">Paid Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(m['paid_amount'] or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:{% if balance > 0 %}#fdecea{% else %}#e8f5ee{% endif %};color:{% if balance > 0 %}var(--red){% else %}var(--green){% endif %};">&#8595;</div><div><div class="lbl">Balance</div><div class="val" style="color:{% if balance > 0 %}var(--red){% else %}var(--green){% endif %};">&#8377;{{ '{:,.0f}'.format(balance) }}</div></div></div>
+  </div>
+
+  <div class="rd-section">
+    <div class="rd-section-ttl">Overview</div>
+    <div class="rd-grid">
+      <div class="rd-fld"><div class="lbl">Date</div><div class="val">{{ m['date'] or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Category</div><div class="val">{{ m['category'] or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Status</div><div class="val{% if not m['status'] %} muted{% endif %}">{{ m['status'] or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Vendor</div><div class="val{% if not m['vendor_name'] %} muted{% endif %}">{{ m['vendor_name'] or '—' }}</div></div>
+    </div>
+  </div>
+
+  {% if m['invoice_no'] or m['invoice_date'] or m['service_type'] or m['km_reading'] or m['next_due_km'] or m['next_service_date'] %}
+  <div class="rd-section">
+    <div class="rd-section-ttl">Service Details</div>
+    <div class="rd-grid">
+      {% if m['service_type'] %}<div class="rd-fld"><div class="lbl">Service Type</div><div class="val">{{ m['service_type'] }}</div></div>{% endif %}
+      {% if m['invoice_no'] %}<div class="rd-fld"><div class="lbl">Invoice No.</div><div class="val">{{ m['invoice_no'] }}</div></div>{% endif %}
+      {% if m['invoice_date'] %}<div class="rd-fld"><div class="lbl">Invoice Date</div><div class="val">{{ m['invoice_date'] }}</div></div>{% endif %}
+      {% if m['km_reading'] %}<div class="rd-fld"><div class="lbl">KM Reading</div><div class="val">{{ m['km_reading'] }}</div></div>{% endif %}
+      {% if m['next_due_km'] %}<div class="rd-fld"><div class="lbl">Next Service Due (KM)</div><div class="val">{{ m['next_due_km'] }}</div></div>{% endif %}
+      {% if m['next_service_date'] %}<div class="rd-fld"><div class="lbl">Next Service Reminder</div><div class="val">{{ m['next_service_date'] }}</div></div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if m['tyre_action'] or m['tyre_id'] or m['tyre_brand'] or m['tyre_position'] %}
+  <div class="rd-section">
+    <div class="rd-section-ttl">Tyre Details</div>
+    <div class="rd-grid">
+      {% if m['tyre_action'] %}<div class="rd-fld"><div class="lbl">Tyre Action</div><div class="val">{{ m['tyre_action'] }}</div></div>{% endif %}
+      {% if m['tyre_position'] %}<div class="rd-fld"><div class="lbl">Position</div><div class="val">{{ m['tyre_position'] }}</div></div>{% endif %}
+      {% if m['tyre_id'] %}<div class="rd-fld"><div class="lbl">Tyre ID</div><div class="val">{{ m['tyre_id'] }}</div></div>{% endif %}
+      {% if m['tyre_brand'] %}<div class="rd-fld"><div class="lbl">Brand</div><div class="val">{{ m['tyre_brand'] }}</div></div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="rd-section">
+    <div class="rd-section-ttl">Notes</div>
+    {% if m['notes'] %}
+    <div class="rd-fld"><div class="val" style="font-weight:500;">{{ m['notes'] }}</div></div>
+    {% else %}
+    <div class="rd-empty-note">No notes for this record.</div>
+    {% endif %}
   </div>
 </div>
 
-<div class="dp-section">
-  <div class="dp-section-ttl">Amounts</div>
-  <div class="dp-grid cols3">
-    <div class="dp-fld"><div class="lbl">Amount</div><div class="val">₹{{ '{:,.0f}'.format(m['amount'] or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Paid Amount</div><div class="val">₹{{ '{:,.0f}'.format(m['paid_amount'] or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Balance</div><div class="val" style="color:{% if (m['amount'] or 0) - (m['paid_amount'] or 0) > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format((m['amount'] or 0) - (m['paid_amount'] or 0)) }}</div></div>
-  </div>
+<div class="rd-ftr">
+  <button type="button" class="btn-cancel" onclick="closeRecordModal()">Close</button>
 </div>
-
-{% if m['invoice_no'] or m['service_type'] or m['tyre_action'] %}
-<div class="dp-section">
-  <div class="dp-section-ttl">Additional Details</div>
-  <div class="dp-grid">
-    {% if m['service_type'] %}<div class="dp-fld"><div class="lbl">Service Type</div><div class="val">{{ m['service_type'] }}</div></div>{% endif %}
-    {% if m['tyre_action'] %}<div class="dp-fld"><div class="lbl">Tyre Action</div><div class="val">{{ m['tyre_action'] }}</div></div>{% endif %}
-    {% if m['invoice_no'] %}<div class="dp-fld"><div class="lbl">Invoice No.</div><div class="val">{{ m['invoice_no'] }}</div></div>{% endif %}
-  </div>
-</div>
-{% endif %}
-
-<div class="dp-section">
-  <div class="dp-section-ttl">Notes</div>
-  <div class="{% if m['notes'] %}dp-fld{% else %}dp-empty-note{% endif %}">
-    {% if m['notes'] %}<div class="val" style="font-weight:500;">{{ m['notes'] }}</div>{% else %}No notes for this record.{% endif %}
-  </div>
-</div>
-
-<a href="/maintenance/edit/{{ m['id'] }}" class="add-btn" style="width:100%;justify-content:center;margin-top:6px;">&#9999;&#65039; Edit This Maintenance Record</a>
 {% endblock %}

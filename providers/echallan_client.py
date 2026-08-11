@@ -131,12 +131,16 @@ def parse_challan_date(value):
 
 
 def parse_rc_date(value):
-    """eChallan dates come as 'DD-Mon-YYYY' (e.g. '16-Mar-2027'). Converts to the app's
-    standard 'YYYY-MM-DD', or None if missing/unparseable — never raises, since a single bad
-    date shouldn't take down a whole sync."""
+    """Most eChallan RC dates come as 'DD-Mon-YYYY' (e.g. '16-Mar-2027'), but rc_tax_upto has
+    been observed as plain numeric 'DD-MM-YYYY' (e.g. '31-03-2027') instead — a real,
+    field-specific inconsistency in the API, not a guess. Tries both. Converts to the app's
+    standard 'YYYY-MM-DD', or None if neither matches — never raises, since a single bad date
+    shouldn't take down a whole sync."""
     if not value:
         return None
-    try:
-        return datetime.datetime.strptime(value, '%d-%b-%Y').date().isoformat()
-    except ValueError:
-        return None
+    for fmt in ('%d-%b-%Y', '%d-%m-%Y'):
+        try:
+            return datetime.datetime.strptime(value, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None

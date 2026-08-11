@@ -82,6 +82,14 @@
   .download-btn { background:var(--white); color:var(--green); border:1.5px solid var(--green); padding:10px 20px; border-radius:7px; font-size:0.84rem; font-weight:700; cursor:pointer; font-family:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
   .download-btn:hover { background:var(--green); color:#fff; box-shadow:0 2px 6px rgba(26,122,76,0.25); }
   .download-btn:active { transform:translateY(1px); box-shadow:none; }
+  /* Small "✎ Edit" toggle that sits inline in a .mt-panel-head next to a tab title (Fitness/
+     Permit/PUC tabs on the vehicle detail page) — was previously an unstyled bare <button>,
+     which rendered as the raw browser default and clashed with everything else on the page.
+     Same shape/weight/interaction as .download-btn's outline tier, just in the accent color and
+     more compact since it's a secondary in-panel action rather than a standalone CTA. */
+  .edit-toggle-btn { background:var(--white); color:var(--accent); border:1.5px solid var(--accent); padding:6px 14px; border-radius:7px; font-size:0.78rem; font-weight:700; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
+  .edit-toggle-btn:hover { background:var(--accent); color:#fff; box-shadow:0 2px 6px rgba(192,86,33,0.25); }
+  .edit-toggle-btn:active { transform:translateY(1px); box-shadow:none; }
   .nav-group { padding:0 12px; margin-bottom:16px; }
   .nav-label { font-size:0.66rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:var(--steel); opacity:0.8; padding:6px 10px; }
   .nav-item {
@@ -95,6 +103,23 @@
   .nav-item.active .nav-icon { color:var(--accent); }
   .nav-icon { width:18px; height:18px; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:var(--steel); transition:color .12s; }
   .nav-icon svg { width:100%; height:100%; }
+  .nav-badge { margin-left:auto; background:var(--red); color:#fff; font-size:0.66rem; font-weight:800; min-width:18px; height:18px; border-radius:9px; display:flex; align-items:center; justify-content:center; padding:0 5px; }
+  /* "Live" warning cue on the Vehicles nav button itself — a soft red tone sliding across its
+     background on a loop — rather than anything on the table rows. Removing .nav-item-warn
+     (done in JS on dismiss) drops straight back to the plain .nav-item look, no residue. */
+  .nav-item-warn {
+    background:linear-gradient(90deg, transparent, rgba(179,57,47,0.16), transparent);
+    background-size:200% 100%;
+    animation:navWarnSlide 2.6s ease-in-out infinite;
+  }
+  .nav-item-warn:hover { animation-play-state:paused; }
+  @keyframes navWarnSlide {
+    0% { background-position:150% 0; }
+    100% { background-position:-50% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nav-item-warn { animation:none; background:rgba(179,57,47,0.1); }
+  }
   .sidebar-footer { margin-top:auto; padding:14px 20px 0; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .sidebar-footer .copy { font-size:0.68rem; color:var(--steel); line-height:1.5; }
   .sidebar-collapse-btn { width:26px; height:26px; flex-shrink:0; border-radius:7px; border:1px solid var(--line); background:none; color:var(--steel); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:0.8rem; }
@@ -102,10 +127,15 @@
   .main-content { flex:1; min-width:0; padding:28px 32px 60px; transition:width 0.25s ease; }
   .detail-panel {
     width:0; flex-shrink:0; background:var(--paper); border-left:1px solid var(--line);
-    overflow-y:auto; overflow-x:hidden; transition:width 0.25s ease; height:100vh; position:sticky; top:0;
+    overflow-x:hidden; transition:width 0.25s ease; min-height:100vh; position:sticky; top:0;
   }
-  .detail-panel.open { width:600px; max-width:92vw; }
-  .detail-panel-inner { width:600px; max-width:92vw; padding:24px 28px 40px; }
+  /* No scrollbar of its own — the panel just grows to fit its content and the page scrolls
+     normally past it, same as everything else on the page. A specific long table inside
+     (Insurance History, Allocation, a challan list, ...) can still scroll internally on its
+     own via a bounded max-height — see .dp-scroll-list — without the whole panel boxing in. */
+  .detail-panel.open { width:640px; max-width:92vw; }
+  .detail-panel-inner { width:640px; max-width:92vw; padding:24px 28px 40px; }
+  .dp-scroll-list { max-height:280px; overflow-y:auto; }
   .detail-panel-close { position:absolute; top:20px; right:20px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); }
   /* Read-only detail views (Trip/Maintenance/Payment, opened from a Ledger row) — same
      sectioned-card look everywhere, grey uppercase label over a bold value, never an editable
@@ -122,6 +152,88 @@
   .dp-fld .val { font-size:0.9rem; font-weight:700; color:var(--ink); word-break:break-word; }
   .dp-fld .val.muted { color:var(--steel); font-weight:600; }
   .dp-empty-note { text-align:center; color:var(--steel); font-size:0.85rem; padding:6px 0; }
+
+  /* RC Details — a centered modal (not the sliding .detail-panel other read-only views use).
+     The box itself never scrolls (overflow:hidden); only .rc-body inside the fetched content
+     does, between a header and footer that stay put — so the popup never shows its own
+     scrollbar, only the section list can, exactly like a native dialog. */
+  .rc-modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.55); z-index:300; align-items:center; justify-content:center; padding:24px; }
+  .rc-modal-overlay.open { display:flex; }
+  .rc-modal-box { background:var(--white); border-radius:14px; width:960px; max-width:100%; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(10,15,30,0.35); }
+  .rc-hd { display:flex; align-items:center; justify-content:space-between; padding:20px 26px; border-bottom:1px solid var(--line); flex-shrink:0; }
+  .rc-hd-left { display:flex; align-items:center; gap:12px; }
+  .rc-hd h2 { margin:0; font-size:1.15rem; }
+  .rc-live-badge { background:rgba(26,122,76,0.1); color:var(--green); font-size:0.66rem; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; padding:4px 10px; border-radius:10px; }
+  .rc-close-btn { background:none; border:none; font-size:1.2rem; cursor:pointer; color:var(--steel); padding:4px; }
+  .rc-close-btn:hover { color:var(--ink); }
+  .rc-sub { padding:12px 26px 0; color:var(--steel); font-size:0.8rem; flex-shrink:0; }
+  .rc-body { overflow-y:auto; padding:16px 26px 22px; flex:1; min-height:0; }
+  .rc-section { border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .rc-section-ttl { display:flex; align-items:center; gap:8px; font-size:0.76rem; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; color:var(--steel); margin-bottom:14px; }
+  .rc-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px 20px; }
+  @media (max-width:760px) { .rc-grid { grid-template-columns:1fr 1fr; } }
+  .rc-fld .lbl { font-size:0.68rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:4px; }
+  .rc-fld .val { font-size:0.86rem; font-weight:700; color:var(--ink); word-break:break-word; }
+  .rc-fld .val.muted { color:var(--steel); font-weight:600; }
+  .rc-ftr { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 26px; border-top:1px solid var(--line); flex-shrink:0; flex-wrap:wrap; }
+  .rc-ftr-note { display:flex; align-items:center; gap:8px; color:var(--steel); font-size:0.78rem; }
+  .rc-ftr-actions { display:flex; gap:10px; }
+
+  /* Record Detail modal — the Ledger's read-only Trip/Maintenance/Payment popup (replaces the
+     old sliding .detail-panel). Same fixed-header/scrolling-body/fixed-footer flex skeleton as
+     .rc-modal-box above (only .rd-body scrolls, never the box itself), just wider to fit the
+     card + stat-tile + tab layout, and with prev/next between the entries on the ledger page
+     that opened it. */
+  .rd-modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.55); z-index:300; align-items:center; justify-content:center; padding:24px; }
+  .rd-modal-overlay.open { display:flex; }
+  .rd-modal-box { background:var(--white); border-radius:14px; width:1040px; max-width:100%; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(10,15,30,0.35); }
+  .rd-hd { display:flex; align-items:center; justify-content:space-between; padding:18px 26px; border-bottom:1px solid var(--line); flex-shrink:0; gap:14px; flex-wrap:wrap; }
+  .rd-hd-left { display:flex; align-items:center; gap:12px; }
+  .rd-hd h2 { margin:0; font-size:1.15rem; }
+  .rd-badge { font-size:0.66rem; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; padding:4px 10px; border-radius:10px; background:rgba(42,120,214,0.1); color:#2a78d6; }
+  .rd-hd-right { display:flex; align-items:center; gap:8px; }
+  .rd-nav-btn, .rd-close-btn { background:none; border:1px solid var(--line); border-radius:7px; font-size:1rem; cursor:pointer; color:var(--steel); padding:5px 10px; line-height:1; }
+  .rd-close-btn { border:none; font-size:1.2rem; padding:4px; }
+  .rd-nav-btn:hover:not(:disabled), .rd-close-btn:hover { color:var(--ink); border-color:var(--steel); }
+  .rd-nav-btn:disabled { opacity:0.35; cursor:default; }
+  .rd-sub { padding:10px 26px 0; color:var(--steel); font-size:0.8rem; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .rd-date-badge { background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:6px 12px; font-size:0.78rem; font-weight:700; color:var(--ink); white-space:nowrap; }
+  .rd-body { overflow-y:auto; padding:16px 26px 22px; flex:1; min-height:0; }
+  .rd-card-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+  @media (max-width:760px) { .rd-card-row { grid-template-columns:1fr; } }
+  .rd-card { border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; gap:12px; align-items:flex-start; }
+  .rd-card-icon { width:44px; height:44px; border-radius:10px; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:1.3rem; flex-shrink:0; }
+  .rd-card-ttl { font-weight:700; font-size:0.95rem; display:flex; align-items:center; gap:8px; }
+  .rd-card-sub { font-size:0.78rem; color:var(--steel); margin-top:2px; }
+  .rd-card-link { font-size:0.78rem; color:var(--accent); text-decoration:none; font-weight:700; display:inline-flex; align-items:center; gap:4px; margin-top:6px; }
+  .rd-card-link:hover { text-decoration:underline; }
+  .rd-route-pt { display:flex; gap:10px; align-items:flex-start; }
+  .rd-route-dot { width:9px; height:9px; border-radius:50%; margin-top:5px; flex-shrink:0; }
+  .rd-route-line { width:2px; flex:1; background:var(--line); margin:2px 0 2px 3.5px; min-height:14px; }
+  .rd-section { border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; }
+  .rd-section-ttl { display:flex; align-items:center; gap:8px; font-size:0.76rem; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; color:var(--steel); margin-bottom:14px; }
+  .rd-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px 20px; }
+  @media (max-width:760px) { .rd-grid { grid-template-columns:1fr 1fr; } }
+  .rd-grid.cols3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .rd-grid.cols5 { grid-template-columns:repeat(5,minmax(0,1fr)); }
+  @media (max-width:900px) { .rd-grid.cols5 { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .rd-fld .lbl { font-size:0.68rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:4px; }
+  .rd-fld .val { font-size:0.86rem; font-weight:700; color:var(--ink); word-break:break-word; }
+  .rd-fld .val.muted { color:var(--steel); font-weight:600; }
+  .rd-stat-row { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+  @media (max-width:760px) { .rd-stat-row { grid-template-columns:1fr 1fr; } }
+  .rd-stat { border:1px solid var(--line); border-radius:10px; padding:13px 15px; display:flex; align-items:center; gap:10px; }
+  .rd-stat-icon { width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:0.95rem; flex-shrink:0; }
+  .rd-stat .lbl { font-size:0.68rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; }
+  .rd-stat .val { font-size:1.1rem; font-weight:800; color:var(--ink); }
+  .rd-tabs { display:flex; gap:4px; background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:5px; margin-bottom:16px; overflow-x:auto; }
+  .rd-tab { padding:8px 14px; border-radius:6px; font-size:0.83rem; font-weight:600; color:var(--steel); background:none; border:none; cursor:pointer; white-space:nowrap; font-family:inherit; }
+  .rd-tab.active { color:var(--white); background:var(--ink); }
+  .rd-tab:hover:not(.active) { color:var(--ink); }
+  .rd-tab-panel { display:none; }
+  .rd-tab-panel.active { display:block; }
+  .rd-empty-note { text-align:center; color:var(--steel); font-size:0.85rem; padding:20px 0; }
+  .rd-ftr { display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:14px 26px; border-top:1px solid var(--line); flex-shrink:0; }
 </style>
 {% block extra_head %}{% endblock %}
 <script>
@@ -176,7 +288,7 @@
       <div class="nav-label">Operations</div>
       <a href="/trips" class="nav-item {% if active=='trips' %}active{% endif %}"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h11v9H2z"/><path d="M13 10h4l3 3v3h-7z"/><circle cx="6.5" cy="18.2" r="1.5"/><circle cx="17" cy="18.2" r="1.5"/></svg></span>Trips</a>
       <a href="/maintenance" class="nav-item {% if active=='maintenance' %}active{% endif %}"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2.6-.6-.6-2.6 2.8-2.8Z"/></svg></span>Maintenance</a>
-      <a href="/vehicles" class="nav-item {% if active=='vehicles' %}active{% endif %}"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg></span>Vehicles</a>
+      <a href="/vehicles" id="vehiclesNavItem" class="nav-item {% if active=='vehicles' %}active{% endif %} {% if challan_alert_count %}nav-item-warn{% endif %}"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg></span>Vehicles{% if challan_alert_count %}<span class="nav-badge" id="vehiclesNavBadge">{{ challan_alert_count }}</span>{% endif %}</a>
     </div>
     <div class="nav-group">
       <div class="nav-label">Analysis</div>
@@ -256,6 +368,16 @@
   <div class="detail-panel" id="detailPanel">
     <div class="detail-panel-inner" id="detailPanelInner"></div>
   </div>
+</div>
+<!-- RC Details is a centered modal, not a slide-in side panel like the other read-only
+     views — its own overlay so the two mechanisms don't collide. -->
+<div class="rc-modal-overlay" id="rcModalOverlay" onclick="if (event.target === this) closeRcModal();">
+  <div class="rc-modal-box" id="rcModalBox"></div>
+</div>
+<!-- Ledger's read-only Trip/Maintenance/Payment popup — same centered-modal family as RC
+     Details above, own overlay/ids so the two never collide. -->
+<div class="rd-modal-overlay" id="rdModalOverlay" onclick="if (event.target === this) closeRecordModal();">
+  <div class="rd-modal-box" id="rdModalBox"></div>
 </div>
 <script>
 (function() {
@@ -376,6 +498,106 @@
   }
   window.toggleDetailPanel = toggleDetailPanel;
 
+  // RC Details — same fetch-and-inject technique as the side panel above, but into the
+  // centered .rc-modal-box instead, since RC is its own visual design (see vehicle_rc_view.html).
+  function openRcModal(url) {
+    var overlay = document.getElementById('rcModalOverlay');
+    var box = document.getElementById('rcModalBox');
+    box.innerHTML = '<div style="padding:60px;text-align:center;color:var(--steel);">Loading...</div>';
+    overlay.classList.add('open');
+    fetch(url, { headers: { 'X-Soft-Nav': '1' } })
+      .then(function(resp) { return resp.text(); })
+      .then(function(html) {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(html, 'text/html');
+        var newMain = doc.getElementById('main-content');
+        box.innerHTML = newMain ? newMain.innerHTML : html;
+        box.querySelectorAll('script').forEach(function(oldScript) {
+          var newScript = document.createElement('script');
+          Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
+          newScript.textContent = oldScript.textContent;
+          oldScript.parentNode.replaceChild(newScript, oldScript);
+        });
+      })
+      .catch(function() { box.innerHTML = '<div style="padding:40px;color:var(--red);">Could not load.</div>'; });
+  }
+  window.openRcModal = openRcModal;
+
+  function closeRcModal() {
+    document.getElementById('rcModalOverlay').classList.remove('open');
+  }
+  window.closeRcModal = closeRcModal;
+
+  // Record Detail — Ledger's read-only Trip/Maintenance/Payment popup, replacing the old
+  // sliding side panel. Same fetch-and-inject technique as RC Details above, into .rd-modal-box
+  // instead, plus prev/next between whatever entries are on the ledger page that opened it
+  // (window.LEDGER_DETAIL_LINKS, set by ledger.html) so a user can step through records without
+  // closing and re-clicking each row.
+  var recordModalUrl = null;
+  function openRecordModal(url) {
+    var overlay = document.getElementById('rdModalOverlay');
+    var box = document.getElementById('rdModalBox');
+    recordModalUrl = url;
+    box.innerHTML = '<div style="padding:60px;text-align:center;color:var(--steel);">Loading...</div>';
+    overlay.classList.add('open');
+    fetch(url, { headers: { 'X-Soft-Nav': '1' } })
+      .then(function(resp) { return resp.text(); })
+      .then(function(html) {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(html, 'text/html');
+        var newMain = doc.getElementById('main-content');
+        box.innerHTML = newMain ? newMain.innerHTML : html;
+        box.querySelectorAll('script').forEach(function(oldScript) {
+          var newScript = document.createElement('script');
+          Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
+          newScript.textContent = oldScript.textContent;
+          oldScript.parentNode.replaceChild(newScript, oldScript);
+        });
+        box.scrollTop = 0;
+        updateRecordNavButtons();
+      })
+      .catch(function() { box.innerHTML = '<div style="padding:40px;color:var(--red);">Could not load.</div>'; });
+  }
+  window.openRecordModal = openRecordModal;
+
+  function closeRecordModal() {
+    document.getElementById('rdModalOverlay').classList.remove('open');
+    recordModalUrl = null;
+  }
+  window.closeRecordModal = closeRecordModal;
+
+  function navRecordModal(dir) {
+    var links = window.LEDGER_DETAIL_LINKS || [];
+    var idx = links.indexOf(recordModalUrl);
+    if (idx === -1) return;
+    var next = idx + dir;
+    if (next < 0 || next >= links.length) return;
+    openRecordModal(links[next]);
+  }
+  window.navRecordModal = navRecordModal;
+
+  function updateRecordNavButtons() {
+    var links = window.LEDGER_DETAIL_LINKS || [];
+    var idx = links.indexOf(recordModalUrl);
+    var prevBtn = document.getElementById('rdPrevBtn');
+    var nextBtn = document.getElementById('rdNextBtn');
+    if (prevBtn) prevBtn.disabled = (idx <= 0);
+    if (nextBtn) nextBtn.disabled = (idx === -1 || idx >= links.length - 1);
+  }
+
+  // A simple tab strip inside the Record Detail popup (Trip's Trip Info / Costs & Payments /
+  // Deductions / Completion) — plain show/hide, no fetch, since all tab content is already in
+  // the DOM from the one fetch that opened the popup.
+  function showRecordTab(name, btn) {
+    var box = document.getElementById('rdModalBox');
+    box.querySelectorAll('.rd-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+    box.querySelectorAll('.rd-tab').forEach(function(t) { t.classList.remove('active'); });
+    var panel = box.querySelector('.rd-tab-panel[data-tab="' + name + '"]');
+    if (panel) panel.classList.add('active');
+    if (btn) btn.classList.add('active');
+  }
+  window.showRecordTab = showRecordTab;
+
   function toggleNotifDropdown(evt) {
     evt.stopPropagation();
     document.getElementById('notifDropdown').classList.toggle('open');
@@ -385,6 +607,27 @@
     var d = document.getElementById('notifDropdown');
     if (d) d.classList.remove('open');
   });
+
+  // The "Vehicles" sidebar button — its badge number and its sliding-colour warning cue —
+  // shares one dismissed marker with the warning strip and its Close button on the Vehicles
+  // page (see vehicles_list.html). That marker is keyed by login_token (this login's own
+  // timestamp), so a fresh login always clears it — every warning shows again — even if it
+  // was dismissed earlier in the very same browser tab, per instruction. Dismissing clears
+  // both here: the badge disappears and .nav-item-warn comes off, so the button goes straight
+  // back to looking like every other nav item, on every page, for the rest of this login.
+  function hideVehiclesNavBadgeIfDismissed() {
+    var badge = document.getElementById('vehiclesNavBadge');
+    var navItem = document.getElementById('vehiclesNavItem');
+    if (!badge) return;
+    try {
+      if (sessionStorage.getItem('fleetWarningDismissed_{{ login_token }}') === '{{ fleet_warning_marker }}') {
+        badge.remove();
+        if (navItem) navItem.classList.remove('nav-item-warn');
+      }
+    } catch (e) {}
+  }
+  window.hideVehiclesNavBadgeIfDismissed = hideVehiclesNavBadgeIfDismissed;
+  hideVehiclesNavBadgeIfDismissed();
 
   function toggleSidebar() {
     var sidebar = document.querySelector('.sidebar');

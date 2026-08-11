@@ -95,12 +95,15 @@
         </div>
       </div>
     </div>
+    {% if v['type'] != 'Market' %}
     <div class="veh-sync-box">
       <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
+        <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
         <button type="submit" class="download-btn">&#8635; Sync Latest Data</button>
       </form>
       <div class="sub">Last synced: {{ v['rc_last_synced'] or 'Never' }}</div>
     </div>
+    {% endif %}
   </div>
 
   <div class="veh-stat-row">
@@ -165,6 +168,9 @@
       </div>
 
       {% if tab == 'insurance' %}
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+          <button type="button" class="add-btn" onclick="document.getElementById('insEditModal').classList.add('open')">&#9998; {{ 'Edit' if active_insurance else 'Add' }} Insurance</button>
+        </div>
         {% if active_insurance %}
         <div class="veh-ins-main">
           <div class="veh-ins-card">
@@ -213,8 +219,93 @@
           &#8505;&#65039; Insurance details created from an eChallan/VAHAN sync are marked accordingly in Notes — please verify and upload the latest policy document.
         </div>
 
+        <div class="modal-overlay" id="insEditModal">
+          <div class="modal-box mt-modal-box" style="display:flex;flex-direction:column;padding:0;max-height:88vh;">
+            <div class="ins-modal-hd">
+              <button type="button" class="modal-close-x" onclick="document.getElementById('insEditModal').classList.remove('open')">&#10005;</button>
+              <h3>&#128737;&#65039; {{ 'Edit' if active_insurance else 'Add' }} Insurance — {{ v['vehicle_no'] }}</h3>
+              <div class="sub">{{ 'Update this vehicle&#39;s current policy' if active_insurance else 'Add a new insurance policy for this vehicle' }}</div>
+            </div>
+            <form method="POST" action="{{ '/maintenance/insurance/%d/edit' % active_insurance.id if active_insurance else '/maintenance/insurance/add' }}" enctype="multipart/form-data" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+              <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab=insurance">
+              <input type="hidden" name="vehicle_no" value="{{ v['vehicle_no'] }}">
+              <div class="ins-modal-body">
+                <label style="font-size:0.7rem;font-weight:700;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;">Insurance Type *</label>
+                <div class="ins-radio-row">
+                  {% for t in ['Comprehensive','Third Party','Transit Insurance'] %}
+                  <label><input type="radio" name="insurance_type" value="{{ t }}" {% if (active_insurance.insurance_type if active_insurance else 'Comprehensive') == t %}checked{% endif %} required>{{ t }}</label>
+                  {% endfor %}
+                </div>
+                <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px;">
+                  <div class="mt-fld"><label>Insurance Company *</label><input type="text" name="insurer_name" value="{{ active_insurance.insurer_name if active_insurance else '' }}" required></div>
+                  <div class="mt-fld"><label>Policy Number *</label><input type="text" name="policy_number" value="{{ active_insurance.policy_number if active_insurance else '' }}" required placeholder="e.g. PL-2026-458214"></div>
+                </div>
+                <div class="mt-fld" style="max-width:200px;margin-top:10px;"><label>Policy Status *</label>
+                  <select name="policy_status" required>
+                    <option value="Active" {% if not active_insurance or active_insurance.status_override != 'Cancelled' %}selected{% endif %}>Active</option>
+                    <option value="Cancelled" {% if active_insurance and active_insurance.status_override == 'Cancelled' %}selected{% endif %}>Cancelled</option>
+                  </select>
+                </div>
+
+                <div class="ins-section-num"><span class="n">2</span> Policy Period</div>
+                <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+                  <div class="mt-fld"><label>Policy Start Date *</label><input type="date" name="start_date" value="{{ active_insurance.start_date if active_insurance else '' }}" required></div>
+                  <div class="mt-fld"><label>Policy Expiry Date *</label><input type="date" name="expiry_date" value="{{ active_insurance.expiry_date if active_insurance else '' }}" required></div>
+                </div>
+
+                <div class="ins-section-num"><span class="n">3</span> Premium Details</div>
+                <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+                  <div class="mt-fld"><label>Premium Amount (₹) *</label><input type="number" step="0.01" name="premium_amount" value="{{ active_insurance.premium_amount if active_insurance else '' }}" required></div>
+                  <div class="mt-fld"><label>Insured Declared Value (₹)</label><input type="number" step="0.01" name="idv" value="{{ active_insurance.idv if active_insurance else '' }}"></div>
+                  <div class="mt-fld"><label>NCB (%)</label><input type="number" step="0.1" name="ncb_pct" value="{{ active_insurance.ncb_pct if active_insurance else '' }}"></div>
+                  <div class="mt-fld"><label>GST Included</label>
+                    <select name="gst_included">
+                      <option value="Yes" {% if active_insurance and active_insurance.gst_included == 'Yes' %}selected{% endif %}>Yes</option>
+                      <option value="No" {% if active_insurance and active_insurance.gst_included == 'No' %}selected{% endif %}>No</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="ins-section-num"><span class="n">4</span> Agent / Broker Details</div>
+                <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+                  <div class="mt-fld"><label>Agent / Broker Name</label><input type="text" name="agent_name" value="{{ active_insurance.agent_name if active_insurance else '' }}"></div>
+                  <div class="mt-fld"><label>Contact Number</label><input type="text" name="agent_contact" value="{{ active_insurance.agent_contact if active_insurance else '' }}"></div>
+                </div>
+                <div class="mt-fld" style="margin-top:10px;"><label>Email (Optional)</label><input type="email" name="agent_email" value="{{ active_insurance.agent_email if active_insurance else '' }}"></div>
+
+                <div class="ins-section-num"><span class="n">5</span> Documents</div>
+                <div class="ins-doc-row">
+                  <label class="ins-doc-box">
+                    <input type="file" name="policy_doc" accept=".pdf,.jpg,.jpeg,.png">
+                    <div class="lbl">Policy Document</div>
+                    <div class="sub">{{ 'Replace current file' if active_insurance and active_insurance.policy_doc_path else 'Upload PDF · Max 5MB' }}</div>
+                  </label>
+                  <label class="ins-doc-box">
+                    <input type="file" name="invoice_doc" accept=".pdf,.jpg,.jpeg,.png">
+                    <div class="lbl">Invoice / Receipt</div>
+                    <div class="sub">{{ 'Replace current file' if active_insurance and active_insurance.invoice_doc_path else 'Upload PDF · Max 5MB' }}</div>
+                  </label>
+                  <label class="ins-doc-box">
+                    <input type="file" name="rc_doc" accept=".pdf,.jpg,.jpeg,.png">
+                    <div class="lbl">RC Copy (Optional)</div>
+                    <div class="sub">{{ 'Replace current file' if active_insurance and active_insurance.rc_doc_path else 'Upload Image · Max 5MB' }}</div>
+                  </label>
+                </div>
+
+                <div class="ins-section-num"><span class="n">6</span> Notes (Optional)</div>
+                <div class="mt-fld"><textarea name="notes" rows="2" placeholder="Enter any special conditions or notes...">{{ active_insurance.notes if active_insurance else '' }}</textarea></div>
+              </div>
+              <div class="ins-modal-ftr">
+                <button type="button" onclick="document.getElementById('insEditModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+                <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Insurance</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
       {% elif tab == 'permit' %}
       <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Permit</div><button type="button" class="edit-toggle-btn" onclick="document.getElementById('editPermitModal').classList.add('open')">&#9998; Edit</button></div>
         {% if comp_row %}
         <div class="mt-detail-grid">
           <div><div class="lbl">Status</div>{{ comp_row.permit.status if comp_row.permit.status != 'Unknown' else 'No Data' }}</div>
@@ -228,9 +319,28 @@
         <div style="text-align:center;color:var(--steel);padding:30px;">No permit data tracked for this vehicle.</div>
         {% endif %}
       </div>
+      <div class="modal-overlay" id="editPermitModal">
+        <div class="modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('editPermitModal').classList.remove('open')">&#10005;</button>
+          <h3>&#9998; Edit Permit — {{ v['vehicle_no'] }}</h3>
+          <form method="POST" action="/vehicles/{{ v['id'] }}/compliance/permit/renew">
+            <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab=permit">
+            <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
+              <div class="mt-fld"><label>Permit No.</label><input type="text" name="document_number" value="{{ comp_row.permit.document_number if comp_row else '' }}"></div>
+              <div class="mt-fld"><label>Permit Type</label><input type="text" name="permit_subtype" value="{{ comp_row.permit.permit_subtype if comp_row else '' }}" placeholder="e.g. National Permit"></div>
+            </div>
+            <div class="mt-fld" style="margin-top:10px;"><label>Valid Upto *</label><input type="date" name="valid_upto" value="{{ comp_row.permit.expiry if comp_row else '' }}" required></div>
+            <div style="display:flex;gap:10px;margin-top:18px;">
+              <button type="button" onclick="document.getElementById('editPermitModal').classList.remove('open')" class="btn-cancel" style="flex:1;">Cancel</button>
+              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save Permit</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       {% elif tab == 'fitness' %}
       <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">Fitness</div><button type="button" class="edit-toggle-btn" onclick="document.getElementById('editFitnessModal').classList.add('open')">&#9998; Edit</button></div>
         {% if comp_row %}
         <div class="mt-detail-grid">
           <div><div class="lbl">Status</div>{{ comp_row.fitness.status if comp_row.fitness.status != 'Unknown' else 'No Data' }}</div>
@@ -243,9 +353,25 @@
         <div style="text-align:center;color:var(--steel);padding:30px;">No fitness data tracked for this vehicle.</div>
         {% endif %}
       </div>
+      <div class="modal-overlay" id="editFitnessModal">
+        <div class="modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('editFitnessModal').classList.remove('open')">&#10005;</button>
+          <h3>&#9998; Edit Fitness — {{ v['vehicle_no'] }}</h3>
+          <form method="POST" action="/vehicles/{{ v['id'] }}/compliance/fitness/renew">
+            <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab=fitness">
+            <div class="mt-fld"><label>Certificate No.</label><input type="text" name="document_number" value="{{ comp_row.fitness.document_number if comp_row else '' }}"></div>
+            <div class="mt-fld" style="margin-top:10px;"><label>Valid Upto *</label><input type="date" name="valid_upto" value="{{ comp_row.fitness.expiry if comp_row else '' }}" required></div>
+            <div style="display:flex;gap:10px;margin-top:18px;">
+              <button type="button" onclick="document.getElementById('editFitnessModal').classList.remove('open')" class="btn-cancel" style="flex:1;">Cancel</button>
+              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save Fitness</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       {% elif tab == 'puc' %}
       <div class="mt-panel">
+        <div class="mt-panel-head"><div class="ttl">PUC</div><button type="button" class="edit-toggle-btn" onclick="document.getElementById('editPucModal').classList.add('open')">&#9998; Edit</button></div>
         {% if comp_row %}
         <div class="mt-detail-grid">
           <div><div class="lbl">Status</div>{{ comp_row.puc.status if comp_row.puc.status != 'Unknown' else 'No Data' }}</div>
@@ -258,6 +384,21 @@
         <div style="text-align:center;color:var(--steel);padding:30px;">No PUC data tracked for this vehicle.</div>
         {% endif %}
       </div>
+      <div class="modal-overlay" id="editPucModal">
+        <div class="modal-box">
+          <button type="button" class="modal-close-x" onclick="document.getElementById('editPucModal').classList.remove('open')">&#10005;</button>
+          <h3>&#9998; Edit PUC — {{ v['vehicle_no'] }}</h3>
+          <form method="POST" action="/vehicles/{{ v['id'] }}/compliance/puc/renew">
+            <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab=puc">
+            <div class="mt-fld"><label>Certificate No.</label><input type="text" name="document_number" value="{{ comp_row.puc.document_number if comp_row else '' }}"></div>
+            <div class="mt-fld" style="margin-top:10px;"><label>Valid Upto *</label><input type="date" name="valid_upto" value="{{ comp_row.puc.expiry if comp_row else '' }}" required></div>
+            <div style="display:flex;gap:10px;margin-top:18px;">
+              <button type="button" onclick="document.getElementById('editPucModal').classList.remove('open')" class="btn-cancel" style="flex:1;">Cancel</button>
+              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save PUC</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       {% elif tab == 'echallan' %}
       <div class="veh-echallan-stats">
@@ -265,9 +406,6 @@
         <div class="veh-stat-card"><div class="hd">Total Amount</div><div class="big">₹{{ '{:,.0f}'.format(challan_pending_amount + challan_paid_amount) }}</div></div>
         <div class="veh-stat-card"><div class="hd">Pending</div><div class="big" style="color:var(--red);">{{ challan_pending_n }}</div><div class="sub2">₹{{ '{:,.0f}'.format(challan_pending_amount) }}</div></div>
         <div class="veh-stat-card"><div class="hd">Paid</div><div class="big" style="color:var(--green);">{{ challan_paid_n }}</div><div class="sub2">₹{{ '{:,.0f}'.format(challan_paid_amount) }}</div></div>
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
-        <form method="POST" action="/vehicles/{{ v['id'] }}/sync-challans-now"><button type="submit" class="download-btn">&#8635; Sync eChallan Data</button></form>
       </div>
       <div class="mt-panel">
         {% if challans %}
@@ -360,8 +498,13 @@
       <div class="mt-panel">
         <div class="mt-panel-head"><div class="ttl">Quick Actions</div></div>
         <div class="veh-qa-list">
-          <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now"><button type="submit">&#8635; Sync Latest Data</button></form>
-          <button type="button" onclick="toggleDetailPanel('/vehicles/{{ v['id'] }}/rc-lookup')">&#128269; View RC Details</button>
+          {% if v['type'] != 'Market' %}
+          <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
+            <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
+            <button type="submit">&#8635; Sync Latest Data</button>
+          </form>
+          {% endif %}
+          <button type="button" onclick="openRcModal('/vehicles/{{ v['id'] }}/rc-lookup')">&#128269; View RC Details</button>
           <a href="/vehicles">&#8592; Back to Vehicles</a>
         </div>
       </div>
