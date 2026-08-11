@@ -1,136 +1,231 @@
 {% extends "base.html" %}
 {% block title %}Trip Details{% endblock %}
 {% block content %}
-<div class="dp-title-row">
-  <h2>Trip Details</h2>
-  <span class="dp-readonly-badge">Read Only</span>
-</div>
-<div class="dp-sub">{{ t.get('lr_number') or 'No LR' }} — {{ t.get('vehicle_no') or 'No vehicle' }} — {{ t.get('party_name') or 'No party' }}</div>
-
-<div class="dp-section">
-  <div class="dp-section-ttl">Trip Information</div>
-  <div class="dp-grid">
-    <div class="dp-fld"><div class="lbl">Date</div><div class="val">{{ t.get('date') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">LR Number</div><div class="val">{{ t.get('lr_number') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Vehicle No</div><div class="val">{{ t.get('vehicle_no') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Type</div><div class="val">{{ t.get('type') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Party Name</div><div class="val">{{ t.get('party_name') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Driver Name</div><div class="val">{{ t.get('driver_name') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Material</div><div class="val">{{ t.get('material') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Charge Type</div><div class="val">{{ 'Fixed' if t.get('rate_type')=='FIXED' else 'Per MT' }}</div></div>
-    <div class="dp-fld"><div class="lbl">From</div><div class="val">{{ t.get('from_loc') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">To</div><div class="val">{{ t.get('to_loc') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Quantity (MT)</div><div class="val">{{ t.get('quantity') or 0 }}</div></div>
-    {% if t.get('rate_type')=='FIXED' %}
-    <div class="dp-fld"><div class="lbl">Fixed Rate Amount</div><div class="val">₹{{ '{:,.0f}'.format(t.get('fixed_rate_amount') or 0) }}</div></div>
-    {% else %}
-    <div class="dp-fld"><div class="lbl">Rate (per unit)</div><div class="val">₹{{ '{:,.2f}'.format(t.get('rate') or 0) }}</div></div>
-    {% endif %}
-  </div>
-</div>
-
 {% set additions = [('Detention Charges', t.get('detention_charges')), ('GPS Cost', t.get('gps_cost')),
                      ('Loading Charge', t.get('loading_charge')), ('Unloading Charge', t.get('unloading_charge')),
                      ('Police Charges', t.get('police_charges')), ('SIM Tracking', t.get('sim_tracking')),
                      ('Union Charges', t.get('union_charges')), ('Weight Charges', t.get('weight_charges')),
                      ('Other Charges', t.get('other_charges'))] %}
-<div class="dp-section">
-  <div class="dp-section-ttl">Charges (Additions)</div>
-  <div class="dp-grid cols3">
-    {% for lbl, val in additions %}
-    <div class="dp-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">₹{{ '{:,.0f}'.format(val or 0) }}</div></div>
-    {% endfor %}
-  </div>
-</div>
-
 {% set deductions = [('Brokerage', t.get('brokerage')), ('Builty Commission', t.get('builty_commission')),
                       ('Late Fees', t.get('late_fees')), ('Material Damage', t.get('material_damage')),
                       ('Shortage Amount', t.get('shortage_amount')), ('TDS', t.get('tds')),
                       ('Other Deductions', t.get('other_deductions'))] %}
-<div class="dp-section">
-  <div class="dp-section-ttl">Deductions</div>
-  <div class="dp-grid cols3">
-    {% for lbl, val in deductions %}
-    <div class="dp-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">₹{{ '{:,.0f}'.format(val or 0) }}</div></div>
-    {% endfor %}
-    <div class="dp-fld"><div class="lbl">Shortage Qty</div><div class="val{% if not t.get('shortage_qty') %} muted{% endif %}">{{ t.get('shortage_qty') or 0 }}</div></div>
+<div class="rd-hd">
+  <div class="rd-hd-left">
+    <h2>Trip Details</h2>
+    <span class="rd-badge">Trip Bill</span>
+  </div>
+  <div class="rd-hd-right">
+    <button type="button" class="rd-nav-btn" id="rdPrevBtn" onclick="navRecordModal(-1)" title="Previous record">&#8592;</button>
+    <button type="button" class="rd-nav-btn" id="rdNextBtn" onclick="navRecordModal(1)" title="Next record">&#8594;</button>
+    <button type="button" class="rd-close-btn" onclick="closeRecordModal()">&#10005;</button>
   </div>
 </div>
-
-<div class="dp-section">
-  <div class="dp-section-ttl">Trip Costs &amp; Vendor Payments</div>
-  <div class="dp-grid cols3">
-    <div class="dp-fld"><div class="lbl">Fuel Amount</div><div class="val{% if not t.get('fuel_amount') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('fuel_amount') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Fuel Vendor</div><div class="val{% if not t.get('fuel_vendor_name') %} muted{% endif %}">{{ t.get('fuel_vendor_name') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Fuel Filled (Litres)</div><div class="val{% if not t.get('fuel_liters') %} muted{% endif %}">{{ t.get('fuel_liters') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Fuel Price (per Litre)</div><div class="val{% if not t.get('fuel_price') %} muted{% endif %}">₹{{ '{:,.2f}'.format(t.get('fuel_price') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Driver Advance</div><div class="val{% if not t.get('driver_adv_amount') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('driver_adv_amount') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Driver Adv. Vendor</div><div class="val{% if not t.get('driveradv_vendor_name') %} muted{% endif %}">{{ t.get('driveradv_vendor_name') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Agent Commission</div><div class="val{% if not t.get('agent_commission') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('agent_commission') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Builty Expense</div><div class="val{% if not t.get('builty_expense') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('builty_expense') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Fine</div><div class="val{% if not t.get('fine') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('fine') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Labour Charges</div><div class="val{% if not t.get('labour_charges') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('labour_charges') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Parking</div><div class="val{% if not t.get('parking') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('parking') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Puncture</div><div class="val{% if not t.get('puncture') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('puncture') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Toll</div><div class="val{% if not t.get('toll') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('toll') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Urea</div><div class="val{% if not t.get('urea') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('urea') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Loading Expense</div><div class="val{% if not t.get('loading_expense') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('loading_expense') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Unloading Expense</div><div class="val{% if not t.get('unloading_expense') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('unloading_expense') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Weighbridge Charges</div><div class="val{% if not t.get('weighbridge_charges') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('weighbridge_charges') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Other Expense</div><div class="val{% if not t.get('other_expense') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('other_expense') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Misc Vendor</div><div class="val{% if not t.get('misc_vendor_name') %} muted{% endif %}">{{ t.get('misc_vendor_name') or '—' }}</div></div>
-  </div>
+<div class="rd-sub">
+  <span>REF / DOCUMENT: {{ t.get('lr_number') or ('Trip #%d' % t.get('id')) }}</span>
+  {% if t.get('date') %}<span class="rd-date-badge">&#128197; {{ t['date'] }}</span>{% endif %}
 </div>
 
-{% if is_market %}
-<div class="dp-section">
-  <div class="dp-section-ttl">Market Vehicle Owner</div>
-  <div class="dp-grid">
-    <div class="dp-fld"><div class="lbl">Owner Name</div><div class="val">{{ t.get('owner_name') or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Owner Charge Type</div><div class="val">{{ 'Fixed' if t.get('owner_rate_type')=='FIXED' else 'Per MT' }}</div></div>
-    {% if t.get('owner_rate_type')=='FIXED' %}
-    <div class="dp-fld"><div class="lbl">Owner Fixed Amount</div><div class="val">₹{{ '{:,.0f}'.format(t.get('owner_fixed_amount') or 0) }}</div></div>
-    {% else %}
-    <div class="dp-fld"><div class="lbl">Owner Rate (per unit)</div><div class="val">₹{{ '{:,.2f}'.format(t.get('owner_rate') or 0) }}</div></div>
+<div class="rd-body">
+  <div class="rd-card-row">
+    <div class="rd-card">
+      <div class="rd-card-icon">&#128667;</div>
+      <div>
+        <div class="rd-card-ttl">{{ t.get('vehicle_no') or 'No vehicle' }}
+          {% if t.get('veh_status') %}<span class="rd-badge" style="background:{% if t['veh_status']=='Active' %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{{ t['veh_status'] }}</span>{% endif %}
+        </div>
+        <div class="rd-card-sub">
+          {%- if veh_rc and (veh_rc.rc_maker_desc or veh_rc.rc_maker_model) %}{{ veh_rc.rc_maker_desc or '' }} {{ veh_rc.rc_maker_model or '' }}{% if t.get('veh_body_type') %} &middot; {{ t['veh_body_type'] }}{% endif -%}
+          {%- elif t.get('veh_body_type') %}{{ t['veh_body_type'] }}
+          {%- else %}{{ t.get('type') or '—' }} vehicle{% endif %}
+        </div>
+        {% if t.get('veh_id') %}<a class="rd-card-link" href="/vehicles/{{ t['veh_id'] }}">View Vehicle &rarr;</a>{% endif %}
+      </div>
+    </div>
+    <div class="rd-card">
+      <div class="rd-card-icon">&#128205;</div>
+      <div style="flex:1;">
+        <div class="rd-route-pt"><span class="rd-route-dot" style="background:var(--green);"></span><div><div class="rd-card-ttl" style="font-size:0.86rem;">{{ t.get('from_loc') or '—' }}</div><div class="rd-card-sub">Loading Point</div></div></div>
+        <div class="rd-route-line"></div>
+        <div class="rd-route-pt"><span class="rd-route-dot" style="background:var(--red);"></span><div><div class="rd-card-ttl" style="font-size:0.86rem;">{{ t.get('to_loc') or '—' }}</div><div class="rd-card-sub">Unloading Point</div></div></div>
+        {% if t.get('actual_km') %}<div class="rd-card-sub" style="margin-top:8px;">Distance: <b style="color:var(--ink);">{{ t['actual_km'] }} km</b></div>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="rd-grid cols5" style="margin-bottom:16px;">
+    <div class="rd-fld"><div class="lbl">Trip Type</div><div class="val">{{ t.get('type') or '—' }}</div></div>
+    <div class="rd-fld"><div class="lbl">Party</div><div class="val">{{ t.get('party_name') or '—' }}</div></div>
+    <div class="rd-fld"><div class="lbl">Material</div><div class="val">{{ t.get('material') or '—' }}</div></div>
+    <div class="rd-fld"><div class="lbl">Driver</div><div class="val">{{ t.get('driver_name') or '—' }}</div></div>
+    <div class="rd-fld"><div class="lbl">LR Received</div><div class="val{% if t.get('lr_received')!='Yes' %} muted{% endif %}">{{ t.get('lr_received') or 'No' }}</div></div>
+  </div>
+
+  <div class="rd-stat-row">
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div><div><div class="lbl">Billed Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('billed_amount') or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#fff3e8;color:var(--accent);">&#8593;</div><div><div class="lbl">Driver Advance</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('driver_adv_amount') or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#fdecea;color:var(--red);">&#8595;</div><div><div class="lbl">Deductions</div><div class="val">&#8377;{{ '{:,.0f}'.format(deductions_total) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#e8f5ee;color:var(--green);">&#10003;</div><div><div class="lbl">Balance Due</div><div class="val">&#8377;{{ '{:,.0f}'.format(balance_due) }}</div></div></div>
+  </div>
+
+  <div class="rd-tabs">
+    <button type="button" class="rd-tab active" onclick="showRecordTab('info', this)">Trip Info</button>
+    <button type="button" class="rd-tab" onclick="showRecordTab('costs', this)">Costs &amp; Payments</button>
+    <button type="button" class="rd-tab" onclick="showRecordTab('deductions', this)">Deductions</button>
+    <button type="button" class="rd-tab" onclick="showRecordTab('completion', this)">Completion</button>
+  </div>
+
+  <div class="rd-tab-panel active" data-tab="info">
+    <div class="rd-card-row">
+      <div class="rd-section" style="margin-bottom:0;">
+        <div class="rd-section-ttl">Trip Information</div>
+        <div class="rd-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="rd-fld"><div class="lbl">LR Number</div><div class="val">{{ t.get('lr_number') or '—' }}</div></div>
+          <div class="rd-fld"><div class="lbl">Date</div><div class="val">{{ t.get('date') or '—' }}</div></div>
+          <div class="rd-fld"><div class="lbl">Charge Type</div><div class="val">{{ 'Fixed' if t.get('rate_type')=='FIXED' else 'Per MT' }}</div></div>
+          <div class="rd-fld"><div class="lbl">Quantity (MT)</div><div class="val">{{ t.get('quantity') or 0 }}</div></div>
+          {% if t.get('rate_type')=='FIXED' %}
+          <div class="rd-fld"><div class="lbl">Fixed Rate Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('fixed_rate_amount') or 0) }}</div></div>
+          {% else %}
+          <div class="rd-fld"><div class="lbl">Rate (per unit)</div><div class="val">&#8377;{{ '{:,.2f}'.format(t.get('rate') or 0) }}</div></div>
+          {% endif %}
+          <div class="rd-fld"><div class="lbl">Empty Trip</div><div class="val{% if not t.get('is_empty') %} muted{% endif %}">{{ 'Yes' if t.get('is_empty') else 'No' }}</div></div>
+        </div>
+      </div>
+      <div class="rd-section" style="margin-bottom:0;">
+        <div class="rd-section-ttl">Fuel</div>
+        <div class="rd-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="rd-fld"><div class="lbl">Fuel Amount</div><div class="val{% if not t.get('fuel_amount') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('fuel_amount') or 0) }}</div></div>
+          <div class="rd-fld"><div class="lbl">Fuel Vendor</div><div class="val{% if not t.get('fuel_vendor_name') %} muted{% endif %}">{{ t.get('fuel_vendor_name') or '—' }}</div></div>
+          <div class="rd-fld"><div class="lbl">Fuel Filled (Litres)</div><div class="val{% if not t.get('fuel_liters') %} muted{% endif %}">{{ t.get('fuel_liters') or '—' }}</div></div>
+          <div class="rd-fld"><div class="lbl">Fuel Price (per Litre)</div><div class="val{% if not t.get('fuel_price') %} muted{% endif %}">&#8377;{{ '{:,.2f}'.format(t.get('fuel_price') or 0) }}</div></div>
+        </div>
+      </div>
+    </div>
+    {% if is_market %}
+    <div class="rd-section">
+      <div class="rd-section-ttl">Market Vehicle Owner</div>
+      <div class="rd-grid">
+        <div class="rd-fld"><div class="lbl">Owner Name</div><div class="val">{{ t.get('owner_name') or '—' }}</div></div>
+        <div class="rd-fld"><div class="lbl">Owner Charge Type</div><div class="val">{{ 'Fixed' if t.get('owner_rate_type')=='FIXED' else 'Per MT' }}</div></div>
+        {% if t.get('owner_rate_type')=='FIXED' %}
+        <div class="rd-fld"><div class="lbl">Owner Fixed Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('owner_fixed_amount') or 0) }}</div></div>
+        {% else %}
+        <div class="rd-fld"><div class="lbl">Owner Rate (per unit)</div><div class="val">&#8377;{{ '{:,.2f}'.format(t.get('owner_rate') or 0) }}</div></div>
+        {% endif %}
+        <div class="rd-fld"><div class="lbl">Owner Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(owner_amount) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Paid to Owner</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('paid_to_owner') or 0) }}</div></div>
+      </div>
+    </div>
     {% endif %}
-    <div class="dp-fld"><div class="lbl">Owner Amount</div><div class="val">₹{{ '{:,.0f}'.format(owner_amount) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Advance / Paid to Owner</div><div class="val">₹{{ '{:,.0f}'.format(t.get('paid_to_owner') or 0) }}</div></div>
+    {% if t.get('remarks') %}
+    <div class="rd-section">
+      <div class="rd-section-ttl">Notes</div>
+      <div class="rd-fld"><div class="val" style="font-weight:500;">{{ t['remarks'] }}</div></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="rd-tab-panel" data-tab="costs">
+    <div class="rd-section">
+      <div class="rd-section-ttl">Charges (Additions)</div>
+      <div class="rd-grid cols3">
+        {% for lbl, val in additions %}
+        <div class="rd-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(val or 0) }}</div></div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="rd-section">
+      <div class="rd-section-ttl">Trip Costs &amp; Vendor Payments</div>
+      <div class="rd-grid cols3">
+        <div class="rd-fld"><div class="lbl">Driver Advance</div><div class="val{% if not t.get('driver_adv_amount') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('driver_adv_amount') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Driver Adv. Vendor</div><div class="val{% if not t.get('driveradv_vendor_name') %} muted{% endif %}">{{ t.get('driveradv_vendor_name') or '—' }}</div></div>
+        <div class="rd-fld"><div class="lbl">Agent Commission</div><div class="val{% if not t.get('agent_commission') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('agent_commission') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Builty Expense</div><div class="val{% if not t.get('builty_expense') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('builty_expense') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Fine</div><div class="val{% if not t.get('fine') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('fine') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Labour Charges</div><div class="val{% if not t.get('labour_charges') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('labour_charges') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Parking</div><div class="val{% if not t.get('parking') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('parking') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Puncture</div><div class="val{% if not t.get('puncture') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('puncture') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Toll</div><div class="val{% if not t.get('toll') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('toll') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Urea</div><div class="val{% if not t.get('urea') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('urea') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Loading Expense</div><div class="val{% if not t.get('loading_expense') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('loading_expense') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Unloading Expense</div><div class="val{% if not t.get('unloading_expense') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('unloading_expense') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Weighbridge Charges</div><div class="val{% if not t.get('weighbridge_charges') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('weighbridge_charges') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Other Expense</div><div class="val{% if not t.get('other_expense') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('other_expense') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Misc Vendor</div><div class="val{% if not t.get('misc_vendor_name') %} muted{% endif %}">{{ t.get('misc_vendor_name') or '—' }}</div></div>
+      </div>
+    </div>
+    {% if custom_items %}
+    <div class="rd-section">
+      <div class="rd-section-ttl">Others (Custom Items)</div>
+      <div style="overflow-x:auto;">
+      <table>
+        <tr><th>Description</th><th>Type</th><th class="num">Amount</th><th>Vendor</th></tr>
+        {% for it in custom_items %}
+        <tr>
+          <td>{{ it['description'] }}</td>
+          <td>{{ 'Deduction' if it['item_type']=='deduction' else 'Charge' }}</td>
+          <td class="num">&#8377;{{ '{:,.0f}'.format(it['amount'] or 0) }}</td>
+          <td>{{ it['vendor_name'] or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      </div>
+    </div>
+    {% endif %}
+    <div class="rd-section">
+      <div class="rd-section-ttl">Payment Tracking</div>
+      <div class="rd-grid cols3">
+        <div class="rd-fld"><div class="lbl">Party Advance</div><div class="val{% if not t.get('party_advance') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('party_advance') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Payment Received</div><div class="val{% if not t.get('payment_received') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('payment_received') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Balance Due</div><div class="val" style="color:{% if balance_due > 0 %}var(--red){% else %}var(--green){% endif %};">&#8377;{{ '{:,.0f}'.format(balance_due) }}</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rd-tab-panel" data-tab="deductions">
+    <div class="rd-section">
+      <div class="rd-section-ttl">Deductions</div>
+      <div class="rd-grid cols3">
+        {% for lbl, val in deductions %}
+        <div class="rd-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(val or 0) }}</div></div>
+        {% endfor %}
+        <div class="rd-fld"><div class="lbl">Shortage Qty</div><div class="val{% if not t.get('shortage_qty') %} muted{% endif %}">{{ t.get('shortage_qty') or 0 }} {{ t.get('shortage_unit') or '' }}</div></div>
+      </div>
+      <div class="rd-fld" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+        <div class="lbl">Total Deductions</div><div class="val" style="font-size:1.1rem;color:var(--red);">&#8377;{{ '{:,.0f}'.format(deductions_total) }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rd-tab-panel" data-tab="completion">
+    {% if t.get('end_date') %}
+    <div class="rd-section">
+      <div class="rd-section-ttl">Trip Completion</div>
+      <div class="rd-grid">
+        <div class="rd-fld"><div class="lbl">End Date</div><div class="val">{{ t['end_date'] }}</div></div>
+        <div class="rd-fld"><div class="lbl">End Time</div><div class="val{% if not t.get('end_time') %} muted{% endif %}">{{ t.get('end_time') or '—' }}</div></div>
+        <div class="rd-fld"><div class="lbl">Actual KM</div><div class="val{% if not t.get('actual_km') %} muted{% endif %}">{{ t.get('actual_km') or '—' }}</div></div>
+        <div class="rd-fld"><div class="lbl">LR Received</div><div class="val">{{ t.get('lr_received') or 'No' }}</div></div>
+      </div>
+      {% if t.get('shortage_amount') or t.get('shortage_qty') %}
+      <div class="rd-grid" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+        <div class="rd-fld"><div class="lbl">Shortage Qty</div><div class="val">{{ t.get('shortage_qty') or 0 }} {{ t.get('shortage_unit') or '' }}</div></div>
+        <div class="rd-fld"><div class="lbl">Shortage Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('shortage_amount') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Shortage Date</div><div class="val{% if not t.get('shortage_date') %} muted{% endif %}">{{ t.get('shortage_date') or '—' }}</div></div>
+      </div>
+      {% if t.get('shortage_remarks') %}
+      <div class="rd-fld" style="margin-top:10px;"><div class="lbl">Shortage Remarks</div><div class="val" style="font-weight:500;">{{ t['shortage_remarks'] }}</div></div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="rd-empty-note">This trip has not been marked complete yet.</div>
+    {% endif %}
   </div>
 </div>
-{% endif %}
 
-{% if custom_items %}
-<div class="dp-section">
-  <div class="dp-section-ttl">Others (Custom Items)</div>
-  <div style="overflow-x:auto;">
-  <table>
-    <tr><th>Description</th><th>Type</th><th class="num">Amount</th><th>Vendor</th></tr>
-    {% for it in custom_items %}
-    <tr>
-      <td>{{ it['description'] }}</td>
-      <td>{{ 'Deduction' if it['item_type']=='deduction' else 'Charge' }}</td>
-      <td class="num">₹{{ '{:,.0f}'.format(it['amount'] or 0) }}</td>
-      <td>{{ it['vendor_name'] or '—' }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  </div>
+<div class="rd-ftr">
+  <button type="button" class="btn-cancel" onclick="closeRecordModal()">Close</button>
 </div>
-{% endif %}
-
-<div class="dp-section">
-  <div class="dp-section-ttl">Payment Tracking</div>
-  <div class="dp-grid cols3">
-    <div class="dp-fld"><div class="lbl">Party Advance</div><div class="val{% if not t.get('party_advance') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('party_advance') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Payment Received</div><div class="val{% if not t.get('payment_received') %} muted{% endif %}">₹{{ '{:,.0f}'.format(t.get('payment_received') or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">LR Received</div><div class="val{% if t.get('lr_received')!='Yes' %} muted{% endif %}">{{ t.get('lr_received') or 'No' }}</div></div>
-  </div>
-</div>
-
-<div class="dp-section" style="background:rgba(26,122,76,0.08);border-color:rgba(26,122,76,0.25);">
-  <div class="dp-section-ttl">Billed Amount</div>
-  <div class="dp-fld"><div class="val" style="font-size:1.3rem;color:var(--green);">₹{{ '{:,.0f}'.format(t.get('billed_amount') or 0) }}</div></div>
-</div>
-
-<a href="/trips/edit/{{ t.get('id') }}" class="add-btn" style="width:100%;justify-content:center;margin-top:6px;">&#9999;&#65039; Edit This Trip</a>
 {% endblock %}

@@ -56,10 +56,15 @@
 .comp-renew-form input { padding:6px 8px; border:1px solid var(--line); border-radius:4px; font-size:0.8rem; }
 
 /* Vehicles table redesign */
-.veh-challan-alert { display:flex; justify-content:space-between; align-items:center; gap:14px; background:rgba(179,57,47,0.08); border:1px solid rgba(179,57,47,0.25); border-radius:10px; padding:14px 18px; margin-bottom:16px; flex-wrap:wrap; }
-.veh-challan-alert .msg { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:0.86rem; color:var(--ink); }
-.veh-challan-alert .msg b { color:var(--red); }
-.veh-challan-alert .msg .sep { color:var(--steel); font-weight:600; }
+.veh-challan-alert { display:flex; justify-content:space-between; align-items:center; gap:14px; background:rgba(179,57,47,0.08); border:1px solid rgba(179,57,47,0.25); border-radius:10px; padding:12px 18px; margin-bottom:16px; flex-wrap:wrap; }
+.veh-challan-alert .msg { display:flex; align-items:center; gap:22px; flex-wrap:wrap; font-size:0.86rem; color:var(--ink); }
+.warn-chip { display:flex; align-items:center; gap:6px; }
+.warn-chip::before { content:"\26A0\FE0F"; }
+.warn-chip.bad b { color:var(--red); }
+.warn-chip b { font-weight:800; }
+.warn-chip .sep { color:var(--steel); font-weight:600; }
+.veh-challan-alert-close { background:none; border:none; color:var(--steel); font-size:0.95rem; cursor:pointer; padding:4px; line-height:1; flex-shrink:0; }
+.veh-challan-alert-close:hover { color:var(--red); }
 .veh-info-ic { color:var(--steel); font-size:0.78rem; cursor:help; }
 .veh-sort-ic { color:var(--steel); font-size:0.7rem; text-decoration:none; margin-left:2px; cursor:pointer; display:inline-block; }
 .veh-sort-ic:hover { color:var(--accent); }
@@ -140,14 +145,18 @@
     <a class="clear" href="/vehicles?tab=all">Clear</a>
   </form>
 
-  {% if challan_vehicles_count > 0 %}
-  <div class="veh-challan-alert">
+  {% if challan_vehicles_count > 0 or ins_expiring > 0 or permit_expiring > 0 or puc_expiring > 0 or fit_expiring > 0 %}
+  <div class="veh-challan-alert" id="vehChallanAlert" data-marker="{{ fleet_warning_marker }}">
     <div class="msg">
-      <span class="ic">&#9888;&#65039;</span>
-      <b>{{ challan_vehicles_count }} vehicle{{ 's' if challan_vehicles_count != 1 }} have challans pending</b>
-      <span class="sep">Total pending amount: ₹{{ '{:,.0f}'.format(challan_total_amount) }}</span>
+      {% if challan_vehicles_count > 0 %}
+      <span class="warn-chip bad"><b>{{ challan_vehicles_count }}</b> Challan{{ 's' if challan_vehicles_count != 1 }} Pending <span class="sep">₹{{ '{:,.0f}'.format(challan_total_amount) }}</span></span>
+      {% endif %}
+      {% if ins_expiring > 0 %}<span class="warn-chip"><b>{{ ins_expiring }}</b> Insurance Expiring <span class="sep">In 30 days</span></span>{% endif %}
+      {% if permit_expiring > 0 %}<span class="warn-chip"><b>{{ permit_expiring }}</b> Permit Expiring <span class="sep">In 30 days</span></span>{% endif %}
+      {% if puc_expiring > 0 %}<span class="warn-chip"><b>{{ puc_expiring }}</b> PUC Expiring <span class="sep">In 30 days</span></span>{% endif %}
+      {% if fit_expiring > 0 %}<span class="warn-chip"><b>{{ fit_expiring }}</b> Fitness Expiring <span class="sep">In 30 days</span></span>{% endif %}
     </div>
-    <a href="/vehicles?tab=all" class="back">&#128196; View Challan Report</a>
+    <button type="button" class="veh-challan-alert-close" title="Dismiss" onclick="dismissChallanAlert()">&#10005;</button>
   </div>
   {% endif %}
 
@@ -163,6 +172,7 @@
         <th>Fitness <span class="veh-info-ic" title="Fitness certificate validity">&#9432;</span></th>
         <th>PUC <span class="veh-info-ic" title="Pollution certificate validity">&#9432;</span></th>
         <th>Permit <span class="veh-info-ic" title="Permit validity">&#9432;</span></th>
+        <th>Road Tax <span class="veh-info-ic" title="From the eChallan RC sync — Tax Valid Upto">&#9432;</span></th>
         <th>Status</th>
         <th>Challan
           <a class="veh-sort-ic" title="Sort by Challan Amount" href="?vehicle={{ f_vehicle }}&type={{ f_type }}&status={{ f_status }}&age={{ f_age }}&sort=challan&dir={{ 'desc' if (f_sort=='challan' and f_dir=='asc') else 'asc' }}">{% if f_sort=='challan' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a>
@@ -199,6 +209,17 @@
         <td><span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span></td>
         {% endif %}
         {% endfor %}
+        <td>
+          {% if r['type'] != 'Market' %}
+          <span class="comp-badge" style="background:{{ comp_colors[r.road_tax_status][0] }};color:{{ comp_colors[r.road_tax_status][1] }};">{% if r.road_tax_status=='Valid' %}&#10003;{% elif r.road_tax_status in ['Expiring Soon','Expired'] %}&#9888;{% endif %} {{ r.road_tax_status if r.road_tax_status != 'Unknown' else 'No Data' }}</span>
+          {% if r.road_tax_upto %}
+          <div class="veh-comp-date">{{ fmt_date(r.road_tax_upto) }}</div>
+          <div class="veh-comp-days">{% if r.road_tax_days_left is not none %}{% if r.road_tax_days_left < 0 %}({{ -r.road_tax_days_left }} days overdue){% else %}({{ r.road_tax_days_left }} days left){% endif %}{% endif %}</div>
+          {% endif %}
+          {% else %}
+          <span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
+          {% endif %}
+        </td>
         <td onclick="event.stopPropagation();">
           {% if st == 'In Maintenance' %}
           <span class="status-pill" style="background:#fff3e8;color:var(--accent);">In Maintenance</span>
@@ -218,7 +239,7 @@
         <td onclick="event.stopPropagation();">
           <div class="veh-actions">
             {% if r['type'] != 'Market' %}
-            <button type="button" class="download-btn" style="padding:6px 10px;font-size:0.78rem;" title="View cached RC details" onclick="toggleDetailPanel('/vehicles/{{ r['id'] }}/rc-lookup')">View RC</button>
+            <button type="button" class="download-btn" style="padding:6px 10px;font-size:0.78rem;" title="View cached RC details" onclick="openRcModal('/vehicles/{{ r['id'] }}/rc-lookup')">View RC</button>
             {% else %}
             <span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
             {% endif %}
@@ -298,6 +319,35 @@ function vehToggleMenu(evt, id) {
 document.addEventListener('click', function() {
   document.querySelectorAll('.veh-more-menu.open').forEach(function(m) { m.classList.remove('open'); });
 });
+
+// Dismissing the warning strip here also closes the same warning surfaced in the notification
+// bell and the "Vehicles" sidebar badge (both defined in base.html, since the sidebar is on
+// every page) — all three share one dismissed marker in sessionStorage, so dismissing any one
+// clears all three for this browser tab. The marker is keyed by login_token (this login's
+// timestamp), so logging out and back in always shows every warning fresh again, even if it
+// was dismissed in the same browser tab before — and a genuinely new/changed warning (a
+// different challan/expiring count) shows again immediately regardless, since the marker
+// value itself encodes those counts.
+var VEH_WARN_KEY = 'fleetWarningDismissed_{{ login_token }}';
+function dismissChallanAlert() {
+  var el = document.getElementById('vehChallanAlert');
+  if (el) {
+    try { sessionStorage.setItem(VEH_WARN_KEY, el.dataset.marker || ''); } catch (e) {}
+    el.remove();
+  }
+  var notif = document.getElementById('notifDropdown');
+  if (notif) notif.classList.remove('open');
+  if (window.hideVehiclesNavBadgeIfDismissed) window.hideVehiclesNavBadgeIfDismissed();
+}
+(function hideChallanAlertIfDismissed() {
+  var el = document.getElementById('vehChallanAlert');
+  if (!el) return;
+  try {
+    if (sessionStorage.getItem(VEH_WARN_KEY) === (el.dataset.marker || '')) {
+      el.remove();
+    }
+  } catch (e) {}
+})();
 </script>
 
 {% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}

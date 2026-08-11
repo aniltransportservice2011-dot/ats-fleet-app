@@ -1,57 +1,83 @@
 {% extends "base.html" %}
 {% block title %}Payment Details{% endblock %}
 {% block content %}
-<div class="dp-title-row">
-  <h2>Payment Details</h2>
-  <span class="dp-readonly-badge">Read Only</span>
+<div class="rd-hd">
+  <div class="rd-hd-left">
+    <h2>Payment Details</h2>
+    <span class="rd-badge" style="{% if p['payment_type']=='received' %}background:#e8f5ee;color:var(--green);{% else %}background:#fdecea;color:var(--red);{% endif %}">{{ 'Payment In' if p['payment_type']=='received' else 'Payment Out' }}</span>
+  </div>
+  <div class="rd-hd-right">
+    <button type="button" class="rd-nav-btn" id="rdPrevBtn" onclick="navRecordModal(-1)" title="Previous record">&#8592;</button>
+    <button type="button" class="rd-nav-btn" id="rdNextBtn" onclick="navRecordModal(1)" title="Next record">&#8594;</button>
+    <button type="button" class="rd-close-btn" onclick="closeRecordModal()">&#10005;</button>
+  </div>
 </div>
-<div class="dp-sub">{{ 'Received from' if p['payment_type']=='received' else 'Paid to' }} {{ entity_name or '—' }}</div>
+<div class="rd-sub">
+  <span>REF / DOCUMENT: {{ p['reference_id'] or ('Payment #%d' % p['id']) }}</span>
+  {% if p['date'] %}<span class="rd-date-badge">&#128197; {{ p['date'] }}</span>{% endif %}
+</div>
 
-<div class="dp-section">
-  <div class="dp-section-ttl">Overview</div>
-  <div class="dp-grid">
-    <div class="dp-fld"><div class="lbl">Date</div><div class="val">{{ p['date'] or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Type</div><div class="val">{{ 'Payment Received' if p['payment_type']=='received' else 'Payment Made' }}</div></div>
-    <div class="dp-fld"><div class="lbl">{{ 'Party' if entity_type=='party' else 'Vendor' }}</div><div class="val">{{ entity_name or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Mode</div><div class="val">{{ p['mode'] or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Reference No.</div><div class="val">{{ p['reference_id'] or '—' }}</div></div>
-    <div class="dp-fld"><div class="lbl">Total Amount</div><div class="val">₹{{ '{:,.0f}'.format(p['amount'] or 0) }}</div></div>
+<div class="rd-body">
+  <div class="rd-card-row" style="grid-template-columns:1fr;">
+    <div class="rd-card">
+      <div class="rd-card-icon">{% if p['payment_type']=='received' %}&#128176;{% else %}&#128184;{% endif %}</div>
+      <div>
+        <div class="rd-card-ttl">{{ entity_name or '—' }}</div>
+        <div class="rd-card-sub">{{ 'Received from' if p['payment_type']=='received' else 'Paid to' }} this {{ entity_type or 'account' }} &middot; Mode: {{ p['mode'] or '—' }}</div>
+        {% if entity_type and entity_id %}<a class="rd-card-link" href="/ledger/{{ entity_type }}/{{ entity_id }}">View Full Ledger &rarr;</a>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="rd-stat-row" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div><div><div class="lbl">Total Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(p['amount'] or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#e8f5ee;color:var(--green);">&#10003;</div><div><div class="lbl">Allocated</div><div class="val">&#8377;{{ '{:,.0f}'.format(p['allocated_amount'] or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:{% if leftover > 0 %}#fff3e8{% else %}var(--paper){% endif %};color:{% if leftover > 0 %}var(--accent){% else %}var(--steel){% endif %};">&#8226;</div><div><div class="lbl">Unallocated</div><div class="val" style="color:{% if leftover > 0 %}var(--accent){% else %}var(--steel){% endif %};">&#8377;{{ '{:,.0f}'.format(leftover) }}</div></div></div>
+  </div>
+
+  <div class="rd-section">
+    <div class="rd-section-ttl">Overview</div>
+    <div class="rd-grid">
+      <div class="rd-fld"><div class="lbl">Date</div><div class="val">{{ p['date'] or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Type</div><div class="val">{{ 'Payment Received' if p['payment_type']=='received' else 'Payment Made' }}</div></div>
+      <div class="rd-fld"><div class="lbl">{{ 'Party' if entity_type=='party' else 'Vendor' }}</div><div class="val">{{ entity_name or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Mode</div><div class="val{% if not p['mode'] %} muted{% endif %}">{{ p['mode'] or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Reference No.</div><div class="val{% if not p['reference_id'] %} muted{% endif %}">{{ p['reference_id'] or '—' }}</div></div>
+      <div class="rd-fld"><div class="lbl">Trips Covered</div><div class="val">{{ allocations|length }}</div></div>
+    </div>
+  </div>
+
+  <div class="rd-section">
+    <div class="rd-section-ttl">Allocation</div>
+    {% if allocations %}
+    <div style="overflow-x:auto;">
+    <table>
+      <tr><th>LR Number</th><th>Route</th><th class="num">Amount</th></tr>
+      {% for a in allocations %}
+      <tr>
+        <td>{{ a['lr_number'] or ('Trip #' ~ a['trip_id']) }}</td>
+        <td>{{ a['from_loc'] or '—' }} &rarr; {{ a['to_loc'] or '—' }}</td>
+        <td class="num">&#8377;{{ '{:,.0f}'.format(a['amount'] or 0) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+    {% else %}
+    <div class="rd-empty-note">Not allocated to any specific trip.</div>
+    {% endif %}
+  </div>
+
+  <div class="rd-section">
+    <div class="rd-section-ttl">Remarks</div>
+    {% if p['remarks'] %}
+    <div class="rd-fld"><div class="val" style="font-weight:500;">{{ p['remarks'] }}</div></div>
+    {% else %}
+    <div class="rd-empty-note">No remarks for this payment.</div>
+    {% endif %}
   </div>
 </div>
 
-<div class="dp-section">
-  <div class="dp-section-ttl">Allocation</div>
-  <div class="dp-grid cols3">
-    <div class="dp-fld"><div class="lbl">Allocated</div><div class="val">₹{{ '{:,.0f}'.format(p['allocated_amount'] or 0) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Unallocated</div><div class="val" style="color:{% if leftover > 0 %}var(--accent){% else %}var(--steel){% endif %};">₹{{ '{:,.0f}'.format(leftover) }}</div></div>
-    <div class="dp-fld"><div class="lbl">Trips Covered</div><div class="val">{{ allocations|length }}</div></div>
-  </div>
-  {% if allocations %}
-  <div style="overflow-x:auto;margin-top:14px;">
-  <table>
-    <tr><th>LR Number</th><th>Route</th><th class="num">Amount</th></tr>
-    {% for a in allocations %}
-    <tr>
-      <td>{{ a['lr_number'] or ('Trip #' ~ a['trip_id']) }}</td>
-      <td>{{ a['from_loc'] or '—' }} &rarr; {{ a['to_loc'] or '—' }}</td>
-      <td class="num">₹{{ '{:,.0f}'.format(a['amount'] or 0) }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  </div>
-  {% else %}
-  <div class="dp-empty-note">Not allocated to any specific trip.</div>
-  {% endif %}
+<div class="rd-ftr">
+  <button type="button" class="btn-cancel" onclick="closeRecordModal()">Close</button>
 </div>
-
-<div class="dp-section">
-  <div class="dp-section-ttl">Remarks</div>
-  <div class="{% if p['remarks'] %}dp-fld{% else %}dp-empty-note{% endif %}">
-    {% if p['remarks'] %}<div class="val" style="font-weight:500;">{{ p['remarks'] }}</div>{% else %}No remarks for this payment.{% endif %}
-  </div>
-</div>
-
-{% if entity_type and entity_id %}
-<a href="/ledger/{{ entity_type }}/{{ entity_id }}" class="add-btn" style="width:100%;justify-content:center;margin-top:6px;">&#128220; View Full Ledger</a>
-{% endif %}
 {% endblock %}
