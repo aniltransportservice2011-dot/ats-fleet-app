@@ -10,7 +10,11 @@ import compliance_service as cs
 from providers.echallan_client import fetch_rc, parse_challan_date, parse_rc_date
 
 app = Flask(__name__)
-app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
+# Falls back to the same literal value that used to be hardcoded here — local dev behaviour
+# (including any session someone's currently logged into) is unchanged unless SECRET_KEY is
+# actually set. A real deployment MUST set SECRET_KEY to something random and never commit it;
+# a leaked/guessable secret key lets someone forge login sessions.
+app.secret_key = os.environ.get('SECRET_KEY', 'fleet-local-app-anil-transport-secret-key-2026')
 app.permanent_session_lifetime = datetime.timedelta(days=30)
 DB = 'fleet.db'
 INSURANCE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'insurance')
@@ -8529,6 +8533,15 @@ def export_excel():
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 if __name__ == '__main__':
+    # Defaults to the same debug=True this always ran with locally — nothing changes for local
+    # `python app.py` unless FLASK_DEBUG is actually set. A real deployment MUST set
+    # FLASK_DEBUG=0: debug mode shows a full interactive stack trace (and lets a visitor execute
+    # code) on any unhandled error, which is a serious leak in production. Set explicitly on
+    # app.debug before the scheduler-gating check below reads it, since that check runs before
+    # app.run() would otherwise set it as a side effect.
+    debug_mode = os.environ.get('FLASK_DEBUG', '1') == '1'
+    app.debug = debug_mode
+
     # Weekly compliance scheduler — opt-in via ENABLE_COMPLIANCE_SCHEDULER=1, not on by default.
     # A background scheduler that starts silently every time `python app.py` is run (which
     # happens constantly during local development, including on every debug-reloader restart)
@@ -8550,4 +8563,4 @@ if __name__ == '__main__':
         # to trigger any live eChallan calls yet.
         start_scheduler(get_db, enable_rc_sync=(os.environ.get('ENABLE_RC_SYNC') == '1'),
                          enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
-    app.run(debug=True, port=5050)
+    app.run(debug=debug_mode, port=5050)
