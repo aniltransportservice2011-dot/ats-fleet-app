@@ -8,11 +8,26 @@ import requests
 from werkzeug.utils import secure_filename
 import compliance_service as cs
 from providers.echallan_client import fetch_rc, parse_challan_date, parse_rc_date
+import db
 
 app = Flask(__name__)
-app.secret_key = 'fleet-local-app-anil-transport-secret-key-2026'
+# Falls back to the same literal value that used to be hardcoded here — local dev behaviour
+# (including any session someone's currently logged into) is unchanged unless SECRET_KEY is
+# actually set. A real deployment MUST set SECRET_KEY to something random and never commit it;
+# a leaked/guessable secret key lets someone forge login sessions.
+app.secret_key = os.environ.get('SECRET_KEY', 'fleet-local-app-anil-transport-secret-key-2026')
 app.permanent_session_lifetime = datetime.timedelta(days=30)
-DB = 'fleet.db'
+# Was a bare relative path ('fleet.db') — only resolves correctly if the process happens to be
+# started from exactly this directory, which is an easy thing to get wrong under a process
+# manager (systemd/gunicorn) on a real server. Getting it wrong wouldn't even error — sqlite3
+# would silently create a new, empty database file wherever the process actually started from,
+# which looks exactly like "all my data disappeared" even though the real file is sitting
+# untouched right here. Now anchored to this file's own directory (same pattern the upload
+# directories below already use), so it resolves to the same file regardless of working
+# directory — and still overridable via DATABASE_PATH for a deployment that wants the DB
+# somewhere else (e.g. a separate mounted volume). Locally this resolves to the exact same
+# fleet.db that's always been here — zero behavior change.
+DB = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fleet.db'))
 INSURANCE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'insurance')
 os.makedirs(INSURANCE_UPLOAD_DIR, exist_ok=True)
 TOLL_RECEIPT_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'toll_receipts')
@@ -21,7 +36,11 @@ os.makedirs(TOLL_RECEIPT_UPLOAD_DIR, exist_ok=True)
 def get_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
-    return conn
+    # Wrapped so a future database swap (see db.py's docstring) only ever means changing what
+    # happens in this one function — every one of the ~475 call sites elsewhere that just do
+    # conn.execute(sql, params) stay exactly as they are. Zero behavior change today: db.Connection
+    # is a pure passthrough on the sqlite backend.
+    return db.Connection(conn, backend='sqlite')
 
 @app.context_processor
 def inject_site_logo():
@@ -2313,15 +2332,24 @@ FASTAG_MOCK_PLAZAS = [
 ]
 _TOLL_IMPORT_STASH = {}  # excel-preview token -> {'rows': [...], 'ts': datetime} — see toll_excel_preview
 
-def _save_toll_receipt(file_storage):
+def _save_toll_receipt(file_storage, company_id=1):
+    """company_id defaults to 1 (see the note on _get_invoice_settings) — every caller passes
+    session.get('company_id', 1), so this saves to uploads/toll_receipts/1/... today exactly
+    like uploads/toll_receipts/... before this change, just one directory level deeper. Once a
+    real second company exists, its uploads land in their own uploads/toll_receipts/<id>/
+    folder automatically, with no risk of two companies' files colliding — existing files
+    already saved under the old flat path are untouched and keep serving from their
+    already-stored path, nothing here retroactively moves them."""
     if not file_storage or not file_storage.filename:
         return None
     filename = secure_filename(file_storage.filename)
     if not filename:
         return None
     unique = f"toll_{int(datetime.datetime.now().timestamp() * 1000)}_{filename}"
-    file_storage.save(os.path.join(TOLL_RECEIPT_UPLOAD_DIR, unique))
-    return f"uploads/toll_receipts/{unique}"
+    company_dir = os.path.join(TOLL_RECEIPT_UPLOAD_DIR, str(company_id))
+    os.makedirs(company_dir, exist_ok=True)
+    file_storage.save(os.path.join(company_dir, unique))
+    return f"uploads/toll_receipts/{company_id}/{unique}"
 
 def _toll_tab_base_context(conn):
     """Everything the Toll tab needs to render — factored out from _maintenance_toll_tab so the
@@ -2857,15 +2885,18 @@ def _insurance_enrich(p):
             pass
     return d
 
-def _save_insurance_doc(file_storage, prefix):
+def _save_insurance_doc(file_storage, prefix, company_id=1):
+    """company_id defaults to 1 — see the note on _save_toll_receipt above, same reasoning."""
     if not file_storage or not file_storage.filename:
         return None
     filename = secure_filename(file_storage.filename)
     if not filename:
         return None
     unique = f"{prefix}_{int(datetime.datetime.now().timestamp() * 1000)}_{filename}"
-    file_storage.save(os.path.join(INSURANCE_UPLOAD_DIR, unique))
-    return f"uploads/insurance/{unique}"
+    company_dir = os.path.join(INSURANCE_UPLOAD_DIR, str(company_id))
+    os.makedirs(company_dir, exist_ok=True)
+    file_storage.save(os.path.join(company_dir, unique))
+    return f"uploads/insurance/{company_id}/{unique}"
 
 def _maintenance_insurance_tab(conn, template='maintenance.html', active='maintenance', base_path='/maintenance'):
     vehicle_f = request.args.get('vehicle', '')
@@ -3585,7 +3616,7 @@ def add_toll():
     payment_mode = f.get('payment_mode') or None
     status = 'synced' if source == 'fastag' else 'pending'
     notes = f.get('notes') or None
-    receipt_path = _save_toll_receipt(request.files.get('receipt'))
+    receipt_path = _save_toll_receipt(request.files.get('receipt'), session.get('company_id', 1))
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes)
@@ -4004,9 +4035,10 @@ def add_insurance():
         (f.get('start_date'), vehicle_id, 'Insurance', premium, premium, insurer_id, f.get('notes') or None, 'Completed'))
     maintenance_id = cur.lastrowid
 
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy')
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice')
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc')
+    _cid = session.get('company_id', 1)
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid)
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid)
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
     conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
@@ -4049,9 +4081,10 @@ def edit_insurance(policy_id):
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
 
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy') or policy['policy_doc_path']
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice') or policy['invoice_doc_path']
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc') or policy['rc_doc_path']
+    _cid = session.get('company_id', 1)
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid) or policy['policy_doc_path']
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid) or policy['invoice_doc_path']
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid) or policy['rc_doc_path']
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
     conn.execute("""UPDATE insurance_policies SET vehicle_id=?, insurance_type=?, insurer_id=?, policy_number=?,
@@ -4117,9 +4150,10 @@ def convert_legacy_insurance(maintenance_id):
     premium = float(f.get('premium_amount') or 0)
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy')
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice')
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc')
+    _cid = session.get('company_id', 1)
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid)
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid)
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
 
     conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
                     expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
@@ -5981,7 +6015,7 @@ def invoice_center():
 
     entity_gstin = (selected_vendor['gstin'] if selected_vendor else (selected_party['gstin'] if selected_party else '')) or ''
     entity_state = _gstin_state(entity_gstin)
-    invoice_settings = _get_invoice_settings(conn)
+    invoice_settings = _get_invoice_settings(conn, session.get('company_id', 1))
 
     vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
     conn.close()
@@ -6073,10 +6107,16 @@ INVOICE_SETTINGS_KEYS = ['company_name', 'address', 'gstin', 'pan', 'phone', 'em
 LOGO_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'logo')
 os.makedirs(LOGO_UPLOAD_DIR, exist_ok=True)
 
-def _get_invoice_settings(conn):
+def _get_invoice_settings(conn, company_id=1):
+    """company_id defaults to 1 — today that's the only company that will ever exist (see
+    migrate_company_id.sql), so every call site passing session.get('company_id', 1) behaves
+    identically to before this parameter existed. The moment a real multi-company login exists
+    (Step B of the multi-tenancy plan), session will actually carry a real company_id and every
+    one of these call sites starts reading the right company's settings with no further changes
+    needed here."""
     s = {}
     for key in INVOICE_SETTINGS_KEYS:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, company_id)).fetchone()
         s[key] = row['value'] if row else ''
     return s
 
@@ -6091,9 +6131,12 @@ def upload_company_logo():
         filename = secure_filename(f.filename)
         ext = os.path.splitext(filename)[1].lower()
         if ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
+            company_id = session.get('company_id', 1)
             unique = f"logo_{int(datetime.datetime.now().timestamp() * 1000)}{ext}"
-            f.save(os.path.join(LOGO_UPLOAD_DIR, unique))
-            rel_path = f"uploads/logo/{unique}"
+            company_dir = os.path.join(LOGO_UPLOAD_DIR, str(company_id))
+            os.makedirs(company_dir, exist_ok=True)
+            f.save(os.path.join(company_dir, unique))
+            rel_path = f"uploads/logo/{company_id}/{unique}"
             conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('logo_path', ?)", (rel_path,))
             conn.commit()
     conn.close()
@@ -6649,7 +6692,7 @@ def invoice_center_generate():
     elif party_id:
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
 
-    s = _get_invoice_settings(conn)
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
     toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
 
     if invoice_type == 'tax':
@@ -6784,7 +6827,7 @@ def invoice_batch_pdf(batch_id):
         entity = conn.execute("SELECT * FROM vendors WHERE id=?", (batch['vendor_id'],)).fetchone()
     elif batch['party_id']:
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (batch['party_id'],)).fetchone()
-    s = _get_invoice_settings(conn)
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
 
     # Batch-level custom items (added from the Edit screen) plus each trip's own "Others" items —
     # kept as named entries, same as at generate time, so a regenerated PDF still prints each one
@@ -7030,16 +7073,18 @@ def update_opening_balance(entity_type, entity_id):
         return redirect(url_for('party_ledger', party_id=entity_id))
     return redirect(url_for('vendor_ledger', vendor_id=entity_id))
 
-def get_company_name():
+def get_company_name(company_id=1):
+    """company_id defaults to 1 — see the note on _get_invoice_settings above; same
+    zero-behavior-change-today, ready-for-real-multi-company-later reasoning applies here."""
     conn = get_db()
-    row = conn.execute("SELECT value FROM settings WHERE key='company_name'").fetchone()
+    row = conn.execute("SELECT value FROM settings WHERE key='company_name' AND company_id=?", (company_id,)).fetchone()
     conn.close()
     return row['value'] if row else 'ANIL TRANSPORT SERVICE'
 
 @app.context_processor
 def inject_company_name():
     try:
-        return {'company_name': get_company_name()}
+        return {'company_name': get_company_name(session.get('company_id', 1))}
     except Exception:
         return {'company_name': 'ANIL TRANSPORT SERVICE'}
 
@@ -7083,7 +7128,7 @@ def inject_challan_alerts():
 
 @app.before_request
 def require_login():
-    exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp']
+    exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick']
     if request.endpoint in exempt:
         return
     if not session.get('user_id'):
@@ -7101,7 +7146,7 @@ def login():
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
                 return render_template('login.html', error='This account has been deactivated. Contact an administrator.',
-                                        company_name=get_company_name())
+                                        company_name=get_company_name(session.get('company_id', 1)))
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -7115,7 +7160,7 @@ def login():
             return redirect(url_for('dashboard'))
         conn.close()
         error = 'Invalid username or password.'
-    return render_template('login.html', error=error, company_name=get_company_name())
+    return render_template('login.html', error=error, company_name=get_company_name(session.get('company_id', 1)))
 
 @app.route('/logout')
 def logout():
@@ -7137,17 +7182,17 @@ def send_login_otp():
     phone = (request.form.get('phone') or '').strip()
     conn = get_db()
     user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
-    s = _get_all_settings(conn)
+    s = _get_all_settings(conn, session.get('company_id', 1))
     conn.close()
 
     if not phone:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='Enter a mobile number.')
     if not user:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='No account found with that mobile number.')
     if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
 
     otp = f"{random.randint(0, 999999):06d}"
@@ -7159,10 +7204,10 @@ def send_login_otp():
     try:
         _send_otp_sms(s, phone, otp)
     except Exception as e:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error=f'Could not send OTP: {e}')
 
-    return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+    return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                             otp_sent=True, otp_phone=phone)
 
 @app.route('/login/otp/verify', methods=['POST'])
@@ -7172,13 +7217,13 @@ def verify_login_otp():
     phone = request.form.get('phone') or ''
 
     if not session.get('otp_user_id') or session.get('otp_phone') != phone:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='Session expired. Please request a new OTP.')
     if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='OTP expired. Please request a new one.')
     if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_sent=True, otp_phone=phone, otp_error='Incorrect OTP.')
 
     conn = get_db()
@@ -7190,7 +7235,7 @@ def verify_login_otp():
         return redirect(url_for('login'))
     if (user['status'] or 'Active') == 'Inactive':
         conn.close()
-        return render_template('login.html', company_name=get_company_name(),
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)),
                                 error='This account has been deactivated. Contact an administrator.')
     session['user_id'] = user['id']
     session['username'] = user['username']
@@ -7266,23 +7311,24 @@ def settings_page():
         role_counts[r] = role_counts.get(r, 0) + 1
     access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
                                   LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
-    s = _get_all_settings(conn)
+    s = _get_all_settings(conn, session.get('company_id', 1))
     recent_sync_log = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 8").fetchall()
     conn.close()
 
     active_settings_tab = request.args.get('tab', 'company')
     invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
-    return render_template('settings.html', company_name=s.get('company_name') or get_company_name(),
+    return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
                             users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                             limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
                             access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
                             s=s, invoice_example=invoice_example, recent_sync_log=recent_sync_log,
                             active='settings', active_settings_tab=active_settings_tab)
 
-def _get_all_settings(conn):
+def _get_all_settings(conn, company_id=1):
+    """company_id defaults to 1 — see the note on _get_invoice_settings above."""
     s = {}
     for key in ALL_SETTING_KEYS:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, company_id)).fetchone()
         s[key] = row['value'] if row else ''
     return s
 
@@ -7316,10 +7362,10 @@ def add_user():
             role_counts[r] = role_counts.get(r, 0) + 1
         access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
                                       LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
-        s = _get_all_settings(conn)
+        s = _get_all_settings(conn, session.get('company_id', 1))
         invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
         conn.close()
-        return render_template('settings.html', company_name=s.get('company_name') or get_company_name(),
+        return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
                                 users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                                 limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
                                 access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
@@ -8528,7 +8574,55 @@ def export_excel():
     return send_file(buf, as_attachment=True, download_name='fleet_export.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
+@app.route('/internal/sync-tick', methods=['POST'])
+def internal_sync_tick():
+    """External trigger for the background sync jobs (scheduler.py), for production.
+
+    The in-process APScheduler below (see the `if __name__=='__main__':` block) only ever starts
+    when this file is run directly — gunicorn imports `app` as a module and never executes that
+    block, so under gunicorn the RC/eChallan/compliance sync would otherwise silently never run
+    at all. Point an external cron (or DigitalOcean's Scheduled Jobs) at this endpoint instead:
+
+      POST /internal/sync-tick?job=sync_tick            — call roughly hourly. Internally
+        self-throttled by scheduler.py's run_sync_tick against the Settings-configured
+        RC/challan sync intervals; safe to call more often than that, it just no-ops until a
+        job is actually due. This is the default if `job` is omitted.
+
+      POST /internal/sync-tick?job=weekly_compliance     — call roughly weekly. Runs the
+        fitness/PUC/permit compliance sync unconditionally on every call (no internal
+        self-throttling), so the caller's own schedule IS the cadence here.
+
+    Protected by a shared secret (INTERNAL_SYNC_TOKEN) sent as the X-Sync-Token header — this
+    can trigger real, paid external API calls (RC/challan lookups), so it must never be
+    triggerable by an anonymous request. Exempted from the login-required gate (require_login)
+    since a cron obviously isn't a logged-in browser session. Fails closed: if
+    INTERNAL_SYNC_TOKEN isn't configured at all, every request is rejected rather than the
+    endpoint being silently wide open.
+    """
+    token = os.environ.get('INTERNAL_SYNC_TOKEN')
+    if not token or request.headers.get('X-Sync-Token') != token:
+        return {'error': 'unauthorized'}, 401
+    job = request.args.get('job', 'sync_tick')
+    if job == 'weekly_compliance':
+        from scheduler import run_weekly_sync
+        summary = run_weekly_sync(get_db)
+        return {'ok': True, 'job': job, 'summary': summary}
+    else:
+        from scheduler import run_sync_tick
+        run_sync_tick(get_db, enable_rc_sync=(os.environ.get('ENABLE_RC_SYNC') == '1'),
+                      enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
+        return {'ok': True, 'job': job}
+
 if __name__ == '__main__':
+    # Defaults to the same debug=True this always ran with locally — nothing changes for local
+    # `python app.py` unless FLASK_DEBUG is actually set. A real deployment MUST set
+    # FLASK_DEBUG=0: debug mode shows a full interactive stack trace (and lets a visitor execute
+    # code) on any unhandled error, which is a serious leak in production. Set explicitly on
+    # app.debug before the scheduler-gating check below reads it, since that check runs before
+    # app.run() would otherwise set it as a side effect.
+    debug_mode = os.environ.get('FLASK_DEBUG', '1') == '1'
+    app.debug = debug_mode
+
     # Weekly compliance scheduler — opt-in via ENABLE_COMPLIANCE_SCHEDULER=1, not on by default.
     # A background scheduler that starts silently every time `python app.py` is run (which
     # happens constantly during local development, including on every debug-reloader restart)
@@ -8550,4 +8644,4 @@ if __name__ == '__main__':
         # to trigger any live eChallan calls yet.
         start_scheduler(get_db, enable_rc_sync=(os.environ.get('ENABLE_RC_SYNC') == '1'),
                          enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
-    app.run(debug=True, port=5050)
+    app.run(debug=debug_mode, port=5050)
