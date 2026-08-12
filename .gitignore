@@ -1,0 +1,23 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# The real application database — contains actual business data (or will, once
+# live). Never belongs in version control; back it up separately instead.
+fleet.db
+*.db-journal
+
+# User-uploaded documents (insurance policies, toll receipts) — real business
+# records, same reasoning as fleet.db above. The existing tracked logo images
+# under static/uploads/logo/ are left as-is (just branding assets), but no
+# future uploads of any kind should get committed.
+static/uploads/insurance/
+static/uploads/toll_receipts/
+
+# Local environment / secrets, once these exist
+.env
+.env.*
+
+# OS/editor cruft
+.DS_Store
