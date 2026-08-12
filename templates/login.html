@@ -26,7 +26,7 @@
 
   .truck-illustration { margin:28px 0 8px; }
 
-  .feature-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:auto; padding-top:20px; }
+  .feature-row { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:auto; padding-top:20px; }
   .feature-item .ic {
     width:38px; height:38px; border-radius:9px; background:rgba(192,86,33,0.18); border:1px solid rgba(192,86,33,0.4);
     display:flex; align-items:center; justify-content:center; margin-bottom:10px; color:var(--accent);
@@ -87,9 +87,21 @@
 
   .resend-row { display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:0.82rem; }
   .resend-row button { background:none; border:none; color:#2a5adb; cursor:pointer; font-size:0.82rem; padding:0; }
+  .resend-row button:disabled { color:var(--steel); cursor:default; }
   .otp-phone-chip { background:var(--paper); border-radius:6px; padding:9px 12px; font-size:0.85rem; color:var(--steel); margin-bottom:16px; text-align:center; }
 
   .secure-note { display:flex; align-items:center; justify-content:center; gap:6px; color:var(--steel); font-size:0.78rem; margin-top:18px; }
+
+  /* ---------- Sign Up (front-end only — no backend wired yet) ---------- */
+  .foot-link { text-align:center; font-size:0.85rem; color:var(--steel); }
+  .foot-link.divider-top { margin-top:22px; padding-top:18px; border-top:1px solid var(--line); }
+  .foot-link .link-btn { color:var(--accent); font-weight:700; text-decoration:none; background:none; border:none; cursor:pointer; font-size:0.85rem; padding:0; font-family:inherit; }
+  .foot-link .link-btn:hover { text-decoration:underline; }
+  .input-group .optional-tag { position:absolute; right:14px; top:50%; transform:translateY(-50%); font-size:0.68rem; color:var(--steel); font-style:italic; }
+  .otp-boxes { display:flex; gap:8px; margin-bottom:6px; justify-content:center; }
+  .otp-boxes input { width:44px; height:52px; text-align:center; font-size:1.25rem; font-weight:700; color:var(--ink); border:1.5px solid var(--line); border-radius:8px; font-family:inherit; }
+  .otp-boxes input:focus { outline:none; border-color:var(--accent); background:rgba(192,86,33,0.04); }
+  .success-check { width:60px; height:60px; border-radius:50%; background:var(--green); display:flex; align-items:center; justify-content:center; margin:0 auto 18px; }
 
   @media (max-width:860px) {
     .login-shell { flex-direction:column; }
@@ -120,9 +132,9 @@
     </div>
 
     <div class="hero-copy">
-      <h1>Manage Your Fleet.<span class="accent-line">Drive Your Success.</span></h1>
+      <h1>Manage Your Transport Business.<span class="accent-line">Drive Your Business Forward.</span></h1>
       <div class="rule"></div>
-      <p>A complete solution to manage your vehicles, trips, drivers, expenses and grow your transport business efficiently.</p>
+      <p>Manage trips, vehicles, expenses, payments and business operations from one place.</p>
     </div>
 
     <div class="truck-illustration">
@@ -146,12 +158,16 @@
 
     <div class="feature-row">
       <div class="feature-item">
-        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h11l3 5h4v-5l-3-5h-4V6H3z"/><circle cx="7.5" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/></svg></div>
-        <div class="ttl">Fleet Tracking</div><div class="sub">Real-time vehicle monitoring</div>
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h11l3 3v15H5z"/><path d="M9 8h7M9 12h7M9 16h4"/></svg></div>
+        <div class="ttl">Accounting &amp; Ledger</div><div class="sub">Track payments, dues and balances</div>
       </div>
       <div class="feature-item">
-        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v14"/><path d="M4 11h8"/><path d="M14 9h2l3 3v6a1 1 0 0 1-1 1h-1"/><circle cx="17" cy="18" r="1.5"/></svg></div>
-        <div class="ttl">Fuel Management</div><div class="sub">Track fuel expenses and efficiency</div>
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.3"/><circle cx="18" cy="18" r="2.3"/><path d="M8 6h7a3 3 0 0 1 3 3v3M16 18H9a3 3 0 0 1-3-3v-3"/></svg></div>
+        <div class="ttl">Trip Management</div><div class="sub">Plan, assign and settle trips</div>
+      </div>
+      <div class="feature-item">
+        <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h11l3 5h4v-5l-3-5h-4V6H3z"/><circle cx="7.5" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/></svg></div>
+        <div class="ttl">Vehicle Management</div><div class="sub">Maintain your fleet records</div>
       </div>
       <div class="feature-item">
         <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5c0-1.1 1-2 2.5-2s2.5.7 2.5 1.8c0 2.4-5 1.4-5 4 0 1.1 1 1.8 2.5 1.8s2.5-.9 2.5-2"/><path d="M12 6v1.3M12 16.7V18"/></svg></div>
@@ -159,7 +175,7 @@
       </div>
       <div class="feature-item">
         <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9"/><path d="M11 19V5"/><path d="M18 19v-7"/><path d="M2 19h20"/></svg></div>
-        <div class="ttl">Smart Reports</div><div class="sub">Data-driven insights for growth</div>
+        <div class="ttl">Business Reports</div><div class="sub">Data-driven insights for growth</div>
       </div>
     </div>
 
@@ -168,11 +184,13 @@
 
   <div class="login-right">
     <div class="login-card">
-      <div class="card-icon">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M12 2l8 3.5v6c0 5-3.4 8.7-8 10.5-4.6-1.8-8-5.5-8-10.5v-6L12 2z" fill="#14213d" stroke="none"/><path d="M8.5 12.2l2.4 2.4L15.7 10" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div id="login-header-chrome">
+        <div class="card-icon">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2"><path d="M12 2l8 3.5v6c0 5-3.4 8.7-8 10.5-4.6-1.8-8-5.5-8-10.5v-6L12 2z" fill="#14213d" stroke="none"/><path d="M8.5 12.2l2.4 2.4L15.7 10" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h2>Welcome Back!</h2>
+        <div class="sub">Sign in to access your fleet dashboard</div>
       </div>
-      <h2>Welcome Back!</h2>
-      <div class="sub">Sign in to access your fleet dashboard</div>
 
       <div id="password-panel" class="login-panel {{ 'active' if not otp_mode else '' }}">
         {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
@@ -249,21 +267,153 @@
         </button>
       </div>
 
-      <div class="secure-note">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 3.5v6c0 5-3.4 8.7-8 10.5-4.6-1.8-8-5.5-8-10.5v-6L12 2z"/></svg>
-        Secure login. All data is protected.
+      <div id="login-footer-chrome">
+        <div class="foot-link divider-top">
+          Don't have an account? <button type="button" class="link-btn" onclick="showPanel('signup')">Create an Account</button>
+        </div>
+
+        <div class="secure-note">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 3.5v6c0 5-3.4 8.7-8 10.5-4.6-1.8-8-5.5-8-10.5v-6L12 2z"/></svg>
+          Secure login. All data is protected.
+        </div>
+      </div>
+
+      <!-- Sign Up flow — front-end only for now (no /signup route or real OTP yet); see CLAUDE.md /
+           multi-tenancy Step B for when this gets wired to a real backend. -->
+      <div id="signup-panel" class="login-panel">
+        <div class="card-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7v1"/><path d="M17 8h4M19 6v4"/></svg>
+        </div>
+        <h2>Create Your Account</h2>
+        <div class="sub">Set up your {{ company_name }} business account</div>
+
+        <div class="input-group">
+          <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+          <label>Full Name</label>
+          <input type="text" autocomplete="name">
+        </div>
+        <div class="input-group">
+          <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg></span>
+          <label>Mobile Number</label>
+          <input type="tel" placeholder="+91XXXXXXXXXX" autocomplete="tel">
+        </div>
+        <div class="input-group">
+          <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></span>
+          <label>Email Address</label>
+          <input type="email" autocomplete="email">
+          <span class="optional-tag">Optional</span>
+        </div>
+        <div class="input-group">
+          <span class="ic-left"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg></span>
+          <label>Business / Company Name</label>
+          <input type="text">
+        </div>
+
+        <button type="button" class="signin-btn" onclick="showPanel('signup-otp')">
+          Continue
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        </button>
+
+        <div class="foot-link" style="margin-top:18px;">
+          Already have an account? <button type="button" class="link-btn" onclick="showPanel('password')">Sign In</button>
+        </div>
+      </div>
+
+      <div id="signup-otp-panel" class="login-panel">
+        <div class="card-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+        </div>
+        <h2>Verify Your Mobile Number</h2>
+        <div class="sub">Enter the 6-digit OTP sent to your mobile number</div>
+
+        <div class="otp-phone-chip" id="signupOtpChip">OTP sent to <b>your mobile number</b></div>
+
+        <div class="otp-boxes">
+          <input maxlength="1" inputmode="numeric" oninput="otpBoxAdvance(this)">
+          <input maxlength="1" inputmode="numeric" oninput="otpBoxAdvance(this)">
+          <input maxlength="1" inputmode="numeric" oninput="otpBoxAdvance(this)">
+          <input maxlength="1" inputmode="numeric" oninput="otpBoxAdvance(this)">
+          <input maxlength="1" inputmode="numeric" oninput="otpBoxAdvance(this)">
+          <input maxlength="1" inputmode="numeric" oninput="otpBoxAdvance(this)">
+        </div>
+
+        <div class="resend-row">
+          <span>Didn't get the code?</span>
+          <button type="button" id="signupResendBtn" disabled>Resend OTP</button>
+        </div>
+
+        <button type="button" class="signin-btn" style="margin-top:16px;" onclick="showPanel('signup-success')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><path d="M20 6L9 17l-5-5"/></svg>
+          Verify &amp; Continue
+        </button>
+
+        <div class="foot-link" style="margin-top:14px;">
+          <button type="button" class="link-btn" onclick="showPanel('signup')">Change Mobile Number</button>
+        </div>
+      </div>
+
+      <div id="signup-success-panel" class="login-panel">
+        <div class="success-check">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
+        </div>
+        <h2 style="margin-top:2px;">Account Created Successfully</h2>
+        <div class="sub" style="margin-bottom:30px;">Your account is ready to use.</div>
+
+        <button type="button" class="signin-btn" onclick="showPanel('password')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          Go to Dashboard
+        </button>
       </div>
     </div>
   </div>
 </div>
 <script>
+var loginPanelIds = { password:'password-panel', otp:'otp-panel', signup:'signup-panel', 'signup-otp':'signup-otp-panel', 'signup-success':'signup-success-panel' };
+var loginChromeStates = ['password', 'otp'];
 function showPanel(which) {
-  document.getElementById('password-panel').classList.toggle('active', which === 'password');
-  document.getElementById('otp-panel').classList.toggle('active', which === 'otp');
+  Object.keys(loginPanelIds).forEach(function(key) {
+    document.getElementById(loginPanelIds[key]).classList.toggle('active', key === which);
+  });
+  var showChrome = loginChromeStates.indexOf(which) !== -1;
+  document.getElementById('login-header-chrome').style.display = showChrome ? '' : 'none';
+  document.getElementById('login-footer-chrome').style.display = showChrome ? '' : 'none';
+  if (which === 'signup-otp') startSignupOtpCountdown();
 }
 function togglePw() {
   var inp = document.getElementById('pwInput');
   inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+function otpBoxAdvance(input) {
+  input.value = input.value.replace(/[^0-9]/g, '');
+  if (input.value && input.nextElementSibling && input.nextElementSibling.tagName === 'INPUT') {
+    input.nextElementSibling.focus();
+  }
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Backspace') return;
+  var active = document.activeElement;
+  if (!active || !active.closest || !active.closest('.otp-boxes')) return;
+  if (!active.value && active.previousElementSibling && active.previousElementSibling.tagName === 'INPUT') {
+    active.previousElementSibling.focus();
+  }
+});
+var signupOtpTimer = null;
+function startSignupOtpCountdown() {
+  var btn = document.getElementById('signupResendBtn');
+  clearInterval(signupOtpTimer);
+  var t = 30;
+  btn.disabled = true;
+  btn.textContent = 'Resend OTP (0:' + (t < 10 ? '0' : '') + t + ')';
+  signupOtpTimer = setInterval(function() {
+    t -= 1;
+    if (t <= 0) {
+      clearInterval(signupOtpTimer);
+      btn.disabled = false;
+      btn.textContent = 'Resend OTP';
+      return;
+    }
+    btn.textContent = 'Resend OTP (0:' + (t < 10 ? '0' : '') + t + ')';
+  }, 1000);
 }
 </script>
 </body></html>
