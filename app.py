@@ -6000,7 +6000,7 @@ def invoice_center():
 
     entity_gstin = (selected_vendor['gstin'] if selected_vendor else (selected_party['gstin'] if selected_party else '')) or ''
     entity_state = _gstin_state(entity_gstin)
-    invoice_settings = _get_invoice_settings(conn)
+    invoice_settings = _get_invoice_settings(conn, session.get('company_id', 1))
 
     vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
     conn.close()
@@ -6092,10 +6092,16 @@ INVOICE_SETTINGS_KEYS = ['company_name', 'address', 'gstin', 'pan', 'phone', 'em
 LOGO_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'logo')
 os.makedirs(LOGO_UPLOAD_DIR, exist_ok=True)
 
-def _get_invoice_settings(conn):
+def _get_invoice_settings(conn, company_id=1):
+    """company_id defaults to 1 — today that's the only company that will ever exist (see
+    migrate_company_id.sql), so every call site passing session.get('company_id', 1) behaves
+    identically to before this parameter existed. The moment a real multi-company login exists
+    (Step B of the multi-tenancy plan), session will actually carry a real company_id and every
+    one of these call sites starts reading the right company's settings with no further changes
+    needed here."""
     s = {}
     for key in INVOICE_SETTINGS_KEYS:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, company_id)).fetchone()
         s[key] = row['value'] if row else ''
     return s
 
@@ -6668,7 +6674,7 @@ def invoice_center_generate():
     elif party_id:
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
 
-    s = _get_invoice_settings(conn)
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
     toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
 
     if invoice_type == 'tax':
@@ -6803,7 +6809,7 @@ def invoice_batch_pdf(batch_id):
         entity = conn.execute("SELECT * FROM vendors WHERE id=?", (batch['vendor_id'],)).fetchone()
     elif batch['party_id']:
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (batch['party_id'],)).fetchone()
-    s = _get_invoice_settings(conn)
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
 
     # Batch-level custom items (added from the Edit screen) plus each trip's own "Others" items —
     # kept as named entries, same as at generate time, so a regenerated PDF still prints each one
@@ -7049,16 +7055,18 @@ def update_opening_balance(entity_type, entity_id):
         return redirect(url_for('party_ledger', party_id=entity_id))
     return redirect(url_for('vendor_ledger', vendor_id=entity_id))
 
-def get_company_name():
+def get_company_name(company_id=1):
+    """company_id defaults to 1 — see the note on _get_invoice_settings above; same
+    zero-behavior-change-today, ready-for-real-multi-company-later reasoning applies here."""
     conn = get_db()
-    row = conn.execute("SELECT value FROM settings WHERE key='company_name'").fetchone()
+    row = conn.execute("SELECT value FROM settings WHERE key='company_name' AND company_id=?", (company_id,)).fetchone()
     conn.close()
     return row['value'] if row else 'ANIL TRANSPORT SERVICE'
 
 @app.context_processor
 def inject_company_name():
     try:
-        return {'company_name': get_company_name()}
+        return {'company_name': get_company_name(session.get('company_id', 1))}
     except Exception:
         return {'company_name': 'ANIL TRANSPORT SERVICE'}
 
@@ -7120,7 +7128,7 @@ def login():
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
                 return render_template('login.html', error='This account has been deactivated. Contact an administrator.',
-                                        company_name=get_company_name())
+                                        company_name=get_company_name(session.get('company_id', 1)))
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -7134,7 +7142,7 @@ def login():
             return redirect(url_for('dashboard'))
         conn.close()
         error = 'Invalid username or password.'
-    return render_template('login.html', error=error, company_name=get_company_name())
+    return render_template('login.html', error=error, company_name=get_company_name(session.get('company_id', 1)))
 
 @app.route('/logout')
 def logout():
@@ -7156,17 +7164,17 @@ def send_login_otp():
     phone = (request.form.get('phone') or '').strip()
     conn = get_db()
     user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
-    s = _get_all_settings(conn)
+    s = _get_all_settings(conn, session.get('company_id', 1))
     conn.close()
 
     if not phone:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='Enter a mobile number.')
     if not user:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='No account found with that mobile number.')
     if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
 
     otp = f"{random.randint(0, 999999):06d}"
@@ -7178,10 +7186,10 @@ def send_login_otp():
     try:
         _send_otp_sms(s, phone, otp)
     except Exception as e:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error=f'Could not send OTP: {e}')
 
-    return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+    return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                             otp_sent=True, otp_phone=phone)
 
 @app.route('/login/otp/verify', methods=['POST'])
@@ -7191,13 +7199,13 @@ def verify_login_otp():
     phone = request.form.get('phone') or ''
 
     if not session.get('otp_user_id') or session.get('otp_phone') != phone:
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='Session expired. Please request a new OTP.')
     if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_error='OTP expired. Please request a new one.')
     if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
-        return render_template('login.html', company_name=get_company_name(), otp_mode=True,
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
                                 otp_sent=True, otp_phone=phone, otp_error='Incorrect OTP.')
 
     conn = get_db()
@@ -7209,7 +7217,7 @@ def verify_login_otp():
         return redirect(url_for('login'))
     if (user['status'] or 'Active') == 'Inactive':
         conn.close()
-        return render_template('login.html', company_name=get_company_name(),
+        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)),
                                 error='This account has been deactivated. Contact an administrator.')
     session['user_id'] = user['id']
     session['username'] = user['username']
@@ -7285,23 +7293,24 @@ def settings_page():
         role_counts[r] = role_counts.get(r, 0) + 1
     access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
                                   LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
-    s = _get_all_settings(conn)
+    s = _get_all_settings(conn, session.get('company_id', 1))
     recent_sync_log = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 8").fetchall()
     conn.close()
 
     active_settings_tab = request.args.get('tab', 'company')
     invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
-    return render_template('settings.html', company_name=s.get('company_name') or get_company_name(),
+    return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
                             users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                             limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
                             access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
                             s=s, invoice_example=invoice_example, recent_sync_log=recent_sync_log,
                             active='settings', active_settings_tab=active_settings_tab)
 
-def _get_all_settings(conn):
+def _get_all_settings(conn, company_id=1):
+    """company_id defaults to 1 — see the note on _get_invoice_settings above."""
     s = {}
     for key in ALL_SETTING_KEYS:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, company_id)).fetchone()
         s[key] = row['value'] if row else ''
     return s
 
@@ -7335,10 +7344,10 @@ def add_user():
             role_counts[r] = role_counts.get(r, 0) + 1
         access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
                                       LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
-        s = _get_all_settings(conn)
+        s = _get_all_settings(conn, session.get('company_id', 1))
         invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
         conn.close()
-        return render_template('settings.html', company_name=s.get('company_name') or get_company_name(),
+        return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
                                 users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                                 limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
                                 access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
