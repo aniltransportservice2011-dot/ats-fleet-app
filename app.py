@@ -7087,7 +7087,7 @@ def inject_challan_alerts():
 
 @app.before_request
 def require_login():
-    exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp']
+    exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick']
     if request.endpoint in exempt:
         return
     if not session.get('user_id'):
@@ -8531,6 +8531,45 @@ def export_excel():
     buf.seek(0)
     return send_file(buf, as_attachment=True, download_name='fleet_export.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.route('/internal/sync-tick', methods=['POST'])
+def internal_sync_tick():
+    """External trigger for the background sync jobs (scheduler.py), for production.
+
+    The in-process APScheduler below (see the `if __name__=='__main__':` block) only ever starts
+    when this file is run directly — gunicorn imports `app` as a module and never executes that
+    block, so under gunicorn the RC/eChallan/compliance sync would otherwise silently never run
+    at all. Point an external cron (or DigitalOcean's Scheduled Jobs) at this endpoint instead:
+
+      POST /internal/sync-tick?job=sync_tick            — call roughly hourly. Internally
+        self-throttled by scheduler.py's run_sync_tick against the Settings-configured
+        RC/challan sync intervals; safe to call more often than that, it just no-ops until a
+        job is actually due. This is the default if `job` is omitted.
+
+      POST /internal/sync-tick?job=weekly_compliance     — call roughly weekly. Runs the
+        fitness/PUC/permit compliance sync unconditionally on every call (no internal
+        self-throttling), so the caller's own schedule IS the cadence here.
+
+    Protected by a shared secret (INTERNAL_SYNC_TOKEN) sent as the X-Sync-Token header — this
+    can trigger real, paid external API calls (RC/challan lookups), so it must never be
+    triggerable by an anonymous request. Exempted from the login-required gate (require_login)
+    since a cron obviously isn't a logged-in browser session. Fails closed: if
+    INTERNAL_SYNC_TOKEN isn't configured at all, every request is rejected rather than the
+    endpoint being silently wide open.
+    """
+    token = os.environ.get('INTERNAL_SYNC_TOKEN')
+    if not token or request.headers.get('X-Sync-Token') != token:
+        return {'error': 'unauthorized'}, 401
+    job = request.args.get('job', 'sync_tick')
+    if job == 'weekly_compliance':
+        from scheduler import run_weekly_sync
+        summary = run_weekly_sync(get_db)
+        return {'ok': True, 'job': job, 'summary': summary}
+    else:
+        from scheduler import run_sync_tick
+        run_sync_tick(get_db, enable_rc_sync=(os.environ.get('ENABLE_RC_SYNC') == '1'),
+                      enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
+        return {'ok': True, 'job': job}
 
 if __name__ == '__main__':
     # Defaults to the same debug=True this always ran with locally — nothing changes for local
