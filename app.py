@@ -8,6 +8,7 @@ import requests
 from werkzeug.utils import secure_filename
 import compliance_service as cs
 from providers.echallan_client import fetch_rc, parse_challan_date, parse_rc_date
+import db
 
 app = Flask(__name__)
 # Falls back to the same literal value that used to be hardcoded here — local dev behaviour
@@ -25,7 +26,11 @@ os.makedirs(TOLL_RECEIPT_UPLOAD_DIR, exist_ok=True)
 def get_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
-    return conn
+    # Wrapped so a future database swap (see db.py's docstring) only ever means changing what
+    # happens in this one function — every one of the ~475 call sites elsewhere that just do
+    # conn.execute(sql, params) stay exactly as they are. Zero behavior change today: db.Connection
+    # is a pure passthrough on the sqlite backend.
+    return db.Connection(conn, backend='sqlite')
 
 @app.context_processor
 def inject_site_logo():
