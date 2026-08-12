@@ -2332,15 +2332,24 @@ FASTAG_MOCK_PLAZAS = [
 ]
 _TOLL_IMPORT_STASH = {}  # excel-preview token -> {'rows': [...], 'ts': datetime} — see toll_excel_preview
 
-def _save_toll_receipt(file_storage):
+def _save_toll_receipt(file_storage, company_id=1):
+    """company_id defaults to 1 (see the note on _get_invoice_settings) — every caller passes
+    session.get('company_id', 1), so this saves to uploads/toll_receipts/1/... today exactly
+    like uploads/toll_receipts/... before this change, just one directory level deeper. Once a
+    real second company exists, its uploads land in their own uploads/toll_receipts/<id>/
+    folder automatically, with no risk of two companies' files colliding — existing files
+    already saved under the old flat path are untouched and keep serving from their
+    already-stored path, nothing here retroactively moves them."""
     if not file_storage or not file_storage.filename:
         return None
     filename = secure_filename(file_storage.filename)
     if not filename:
         return None
     unique = f"toll_{int(datetime.datetime.now().timestamp() * 1000)}_{filename}"
-    file_storage.save(os.path.join(TOLL_RECEIPT_UPLOAD_DIR, unique))
-    return f"uploads/toll_receipts/{unique}"
+    company_dir = os.path.join(TOLL_RECEIPT_UPLOAD_DIR, str(company_id))
+    os.makedirs(company_dir, exist_ok=True)
+    file_storage.save(os.path.join(company_dir, unique))
+    return f"uploads/toll_receipts/{company_id}/{unique}"
 
 def _toll_tab_base_context(conn):
     """Everything the Toll tab needs to render — factored out from _maintenance_toll_tab so the
@@ -2876,15 +2885,18 @@ def _insurance_enrich(p):
             pass
     return d
 
-def _save_insurance_doc(file_storage, prefix):
+def _save_insurance_doc(file_storage, prefix, company_id=1):
+    """company_id defaults to 1 — see the note on _save_toll_receipt above, same reasoning."""
     if not file_storage or not file_storage.filename:
         return None
     filename = secure_filename(file_storage.filename)
     if not filename:
         return None
     unique = f"{prefix}_{int(datetime.datetime.now().timestamp() * 1000)}_{filename}"
-    file_storage.save(os.path.join(INSURANCE_UPLOAD_DIR, unique))
-    return f"uploads/insurance/{unique}"
+    company_dir = os.path.join(INSURANCE_UPLOAD_DIR, str(company_id))
+    os.makedirs(company_dir, exist_ok=True)
+    file_storage.save(os.path.join(company_dir, unique))
+    return f"uploads/insurance/{company_id}/{unique}"
 
 def _maintenance_insurance_tab(conn, template='maintenance.html', active='maintenance', base_path='/maintenance'):
     vehicle_f = request.args.get('vehicle', '')
@@ -3604,7 +3616,7 @@ def add_toll():
     payment_mode = f.get('payment_mode') or None
     status = 'synced' if source == 'fastag' else 'pending'
     notes = f.get('notes') or None
-    receipt_path = _save_toll_receipt(request.files.get('receipt'))
+    receipt_path = _save_toll_receipt(request.files.get('receipt'), session.get('company_id', 1))
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes)
@@ -4023,9 +4035,10 @@ def add_insurance():
         (f.get('start_date'), vehicle_id, 'Insurance', premium, premium, insurer_id, f.get('notes') or None, 'Completed'))
     maintenance_id = cur.lastrowid
 
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy')
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice')
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc')
+    _cid = session.get('company_id', 1)
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid)
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid)
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
     conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
@@ -4068,9 +4081,10 @@ def edit_insurance(policy_id):
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
 
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy') or policy['policy_doc_path']
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice') or policy['invoice_doc_path']
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc') or policy['rc_doc_path']
+    _cid = session.get('company_id', 1)
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid) or policy['policy_doc_path']
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid) or policy['invoice_doc_path']
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid) or policy['rc_doc_path']
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
     conn.execute("""UPDATE insurance_policies SET vehicle_id=?, insurance_type=?, insurer_id=?, policy_number=?,
@@ -4136,9 +4150,10 @@ def convert_legacy_insurance(maintenance_id):
     premium = float(f.get('premium_amount') or 0)
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy')
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice')
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc')
+    _cid = session.get('company_id', 1)
+    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid)
+    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid)
+    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
 
     conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
                     expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
@@ -6116,9 +6131,12 @@ def upload_company_logo():
         filename = secure_filename(f.filename)
         ext = os.path.splitext(filename)[1].lower()
         if ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
+            company_id = session.get('company_id', 1)
             unique = f"logo_{int(datetime.datetime.now().timestamp() * 1000)}{ext}"
-            f.save(os.path.join(LOGO_UPLOAD_DIR, unique))
-            rel_path = f"uploads/logo/{unique}"
+            company_dir = os.path.join(LOGO_UPLOAD_DIR, str(company_id))
+            os.makedirs(company_dir, exist_ok=True)
+            f.save(os.path.join(company_dir, unique))
+            rel_path = f"uploads/logo/{company_id}/{unique}"
             conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('logo_path', ?)", (rel_path,))
             conn.commit()
     conn.close()
