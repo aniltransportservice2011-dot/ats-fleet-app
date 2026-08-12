@@ -17,7 +17,17 @@ app = Flask(__name__)
 # a leaked/guessable secret key lets someone forge login sessions.
 app.secret_key = os.environ.get('SECRET_KEY', 'fleet-local-app-anil-transport-secret-key-2026')
 app.permanent_session_lifetime = datetime.timedelta(days=30)
-DB = 'fleet.db'
+# Was a bare relative path ('fleet.db') — only resolves correctly if the process happens to be
+# started from exactly this directory, which is an easy thing to get wrong under a process
+# manager (systemd/gunicorn) on a real server. Getting it wrong wouldn't even error — sqlite3
+# would silently create a new, empty database file wherever the process actually started from,
+# which looks exactly like "all my data disappeared" even though the real file is sitting
+# untouched right here. Now anchored to this file's own directory (same pattern the upload
+# directories below already use), so it resolves to the same file regardless of working
+# directory — and still overridable via DATABASE_PATH for a deployment that wants the DB
+# somewhere else (e.g. a separate mounted volume). Locally this resolves to the exact same
+# fleet.db that's always been here — zero behavior change.
+DB = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fleet.db'))
 INSURANCE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'insurance')
 os.makedirs(INSURANCE_UPLOAD_DIR, exist_ok=True)
 TOLL_RECEIPT_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'toll_receipts')
