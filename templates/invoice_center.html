@@ -6,8 +6,6 @@
   .ic-head h1 { margin:0 0 2px; font-size:1.5rem; }
   .ic-head .sub { color:var(--steel); font-size:0.88rem; }
   .ic-head-actions { display:flex; gap:10px; flex-shrink:0; flex-wrap:wrap; }
-  .ic-btn-outline { background:var(--white); border:1.5px solid var(--line); color:var(--ink); padding:9px 14px; border-radius:6px; font-size:0.82rem; font-weight:600; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-  .ic-btn-outline:hover { border-color:var(--accent); color:var(--accent); }
 
   .ic-panel { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:16px; }
   .ic-panel h3 { font-size:0.92rem; margin:0 0 14px; display:flex; align-items:center; gap:8px; }
@@ -73,19 +71,17 @@
 {% block content %}
 {% set type_meta = {
   'party': {'ic':'&#128179;', 'ttl':'Party Invoice', 'desc':'Bill to customers'},
-  'vehicle_owner': {'ic':'&#128667;', 'ttl':'Vehicle Owner Bill', 'desc':'Bill for vehicle owners'},
+  'vehicle_owner': {'ic':'&#128667;', 'ttl':'Freight Bill', 'desc':'Bill for vehicle owners'},
   'tax': {'ic':'&#128196;', 'ttl':'Tax Invoice', 'desc':'With GST details'},
-  'bill': {'ic':'&#128203;', 'ttl':'Bill Invoice', 'desc':'Without GST details'},
 } %}
 <div class="wrap" style="max-width:none; width:100%;">
   <div class="ic-head">
     <div>
       <h1>Invoice Center</h1>
-      <div class="sub">Generate Party Invoices and Vehicle Owner Bills</div>
+      <div class="sub">Generate Party Invoices and Freight Bills</div>
     </div>
     <div class="ic-head-actions">
-      <a href="/invoices/generated" class="ic-btn-outline">&#128203; Generated Invoices</a>
-      <a href="/settings?tab=invoices" class="ic-btn-outline">&#9881;&#65039; Invoice Settings</a>
+      <a href="/invoices/generated" class="add-btn">&#128203; Generated Invoices</a>
     </div>
   </div>
 

@@ -27,6 +27,16 @@
   --red: #f0665e;
 }
 * { box-sizing: border-box; }
+html {
+  /* Windows browsers show a classic ~17px scrollbar that occupies real layout width; macOS's
+     overlay scrollbar takes none. Without this, any page whose content just crosses the
+     scroll threshold shifts everything ~17px narrower the moment the scrollbar appears — on
+     Mac that never happens, so a page built/reviewed there looks fine while the same page on
+     Windows can show elements crammed against the right edge or wrapping differently. Reserving
+     the gutter unconditionally means every page renders at the same effective width on both,
+     scrollbar present or not. */
+  scrollbar-gutter: stable;
+}
 body {
   font-family: 'Segoe UI', -apple-system, Arial, sans-serif;
   background: var(--paper);
@@ -386,14 +396,9 @@ button.submit:active { transform: translateY(1px); box-shadow: none; }
   .mt-tyre-detail-hd2 .tyre-hd-meta .v { font-size:0.85rem; font-weight:700; }
   .mt-tyre-detail-empty { text-align:center; color:var(--steel); padding:40px 20px; font-size:0.85rem; }
 
-  .bat-layout { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; margin-bottom:18px; align-items:start; }
-  @media (max-width:1100px) { .bat-layout { grid-template-columns:1fr; } }
   .bat-health-track { width:80px; height:6px; background:var(--paper); border-radius:3px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:6px; }
   .bat-health-fill { height:100%; border-radius:3px; }
   .bat-row { cursor:pointer; }
-  .bat-row.selected { background:#fff3e8; }
-  .bat-side-panel { display:none; }
-  .bat-side-panel.active { display:block; }
   .bat-detail-hd { display:flex; align-items:flex-start; gap:14px; margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
   .bat-detail-hd .ic-lg { width:52px; height:52px; border-radius:12px; background:var(--paper); display:flex; align-items:center; justify-content:center; color:var(--accent); flex-shrink:0; }
   .bat-detail-hd .ic-lg svg { width:30px; height:30px; }

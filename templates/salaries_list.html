@@ -39,6 +39,7 @@
     <div class="summary-card"><div class="lbl">Total Outstanding</div><div class="val" style="color:{% if total_outstanding>0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(total_outstanding) }}</div><div class="sub">Outstanding balance</div></div>
   </div>
 
+  {% if rows %}
   <table>
     <tr><th>Type</th><th>Employee</th><th class="num">Outstanding Balance</th><th>Action</th></tr>
     {% for r in rows %}
@@ -50,5 +51,8 @@
     </tr>
     {% endfor %}
   </table>
+  {% else %}
+  <div style="text-align:center;color:var(--steel);font-size:0.85rem;padding:20px 0;">No employees match this selection.</div>
+  {% endif %}
 </div>
 {% endblock %}

@@ -29,6 +29,7 @@
       <div>
         <div class="panel">
           <h3>Trips Included ({{ total_trips }})</h3>
+          {% if line_items %}
           <table>
             <tr><th>LR Number</th><th>Vehicle</th><th>Date</th><th class="num">Freight</th>{% if invoice_type=='vehicle_owner' %}<th class="num">Net Payable</th>{% endif %}</tr>
             {% for li in line_items %}
@@ -38,6 +39,9 @@
             </tr>
             {% endfor %}
           </table>
+          {% else %}
+          <div style="text-align:center;color:var(--steel);padding:20px 0;">No trips selected.</div>
+          {% endif %}
         </div>
 
         <div class="panel">

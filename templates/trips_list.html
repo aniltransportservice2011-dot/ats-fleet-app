@@ -32,6 +32,8 @@
   .info-note { background:rgba(42,120,214,0.08); border:1px solid rgba(42,120,214,0.2); border-radius:6px; padding:10px 12px; margin:14px 0; font-size:0.78rem; color:var(--steel); display:flex; gap:8px; align-items:flex-start; }
   .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
   @media (max-width:640px) { .row3 { grid-template-columns:1fr; } }
+  .trip-sort-ic { color:var(--steel); font-size:0.7rem; text-decoration:none; margin-left:3px; cursor:pointer; display:inline-block; }
+  .trip-sort-ic:hover { color:var(--accent); }
 </style>
 {% endblock %}
 {% block content %}
@@ -95,7 +97,6 @@
     <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(total_shown) }}</div></div>
     <div class="summary-card"><div class="lbl">Pending Balance</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(pending_total) }}</div></div>
     <div class="summary-card"><div class="lbl">Active Trips</div><div class="val" style="color:var(--accent);">{{ active_count }}</div></div>
-    <div class="summary-card"><div class="lbl">LR Received</div><div class="val" style="color:var(--green);">{{ lr_received_count }}</div></div>
     <div class="summary-card"><div class="lbl">LR Pending</div><div class="val" style="color:var(--red);">{{ lr_pending_count }}</div></div>
   </div>
 
@@ -103,8 +104,14 @@
     <span>Showing <b>{{ trips|length }}</b> of <b>{{ total_count }}</b> trips</span>
   </div>
 
+  {% if trips %}
   <table>
-    <tr><th>Date</th><th>LR Number</th><th>Vehicle</th><th>Party</th><th>From</th><th>To</th><th class="num">Billed</th><th class="num">Pending</th><th>End Trip</th><th>Action</th></tr>
+    <tr>
+      <th>Date <a class="trip-sort-ic" title="Sort by Date" href="?{{ filter_qs }}&sort=date&dir={{ 'asc' if (f_sort=='date' and f_dir=='desc') or f_sort=='' else 'desc' }}">{% if f_sort=='date' or f_sort=='' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a></th>
+      <th>LR Number</th><th>Vehicle</th>
+      <th>Party <a class="trip-sort-ic" title="Sort by Party" href="?{{ filter_qs }}&sort=party&dir={{ 'desc' if (f_sort=='party' and f_dir=='asc') else 'asc' }}">{% if f_sort=='party' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a></th>
+      <th>From</th><th>To</th><th class="num">Billed</th><th class="num">Pending</th><th>End Trip</th><th>Action</th>
+    </tr>
     {% for t in trips %}
     <tr class="clickable-row" onclick="goTo('/trips/edit/{{ t['id'] }}')">
       <td>{{ t['date'] }}</td><td style="color:var(--accent);">{{ t['lr_number'] }}</td><td>{{ t['vehicle_no'] }}</td>
@@ -134,6 +141,9 @@
   </table>
 
   {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);font-size:0.85rem;padding:30px 0;">No trips found for this selection.</div>
+  {% endif %}
 </div>
 
 {% for t in trips %}

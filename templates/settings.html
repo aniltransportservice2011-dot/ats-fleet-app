@@ -177,7 +177,7 @@
           <button type="button" class="edit-toggle-btn" onclick="document.getElementById('prefsEditModal').classList.add('open')">Edit</button>
         </div>
         <div class="kv-grid" id="prefsView">
-          <div><div class="lbl">Default Invoice Type</div>{{ {'party':'Party Invoice','vehicle_owner':'Market Vehicle Invoice','tax':'Tax Invoice (With GST)','bill':'Bill Invoice'}[s['default_invoice_type']] if s['default_invoice_type'] else '—' }}</div>
+          <div><div class="lbl">Default Invoice Type</div>{{ {'party':'Party Invoice','vehicle_owner':'Freight Bill','tax':'Tax Invoice (With GST)','bill':'Bill Invoice'}[s['default_invoice_type']] if s['default_invoice_type'] else '—' }}</div>
           <div><div class="lbl">Show Company Logo</div><span class="toggle-badge {{ 'on' if s['show_company_logo']=='1' else 'off' }}">{{ 'Enabled' if s['show_company_logo']=='1' else 'Disabled' }}</span></div>
           <div><div class="lbl">Payment Terms</div>{{ s['default_payment_terms'] or '—' }}</div>
           <div><div class="lbl">Show Bank Details</div><span class="toggle-badge {{ 'on' if s['show_bank_details']=='1' else 'off' }}">{{ 'Enabled' if s['show_bank_details']=='1' else 'Disabled' }}</span></div>
@@ -195,7 +195,7 @@
               <div><label>Default Invoice Type</label>
                 <select name="default_invoice_type">
                   <option value="party" {% if s['default_invoice_type']=='party' %}selected{% endif %}>Party Invoice</option>
-                  <option value="vehicle_owner" {% if s['default_invoice_type']=='vehicle_owner' %}selected{% endif %}>Market Vehicle Invoice</option>
+                  <option value="vehicle_owner" {% if s['default_invoice_type']=='vehicle_owner' %}selected{% endif %}>Freight Bill</option>
                   <option value="tax" {% if s['default_invoice_type']=='tax' %}selected{% endif %}>Tax Invoice (With GST)</option>
                   <option value="bill" {% if s['default_invoice_type']=='bill' %}selected{% endif %}>Bill Invoice</option>
                 </select>
@@ -296,7 +296,7 @@
       <form method="POST" action="/settings?tab=tax" class="stack">
         <input type="hidden" name="form_type" value="rcm">
         <textarea name="rcm_clause" rows="4" style="width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:3px;font-size:0.9rem;font-family:inherit;">{{ s['rcm_clause'] }}</textarea>
-        <button type="submit" class="modal-save-btn">Save RCM Clause</button>
+        <button type="submit" class="add-btn" style="justify-self:end;">Save RCM Clause</button>
       </form>
     </div>
   </div>
@@ -321,8 +321,8 @@
         <div class="card-head" style="align-items:flex-start;">
           <div><h3>Manage Users</h3><div class="sub">Add, edit or manage user accounts and their access level</div></div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
-            <a href="/settings/users/export" style="box-sizing:border-box;height:36px;background:none;border:1px solid var(--line);color:var(--ink);padding:0 14px;border-radius:4px;font-size:0.82rem;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">&#11015;&#65039; Export Users</a>
-            <button type="button" style="box-sizing:border-box;height:36px;width:auto;display:inline-flex;align-items:center;gap:4px;margin:0;padding:0 16px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:0.82rem;font-weight:600;cursor:pointer;white-space:nowrap;" onclick="document.getElementById('addUserModal').classList.add('open')">+ Add User</button>
+            <a href="/settings/users/export" class="download-btn">&#11015;&#65039; Export Users</a>
+            <button type="button" class="add-btn" onclick="document.getElementById('addUserModal').classList.add('open')">+ Add User</button>
           </div>
         </div>
 
@@ -590,8 +590,8 @@
       <div style="margin-top:14px;max-width:220px;"><label class="ur-section-lbl">3. Status *</label><select name="status" style="margin-top:6px;"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
-        <button type="button" onclick="document.getElementById('addUserModal').classList.remove('open')" style="height:38px;padding:0 18px;background:none;border:1px solid var(--line);border-radius:4px;font-size:0.85rem;font-weight:600;cursor:pointer;">Cancel</button>
-        <button type="submit" style="height:38px;padding:0 18px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:0.85rem;font-weight:600;cursor:pointer;">Save User</button>
+        <button type="button" onclick="document.getElementById('addUserModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save User</button>
       </div>
     </form>
   </div>

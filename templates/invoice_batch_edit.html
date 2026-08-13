@@ -5,7 +5,7 @@
   <a class="back" href="/invoices/generated">&larr; Back to Generated Invoices</a>
   <h1>Edit Invoice — {{ b['invoice_number'] }}</h1>
   <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">
-    {{ 'Market Vehicle Invoice' if b['invoice_type']=='vehicle_owner' else 'Party Invoice' }} for
+    {{ 'Freight Bill' if b['invoice_type']=='vehicle_owner' else 'Party Invoice' }} for
     <b>{{ b['vendor_name'] if b['invoice_type']=='vehicle_owner' else b['party_name'] }}</b>.
     Changes here are reflected the next time this invoice is downloaded. To change the trips included, generate a new invoice from Invoice Center.
   </div>
