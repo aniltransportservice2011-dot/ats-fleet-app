@@ -4454,7 +4454,8 @@ def _get_vendor_ledger_entries(vendor_id):
                           ORDER BY t.date""", (vendor_id,)).fetchall()
     owner_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.rate_type, t.fixed_rate_amount, t.owner_rate,
                                   t.owner_rate_type, t.owner_fixed_amount,
-                                  t.quantity, t.paid_to_owner, t.type, v.vehicle_no
+                                  t.quantity, t.paid_to_owner, t.type, v.vehicle_no,
+                                  t.fuel_vendor_id, t.fuel_amount, t.driver_adv_vendor_id, t.driver_adv_amount
                                   FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                                   WHERE t.owner_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
     # Trip "Others" items explicitly tagged with this vendor (e.g. a second fuel top-up or an
@@ -4524,6 +4525,23 @@ def _get_vendor_ledger_entries(vendor_id):
                              'debit': original_paid, 'credit': owed,
                              'kind': 'Trip Bill', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
                              'link': url_for('trip_view', trip_id=o['id'])})
+            # Fuel/driver advance paid to a genuinely different vendor (not the owner themself) on
+            # this trip counts as money already delivered to the owner on his behalf — the company
+            # paid his fuel/advance bill directly instead of handing him cash. That vendor still gets
+            # their own payable elsewhere (the fuel/adv loops above); here it separately reduces what
+            # the owner is still owed, same as a direct payment would.
+            if o['fuel_vendor_id'] and o['fuel_vendor_id'] != vendor_id and o['fuel_amount']:
+                fdetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Fuel paid on your behalf" + (f" ({ident})" if ident else '')
+                entries.append({'date': o['date'], 'detail': fdetail,
+                                 'debit': o['fuel_amount'], 'credit': 0,
+                                 'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
+                                 'link': url_for('trip_view', trip_id=o['id'])})
+            if o['driver_adv_vendor_id'] and o['driver_adv_vendor_id'] != vendor_id and o['driver_adv_amount']:
+                adetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Driver advance paid on your behalf" + (f" ({ident})" if ident else '')
+                entries.append({'date': o['date'], 'detail': adetail,
+                                 'debit': o['driver_adv_amount'], 'credit': 0,
+                                 'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
+                                 'link': url_for('trip_view', trip_id=o['id'])})
     for it in other_items:
         ident = it['vehicle_no'] or trip_invoice_no.get(it['trip_id'], '')
         detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}" + (f" ({ident})" if ident else '')
