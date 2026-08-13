@@ -165,8 +165,8 @@
 
   <div class="lg2-tabs">
     <a class="lg2-tab {{ 'active' if f_tab=='all' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}tab=all">All Transactions</a>
-    <a class="lg2-tab {{ 'active' if f_tab=='receivables' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}tab=receivables">Receivables (From You)</a>
-    <a class="lg2-tab {{ 'active' if f_tab=='payables' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}tab=payables">Payables (To You)</a>
+    <a class="lg2-tab {{ 'active' if f_tab=='receivables' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}tab=receivables">Receivables</a>
+    <a class="lg2-tab {{ 'active' if f_tab=='payables' }}" href="?{{ tab_qs }}{% if tab_qs %}&{% endif %}tab=payables">Payables</a>
   </div>
 
   <form class="lg2-filters" method="GET">
@@ -231,8 +231,8 @@
   </div>
 
   <div class="lg2-bottom-row">
-    <div class="lg2-bottom-card"><div><div class="lbl">Total Receivables (From You)</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(final_balance if final_balance > 0 else 0) }}</div></div><div class="lg2-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128176;</div></div>
-    <div class="lg2-bottom-card"><div><div class="lbl">Total Payables (To You)</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format((final_balance|abs) if final_balance < 0 else 0) }}</div></div><div class="lg2-kpi-icon" style="background:#fdecea;color:var(--red);">&#8681;</div></div>
+    <div class="lg2-bottom-card"><div><div class="lbl">Total Receivables</div><div class="val" style="color:var(--green);">₹{{ '{:,.0f}'.format(final_balance if final_balance > 0 else 0) }}</div></div><div class="lg2-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128176;</div></div>
+    <div class="lg2-bottom-card"><div><div class="lbl">Total Payables</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format((final_balance|abs) if final_balance < 0 else 0) }}</div></div><div class="lg2-kpi-icon" style="background:#fdecea;color:var(--red);">&#8681;</div></div>
     <div class="lg2-bottom-card"><div><div class="lbl">Net Balance</div><div class="val">₹{{ '{:,.0f}'.format(final_balance) }}</div></div><div class="lg2-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#9878;</div></div>
     <div class="lg2-bottom-card"><div><div class="lbl">Last Transaction</div><div class="val" style="font-size:0.95rem;">{{ entries[0].date if entries else '—' }}</div></div><div class="lg2-kpi-icon" style="background:#fff3e8;color:var(--accent);">&#128197;</div></div>
   </div>

@@ -26,9 +26,9 @@
 
   <div class="inv-box">
     <div class="inv-letterhead">
-      <h2>ANIL TRANSPORT SERVICE</h2>
-      <div class="addr">Head Off.: Shop No. D/8, Nirmal Market Power House Road, Rourkela - 769001</div>
-      <div class="addr">GSTIN No.: 21ABDPL6110E1ZG &nbsp;|&nbsp; Mob. +91 9437246272 &nbsp;|&nbsp; Ph./Fax: 0661-2501272</div>
+      <h2>{{ s.company_name or company_name }}</h2>
+      {% if s.address %}<div class="addr">{{ s.address }}</div>{% endif %}
+      <div class="addr">{% if s.gstin %}GSTIN No.: {{ s.gstin }}{% endif %}{% if s.gstin and s.phone %} &nbsp;|&nbsp; {% endif %}{% if s.phone %}Mob. {{ s.phone }}{% endif %}</div>
     </div>
 
     <div class="inv-grid">

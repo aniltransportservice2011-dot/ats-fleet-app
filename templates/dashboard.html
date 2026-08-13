@@ -90,7 +90,7 @@
     <div class="kpi">
       <div class="kpi-icon" style="background:#eaf1fb;color:#7a5ad6;">&#128666;</div>
       <div><div class="label">Own Vehicle Revenue</div><div class="value">₹{{ '{:,.0f}'.format(own_vehicle_turnover) }}</div>
-      <div class="sub">Line + Local only</div></div>
+      </div>
     </div>
     <div class="kpi">
       <div class="kpi-icon" style="background:{% if market_vehicle_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if market_vehicle_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128176;</div>
@@ -100,7 +100,7 @@
       {% else %}
       <div class="value" style="color:var(--red);">-₹{{ '{:,.0f}'.format(market_vehicle_profit|abs) }}</div>
       {% endif %}
-      <div class="sub">{{ market_trip_count }} trips &middot; party rate minus owner's rate</div></div>
+      <div class="sub">{{ market_trip_count }} trips</div></div>
     </div>
     <div class="kpi">
       <div class="kpi-icon" style="background:#fdecea;color:#e34948;">&#9981;</div>
