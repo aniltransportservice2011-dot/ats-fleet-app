@@ -11,7 +11,7 @@
       <select name="invoice_type">
         <option value="">All Types</option>
         <option value="party" {% if f_type=='party' %}selected{% endif %}>Party Invoice</option>
-        <option value="vehicle_owner" {% if f_type=='vehicle_owner' %}selected{% endif %}>Market Vehicle Invoice</option>
+        <option value="vehicle_owner" {% if f_type=='vehicle_owner' %}selected{% endif %}>Freight Bill</option>
         <option value="tax" {% if f_type=='tax' %}selected{% endif %}>Tax Invoice</option>
         <option value="bill" {% if f_type=='bill' %}selected{% endif %}>Bill Invoice</option>
       </select>
@@ -27,7 +27,7 @@
     {% for r in rows %}
     <tr class="clickable-row" onclick="window.location='/invoices/generated/{{ r['id'] }}/edit'">
       <td>{{ r['invoice_number'] }}{% if r['status']=='draft' %} <span style="padding:2px 8px;border-radius:8px;font-size:0.68rem;font-weight:600;background:var(--paper);color:var(--steel);">Draft</span>{% endif %}</td>
-      <td>{{ {'party':'Party Invoice','vehicle_owner':'Market Vehicle Invoice','tax':'Tax Invoice','bill':'Bill Invoice'}.get(r['invoice_type'], r['invoice_type']) }}</td>
+      <td>{{ {'party':'Party Invoice','vehicle_owner':'Freight Bill','tax':'Tax Invoice','bill':'Bill Invoice'}.get(r['invoice_type'], r['invoice_type']) }}</td>
       <td>{{ r['vendor_name'] if r['invoice_type']=='vehicle_owner' else r['party_name'] }}</td>
       <td>{{ r['invoice_date'] }}</td>
       <td>{{ r['due_date'] or '—' }}</td>

@@ -10,6 +10,7 @@
   <h1>Employee Advances <a class="add-btn" href="/advances/add">+ Add Advance</a></h1>
 
   <div style="font-size:14px;font-weight:500;margin:16px 0 8px;">Outstanding by employee</div>
+  {% if rows %}
   <table>
     <tr><th>Employee</th><th class="num">Given</th><th class="num">Repaid</th><th class="num">Outstanding</th></tr>
     {% for r in rows %}
@@ -20,8 +21,12 @@
     </tr>
     {% endfor %}
   </table>
+  {% else %}
+  <div style="text-align:center;color:var(--steel);font-size:0.85rem;padding:20px 0;">No advances recorded yet.</div>
+  {% endif %}
 
   <div style="font-size:14px;font-weight:500;margin:24px 0 8px;">All advance entries</div>
+  {% if entries %}
   <table>
     <tr><th>Date</th><th>Employee</th><th>Type</th><th class="num">Amount</th><th>Notes</th></tr>
     {% for e in entries %}
@@ -29,5 +34,8 @@
       <td class="num">₹{{ '{:,.0f}'.format(e['amount'] or 0) }}</td><td>{{ e['notes'] }}</td></tr>
     {% endfor %}
   </table>
+  {% else %}
+  <div style="text-align:center;color:var(--steel);font-size:0.85rem;padding:20px 0;">No advance entries yet.</div>
+  {% endif %}
 </div>
 {% endblock %}

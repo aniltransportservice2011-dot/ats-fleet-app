@@ -1541,7 +1541,6 @@ def overheads_list():
     tab = request.args.get('tab', 'all')
     cat_f = request.args.get('category', '')
     vendor_f = request.args.get('vendor', '')
-    mode_f = request.args.get('payment_mode', '')
     status_f = request.args.get('status', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
@@ -1556,9 +1555,6 @@ def overheads_list():
     if vendor_f:
         query += " AND vendor = ?"
         params.append(vendor_f)
-    if mode_f:
-        query += " AND payment_mode = ?"
-        params.append(mode_f)
     if status_f:
         query += " AND COALESCE(status,'Paid') = ?"
         params.append(status_f)
@@ -1664,15 +1660,6 @@ def overheads_list():
     month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     trend_points = [{'label': month_labels[i], 'amount': trend_totals[f"{year:04d}-{i+1:02d}"]} for i in range(12)]
 
-    # Payment Mode Breakdown — donut across all-time entries.
-    mode_totals = {}
-    for r in all_rows:
-        key = r['payment_mode'] or 'Unspecified'
-        mode_totals[key] = mode_totals.get(key, 0) + (r['amount'] or 0)
-    mode_sorted = sorted(mode_totals.items(), key=lambda kv: -kv[1])
-    mode_segments = [(label, amt, EXPENSE_PALETTE[i % len(EXPENSE_PALETTE)]) for i, (label, amt) in enumerate(mode_sorted)]
-    mode_gradient, mode_legend = _conic_gradient(mode_segments)
-
     # Expense by Status — donut, Paid vs Pending.
     paid_amount = total_amount - pending_amount
     status_segments = [('Paid', paid_amount, '#1a9c5b'), ('Pending', pending_amount, '#eda100')]
@@ -1716,7 +1703,7 @@ def overheads_list():
     conn.close()
     return render_template(
         'overheads_list.html', rows=page_rows, categories=categories, vendors=vendors,
-        tab=tab, f_category=cat_f, f_vendor=vendor_f, f_payment_mode=mode_f, f_status=status_f,
+        tab=tab, f_category=cat_f, f_vendor=vendor_f, f_status=status_f,
         f_date_from=date_from, f_date_to=date_to,
         total_amount=total_amount, total_count=total_count, this_month_amount=this_month_amount,
         pending_amount=pending_amount, pending_count=pending_count,
@@ -1725,7 +1712,6 @@ def overheads_list():
         upcoming=upcoming[:4], top_categories_gradient=top_categories_gradient,
         top_categories_legend=top_categories_legend, top_categories_total=top_categories_total,
         recent_bills=recent_bills, trend_points=trend_points,
-        mode_gradient=mode_gradient, mode_legend=mode_legend,
         status_gradient=status_gradient, status_legend=status_legend,
         vendor_summary_rows=vendor_summary_rows, category_summary_rows=category_summary_rows,
         page=page, per_page=per_page, total_pages=total_pages, page_tokens=page_tokens, base_qs=base_qs,
@@ -1799,6 +1785,8 @@ def trips_list():
     from_f = request.args.get('from_loc', '')
     to_f = request.args.get('to_loc', '')
     type_f = request.args.get('type', '')
+    sort_f = request.args.get('sort', '')
+    dir_f = request.args.get('dir', 'desc')
 
     query = """SELECT t.id, t.date, t.lr_number, v.vehicle_no, p.name as party_name,
                t.from_loc, t.to_loc, t.billed_amount, t.lr_received, t.type,
@@ -1855,7 +1843,12 @@ def trips_list():
                                              per_page_options=(10, 25, 50, 100), default_per_page=50)
     offset = (page - 1) * per_page
 
-    query += f" ORDER BY t.date DESC LIMIT {per_page} OFFSET {offset}"
+    # Whitelisted column map — sort_f/dir_f come straight from the query string, so they're
+    # never interpolated directly into SQL; only the vetted values on the right ever reach it.
+    sort_columns = {'date': 't.date', 'party': 'p.name'}
+    order_col = sort_columns.get(sort_f, 't.date')
+    order_dir = 'ASC' if dir_f == 'asc' else 'DESC'
+    query += f" ORDER BY {order_col} {order_dir}, t.date DESC LIMIT {per_page} OFFSET {offset}"
 
     trips = conn.execute(query, params).fetchall()
     vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
@@ -1869,13 +1862,22 @@ def trips_list():
     base_qs = urlencode(base_params)
     page_tokens = _page_tokens(page, total_pages)
 
+    # Same filters, minus sort/dir — sort-column links in the template build off this so
+    # clicking "Date" or "Party" toggles just the sort, keeping every active filter intact.
+    filter_params = dict(base_params)
+    filter_params.pop('sort', None)
+    filter_params.pop('dir', None)
+    filter_qs = urlencode(filter_params)
+
     return render_template('trips_list.html', trips=trips, total_shown=total_shown, total_count=total_count,
+                            filter_qs=filter_qs,
                             pending_total=pending_total, active_count=active_count,
                             lr_received_count=lr_received_count, lr_pending_count=lr_pending_count,
                             page=page, total_pages=total_pages, per_page=per_page, base_qs=base_qs, page_tokens=page_tokens,
                             vehicles=vehicles, parties=parties,
                             f_vehicle=vehicle_f, f_party=party_f, f_date_from=date_from, f_date_to=date_to,
-                            f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f, active='trips')
+                            f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f,
+                            f_sort=sort_f, f_dir=dir_f, active='trips')
 
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
@@ -2769,6 +2771,9 @@ def _maintenance_battery_tab(conn):
                 pass
     avg_life_months = round(sum(ages) / len(ages)) if ages else None
 
+    healths = [r['health_pct'] for r in all_rows if r['health_pct'] is not None]
+    avg_health_pct = round(sum(healths) / len(healths)) if healths else None
+
     status_counts = {'Good': 0, 'Weak': 0, 'Replace Soon': 0, 'Dead': 0, 'In Stock': 0}
     for r in all_rows:
         status_counts[r['status']] = status_counts.get(r['status'], 0) + 1
@@ -2813,7 +2818,8 @@ def _maintenance_battery_tab(conn):
     return render_template('maintenance.html', tab='battery',
         rows=page_rows, total_count=total_count,
         total_batteries=total_batteries, in_use=in_use, in_stock=in_stock, weak_soon=weak_soon, dead_count=dead_count,
-        avg_life_months=avg_life_months, status_counts=status_counts, warranty_list=warranty_list, low_health=low_health,
+        avg_life_months=avg_life_months, avg_health_pct=avg_health_pct,
+        status_counts=status_counts, warranty_list=warranty_list, low_health=low_health,
         total_cost_year=total_cost_year, replaced_year=replaced_year, cost_per_battery=cost_per_battery,
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         vehicles=vehicles, battery_vendors=battery_vendors, combined_names=combined_names,

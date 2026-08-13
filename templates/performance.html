@@ -100,6 +100,7 @@
 
     <div class="perf-panel">
       <h3>Driver Performance Detail</h3>
+      {% if driver_rows %}
       <table>
         <tr><th>Driver Name</th><th class="num">Completed Trips</th><th class="num">Total Billed</th><th class="num">Fuel Cost</th><th class="num">Profit</th><th>Last Trip Date</th></tr>
         {% for r in driver_rows %}
@@ -111,11 +112,12 @@
           <td class="num" style="font-weight:600;color:{% if r['profit']>=0 %}var(--green){% else %}var(--red){% endif %};">{% if r['profit']>=0 %}₹{{ '{:,.0f}'.format(r['profit']) }}{% else %}-₹{{ '{:,.0f}'.format(r['profit']|abs) }}{% endif %}</td>
           <td>{{ r['last_trip'] or '—' }}</td>
         </tr>
-        {% else %}
-        <tr><td colspan="6" style="text-align:center;color:var(--steel);padding:30px;">No drivers found for this selection.</td></tr>
         {% endfor %}
       </table>
       {{ pager.render_pager('driverPager', d_page, d_total_pages, per_page, base_qs ~ ('&' if base_qs else '') ~ 'tab=driver&v_page=' ~ v_page, d_page_tokens, per_page_options=[5,10,25,50], page_param='d_page') }}
+      {% else %}
+      <div style="text-align:center;color:var(--steel);padding:30px;">No drivers found for this selection.</div>
+      {% endif %}
     </div>
   </div>
 
@@ -162,6 +164,7 @@
 
     <div class="perf-panel">
       <h3>Vehicle Performance Detail</h3>
+      {% if vehicle_rows %}
       <table>
         <tr><th>Vehicle No</th><th>Type</th><th class="num">Completed Trips</th><th class="num">Total Billed</th><th class="num">Fuel Cost</th><th class="num">Maintenance</th><th class="num">Profit</th><th>Last Trip Date</th></tr>
         {% for r in vehicle_rows %}
@@ -175,11 +178,12 @@
           <td class="num" style="font-weight:600;color:{% if r['profit']>=0 %}var(--green){% else %}var(--red){% endif %};">{% if r['profit']>=0 %}₹{{ '{:,.0f}'.format(r['profit']) }}{% else %}-₹{{ '{:,.0f}'.format(r['profit']|abs) }}{% endif %}</td>
           <td>{{ r['last_trip'] or '—' }}</td>
         </tr>
-        {% else %}
-        <tr><td colspan="8" style="text-align:center;color:var(--steel);padding:30px;">No vehicles found for this selection.</td></tr>
         {% endfor %}
       </table>
       {{ pager.render_pager('vehiclePager', v_page, v_total_pages, per_page, base_qs ~ ('&' if base_qs else '') ~ 'tab=vehicle&d_page=' ~ d_page, v_page_tokens, per_page_options=[5,10,25,50], page_param='v_page') }}
+      {% else %}
+      <div style="text-align:center;color:var(--steel);padding:30px;">No vehicles found for this selection.</div>
+      {% endif %}
     </div>
   </div>
 </div>

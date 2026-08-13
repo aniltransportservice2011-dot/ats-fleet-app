@@ -41,6 +41,7 @@
     {% endif %}
   </div>
 
+  {% if entries %}
   <table>
     <tr><th>Date</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Advance Balance</th><th>Entry Recorded</th></tr>
     {% for e in entries %}
@@ -54,6 +55,9 @@
     </tr>
     {% endfor %}
   </table>
+  {% else %}
+  <div style="text-align:center;color:var(--steel);font-size:0.85rem;padding:20px 0;">No ledger entries recorded yet.</div>
+  {% endif %}
 </div>
 
 {% for e in entries %}

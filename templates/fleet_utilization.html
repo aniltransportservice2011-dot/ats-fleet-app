@@ -128,6 +128,7 @@
           <input type="text" id="fuSearch" placeholder="Search vehicle..." oninput="fuFilterTable()">
         </div>
       </div>
+      {% if rows %}
       <table id="fuTable">
         <tr><th>Vehicle No</th><th>Type</th><th>Group</th><th class="num">Active Days<br>(This Period)</th><th class="num">Idle Days<br>(This Period)</th><th class="num">Total Days</th><th class="num">Empty Run Trips</th><th class="num">Idle %</th><th>Last Trip Date</th><th>Status</th><th>Action</th></tr>
         {% for r in rows %}
@@ -142,8 +143,6 @@
           <td><span class="status-badge" style="background:{% if r['status']=='Active' %}#e8f5ee;color:var(--green){% else %}#fdecea;color:var(--red){% endif %};">{{ r['status'] }}</span></td>
           <td><button class="eye-btn" title="View" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg></button></td>
         </tr>
-        {% else %}
-        <tr><td colspan="11" style="text-align:center;color:var(--steel);padding:30px;">No own vehicles found for this selection.</td></tr>
         {% endfor %}
       </table>
       <div class="fu-pagination">
@@ -155,6 +154,9 @@
           <option value="50">50 / page</option>
         </select>
       </div>
+      {% else %}
+      <div style="text-align:center;color:var(--steel);padding:30px;">No own vehicles found for this selection.</div>
+      {% endif %}
     </div>
   </div>
 
@@ -172,6 +174,7 @@
     </div>
     <div class="fu-panel">
       <h3>All Vehicles — Idle Detail</h3>
+      {% if rows %}
       <table>
         <tr><th>Vehicle No</th><th>Type</th><th class="num">Active Days</th><th class="num">Idle Days</th><th class="num">Total Days</th><th>Last Trip Date</th><th>Status</th></tr>
         {% for r in rows %}
@@ -185,6 +188,9 @@
         </tr>
         {% endfor %}
       </table>
+      {% else %}
+      <div style="text-align:center;color:var(--steel);padding:30px;">No vehicles found for this selection.</div>
+      {% endif %}
     </div>
   </div>
 
@@ -196,6 +202,7 @@
     </div>
     <div class="fu-panel">
       <h3>Empty Run Trips</h3>
+      {% if empty_rows %}
       <table>
         <tr><th>Date</th><th>Vehicle</th><th>From</th><th>To</th><th class="num">Fuel (₹)</th><th class="num">Toll (₹)</th><th class="num">Total Loss (₹)</th></tr>
         {% for r in empty_rows %}
@@ -205,10 +212,11 @@
           <td class="num" style="color:var(--red);">-₹{{ '{:,.0f}'.format(r['toll'] or 0) }}</td>
           <td class="num" style="color:var(--red);font-weight:600;">-₹{{ '{:,.0f}'.format((r['fuel_amount'] or 0)+(r['toll'] or 0)) }}</td>
         </tr>
-        {% else %}
-        <tr><td colspan="7" style="text-align:center;color:var(--steel);padding:30px;">No empty runs found for this selection.</td></tr>
         {% endfor %}
       </table>
+      {% else %}
+      <div style="text-align:center;color:var(--steel);padding:30px;">No empty runs found for this selection.</div>
+      {% endif %}
     </div>
   </div>
 
@@ -233,7 +241,9 @@ function fuFilterTable() {
 }
 
 function fuRenderPage(page) {
-  var pageSize = parseInt(document.getElementById('fuPageSize').value, 10);
+  var pageSizeEl = document.getElementById('fuPageSize');
+  if (!pageSizeEl) return; // table (and its pagination controls) aren't in the DOM when there are no rows
+  var pageSize = parseInt(pageSizeEl.value, 10);
   var totalPages = Math.max(1, Math.ceil(fuFiltered.length / pageSize));
   fuPage = Math.min(Math.max(1, page), totalPages);
 

@@ -29,9 +29,6 @@
 .detail-row { padding:6px 0; border-bottom:1px solid var(--line); font-size:0.88rem; }
 .detail-row .lbl { color:var(--steel); font-size:0.72rem; text-transform:uppercase; }
 
-.oh-layout { display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start; }
-@media (max-width:1100px) { .oh-layout { grid-template-columns:1fr; } }
-.oh-side { display:flex; flex-direction:column; gap:16px; }
 .oh-icon-box { width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .oh-icon-box svg { width:15px; height:15px; }
 .oh-legend { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
@@ -98,8 +95,7 @@
     </div>
   </div>
 
-  <div class="oh-layout">
-    <div>
+  <div>
       <div class="mt-tabs">
         <a class="mt-tab {{ 'active' if tab=='all' }}" href="?tab=all">All Expenses</a>
         <a class="mt-tab {{ 'active' if tab=='recurring' }}" href="?tab=recurring">Recurring Expenses</a>
@@ -117,11 +113,6 @@
         <div class="field"><label>Vendor</label>
           <select name="vendor"><option value="">All Vendors</option>
             {% for v in vendors %}<option value="{{ v['vendor'] }}" {% if f_vendor==v['vendor'] %}selected{% endif %}>{{ v['vendor'] }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="field"><label>Payment Mode</label>
-          <select name="payment_mode"><option value="">All Modes</option>
-            {% for m in ['Cash','Bank Transfer','UPI','Online','Credit Card','Cheque'] %}<option value="{{ m }}" {% if f_payment_mode==m %}selected{% endif %}>{{ m }}</option>{% endfor %}
           </select>
         </div>
         <div class="field"><label>Status</label>
@@ -203,9 +194,9 @@
         {% else %}<div class="oh-empty">No expenses recorded yet.</div>{% endif %}
       </div>
       {% endif %}
-    </div>
+  </div>
 
-    <div class="oh-side">
+  <div class="mt-row-3" style="margin-top:18px;">
       <div class="mt-panel">
         <div class="mt-panel-head"><span class="ttl">Upcoming Payments</span><a href="?tab=all&status=Pending" style="font-size:0.72rem;color:var(--accent);font-weight:700;text-decoration:none;">View All</a></div>
         {% if upcoming %}
@@ -261,41 +252,30 @@
         <div class="oh-empty">No receipts/invoice numbers on file yet.</div>
         {% endif %}
       </div>
-    </div>
   </div>
 
-  <div class="mt-row-3" style="margin-top:18px;">
+  <div class="mt-row-3" style="margin-top:18px;grid-template-columns:1fr 1fr;">
     <div class="mt-panel">
       <div class="mt-panel-head"><span class="ttl">Expense Trend</span><span style="font-size:0.7rem;color:var(--steel);">{{ current_year }}</span></div>
       {% set max_amt = (trend_points|map(attribute='amount')|list)|max %}
       {% set max_amt = max_amt if max_amt and max_amt > 0 else 1 %}
+      {# Jinja2's {% set %} doesn't persist across loop iterations by default — prev_px/prev_py
+         were silently going undefined every iteration, producing a malformed "points" attribute
+         (e.g. ",45,120.0") that the browser's SVG parser rejected outright, so no connecting
+         line ever actually rendered. A namespace object is the standard Jinja fix for a value
+         that needs to carry over between iterations. #}
+      {% set ns = namespace(prev_px=None, prev_py=None) %}
       <svg viewBox="0 0 320 150" width="100%" style="overflow:visible;">
         <line x1="10" y1="120" x2="310" y2="120" stroke="var(--line)"/>
         {% for p in trend_points %}
         {% set px = 20 + loop.index0 * 25 %}
         {% set py = (120 - (p.amount / max_amt * 95))|round(1) %}
-        {% if not loop.first %}<polyline points="{{ prev_px }},{{ prev_py }} {{ px }},{{ py }}" fill="none" stroke="var(--accent)" stroke-width="2"/>{% endif %}
+        {% if not loop.first %}<polyline points="{{ ns.prev_px }},{{ ns.prev_py }} {{ px }},{{ py }}" fill="none" stroke="var(--accent)" stroke-width="2"/>{% endif %}
         <circle cx="{{ px }}" cy="{{ py }}" r="2.5" fill="var(--accent)"/>
         {% if loop.index0 % 2 == 0 %}<text x="{{ px }}" y="134" font-size="8" text-anchor="middle" fill="var(--steel)">{{ p.label }}</text>{% endif %}
-        {% set prev_px = px %}{% set prev_py = py %}
+        {% set ns.prev_px = px %}{% set ns.prev_py = py %}
         {% endfor %}
       </svg>
-    </div>
-
-    <div class="mt-panel">
-      <div class="mt-panel-head"><span class="ttl">Payment Mode Breakdown</span></div>
-      {% if mode_legend and (mode_legend|map(attribute='amount')|sum) > 0 %}
-      <div class="mt-donut-wrap" style="justify-content:center;">
-        <div class="mt-donut" style="background:{{ mode_gradient }};">
-          <div class="mt-donut-inner"><div class="num">₹{{ '{:,.0f}'.format(total_amount) }}</div><div class="lbl">Total</div></div>
-        </div>
-      </div>
-      <div class="oh-legend">
-        {% for l in mode_legend %}
-        <div class="oh-legend-row"><span class="oh-legend-dot" style="background:{{ l.color }};border-radius:50%;"></span><span class="lbl">{{ l.label }}</span><span class="amt">₹{{ '{:,.0f}'.format(l.amount) }}</span><span class="pct">({{ l.pct }}%)</span></div>
-        {% endfor %}
-      </div>
-      {% else %}<div class="oh-empty">No expenses recorded yet.</div>{% endif %}
     </div>
 
     <div class="mt-panel">

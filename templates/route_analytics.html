@@ -259,8 +259,8 @@
           <th class="grp-th" colspan="3">Fuel Taken (₹)</th>
         </tr>
         <tr>
-          <th class="num grp-th">Lowest</th><th class="num grp-th">Average</th><th class="num grp-th">Highest</th>
-          <th class="num grp-th">Lowest</th><th class="num grp-th">Average</th><th class="num grp-th">Highest</th>
+          <th class="num grp-th">Highest</th><th class="num grp-th">Average</th><th class="num grp-th">Lowest</th>
+          <th class="num grp-th">Highest</th><th class="num grp-th">Average</th><th class="num grp-th">Lowest</th>
         </tr>
         </thead>
         <tbody>
@@ -273,12 +273,12 @@
           <td class="num">₹{{ '{:,.0f}'.format(r.average) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.lowest) }}</td>
           <td class="num">{{ r.trips }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.da_lowest) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.da_average) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.da_highest) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_lowest) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_average) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.da_average) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.da_lowest) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.fuel_highest) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_average) }}</td>
+          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_lowest) }}</td>
         </tr>
         {% endfor %}
         </tbody>

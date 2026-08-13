@@ -91,6 +91,7 @@
       {% endif %}
 
       <div style="font-size:0.85rem;font-weight:700;margin-bottom:8px;">Excel Preview <span style="font-weight:400;color:var(--steel);font-size:0.75rem;">(first 10 rows)</span></div>
+      {% if excel_rows %}
       <div style="overflow-x:auto;margin-bottom:14px;">
       <table>
         <tr><th>Vehicle</th><th>Date</th><th>Time</th><th>Toll Plaza / Description</th><th class="num">Amount</th><th>Source</th><th></th></tr>
@@ -104,6 +105,9 @@
         {% endfor %}
       </table>
       </div>
+      {% else %}
+      <div style="text-align:center;color:var(--steel);font-size:0.85rem;padding:20px 0;">No rows found in this file.</div>
+      {% endif %}
 
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;font-size:0.82rem;">
         <span>&#9989; <b style="color:var(--green);">{{ excel_valid_count }}</b> Valid Records <span style="color:var(--steel);">(₹{{ '{:,.0f}'.format(excel_valid_amount) }})</span></span>
