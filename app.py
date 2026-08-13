@@ -447,11 +447,16 @@ def dashboard():
     # category='Toll') is the source of truth for toll cost now, folded into maint_total below.
     # Adding the old per-trip manual `toll` field here too would double-count the same real-world
     # toll charge once it's been synced/imported through Toll Management.
-    total_charges_paid = sum((t['fuel_amount'] or 0)+(t['driver_adv_amount'] or 0)+
-                              (t['agent_commission'] or 0)+(t['builty_expense'] or 0)+(t['conductor_expense'] or 0)+
+    # Fuel/driver-advance recorded on a Market trip is the owner's own money (covered by the
+    # contracted freight, same rule as the vendor ledger and invoice center) — not a real company
+    # expense, so it's excluded here. Everything else in this sum applies regardless of vehicle type.
+    fuel_total = sum(t['fuel_amount'] or 0 for t in trips if t['type'] != 'Market')
+    driveradv_total = sum(t['driver_adv_amount'] or 0 for t in trips if t['type'] != 'Market')
+    other_charges_total = sum((t['agent_commission'] or 0)+(t['builty_expense'] or 0)+(t['conductor_expense'] or 0)+
                               (t['fine'] or 0)+(t['labour_charges'] or 0)+(t['parking'] or 0)+(t['puncture'] or 0)+
                               (t['urea'] or 0)+(t['loading_expense'] or 0)+(t['unloading_expense'] or 0)+
                               (t['wear_tear'] or 0)+(t['weighbridge_charges'] or 0)+(t['other_expense'] or 0) for t in trips)
+    total_charges_paid = fuel_total + driveradv_total + other_charges_total
     adj_revenue = total_revenue - total_charges_paid
 
     maint_total_query = "SELECT COALESCE(SUM(m.amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id WHERE m.date>=? AND m.date<=?"
@@ -465,7 +470,7 @@ def dashboard():
     maint_toll_total = conn.execute(maint_toll_query, maint_total_params).fetchone()[0]
     salaries_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM salaries WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     overheads_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
-    total_expenses = total_charges_paid + maint_total + overheads_total
+    total_expenses = total_charges_paid + maint_total + overheads_total + salaries_total
     total_profit = total_revenue - total_expenses
 
     all_vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE type IS NOT NULL").fetchall()
@@ -473,13 +478,11 @@ def dashboard():
     running_count = len(running_vnos)
     idle_count = len(all_vehicles) - running_count
 
-    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local')").fetchall()
-    own_running_ids = set(t['vehicle_id'] for t in trips if t['type'] in ('Line','Local'))
+    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market'").fetchall()
+    own_running_ids = set(t['vehicle_id'] for t in trips if t['type'] != 'Market')
     own_idle_count = sum(1 for v in own_vehicles if v['id'] not in own_running_ids)
     own_vehicle_count = len(own_vehicles)
 
-    fuel_total = sum(t['fuel_amount'] or 0 for t in trips)
-    driveradv_total = sum(t['driver_adv_amount'] or 0 for t in trips)
     toll_total = maint_toll_total  # real Toll Management figure, not the old per-trip manual field
     maint_other_total = maint_total - maint_toll_total  # rest of Maintenance, so this chart's slices don't overlap
     other_exp_total = total_charges_paid - fuel_total - driveradv_total
@@ -494,7 +497,7 @@ def dashboard():
     # Vehicle-wise revenue, own vehicles only (Line + Local)
     veh_revenue = {}
     for t in trips:
-        if t['type'] in ('Line', 'Local') and t['vehicle_no']:
+        if t['type'] != 'Market' and t['vehicle_no']:
             veh_revenue[t['vehicle_no']] = veh_revenue.get(t['vehicle_no'], 0) + (t['billed_amount'] or 0)
     veh_rev_list = sorted(veh_revenue.items(), key=lambda x: x[1], reverse=True)[:10]
     veh_rev_max = max([v for _, v in veh_rev_list], default=1) or 1
@@ -521,7 +524,7 @@ def dashboard():
     payables = [v for v in vendors_bal if v['balance'] and v['balance'] > 0]
     total_payables = sum(v['balance'] for v in payables)
 
-    own_vehicle_turnover = sum(t['billed_amount'] or 0 for t in trips if t['type'] in ('Line','Local'))
+    own_vehicle_turnover = sum(t['billed_amount'] or 0 for t in trips if t['type'] != 'Market')
 
     market_trips = [t for t in trips if t['type'] == 'Market']
     market_trip_count = len(market_trips)
@@ -667,6 +670,15 @@ def _build_rc_pdf(v, d):
     from xml.sax.saxutils import escape as esc
     import io
 
+    conn = get_db()
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
+    conn.close()
+    company_name = s['company_name'] or get_company_name(session.get('company_id', 1))
+    company_addr_line = s['address'] or ''
+    company_contact_line = ' &nbsp;|&nbsp; '.join(x for x in [
+        (f"GSTIN No.: {esc(s['gstin'])}" if s['gstin'] else ''),
+        (f"Mob. {esc(s['phone'])}" if s['phone'] else '')] if x)
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, topMargin=0.35*inch, bottomMargin=0.35*inch,
                              leftMargin=0.5*inch, rightMargin=0.5*inch)
@@ -714,9 +726,9 @@ def _build_rc_pdf(v, d):
         return [hdr, grid, Spacer(1, 6)]
 
     story = [
-        Paragraph("ANIL TRANSPORT SERVICE", company_style),
-        Paragraph("Head Off.: Shop No. D/8, Nirmal Market Power House Road, Rourkela - 769001", sub_style),
-        Paragraph("GSTIN No.: 21ABDPL6110E1ZG &nbsp;|&nbsp; Mob. +91 9437246272", sub_style),
+        Paragraph(esc(company_name), company_style),
+        Paragraph(esc(company_addr_line), sub_style),
+        Paragraph(company_contact_line, sub_style),
         Spacer(1, 5),
     ]
     line = Table([['']], colWidths=[CONTENT_W], rowHeights=[2])
@@ -2071,12 +2083,12 @@ def _maintenance_overview_tab(conn):
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
-    own_vehicles = conn.execute("SELECT id, vehicle_no, registration_date FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    own_vehicles = conn.execute("SELECT id, vehicle_no, registration_date FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
     total_fleet = len(own_vehicles)
 
     period_entries = conn.execute("""SELECT m.id, m.date, m.vehicle_id, m.category, m.service_type, m.amount, m.paid_amount, v.vehicle_no
                                      FROM maintenance m JOIN vehicles v ON m.vehicle_id=v.id
-                                     WHERE v.type IN ('Line','Local') AND m.date>=? AND m.date<=?
+                                     WHERE v.type != 'Market' AND m.date>=? AND m.date<=?
                                      ORDER BY m.date DESC""", (date_from, date_to)).fetchall()
     total_cost = sum(e['amount'] or 0 for e in period_entries)
     total_paid = sum(e['paid_amount'] or 0 for e in period_entries)
@@ -2099,7 +2111,7 @@ def _maintenance_overview_tab(conn):
                         'count': cat_data[k]['count'], 'cost': cat_data[k]['cost']} for k in cat_labels]
 
     km_row = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) as km FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
-                             WHERE v.type IN ('Line','Local') AND t.date>=? AND t.date<=? AND t.actual_km IS NOT NULL""",
+                             WHERE v.type != 'Market' AND t.date>=? AND t.date<=? AND t.actual_km IS NOT NULL""",
                            (date_from, date_to)).fetchone()
     total_km = km_row['km'] or 0
     avg_cost_km = round(total_cost / total_km, 2) if total_km > 0 else None
@@ -2176,7 +2188,7 @@ def _maintenance_overview_tab(conn):
             yy -= 1
         mf, mt = _month_bounds(yy, mm)
         cost = conn.execute("""SELECT COALESCE(SUM(m.amount),0) FROM maintenance m JOIN vehicles v ON m.vehicle_id=v.id
-                               WHERE v.type IN ('Line','Local') AND m.date>=? AND m.date<=?""", (mf, mt)).fetchone()[0]
+                               WHERE v.type != 'Market' AND m.date>=? AND m.date<=?""", (mf, mt)).fetchone()[0]
         trend.append({'label': calendar.month_abbr[mm], 'cost': cost})
     trend_max = max([t['cost'] for t in trend], default=1) or 1
     chart_w, chart_h = 640, 150
@@ -2253,7 +2265,7 @@ def _maintenance_urea_tab(conn):
     # Consumption (L/100km) needs real distance driven — the own fleet's actual_km already
     # logged on trips this month, not an invented figure.
     month_km = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
-                               WHERE v.type IN ('Line','Local') AND t.date>=? AND t.actual_km IS NOT NULL""",
+                               WHERE v.type != 'Market' AND t.date>=? AND t.actual_km IS NOT NULL""",
                             (month_start,)).fetchone()[0]
     avg_consumption = round(month_usage / month_km * 100, 2) if month_km else None
 
@@ -2370,7 +2382,7 @@ def _toll_tab_base_context(conn):
     query = """SELECT te.*, v.vehicle_no, t.lr_number
                FROM toll_entries te JOIN vehicles v ON te.vehicle_id=v.id
                LEFT JOIN trips t ON te.trip_id=t.id
-               WHERE v.type IN ('Line','Local')"""
+               WHERE v.type != 'Market'"""
     params = []
     if vehicle_f:
         query += " AND v.vehicle_no=?"; params.append(vehicle_f)
@@ -2392,7 +2404,7 @@ def _toll_tab_base_context(conn):
     # shouldn't make the stat cards lie about the real totals.
     full_ledger = conn.execute("""SELECT te.*, v.vehicle_no FROM toll_entries te
                                   JOIN vehicles v ON te.vehicle_id=v.id
-                                  WHERE v.type IN ('Line','Local')""").fetchall()
+                                  WHERE v.type != 'Market'""").fetchall()
     today = datetime.date.today().isoformat()
     month_start = datetime.date.today().replace(day=1).isoformat()
     today_rows = [r for r in full_ledger if r['date'] == today]
@@ -2454,7 +2466,7 @@ def _toll_tab_base_context(conn):
     base_params.pop('page', None); base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
     last_sync_row = conn.execute("SELECT value FROM settings WHERE key='toll_fastag_last_sync'").fetchone()
 
     return dict(
@@ -2973,7 +2985,7 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
     total_premium_year = sum(r['premium_amount'] or 0 for r in all_rows if (r['start_date'] or '').startswith(this_year))
     avg_premium = round(sum(r['premium_amount'] or 0 for r in all_rows) / total_policies) if total_policies else 0
 
-    own_fleet_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type IN ('Line','Local')").fetchone()[0]
+    own_fleet_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type != 'Market'").fetchone()[0]
     active_vehicle_ids = set(r['vehicle_id'] for r in all_rows if r['status'] == 'Active' and r['vehicle_id'])
     coverage_pct = round(len(active_vehicle_ids) / own_fleet_count * 100) if own_fleet_count else 0
     total_idv = sum(r['idv'] or 0 for r in all_rows if r['status'] == 'Active')
@@ -3599,7 +3611,7 @@ def delete_urea(txn_id):
 def add_toll():
     conn = get_db()
     f = request.form
-    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type IN ('Line','Local')",
+    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type != 'Market'",
                         ((f.get('vehicle_no') or '').strip(),)).fetchone()
     vehicle_id = row['id'] if row else None
     if not vehicle_id:
@@ -3674,7 +3686,7 @@ def sync_fastag_toll():
     (or just use the Excel import above, which already reads real BOSS exports) once one exists."""
     import random
     conn = get_db()
-    vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
     if not vehicles:
         conn.close()
         return redirect(url_for('maintenance_list', tab='toll'))
@@ -3768,7 +3780,7 @@ def _parse_toll_excel(file_storage, conn):
     ws = wb.active
 
     own_vehicles = {v['vehicle_no'].upper(): v['id'] for v in
-                     conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IN ('Line','Local')").fetchall()}
+                     conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market'").fetchall()}
     # Keyed (not just a set) so a re-import can tell whether a duplicate TransactionId's row
     # actually changed since it was saved — a re-upload with a corrected amount/date/etc. should
     # offer to override the existing record, not just get silently skipped as "already imported".
@@ -4428,12 +4440,18 @@ def _get_vendor_ledger_entries(vendor_id):
                              LEFT JOIN batteries b ON b.maintenance_id=m.id
                              LEFT JOIN insurance_policies ip ON ip.maintenance_id=m.id
                              WHERE m.vendor_id=? ORDER BY m.date""", (vendor_id,)).fetchall()
+    # Skip trips where this same vendor is also the vehicle owner (owner_vendor_id) on the same
+    # trip — that means the fuel/driver advance was paid by the owner out of their own freight
+    # money, not a separate expense we owe them for. It's already inside the Trip Bill credit
+    # below; counting it again here would double it.
     fuel = conn.execute("""SELECT t.id, t.date, t.fuel_amount, t.type, v.vehicle_no
                            FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                           WHERE t.fuel_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
+                           WHERE t.fuel_vendor_id=? AND (t.owner_vendor_id IS NULL OR t.owner_vendor_id != t.fuel_vendor_id)
+                           ORDER BY t.date""", (vendor_id,)).fetchall()
     adv = conn.execute("""SELECT t.id, t.date, t.driver_adv_amount, t.type, v.vehicle_no
                           FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                          WHERE t.driver_adv_vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
+                          WHERE t.driver_adv_vendor_id=? AND (t.owner_vendor_id IS NULL OR t.owner_vendor_id != t.driver_adv_vendor_id)
+                          ORDER BY t.date""", (vendor_id,)).fetchall()
     owner_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.rate_type, t.fixed_rate_amount, t.owner_rate,
                                   t.owner_rate_type, t.owner_fixed_amount,
                                   t.quantity, t.paid_to_owner, t.type, v.vehicle_no
@@ -4585,9 +4603,17 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
     def num_cell(text):
         return Paragraph(esc(str(text)), num_style) if text else ''
 
-    story = [Paragraph("ANIL TRANSPORT SERVICE", company_style),
-             Paragraph("Head Off.: Shop No. D/8, Nirmal Market Power House Road, Rourkela - 769001", sub_style),
-             Paragraph("GSTIN No.: 21ABDPL6110E1ZG &nbsp;|&nbsp; Mob. +91 9437246272", sub_style),
+    conn = get_db()
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
+    conn.close()
+    company_name = s['company_name'] or get_company_name(session.get('company_id', 1))
+    company_contact_line = ' &nbsp;|&nbsp; '.join(x for x in [
+        (f"GSTIN No.: {esc(s['gstin'])}" if s['gstin'] else ''),
+        (f"Mob. {esc(s['phone'])}" if s['phone'] else '')] if x)
+
+    story = [Paragraph(esc(company_name), company_style),
+             Paragraph(esc(s['address'] or ''), sub_style),
+             Paragraph(company_contact_line, sub_style),
              Spacer(1, 4)]
     line_table = Table([['']], colWidths=[7*inch], rowHeights=[2])
     line_table.setStyle(TableStyle([('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor('#1B2A4A'))]))
@@ -5116,6 +5142,7 @@ def download_payslip(salary_id):
         conn.close()
         return redirect(url_for('salaries_list', tab='salary'))
     items = conn.execute("SELECT item_type, description, amount FROM salary_items WHERE salary_id=?", (salary_id,)).fetchall()
+    company_name = get_company_name(session.get('company_id', 1))
     conn.close()
 
     buf = io.BytesIO()
@@ -5125,7 +5152,7 @@ def download_payslip(salary_id):
     title_style = ParagraphStyle('T', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#1B2A4A'))
     label_style = ParagraphStyle('L', parent=styles['Normal'], fontSize=9.5, textColor=colors.HexColor('#5A6B8C'))
 
-    story = [Paragraph("ANIL TRANSPORT SERVICE", company_style), Spacer(1, 6),
+    story = [Paragraph(esc(company_name), company_style), Spacer(1, 6),
              Paragraph(f"Payslip — {sal['month_key']}", title_style), Spacer(1, 10),
              Paragraph(f"<b>{esc(sal['name'])}</b> ({esc(sal['employee_code'] or '')}) — {esc(sal['role'] or sal['type'] or '')}", label_style),
              Spacer(1, 14)]
@@ -5721,7 +5748,7 @@ def performance():
         COALESCE(SUM(t.fuel_amount),0) as total_fuel,
         COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
         MAX(t.date) as last_trip
-        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type IN ('Line','Local')"""
+        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type != 'Market'"""
     vparams = []
     if date_from:
         vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
@@ -5757,7 +5784,7 @@ def performance():
         v['pct'] = round(v['trip_count'] / top5_vehicles_max * 100, 1)
 
     vmonth_q = """SELECT substr(t.date,1,7) as month, COUNT(*) as trips, COALESCE(SUM(t.billed_amount),0) as billed
-                  FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type IN ('Line','Local')"""
+                  FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type != 'Market'"""
     if date_from:
         vmonth_q += " AND t.date >= ?"
     if date_to:
@@ -5831,7 +5858,7 @@ def export_performance():
         COALESCE(SUM(t.billed_amount),0) as total_billed, COALESCE(SUM(t.fuel_amount),0) as total_fuel,
         COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
         MAX(t.date) as last_trip
-        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type IN ('Line','Local')"""
+        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type != 'Market'"""
     vparams = []
     if date_from:
         vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
@@ -6064,8 +6091,12 @@ def invoice_center_review():
     for t in trips:
         if invoice_type == 'vehicle_owner':
             freight = t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT')=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
-            already_given = (t['paid_to_owner'] or 0) + (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
-            net = freight - already_given
+            # The freight is a lump-sum contract price that already covers the owner's own fuel and
+            # driver costs — only actual cash paid to them reduces what's still owed. Fuel/driver
+            # advance recorded on the trip is the owner's own spending, not a company payment on
+            # their behalf, so it must never be netted against the freight (see CLAUDE.md/git log
+            # for the real-world confirmation of this — it was the reverse before, incorrectly).
+            net = freight - (t['paid_to_owner'] or 0)
         else:
             freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
             net = t['billed_amount'] or 0
@@ -6877,6 +6908,7 @@ def invoice_preview(trip_id):
                         LEFT JOIN parties p ON t.party_id=p.id WHERE t.id=?""", (trip_id,)).fetchone()
     inv = conn.execute("SELECT * FROM invoices WHERE trip_id=?", (trip_id,)).fetchone()
     extra_items = conn.execute("SELECT * FROM invoice_items WHERE trip_id=?", (trip_id,)).fetchall()
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
     conn.close()
     charges = [
         ('Driver Payment', t['driver_payment']), ('Detention Charges', t['detention_charges']),
@@ -6901,7 +6933,8 @@ def invoice_preview(trip_id):
     amount_paid = (t['payment_received'] or 0) + (t['party_advance'] or 0)
     balance_due = invoice_total - amount_paid
     return render_template('invoice_preview.html', t=t, inv=inv, charges=charges, deductions=deductions, freight=freight,
-                            invoice_total=invoice_total, amount_paid=amount_paid, balance_due=balance_due, extra_items=extra_items, active='invoices')
+                            invoice_total=invoice_total, amount_paid=amount_paid, balance_due=balance_due, extra_items=extra_items,
+                            s=s, active='invoices')
 
 @app.route('/invoices/<int:trip_id>/edit', methods=['GET', 'POST'])
 def invoice_edit(trip_id):
@@ -6953,6 +6986,7 @@ def invoice_pdf(trip_id):
     from reportlab.lib.units import inch
     from reportlab.lib import colors
     from flask import send_file
+    from xml.sax.saxutils import escape as esc
     import io
 
     conn = get_db()
@@ -6961,7 +6995,12 @@ def invoice_pdf(trip_id):
                         LEFT JOIN parties p ON t.party_id=p.id WHERE t.id=?""", (trip_id,)).fetchone()
     inv = conn.execute("SELECT * FROM invoices WHERE trip_id=?", (trip_id,)).fetchone()
     extra_items = conn.execute("SELECT * FROM invoice_items WHERE trip_id=?", (trip_id,)).fetchall()
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
     conn.close()
+    company_name = s['company_name'] or get_company_name(session.get('company_id', 1))
+    company_contact_line = ' &nbsp;&nbsp;|&nbsp;&nbsp; '.join(x for x in [
+        (f"GSTIN No.: {esc(s['gstin'])}" if s['gstin'] else ''),
+        (f"Mob. {esc(s['phone'])}" if s['phone'] else '')] if x)
 
     invoice_number = (inv['invoice_number'] if inv and inv['invoice_number'] else f"INV-{t['lr_number']}")
     due_date = (inv['due_date'] if inv and inv['due_date'] else '')
@@ -6986,9 +7025,9 @@ def invoice_pdf(trip_id):
     label_style = ParagraphStyle('L', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#5A6B8C'))
     story = []
 
-    story.append(Paragraph("ANIL TRANSPORT SERVICE", title_style))
-    story.append(Paragraph("Head Off.: Shop No. D/8, Nirmal Market Power House Road, Rourkela - 769001", sub_style))
-    story.append(Paragraph("GSTIN No.: 21ABDPL6110E1ZG &nbsp;&nbsp;|&nbsp;&nbsp; Mob. +91 9437246272 &nbsp;&nbsp;|&nbsp;&nbsp; Ph./Fax: 0661-2501272", sub_style))
+    story.append(Paragraph(esc(company_name), title_style))
+    story.append(Paragraph(esc(s['address'] or ''), sub_style))
+    story.append(Paragraph(company_contact_line, sub_style))
     story.append(Spacer(1, 6))
     line_table = Table([['']], colWidths=[7*inch], rowHeights=[2])
     line_table.setStyle(TableStyle([('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor('#1B2A4A'))]))
@@ -7159,6 +7198,7 @@ def login():
             session['is_admin'] = user['is_admin']
             now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             session['login_at'] = now  # lets dismissed-warning state reset on every fresh login, see inject_challan_alerts
+            session['show_zoom_tip'] = True  # one-shot — shown at most once, then popped by base.html on the next render
             conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user['id']))
             conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login', now))
             conn.commit()
@@ -7248,6 +7288,7 @@ def verify_login_otp():
     session['is_admin'] = user['is_admin']
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     session['login_at'] = now  # lets dismissed-warning state reset on every fresh login, see inject_challan_alerts
+    session['show_zoom_tip'] = True  # one-shot — shown at most once, then popped by base.html on the next render
     conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user['id']))
     conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login (OTP)', now))
     conn.commit()
@@ -7766,7 +7807,7 @@ def fleet_utilization():
     d2 = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
 
     # ---------- Idle tracker: active days = union of each trip's start..end_date span ----------
-    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type IN ('Line','Local')"
+    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type != 'Market'"
     params = []
     if type_f:
         query += " AND type = ?"
@@ -7852,7 +7893,7 @@ def fleet_utilization():
         tick_val = round(trend_max * k / 4)
         y_ticks.append({'value': tick_val, 'y': round(pad_t + plot_h - (tick_val / trend_max * plot_h if trend_max else 0), 1)})
 
-    all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
     conn.close()
     return render_template('fleet_utilization.html',
         rows=rows, most_idle=most_idle, empty_rows=empty_rows, trend=trend, trend_max=trend_max,
@@ -7879,7 +7920,7 @@ def export_fleet_utilization():
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
-    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type IN ('Line','Local')"
+    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type != 'Market'"
     params = []
     if type_f:
         query += " AND type = ?"; params.append(type_f)
@@ -8281,8 +8322,8 @@ def business_performance():
     avg_daily_revenue = round(curr['revenue'] / days_in_period, 2) if days_in_period else 0
     avg_daily_profit = round(curr['net_profit'] / days_in_period, 2) if days_in_period else 0
 
-    own_vehicle_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type IN ('Line','Local')").fetchone()[0]
-    own_revenue = sum(t['billed_amount'] or 0 for t in curr['trips'] if t['type'] in ('Line', 'Local'))
+    own_vehicle_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type != 'Market'").fetchone()[0]
+    own_revenue = sum(t['billed_amount'] or 0 for t in curr['trips'] if t['type'] != 'Market')
     avg_revenue_per_vehicle = round(own_revenue / own_vehicle_count, 2) if own_vehicle_count else 0
     employee_count = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
     avg_revenue_per_employee = round(curr['revenue'] / employee_count, 2) if employee_count else 0

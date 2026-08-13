@@ -14,6 +14,23 @@
 <style>
   * { box-sizing: border-box; }
   body { margin:0; font-family:'Segoe UI', -apple-system, Arial, sans-serif; background:var(--paper); }
+
+  /* One-shot toast — server sets session['show_zoom_tip'] at the moment of login (both password
+     and OTP flows), and this template pops it, so it's only ever eligible to render on the very
+     next page load after a real login, never on ordinary navigation between pages. JS below still
+     gates it further to Windows only. Slides in from the right, auto-hides after 5s. */
+  .win-zoom-toast { position:fixed; top:20px; right:20px; z-index:9999; max-width:340px;
+    display:flex; align-items:flex-start; gap:10px; background:var(--white); color:var(--ink);
+    border:1px solid rgba(42,120,214,0.25); border-left:4px solid #2a78d6; border-radius:8px;
+    padding:12px 14px; font-size:0.82rem; box-shadow:0 8px 24px rgba(20,33,61,0.16);
+    opacity:0; transform:translateX(24px); pointer-events:none;
+    transition:opacity .35s ease, transform .35s ease; }
+  .win-zoom-toast.show { opacity:1; transform:translateX(0); pointer-events:auto; }
+  .win-zoom-toast .msg { flex:1; line-height:1.45; }
+  .win-zoom-toast kbd { background:var(--paper); border:1px solid var(--line); border-radius:3px; padding:1px 5px; font-size:0.72rem; font-family:inherit; }
+  .win-zoom-toast .dismiss { background:none; border:none; color:var(--steel); cursor:pointer; font-size:0.85rem; padding:2px 4px; flex-shrink:0; line-height:1; }
+  .win-zoom-toast .dismiss:hover { color:var(--ink); }
+
   .app-shell { display:flex; min-height:100vh; }
   .sidebar {
     width:230px; flex-shrink:0; background:var(--white); color:var(--ink);
@@ -272,6 +289,28 @@
 </script>
 </head>
 <body>
+{% if session.pop('show_zoom_tip', False) %}
+<div id="winZoomToast" class="win-zoom-toast">
+  <span class="msg">&#128161; Tip: For a better experience on Windows, set your browser zoom to <b>90%</b> (<kbd>Ctrl</kbd> + <kbd>&minus;</kbd>).</span>
+  <button type="button" class="dismiss" onclick="document.getElementById('winZoomToast').classList.remove('show')" aria-label="Dismiss">&#10005;</button>
+</div>
+<script>
+(function() {
+  var isWindows = false;
+  if (navigator.userAgentData && navigator.userAgentData.platform) {
+    isWindows = navigator.userAgentData.platform === 'Windows';
+  } else if (navigator.userAgent) {
+    isWindows = navigator.userAgent.indexOf('Windows') !== -1;
+  } else if (navigator.platform) {
+    isWindows = navigator.platform.indexOf('Win') !== -1;
+  }
+  if (!isWindows) return;
+  var toastEl = document.getElementById('winZoomToast');
+  requestAnimationFrame(function() { toastEl.classList.add('show'); });
+  setTimeout(function() { toastEl.classList.remove('show'); }, 5000);
+})();
+</script>
+{% endif %}
 <div class="app-shell">
   <div class="sidebar">
     <div class="brand">
