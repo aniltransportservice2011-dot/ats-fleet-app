@@ -212,7 +212,7 @@
         <td>{{ e.ref or '—' }}</td>
         <td class="num">{% if e.debit %}₹{{ '{:,.0f}'.format(e.debit) }}{% else %}—{% endif %}</td>
         <td class="num" style="color:var(--green);">{% if e.credit %}₹{{ '{:,.0f}'.format(e.credit) }}{% else %}—{% endif %}</td>
-        <td class="num" style="font-weight:700;">₹{{ '{:,.0f}'.format(e.balance) }}</td>
+        <td class="num" style="font-weight:700;color:{% if e.balance > 0 %}var(--green){% elif e.balance < 0 %}var(--red){% else %}inherit{% endif %};">₹{{ '{:,.0f}'.format(e.balance|abs) }}{% if e.balance > 0 %} Dr{% elif e.balance < 0 %} Cr{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
