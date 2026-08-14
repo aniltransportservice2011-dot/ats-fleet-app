@@ -4444,11 +4444,11 @@ def _get_vendor_ledger_entries(vendor_id):
     # trip — that means the fuel/driver advance was paid by the owner out of their own freight
     # money, not a separate expense we owe them for. It's already inside the Trip Bill credit
     # below; counting it again here would double it.
-    fuel = conn.execute("""SELECT t.id, t.date, t.fuel_amount, t.type, v.vehicle_no
+    fuel = conn.execute("""SELECT t.id, t.date, t.lr_number, t.fuel_amount, t.type, v.vehicle_no
                            FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                            WHERE t.fuel_vendor_id=? AND (t.owner_vendor_id IS NULL OR t.owner_vendor_id != t.fuel_vendor_id)
                            ORDER BY t.date""", (vendor_id,)).fetchall()
-    adv = conn.execute("""SELECT t.id, t.date, t.driver_adv_amount, t.type, v.vehicle_no
+    adv = conn.execute("""SELECT t.id, t.date, t.lr_number, t.driver_adv_amount, t.type, v.vehicle_no
                           FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                           WHERE t.driver_adv_vendor_id=? AND (t.owner_vendor_id IS NULL OR t.owner_vendor_id != t.driver_adv_vendor_id)
                           ORDER BY t.date""", (vendor_id,)).fetchall()
@@ -4502,14 +4502,12 @@ def _get_vendor_ledger_entries(vendor_id):
                          'kind': 'Expense Adj.', 'ref': m['invoice_no'] or '', 'vehicle_type': '',
                          'link': url_for('maintenance_view', m_id=m['id'])})
     for f in fuel:
-        ident = f['vehicle_no'] or trip_invoice_no.get(f['id'], '')
-        detail = 'Fuel' + (f" — {ident}" if ident else '')
+        detail = f"Trip: {_lr_label(f['lr_number'], f['id'])} — Fuel"
         entries.append({'date': f['date'], 'detail': detail, 'debit': 0, 'credit': f['fuel_amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(f['id'], ''), 'vehicle_type': f['type'] or '',
                          'link': url_for('trip_view', trip_id=f['id'])})
     for a in adv:
-        ident = a['vehicle_no'] or trip_invoice_no.get(a['id'], '')
-        detail = 'Driver Advance' + (f" — {ident}" if ident else '')
+        detail = f"Trip: {_lr_label(a['lr_number'], a['id'])} — Driver Advance"
         entries.append({'date': a['date'], 'detail': detail, 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(a['id'], ''), 'vehicle_type': a['type'] or '',
                          'link': url_for('trip_view', trip_id=a['id'])})
@@ -4518,33 +4516,30 @@ def _get_vendor_ledger_entries(vendor_id):
         if owed:
             original_paid = (o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0)
             detail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire"
-            ident = o['vehicle_no'] or trip_invoice_no.get(o['id'], '')
-            if ident:
-                detail += f" ({ident})"
             entries.append({'date': o['date'], 'detail': detail,
                              'debit': original_paid, 'credit': owed,
                              'kind': 'Trip Bill', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
                              'link': url_for('trip_view', trip_id=o['id'])})
-            # Fuel/driver advance paid to a genuinely different vendor (not the owner themself) on
-            # this trip counts as money already delivered to the owner on his behalf — the company
-            # paid his fuel/advance bill directly instead of handing him cash. That vendor still gets
-            # their own payable elsewhere (the fuel/adv loops above); here it separately reduces what
-            # the owner is still owed, same as a direct payment would.
-            if o['fuel_vendor_id'] and o['fuel_vendor_id'] != vendor_id and o['fuel_amount']:
-                fdetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Fuel paid on your behalf" + (f" ({ident})" if ident else '')
+            # Fuel/driver advance is deducted from what the owner's owed whenever it wasn't the
+            # owner's own money — i.e. anything != the owner himself, which includes a blank vendor
+            # (untagged means the company paid it directly, no vendor to track) as well as a real
+            # different vendor (who also gets their own payable via the fuel/adv loops above). The
+            # ONLY case that's excluded is the vendor field explicitly set to the owner himself —
+            # that's the deliberate signal that he paid it out of his own freight money.
+            if o['fuel_vendor_id'] != vendor_id and o['fuel_amount']:
+                fdetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Fuel paid on your behalf"
                 entries.append({'date': o['date'], 'detail': fdetail,
                                  'debit': o['fuel_amount'], 'credit': 0,
                                  'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
                                  'link': url_for('trip_view', trip_id=o['id'])})
-            if o['driver_adv_vendor_id'] and o['driver_adv_vendor_id'] != vendor_id and o['driver_adv_amount']:
-                adetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Driver advance paid on your behalf" + (f" ({ident})" if ident else '')
+            if o['driver_adv_vendor_id'] != vendor_id and o['driver_adv_amount']:
+                adetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Driver advance paid on your behalf"
                 entries.append({'date': o['date'], 'detail': adetail,
                                  'debit': o['driver_adv_amount'], 'credit': 0,
                                  'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
                                  'link': url_for('trip_view', trip_id=o['id'])})
     for it in other_items:
-        ident = it['vehicle_no'] or trip_invoice_no.get(it['trip_id'], '')
-        detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}" + (f" ({ident})" if ident else '')
+        detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}"
         amt = it['amount'] or 0
         # 'charge' = vendor supplied something, we owe them more (credit side, same convention as
         # Fuel/Driver Advance above); 'deduction' reduces what's owed (debit side).
