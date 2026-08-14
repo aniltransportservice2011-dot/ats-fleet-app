@@ -217,6 +217,33 @@ def _clean_loc(raw):
     cleaned = first_word.upper().replace(',', '').strip()
     return _LOCATION_ALIASES.get(cleaned, cleaned)
 
+# RC body-type descriptions come back verbose ("ARTICULATED TRAILER", "OPEN BODY TRUCK") — this
+# picks out just the recognizable body-type word so the Vehicles list shows "Trailer"/"Truck",
+# not the full RC string. Checked longest-keyword-first so "TRAILER" doesn't win over a more
+# specific match if one's ever added later.
+_BODY_TYPE_KEYWORDS = ['ARTICULATED TRAILER', 'TRAILER', 'TANKER', 'CONTAINER', 'TIPPER',
+                       'FLATBED', 'PICKUP', 'TRUCK', 'VAN', 'BUS']
+def _short_body_type(raw):
+    if not raw:
+        return ''
+    raw_upper = raw.upper()
+    for kw in _BODY_TYPE_KEYWORDS:
+        if kw in raw_upper:
+            return 'Trailer' if kw == 'ARTICULATED TRAILER' else kw.title()
+    # No known keyword matched — fall back to the raw value itself, title-cased, rather than
+    # hiding it entirely (covers a manual entry that used different wording).
+    return raw.strip().title()
+
+# One fixed color per recognized body type, drawn from the same palette already used for
+# category colors elsewhere in the app (Expense Breakdown, etc.) so it reads as one system.
+# Anything not in this map (an unrecognized manual entry) falls back to a neutral grey.
+_BODY_TYPE_COLORS = {
+    'Trailer': '#2a78d6', 'Truck': '#1a9c5b', 'Tanker': '#eda100', 'Container': '#4a3aa7',
+    'Tipper': '#e34948', 'Flatbed': '#7a5ad6', 'Pickup': '#eb6834', 'Van': '#0891b2', 'Bus': '#c026d3',
+}
+def _body_type_color(short):
+    return _BODY_TYPE_COLORS.get(short, '#64748b')
+
 def get_or_create_party(conn, name):
     if not name or not name.strip():
         return None
@@ -255,36 +282,35 @@ def get_or_create_vendor(conn, name):
     return cur.lastrowid
 
 def _accounts_rows(conn):
-    """Shared party+vendor balance list used by both the Ledger page and its export —
-    identical formula to what accounts()/dashboard() have always used, just factored out."""
-    parties_bal = conn.execute("""SELECT p.id, p.name, p.contact, p.email, p.address, p.credit_limit, p.category, p.gstin, p.status,
-        (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(payment_received)+SUM(party_advance),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE party_id=p.id AND payment_type='received') +
-        COALESCE(p.opening_balance,0) as balance
-        FROM parties p ORDER BY p.name""").fetchall()
+    """Shared party+vendor balance list used by the Ledger page, its export, Dashboard, and
+    Business Performance. Each row's balance is computed by running the exact same transactional
+    entries the individual ledger detail page uses (_get_party_ledger_entries /
+    _get_vendor_ledger_entries) — not a separate hand-written SQL aggregate. That used to be two
+    different formulas that could (and did) disagree: the old aggregate here had no idea a party
+    could have a linked vendor record (fuel/maintenance/owner-hire bought under the same name),
+    so a party who was also a heavy vendor-side payable showed up here as Receivable while their
+    own detail page — which does merge both sides — correctly showed Payable. Computing every
+    row from the same entries the detail page reads makes that class of mismatch impossible.
+    """
+    parties = conn.execute("""SELECT id, name, contact, email, address, credit_limit, category, gstin, status
+        FROM parties ORDER BY name""").fetchall()
+    vendors = conn.execute("""SELECT id, name, contact, email, address, credit_limit, category, gstin, status
+        FROM vendors WHERE linked_party_id IS NULL ORDER BY name""").fetchall()
 
-    vendors_bal = conn.execute("""SELECT v.id, v.name, v.contact, v.email, v.address, v.credit_limit, v.category, v.gstin, v.status,
-        (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
-        (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
-        (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
-        (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
-        COALESCE(v.opening_balance,0) as balance
-        FROM vendors v WHERE v.linked_party_id IS NULL ORDER BY v.name""").fetchall()
+    def _entry_balance(entries):
+        # Same convention as the ledger detail page: debit - credit, positive = receivable,
+        # negative = payable (see _get_party_ledger_entries / _get_vendor_ledger_entries).
+        return sum(e['debit'] for e in entries) - sum(e['credit'] for e in entries)
 
     rows = []
-    for p in parties_bal:
-        rows.append({'id': p['id'], 'name': p['name'], 'role': 'Party', 'balance': p['balance'] or 0,
+    for p in parties:
+        balance = _entry_balance(_get_party_ledger_entries(p['id']))
+        rows.append({'id': p['id'], 'name': p['name'], 'role': 'Party', 'balance': balance,
                       'contact': p['contact'], 'email': p['email'], 'address': p['address'], 'credit_limit': p['credit_limit'],
                       'group': p['category'] or '', 'gstin': p['gstin'], 'status': p['status'] or 'Active'})
-    for v in vendors_bal:
-        # Vendor's raw balance is costs-minus-paid (positive = we owe them).
-        # Negate so positive consistently means "receivable" and negative means "payable", matching parties.
-        rows.append({'id': v['id'], 'name': v['name'], 'role': 'Vendor', 'balance': -(v['balance'] or 0),
+    for v in vendors:
+        balance = _entry_balance(_get_vendor_ledger_entries(v['id']))
+        rows.append({'id': v['id'], 'name': v['name'], 'role': 'Vendor', 'balance': balance,
                       'contact': v['contact'], 'email': v['email'], 'address': v['address'], 'credit_limit': v['credit_limit'],
                       'group': v['category'] or '', 'gstin': v['gstin'], 'status': v['status'] or 'Active'})
     rows.sort(key=lambda r: r['name'])
@@ -503,26 +529,17 @@ def dashboard():
     veh_rev_max = max([v for _, v in veh_rev_list], default=1) or 1
     vehicle_revenue = [{'vehicle_no': vn, 'revenue': rev, 'pct': round((rev/veh_rev_max)*100, 1)} for vn, rev in veh_rev_list]
 
-    parties_bal = conn.execute("""SELECT p.name,
-        (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(payment_received)+SUM(party_advance),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE party_id=p.id AND payment_type='received') +
-        COALESCE(p.opening_balance,0) as balance
-        FROM parties p ORDER BY balance DESC""").fetchall()
-    receivables = [r for r in parties_bal if r['balance'] and r['balance'] > 0]
+    # Same rows the Ledger page shows — calling _accounts_rows() directly (rather than a separate
+    # hand-written query) guarantees this can never drift out of sync with the Ledger or with any
+    # individual party/vendor's own detail page ever again. Split by balance sign only, same as
+    # accounts()'s own total_receivable/total_payable — not restricted by role, since an
+    # overpaid party (balance<0) is a real payable and an overpaid vendor (balance>0) is a real
+    # receivable, exactly as the Ledger page itself treats them.
+    _acct_rows = _accounts_rows(conn)
+    receivables = sorted([r for r in _acct_rows if r['balance'] > 0], key=lambda r: -r['balance'])
     total_receivables = sum(r['balance'] for r in receivables)
-
-    vendors_bal = conn.execute("""SELECT v.name,
-        (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
-        (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
-        (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
-        COALESCE(v.opening_balance,0) as balance
-        FROM vendors v ORDER BY balance DESC""").fetchall()
-    payables = [v for v in vendors_bal if v['balance'] and v['balance'] > 0]
-    total_payables = sum(v['balance'] for v in payables)
+    payables = sorted([r for r in _acct_rows if r['balance'] < 0], key=lambda r: r['balance'])
+    total_payables = sum(-r['balance'] for r in payables)
 
     own_vehicle_turnover = sum(t['billed_amount'] or 0 for t in trips if t['type'] != 'Market')
 
@@ -1079,12 +1096,20 @@ def vehicles_list():
         # registration_date. No cache yet -> shown as "No Data", same convention as the other
         # compliance columns for an un-synced vehicle.
         road_tax_upto = None
+        rc_body_type = None
         if d.get('rc_synced_data'):
             try:
-                road_tax_upto = parse_rc_date(json.loads(d['rc_synced_data']).get('rc_tax_upto'))
+                rc_data = json.loads(d['rc_synced_data'])
+                road_tax_upto = parse_rc_date(rc_data.get('rc_tax_upto'))
+                rc_body_type = rc_data.get('rc_body_type_desc')
             except ValueError:
                 road_tax_upto = None
         d['road_tax_upto'] = road_tax_upto
+        # Manual entry (body_type column) wins if set; otherwise fall back to whatever the last
+        # RC sync cached. Both go through the same shortener so the list always shows a short
+        # word ("Trailer"/"Truck"), never the raw verbose RC string.
+        d['body_type_short'] = _short_body_type(d.get('body_type') or rc_body_type)
+        d['body_type_color'] = _body_type_color(d['body_type_short'])
         d['road_tax_status'] = {'ok': 'Valid', 'expiring': 'Expiring Soon', 'expired': 'Expired', None: 'Unknown'}[_expiry_bucket(road_tax_upto)]
         d['road_tax_days_left'] = (datetime.datetime.strptime(road_tax_upto, '%Y-%m-%d').date() - datetime.date.today()).days if road_tax_upto else None
         all_rows.append(d)
@@ -4420,7 +4445,7 @@ def _get_party_ledger_entries(party_id):
         # so this one ledger reflects everything, instead of splitting across two disconnected records.
         vendor_entries = _get_vendor_ledger_entries(linked_vendor['id'])
         for ve in vendor_entries:
-            entries.append({'date': ve['date'], 'detail': ve['detail'] + ' (vendor side)',
+            entries.append({'date': ve['date'], 'detail': ve['detail'],
                              'debit': ve['debit'], 'credit': ve['credit'],
                              'kind': ve.get('kind', 'Expense Adj.'), 'ref': ve.get('ref', ''), 'vehicle_type': ve.get('vehicle_type', ''),
                              'link': ve.get('link')})
@@ -4634,7 +4659,7 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
     story.append(line_table)
     story.append(Spacer(1, 14))
 
-    story.append(Paragraph(f"Statement of Account — {esc(name)} ({esc(role)})", title_style))
+    story.append(Paragraph(f"Statement of Account — {esc(name)}", title_style))
     contact_line = " &nbsp;|&nbsp; ".join([esc(p) for p in [contact, email, address] if p])
     if contact_line:
         story.append(Paragraph(contact_line, label_style))
@@ -5701,7 +5726,7 @@ def _trend_chart_coords(monthly, value_key):
 def performance():
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2026-07-31')
+    date_to = request.args.get('date_to', '2027-03-31')
 
     # ---------- Driver Performance (same calculation as the original Driver Performance page) ----------
     # Toll excluded from driver-level cost — Toll Management (FASTag/BOSS) tracks cost per
@@ -5850,7 +5875,7 @@ def export_performance():
     import io
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2026-07-31')
+    date_to = request.args.get('date_to', '2027-03-31')
 
     driver_query = """SELECT driver_name, COUNT(*) as trip_count, SUM(billed_amount) as total_billed,
         SUM(fuel_amount) as total_fuel,
@@ -7495,7 +7520,7 @@ def route_analytics():
     conn = get_db()
     tab = request.args.get('tab', 'best-routes')
     date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2026-07-31')
+    date_to = request.args.get('date_to', '2027-03-31')
     from_f = request.args.get('from', '')
     to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
@@ -7705,7 +7730,7 @@ def export_route_analytics():
     import io
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2026-07-31')
+    date_to = request.args.get('date_to', '2027-03-31')
     from_f = request.args.get('from', '')
     to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
@@ -7810,7 +7835,7 @@ def empty_runs():
 def fleet_utilization():
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2026-07-31')
+    date_to = request.args.get('date_to', '2027-03-31')
     vehicle_f = request.args.get('vehicle', '')
     type_f = request.args.get('type', '')
 
@@ -7928,7 +7953,7 @@ def export_fleet_utilization():
     import io
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2026-07-31')
+    date_to = request.args.get('date_to', '2027-03-31')
     vehicle_f = request.args.get('vehicle', '')
     type_f = request.args.get('type', '')
     if date_from > date_to:
@@ -8151,29 +8176,14 @@ def business_performance():
     revenue_growth_qoq = _pct_growth(curr_q['revenue'], prev_q['revenue'])
     revenue_growth_yoy = _pct_growth(curr['revenue'], curr_y['revenue'])
 
-    # Outstanding receivables / payables — all-time snapshot balances, same formula as accounts().
-    party_rows = conn.execute("""SELECT p.id, p.name,
-        (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(payment_received)+SUM(party_advance),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE party_id=p.id AND payment_type='received') +
-        COALESCE(p.opening_balance,0) as balance
-        FROM parties p""").fetchall()
-    party_balance = {r['id']: (r['balance'] or 0) for r in party_rows}
-    party_name = {r['id']: r['name'] for r in party_rows}
-    total_receivables = sum(b for b in party_balance.values() if b > 0)
-
-    vendor_rows = conn.execute("""SELECT v.id, v.name,
-        (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
-        (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
-        (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
-        (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
-        COALESCE(v.opening_balance,0) as balance
-        FROM vendors v WHERE v.linked_party_id IS NULL""").fetchall()
-    total_payables = sum((r['balance'] or 0) for r in vendor_rows if (r['balance'] or 0) > 0)
+    # Outstanding receivables / payables — all-time snapshot balances, same rows _accounts_rows()
+    # builds for the Ledger page (see its docstring — computed from each party/vendor's real
+    # transactional entries, not a separate hand-written aggregate that can drift out of sync).
+    _acct_rows_bp = _accounts_rows(conn)
+    party_balance = {r['id']: r['balance'] for r in _acct_rows_bp if r['role'] == 'Party'}
+    party_name = {r['id']: r['name'] for r in _acct_rows_bp if r['role'] == 'Party'}
+    total_receivables = sum(r['balance'] for r in _acct_rows_bp if r['balance'] > 0)
+    total_payables = sum(-r['balance'] for r in _acct_rows_bp if r['balance'] < 0)
 
     # Cash movement for the selected period.
     cash_collected = conn.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type='received' AND date>=? AND date<=?",
@@ -8465,28 +8475,12 @@ def export_business_performance():
 
     curr = _period_financials(conn, date_from, date_to)
 
-    party_rows = conn.execute("""SELECT p.id, p.name,
-        (SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(payment_received)+SUM(party_advance),0) FROM trips WHERE party_id=p.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE party_id=p.id AND payment_type='received') +
-        COALESCE(p.opening_balance,0) as balance
-        FROM parties p""").fetchall()
-    party_balance = {r['id']: (r['balance'] or 0) for r in party_rows}
-    party_name = {r['id']: r['name'] for r in party_rows}
-    total_receivables = sum(b for b in party_balance.values() if b > 0)
-
-    vendor_rows = conn.execute("""SELECT v.id, v.name,
-        (SELECT COALESCE(SUM(m.amount),0) FROM maintenance m WHERE m.vendor_id=v.id) +
-        (SELECT COALESCE(SUM(fuel_amount),0) FROM trips WHERE fuel_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(driver_adv_amount),0) FROM trips WHERE driver_adv_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE owner_rate*quantity END),0) FROM trips WHERE owner_vendor_id=v.id) +
-        (SELECT COALESCE(SUM(CASE WHEN item_type='charge' THEN amount ELSE -amount END),0) FROM invoice_items WHERE vendor_id=v.id) -
-        (SELECT COALESCE(SUM(m.paid_amount),0) FROM maintenance m WHERE m.vendor_id=v.id) -
-        (SELECT COALESCE(SUM(paid_to_owner),0) FROM trips WHERE owner_vendor_id=v.id) -
-        (SELECT COALESCE(SUM(amount-COALESCE(allocated_amount,0)),0) FROM payments WHERE vendor_id=v.id AND payment_type='paid') -
-        COALESCE(v.opening_balance,0) as balance
-        FROM vendors v WHERE v.linked_party_id IS NULL""").fetchall()
-    total_payables = sum((r['balance'] or 0) for r in vendor_rows if (r['balance'] or 0) > 0)
+    # Same rows _accounts_rows() builds for the Ledger page — see its docstring.
+    _acct_rows_bpx = _accounts_rows(conn)
+    party_balance = {r['id']: r['balance'] for r in _acct_rows_bpx if r['role'] == 'Party'}
+    party_name = {r['id']: r['name'] for r in _acct_rows_bpx if r['role'] == 'Party'}
+    total_receivables = sum(r['balance'] for r in _acct_rows_bpx if r['balance'] > 0)
+    total_payables = sum(-r['balance'] for r in _acct_rows_bpx if r['balance'] < 0)
 
     cash_collected = conn.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type='received' AND date>=? AND date<=?",
                                    (date_from, date_to)).fetchone()[0]
