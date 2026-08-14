@@ -222,14 +222,18 @@ def _clean_loc(raw):
 # not the full RC string. Checked longest-keyword-first so "TRAILER" doesn't win over a more
 # specific match if one's ever added later.
 _BODY_TYPE_KEYWORDS = ['ARTICULATED TRAILER', 'TRAILER', 'TANKER', 'CONTAINER', 'TIPPER',
-                       'FLATBED', 'PICKUP', 'TRUCK', 'VAN', 'BUS']
+                       'FLATBED', 'PICKUP', 'TRUCK', 'VAN', 'BUS', 'CAR',
+                       'TWO WHEELER', '2 WHEELER', 'MOTORCYCLE', 'SCOOTER', 'BIKE']
+# Keywords that don't map cleanly onto their own title-cased text collapse to one canonical label.
+_BODY_TYPE_ALIASES = {'ARTICULATED TRAILER': 'Trailer', 'TWO WHEELER': '2 Wheeler', '2 WHEELER': '2 Wheeler',
+                       'MOTORCYCLE': '2 Wheeler', 'SCOOTER': '2 Wheeler', 'BIKE': '2 Wheeler'}
 def _short_body_type(raw):
     if not raw:
         return ''
     raw_upper = raw.upper()
     for kw in _BODY_TYPE_KEYWORDS:
         if kw in raw_upper:
-            return 'Trailer' if kw == 'ARTICULATED TRAILER' else kw.title()
+            return _BODY_TYPE_ALIASES.get(kw, kw.title())
     # No known keyword matched — fall back to the raw value itself, title-cased, rather than
     # hiding it entirely (covers a manual entry that used different wording).
     return raw.strip().title()
@@ -240,9 +244,21 @@ def _short_body_type(raw):
 _BODY_TYPE_COLORS = {
     'Trailer': '#2a78d6', 'Truck': '#1a9c5b', 'Tanker': '#eda100', 'Container': '#4a3aa7',
     'Tipper': '#e34948', 'Flatbed': '#7a5ad6', 'Pickup': '#eb6834', 'Van': '#0891b2', 'Bus': '#c026d3',
+    'Car': '#16a34a', '2 Wheeler': '#f59e0b',
 }
 def _body_type_color(short):
     return _BODY_TYPE_COLORS.get(short, '#64748b')
+
+# One representative emoji per recognized body type — used only on the Vehicles list/detail
+# pages, where the icon stands in for one specific vehicle's actual type, not as a generic
+# "vehicles" section icon (those elsewhere in the app stay the plain truck emoji on purpose).
+_BODY_TYPE_ICONS = {
+    'Trailer': '\U0001F69B', 'Truck': '\U0001F69A', 'Tanker': '\U0001F69B', 'Container': '\U0001F69B',
+    'Tipper': '\U0001F69B', 'Flatbed': '\U0001F69A', 'Pickup': '\U0001F6FB', 'Van': '\U0001F690',
+    'Bus': '\U0001F68C', 'Car': '\U0001F697', '2 Wheeler': '\U0001F3CD️',
+}
+def _body_type_icon(short):
+    return _BODY_TYPE_ICONS.get(short, '\U0001F69A')
 
 def get_or_create_party(conn, name):
     if not name or not name.strip():
@@ -826,6 +842,8 @@ def vehicle_detail(v_id):
 
     rc_data = json.loads(v['rc_synced_data']) if v['rc_synced_data'] else None
     age_years = _vehicle_age_years(v['registration_date'])
+    body_type_short = _short_body_type(v['body_type'] or (rc_data.get('rc_body_type_desc') if rc_data else None))
+    body_type_icon = _body_type_icon(body_type_short)
 
     comp_row = None
     if v['type'] != 'Market':
@@ -896,7 +914,7 @@ def vehicle_detail(v_id):
                             comp_row=comp_row, insurance_rows=insurance_rows, active_insurance=active_insurance,
                             challans=challans, challan_pending_amount=challan_pending_amount, challan_paid_amount=challan_paid_amount,
                             challan_pending_n=challan_pending_n, challan_paid_n=challan_paid_n,
-                            reminders=reminders, history=history,
+                            reminders=reminders, history=history, body_type_icon=body_type_icon,
                             company_name=company_name, rc_year=_rc_month_year(rc_data.get('rc_manu_month_yr')) if rc_data else None,
                             today_str=datetime.date.today().isoformat(), tab=tab, active='vehicles')
 
@@ -1110,6 +1128,7 @@ def vehicles_list():
         # word ("Trailer"/"Truck"), never the raw verbose RC string.
         d['body_type_short'] = _short_body_type(d.get('body_type') or rc_body_type)
         d['body_type_color'] = _body_type_color(d['body_type_short'])
+        d['body_type_icon'] = _body_type_icon(d['body_type_short'])
         d['road_tax_status'] = {'ok': 'Valid', 'expiring': 'Expiring Soon', 'expired': 'Expired', None: 'Unknown'}[_expiry_bucket(road_tax_upto)]
         d['road_tax_days_left'] = (datetime.datetime.strptime(road_tax_upto, '%Y-%m-%d').date() - datetime.date.today()).days if road_tax_upto else None
         all_rows.append(d)

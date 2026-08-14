@@ -8,7 +8,7 @@
     <button type="button" class="rc-close-btn" onclick="closeRcModal()">&#10005;</button>
   </div>
   <div class="rc-sub">
-    {% if result.ok %}Fetched on {{ v['rc_last_synced'] or 'just now' }} from eChallan Vehicle RC Lookup API{% else %}{{ v['vehicle_no'] }}{% endif %}
+    {% if result.ok %}Fetched on {{ v['rc_last_synced'] or 'just now' }} from eChallan{% else %}{{ v['vehicle_no'] }}{% endif %}
   </div>
 
   <div class="rc-body">

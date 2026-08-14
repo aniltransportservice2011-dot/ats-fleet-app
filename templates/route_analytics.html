@@ -64,6 +64,10 @@
   .rr-table th.sticky-col { z-index:3; }
   .rr-table .sticky-from { left:0; max-width:130px; }
   .rr-table .sticky-to { left:130px; max-width:120px; box-shadow:2px 0 4px -2px rgba(0,0,0,0.08); }
+  /* Type is the first non-frozen column, sitting right against the sticky boundary — give it its
+     own guaranteed width and a hair of left padding so it can never get visually squeezed against
+     (or read as swallowed by) the frozen From/To columns next to it. */
+  .rr-table td:nth-child(3), .rr-table th:nth-child(3) { min-width:70px; padding-left:16px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -215,34 +219,6 @@
       </div>
     </div>
 
-    <div class="ra-grid-2">
-      <div class="ra-panel">
-        <div class="ra-panel-head"><h3>Rate Trend (Average Rate Over Time)</h3></div>
-        {% if svg_points %}
-        <svg viewBox="0 0 400 160" style="width:100%;height:160px;">
-          <polyline points="{{ svg_points }}" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
-          {% for label in svg_labels %}
-          <text x="{{ (loop.index0 / (svg_labels|length - 1) * 400) if svg_labels|length > 1 else 200 }}" y="155" font-size="9" fill="#5A6B8C" text-anchor="middle">{{ label }}</text>
-          {% endfor %}
-        </svg>
-        {% else %}
-        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">Not enough data for a trend yet.</div>
-        {% endif %}
-      </div>
-      <div class="ra-panel" style="text-align:center;">
-        <div class="ra-panel-head" style="text-align:left;"><h3>Rate Breakdown</h3></div>
-        {% set local_end = line_pct + local_pct %}
-        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% {{ local_end }}%, #eda100 {{ local_end }}% 100%);">
-          <div class="donut-inner"><div class="num">₹{{ '{:,.0f}'.format(rr_avg_rate_overall) }}</div><div class="lbl">Total Avg Rate</div></div>
-        </div>
-        <div style="text-align:left;">
-          <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Line Routes &nbsp;₹{{ '{:,.0f}'.format(line_avg) }}</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Local Routes &nbsp;₹{{ '{:,.0f}'.format(local_avg) }}</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Market Routes &nbsp;₹{{ '{:,.0f}'.format(market_avg) }}</div>
-        </div>
-      </div>
-    </div>
-
     <div class="ra-panel">
       <div class="ra-panel-head"><h3>Route Rates <span style="color:var(--steel);font-weight:400;font-size:0.8rem;">({{ rr_total_count }})</span></h3></div>
       {% if rr_rows %}
@@ -290,6 +266,34 @@
       {% else %}
       <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No per-MT rate data for this selection.</div>
       {% endif %}
+    </div>
+
+    <div class="ra-grid-2">
+      <div class="ra-panel">
+        <div class="ra-panel-head"><h3>Rate Trend (Average Rate Over Time)</h3></div>
+        {% if svg_points %}
+        <svg viewBox="0 0 400 160" style="width:100%;height:160px;">
+          <polyline points="{{ svg_points }}" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+          {% for label in svg_labels %}
+          <text x="{{ (loop.index0 / (svg_labels|length - 1) * 400) if svg_labels|length > 1 else 200 }}" y="155" font-size="9" fill="#5A6B8C" text-anchor="middle">{{ label }}</text>
+          {% endfor %}
+        </svg>
+        {% else %}
+        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">Not enough data for a trend yet.</div>
+        {% endif %}
+      </div>
+      <div class="ra-panel" style="text-align:center;">
+        <div class="ra-panel-head" style="text-align:left;"><h3>Rate Breakdown</h3></div>
+        {% set local_end = line_pct + local_pct %}
+        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% {{ local_end }}%, #eda100 {{ local_end }}% 100%);">
+          <div class="donut-inner"><div class="num">₹{{ '{:,.0f}'.format(rr_avg_rate_overall) }}</div><div class="lbl">Total Avg Rate</div></div>
+        </div>
+        <div style="text-align:left;">
+          <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Line Routes &nbsp;₹{{ '{:,.0f}'.format(line_avg) }}</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Local Routes &nbsp;₹{{ '{:,.0f}'.format(local_avg) }}</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Market Routes &nbsp;₹{{ '{:,.0f}'.format(market_avg) }}</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

@@ -3,13 +3,15 @@
 {% block extra_head %}
 <style>
 .veh-detail-head { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; }
-.veh-detail-top { display:flex; gap:18px; align-items:flex-start; }
+.veh-detail-top { display:flex; gap:18px; align-items:flex-start; flex:1; min-width:0; }
 .veh-photo { width:64px; height:64px; border-radius:12px; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:1.8rem; flex-shrink:0; }
-.veh-detail-title { font-size:1.3rem; font-weight:800; display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-.veh-detail-row { display:flex; gap:28px; flex-wrap:wrap; margin-bottom:10px; }
+.veh-detail-title { font-size:1.3rem; font-weight:800; display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; word-break:break-word; }
+.veh-detail-row { display:grid; grid-template-columns:repeat(6, 1fr); gap:14px 24px; margin-bottom:14px; }
+@media (max-width:1100px) { .veh-detail-row { grid-template-columns:repeat(3, 1fr); } }
+@media (max-width:640px) { .veh-detail-row { grid-template-columns:repeat(2, 1fr); } }
 .veh-detail-row .lbl { font-size:0.7rem; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; }
-.veh-detail-row .v { font-size:0.88rem; font-weight:700; margin-top:2px; }
-.veh-sync-box { text-align:right; }
+.veh-detail-row .v { font-size:0.88rem; font-weight:700; margin-top:2px; word-break:break-word; }
+.veh-sync-box { text-align:right; flex-shrink:0; align-self:flex-start; }
 .veh-sync-box .sub { font-size:0.72rem; color:var(--steel); margin-top:6px; }
 .veh-stat-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
 @media (max-width:1200px) { .veh-stat-row { grid-template-columns:repeat(3,1fr); } }
@@ -70,11 +72,22 @@
 {% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
 <div id="main-content" class="wrap" style="max-width:none; width:100%;">
   <div class="mt-crumb"><a href="/vehicles">Vehicles</a> &nbsp;&rsaquo;&nbsp; {{ v['vehicle_no'] }} &nbsp;&rsaquo;&nbsp; {{ tab_titles[tab] }}</div>
-  <a href="/vehicles" class="back" style="margin:10px 0 16px;display:inline-flex;">&#8592; Back to Vehicles</a>
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin:10px 0 16px;">
+    <a href="/vehicles" class="back" style="display:inline-flex;">&#8592; Back to Vehicles</a>
+    {% if v['type'] != 'Market' %}
+    <div class="veh-sync-box">
+      <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
+        <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
+        <button type="submit" class="download-btn">&#8635; Fetch Latest Data</button>
+      </form>
+      <div class="sub">Last synced: {{ v['rc_last_synced'] or 'Never' }}</div>
+    </div>
+    {% endif %}
+  </div>
 
   <div class="veh-detail-head mt-panel">
     <div class="veh-detail-top">
-      <div class="veh-photo">&#128667;</div>
+      <div class="veh-photo">{{ body_type_icon }}</div>
       <div>
         <div class="veh-detail-title">{{ v['vehicle_no'] }}
           <span class="status-pill" style="background:{% if (v['status'] or 'Active')=='Active' %}#e8f5ee;color:var(--green){% elif v['status']=='In Maintenance' %}#fff3e8;color:var(--accent){% else %}var(--paper);color:var(--steel){% endif %};">{{ v['status'] or 'Active' }}</span>
@@ -88,22 +101,13 @@
           <div><div class="lbl">Vehicle Age</div><div class="v">{% if age_years is not none %}{{ age_years }} Years{% else %}—{% endif %}</div></div>
         </div>
         <div class="veh-detail-row" style="margin-bottom:0;">
-          <div><div class="lbl">Chassis No.</div><div class="v">{{ v['chassis_number'] or '—' }}</div></div>
-          <div><div class="lbl">Engine No.</div><div class="v">{{ v['engine_number'] or '—' }}</div></div>
+          <div><div class="lbl">Chassis No.</div><div class="v">{{ v['chassis_number'] or (rc_data.rc_chasi_no if rc_data else none) or '—' }}</div></div>
+          <div><div class="lbl">Engine No.</div><div class="v">{{ v['engine_number'] or (rc_data.rc_eng_no if rc_data else none) or '—' }}</div></div>
           <div><div class="lbl">Registration Date</div><div class="v">{{ v['registration_date'] or '—' }}</div></div>
           <div><div class="lbl">Owner</div><div class="v">{{ company_name }}</div></div>
         </div>
       </div>
     </div>
-    {% if v['type'] != 'Market' %}
-    <div class="veh-sync-box">
-      <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
-        <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
-        <button type="submit" class="download-btn">&#8635; Sync Latest Data</button>
-      </form>
-      <div class="sub">Last synced: {{ v['rc_last_synced'] or 'Never' }}</div>
-    </div>
-    {% endif %}
   </div>
 
   <div class="veh-stat-row">
@@ -501,7 +505,7 @@
           {% if v['type'] != 'Market' %}
           <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
             <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
-            <button type="submit">&#8635; Sync Latest Data</button>
+            <button type="submit">&#8635; Fetch Latest Data</button>
           </form>
           {% endif %}
           <button type="button" onclick="openRcModal('/vehicles/{{ v['id'] }}/rc-lookup')">&#128269; View RC Details</button>
