@@ -74,7 +74,7 @@
           <div class="summary-line total"><span>Sub Total</span><span>₹{{ '{:,.0f}'.format(total_freight) }}</span></div>
           {% if invoice_type == 'tax' %}
           <div class="fld" style="margin-top:8px;"><label>GST Rate (%)</label><input type="number" step="0.01" name="gst_rate" value="18"></div>
-          <div class="fld"><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate" value="1"></div>
+          <div class="fld"><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate" placeholder="0"></div>
           {% endif %}
           <div class="grand-total-box">
             <span style="font-weight:600;">Grand Total (est.)</span>

@@ -236,7 +236,7 @@
           {% else %}
           <input type="hidden" name="gst_rate" value="0">
           {% endif %}
-          <div class="ic-summary-row"><span class="lbl">TDS Rate (%)</span><input type="number" step="0.01" name="tds_rate" id="icTds" value="{{ invoice_settings.tds_rate_default or 1 }}" oninput="icRecalc()"></div>
+          <div class="ic-summary-row"><span class="lbl">TDS Rate (%)</span><input type="number" step="0.01" name="tds_rate" id="icTds" value="{{ invoice_settings.tds_rate_default }}" placeholder="0" oninput="icRecalc()"></div>
           <div class="ic-grand-box"><span class="lbl">Grand Total</span><span class="val" id="sGrand">₹0</span></div>
           <div class="ic-words">Amount in words: <span id="sWords">Zero Rupees Only</span></div>
         </div>
