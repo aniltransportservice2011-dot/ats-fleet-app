@@ -6848,7 +6848,8 @@ def invoice_center_generate():
     for desc, amt, item_type in new_items:
         conn.execute("INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type) VALUES (?,?,?,?)",
                      (batch_id, desc, amt, item_type))
-    conn.execute("UPDATE settings SET value=? WHERE key='next_invoice_number'", (str(next_num + 1),))
+    conn.execute("INSERT OR REPLACE INTO settings (key, value, company_id) VALUES ('next_invoice_number', ?, ?)",
+                 (str(next_num + 1), session.get('company_id', 1)))
     conn.commit()
     conn.close()
 
@@ -7427,13 +7428,18 @@ def settings_page():
             'sync_schedule': ['rc_sync_interval_days', 'challan_sync_interval_days'],
         }
         if form_type in field_groups:
+            # INSERT OR REPLACE, not a plain UPDATE — a bare UPDATE silently does nothing when no
+            # row exists yet for that key (no error, no rows affected), which is exactly how a
+            # setting could look "saved" (200 OK, page reloads fine) while never actually taking
+            # effect. This is the same pattern already used correctly for logo_path just below.
             for key in field_groups[form_type]:
                 if key in ['show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words',
                            'reverse_charge_applicable', 'rcm_on_transport', 'tds_applicable', 'eway_bill_mandatory']:
                     val = '1' if request.form.get(key) == 'on' else '0'
                 else:
                     val = request.form.get(key, '')
-                conn.execute("UPDATE settings SET value=? WHERE key=?", (val, key))
+                conn.execute("INSERT OR REPLACE INTO settings (key, value, company_id) VALUES (?, ?, ?)",
+                             (key, val, session.get('company_id', 1)))
             conn.commit()
 
     users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
