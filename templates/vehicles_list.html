@@ -189,7 +189,9 @@
       <tr class="clickable-row" onclick="window.location.href='/vehicles/{{ r['id'] }}'">
         <td>
           <div class="veh-no">{{ r['vehicle_no'] }}</div>
-          <div class="veh-type-sub" style="color:{% if r['type']=='Line' %}#2a78d6{% elif r['type']=='Local' %}#1a9c5b{% else %}#eda100{% endif %};">&#128667; {{ r['type'] }}</div>
+          {% if r['body_type_short'] %}
+          <div class="veh-type-sub" style="color:{{ r['body_type_color'] }};">&#128667; {{ r['body_type_short'] }}</div>
+          {% endif %}
         </td>
         <td>
           {% if r.age_years is not none %}<div class="veh-no">{{ r.age_years }}</div><div class="veh-type-sub">Years</div>

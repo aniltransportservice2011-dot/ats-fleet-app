@@ -112,7 +112,6 @@
     <div>
       <div class="lg2-title-row">
         <h1>{{ name }}</h1>
-        <span class="lg2-role-pill" style="{% if role=='Party' %}background:#eaf1fb;color:#2a78d6;{% else %}background:#fff3e8;color:var(--accent);{% endif %}">{{ role }}</span>
       </div>
       <div class="lg2-sub">{{ category or (role + ' account') }}{% if gstin %} &nbsp;•&nbsp; GSTIN: {{ gstin }}{% endif %}</div>
     </div>
