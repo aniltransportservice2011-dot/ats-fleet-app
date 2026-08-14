@@ -6638,12 +6638,12 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     if invoice_type == 'vehicle_owner' and total_already_given:
         deduction_rows = [['Gross Bill Amount', f"Rs. {grand_total:,.2f}"]]
         if total_fuel_given:
-            deduction_rows.append(['Less: Fuel Advance Given', f"Rs. {total_fuel_given:,.2f}"])
+            deduction_rows.append(['Fuel Advance', f"Rs. {total_fuel_given:,.2f}"])
         if total_driver_adv_given:
-            deduction_rows.append(['Less: Driver Advance Given', f"Rs. {total_driver_adv_given:,.2f}"])
+            deduction_rows.append(['Driver Advance', f"Rs. {total_driver_adv_given:,.2f}"])
         if total_paid_to_owner:
-            deduction_rows.append(['Less: Amount Already Paid', f"Rs. {total_paid_to_owner:,.2f}"])
-        deduction_rows.append(['NET PAYABLE TO OWNER (Rs.)', f"{net_payable:,.2f}"])
+            deduction_rows.append(['Advance Paid', f"Rs. {total_paid_to_owner:,.2f}"])
+        deduction_rows.append(['NET PAYABLE (Rs.)', f"{net_payable:,.2f}"])
         # Same bordered-bar treatment as "TOTAL FREIGHT & CHARGES" above (BOX + row rules +
         # highlighted final row) instead of plain floating text, so this reads as one continuous
         # pattern with the totals above it rather than a visually distinct, "distorted" block.
