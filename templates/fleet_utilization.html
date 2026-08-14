@@ -106,11 +106,11 @@
         <h3>Idle vs Active Days (This Period)</h3>
         <div class="donut-wrap">
           <div class="donut" style="background:conic-gradient(#e34948 0% {{ idle_days_pct }}%, #1a9c5b {{ idle_days_pct }}% 100%);">
-            <div class="donut-inner"><div class="num">{{ '{:,.0f}'.format(total_active_days + total_idle_days) }}</div><div class="lbl">Total Days</div></div>
+            <div class="donut-inner"><div class="num">{{ avg_idle_days + avg_active_days }}</div><div class="lbl">Avg Days / Vehicle</div></div>
           </div>
           <div>
-            <div class="legend-item"><span class="legend-dot" style="background:#e34948;"></span><span>Idle Days<br><b>{{ '{:,.0f}'.format(total_idle_days) }} ({{ idle_days_pct }}%)</b></span></div>
-            <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span><span>Active Days<br><b>{{ '{:,.0f}'.format(total_active_days) }} ({{ active_days_pct }}%)</b></span></div>
+            <div class="legend-item"><span class="legend-dot" style="background:#e34948;"></span><span>Idle Days (avg)<br><b>{{ avg_idle_days }} ({{ idle_days_pct }}%)</b></span></div>
+            <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span><span>Active Days (avg)<br><b>{{ avg_active_days }} ({{ active_days_pct }}%)</b></span></div>
           </div>
         </div>
       </div>
