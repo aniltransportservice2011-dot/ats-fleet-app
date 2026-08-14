@@ -190,7 +190,7 @@
         <td>
           <div class="veh-no">{{ r['vehicle_no'] }}</div>
           {% if r['body_type_short'] %}
-          <div class="veh-type-sub" style="color:{{ r['body_type_color'] }};">&#128667; {{ r['body_type_short'] }}</div>
+          <div class="veh-type-sub" style="color:{{ r['body_type_color'] }};">{{ r['body_type_icon'] }} {{ r['body_type_short'] }}</div>
           {% endif %}
         </td>
         <td>
