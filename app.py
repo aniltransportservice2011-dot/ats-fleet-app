@@ -2097,8 +2097,9 @@ def _maintenance_overview_tab(conn):
 
     # Fitness & Permit are tracked on the Vehicles page's own Compliance system now (with their own
     # renew/sync flow and cost path) — no longer duplicated here as a Maintenance Overview card.
-    cat_labels = ['Service', 'Tyres', 'Battery', 'Insurance', 'Urea', 'Toll']
-    cat_slugs = {'Service': 'service', 'Tyres': 'tyres', 'Battery': 'battery', 'Insurance': 'insurance',
+    # Insurance removed from this card row too, per the same reasoning.
+    cat_labels = ['Service', 'Tyres', 'Battery', 'Urea', 'Toll']
+    cat_slugs = {'Service': 'service', 'Tyres': 'tyres', 'Battery': 'battery',
                  'Urea': 'urea', 'Toll': 'toll'}
     cat_data = {k: {'vehicles': set(), 'count': 0, 'cost': 0} for k in cat_labels}
     for e in period_entries:
@@ -4527,13 +4528,13 @@ def _get_vendor_ledger_entries(vendor_id):
             # ONLY case that's excluded is the vendor field explicitly set to the owner himself —
             # that's the deliberate signal that he paid it out of his own freight money.
             if o['fuel_vendor_id'] != vendor_id and o['fuel_amount']:
-                fdetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Fuel paid on your behalf"
+                fdetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Fuel (Company Paid)"
                 entries.append({'date': o['date'], 'detail': fdetail,
                                  'debit': o['fuel_amount'], 'credit': 0,
                                  'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
                                  'link': url_for('trip_view', trip_id=o['id'])})
             if o['driver_adv_vendor_id'] != vendor_id and o['driver_adv_amount']:
-                adetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Driver advance paid on your behalf"
+                adetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Driver Advance (Company Paid)"
                 entries.append({'date': o['date'], 'detail': adetail,
                                  'debit': o['driver_adv_amount'], 'credit': 0,
                                  'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
