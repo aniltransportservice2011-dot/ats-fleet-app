@@ -231,12 +231,14 @@
       </div>
       <div class="ra-panel" style="text-align:center;">
         <div class="ra-panel-head" style="text-align:left;"><h3>Rate Breakdown</h3></div>
-        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% 100%);">
+        {% set local_end = line_pct + local_pct %}
+        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% {{ local_end }}%, #eda100 {{ local_end }}% 100%);">
           <div class="donut-inner"><div class="num">₹{{ '{:,.0f}'.format(rr_avg_rate_overall) }}</div><div class="lbl">Total Avg Rate</div></div>
         </div>
         <div style="text-align:left;">
           <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Line Routes &nbsp;₹{{ '{:,.0f}'.format(line_avg) }}</div>
           <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Local Routes &nbsp;₹{{ '{:,.0f}'.format(local_avg) }}</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Market Routes &nbsp;₹{{ '{:,.0f}'.format(market_avg) }}</div>
         </div>
       </div>
     </div>

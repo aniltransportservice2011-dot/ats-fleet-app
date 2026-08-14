@@ -7556,7 +7556,12 @@ def route_analytics():
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
         d['revenue'] += t['billed_amount'] or 0
-        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
+        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # contracted freight added below — including both here double-counts it (same rule as the
+        # Dashboard/Ledger/Invoice Center fixes: it's not a real company cost unless a different,
+        # explicitly-tagged vendor paid it, which this per-route rollup has no vendor context for).
+        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        cost = (fuel_and_adv + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
                 (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                 (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -7660,11 +7665,22 @@ def route_analytics():
     rr_avg_rate_overall = round(sum(all_rates_flat) / len(all_rates_flat), 0) if all_rates_flat else 0
     rr_total_routes = len(rr_groups)
 
+    # Line/Local/Market donut — used to only compute Line's share and dump the entire remainder
+    # into Local's slice, silently folding Market's (very different) rates into "Local" and never
+    # showing them anywhere. Every real type now gets its own share and average.
     line_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Line' for r in rates]
     local_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Local' for r in rates]
+    market_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Market' for r in rates]
+    other_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt not in ('Line', 'Local', 'Market') for r in rates]
     line_avg = round(sum(line_rates) / len(line_rates), 0) if line_rates else 0
     local_avg = round(sum(local_rates) / len(local_rates), 0) if local_rates else 0
+    market_avg = round(sum(market_rates) / len(market_rates), 0) if market_rates else 0
     line_pct = round(len(line_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
+    local_pct = round(len(local_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
+    market_pct = round(len(market_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
+    # Any stray/unexpected type gets folded into Market's slice visually (better than silently
+    # vanishing) but never into its average — other_rates existing at all would be a real data gap.
+    market_pct += round(len(other_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
 
     rt_query = """SELECT substr(date,1,7) as month, AVG(rate) as avg_rate FROM trips
                   WHERE rate_type='PER_MT' AND rate > 0 AND date>=? AND date<=?
@@ -7716,7 +7732,8 @@ def route_analytics():
         rr_rows=rr_rows_page, rr_total_count=rr_total_count, rr_page=rr_page, rr_per_page=rr_per_page,
         rr_total_pages=rr_total_pages, rr_page_tokens=rr_page_tokens, rr_base_qs=rr_base_qs,
         highest_entry=highest_entry, lowest_entry=lowest_entry, rr_avg_rate_overall=rr_avg_rate_overall,
-        rr_total_routes=rr_total_routes, line_avg=line_avg, local_avg=local_avg, line_pct=line_pct,
+        rr_total_routes=rr_total_routes, line_avg=line_avg, local_avg=local_avg, market_avg=market_avg,
+        line_pct=line_pct, local_pct=local_pct, market_pct=market_pct,
         da_lowest=da_lowest, da_average=da_average, da_highest=da_highest,
         fuel_lowest=fuel_lowest, fuel_average=fuel_average, fuel_highest=fuel_highest,
         trend_points=trend_points, svg_points=svg_points, svg_labels=svg_labels,
@@ -7761,7 +7778,12 @@ def export_route_analytics():
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
         d['revenue'] += t['billed_amount'] or 0
-        cost = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
+        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # contracted freight added below — including both here double-counts it (same rule as the
+        # Dashboard/Ledger/Invoice Center fixes: it's not a real company cost unless a different,
+        # explicitly-tagged vendor paid it, which this per-route rollup has no vendor context for).
+        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        cost = (fuel_and_adv + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
                 (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                 (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -8231,7 +8253,10 @@ def business_performance():
         d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0, 'trips': 0})
         d['revenue'] += t['billed_amount'] or 0
         d['trips'] += 1
-        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, curr_toll_map) + (t['parking'] or 0)
+        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # contracted freight added below — see the same fix in route_analytics().
+        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        direct = fuel_and_adv + _trip_toll(t, curr_toll_map) + (t['parking'] or 0)
         if t['type'] == 'Market':
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
@@ -8329,7 +8354,10 @@ def business_performance():
         # Toll excluded here on purpose — the maintenance-by-date sum just below already carries
         # Toll Management's real toll cost (category='Toll' rows), dated per entry; adding a
         # per-trip toll figure too would double-count it, same reasoning as Dashboard's total.
-        direct = ((t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + (t['parking'] or 0) +
+        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # contracted freight added below — see the same fix in route_analytics().
+        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        direct = (fuel_and_adv + (t['parking'] or 0) +
                   (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                   (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                   (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -8498,7 +8526,10 @@ def export_business_performance():
             continue
         d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0})
         d['revenue'] += t['billed_amount'] or 0
-        direct = (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0) + _trip_toll(t, export_toll_map) + (t['parking'] or 0)
+        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # contracted freight added below — see the same fix in route_analytics().
+        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        direct = fuel_and_adv + _trip_toll(t, export_toll_map) + (t['parking'] or 0)
         if t['type'] == 'Market':
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
