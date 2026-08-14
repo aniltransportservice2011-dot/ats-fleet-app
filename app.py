@@ -7952,7 +7952,12 @@ def fleet_utilization():
     total_all_days = total_active_days + total_idle_days
     active_days_pct = round((total_active_days / total_all_days * 100), 1) if total_all_days > 0 else 0
     idle_days_pct = round((total_idle_days / total_all_days * 100), 1) if total_all_days > 0 else 0
+    # Per-vehicle averages — the raw fleet-wide sums above can run into the thousands (17 vehicles
+    # each idle for part of a year adds up fast) and read as if that were a single days count,
+    # which isn't a meaningful number on its own. The percentages stay valid as a proportion; the
+    # donut itself shows the average per vehicle instead of the summed total.
     avg_idle_days = round(total_idle_days / total_vehicles, 1) if total_vehicles > 0 else 0
+    avg_active_days = round(total_active_days / total_vehicles, 1) if total_vehicles > 0 else 0
     most_idle = sorted(rows, key=lambda r: r['idle_days'], reverse=True)[:5]
 
     # ---------- Empty runs (same formulas as the old Empty Runs page — LR number starting with "Empty") ----------
@@ -8008,7 +8013,7 @@ def fleet_utilization():
         total_vehicles=total_vehicles, active_vehicles=active_vehicles, idle_vehicles=idle_vehicles,
         active_pct=active_pct, idle_vehicles_pct=idle_vehicles_pct,
         total_active_days=total_active_days, total_idle_days=total_idle_days, active_days_pct=active_days_pct, idle_days_pct=idle_days_pct,
-        avg_idle_days=avg_idle_days, empty_run_trips=empty_run_trips, empty_run_pct_overall=empty_run_pct_overall,
+        avg_idle_days=avg_idle_days, avg_active_days=avg_active_days, empty_run_trips=empty_run_trips, empty_run_pct_overall=empty_run_pct_overall,
         total_fuel=total_fuel, total_toll=total_toll, total_empty_cost=total_empty_cost,
         f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, f_type=type_f, vehicles=all_vehicles_list,
         active='fleet-utilization')
