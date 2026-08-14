@@ -587,7 +587,7 @@ def dashboard():
                                     LEFT JOIN parties p ON t.party_id=p.id
                                     ORDER BY t.date DESC LIMIT 8""").fetchall()
 
-    vehicles_list = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+    vehicles_list = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
 
     fy_map = {'2026-04-01|2027-03-31': ('2026-04-01','2027-03-31'), '2025-04-01|2026-03-31': ('2025-04-01','2026-03-31')}
     f_fy = ''
@@ -1046,7 +1046,7 @@ def _vehicles_permit_fitness_tab(conn):
     permit_expiring = sum(1 for r in rows if r['permit']['status'] == 'Expiring Soon')
     expired_count = sum(1 for r in rows if r['worst_status'] == 'Expired')
 
-    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
 
     total_pages_count = len(rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_pages_count,
@@ -1198,7 +1198,7 @@ def vehicles_list():
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
 
     # Compliance badges (Insurance/Fitness/PUC/Permit) — own fleet only, see compliance_service's
     # module docstring for why Market vehicles are excluded. Keyed by vehicle_id for O(1) lookup
@@ -1907,8 +1907,10 @@ def trips_list():
     query += f" ORDER BY {order_col} {order_dir}, t.date DESC LIMIT {per_page} OFFSET {offset}"
 
     trips = conn.execute(query, params).fetchall()
-    vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
-    parties = conn.execute("SELECT DISTINCT name FROM parties ORDER BY name").fetchall()
+    vehicles = conn.execute("""SELECT DISTINCT vehicle_no FROM vehicles
+                               WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active'
+                               ORDER BY vehicle_no""").fetchall()
+    parties = conn.execute("SELECT DISTINCT name FROM parties WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     conn.close()
 
     from urllib.parse import urlencode
@@ -2054,10 +2056,18 @@ def _save_trip_custom_items(conn, trip_id, form):
 
 def _get_autocomplete_lists():
     conn = get_db()
-    vehicles = conn.execute("SELECT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
-    parties = conn.execute("SELECT name FROM parties ORDER BY name").fetchall()
-    vendors = conn.execute("SELECT name FROM vendors ORDER BY name").fetchall()
-    combined_names = sorted(set([p['name'] for p in parties] + [v['name'] for v in vendors]))
+    vehicles = conn.execute("""SELECT vehicle_no FROM vehicles
+                               WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active'
+                               ORDER BY vehicle_no""").fetchall()
+    parties = conn.execute("SELECT name FROM parties WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+    vendors = conn.execute("SELECT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+    # A linked party+vendor pair is the same real organization — only a vendor with no linked party
+    # contributes a name here beyond what the parties list already covers, so the combined
+    # suggestion list never shows the same organization twice under two slightly different records.
+    unlinked_vendor_names = conn.execute("""SELECT name FROM vendors
+                                            WHERE linked_party_id IS NULL AND COALESCE(status,'Active')='Active'
+                                            ORDER BY name""").fetchall()
+    combined_names = sorted(set([p['name'] for p in parties] + [v['name'] for v in unlinked_vendor_names]))
     conn.close()
     return vehicles, parties, vendors, combined_names
 
@@ -2208,12 +2218,24 @@ def _maintenance_overview_tab(conn):
                 stale.append((v['vehicle_no'], days_since))
         else:
             stale.append((v['vehicle_no'], None))
+    # One consolidated card per category instead of one card per vehicle — with several vehicles
+    # missing history at once, six near-identical "No Maintenance History" cards was just noise;
+    # a single card naming how many (and which) says the same thing without cluttering the panel.
     stale.sort(key=lambda x: (x[1] is None, -(x[1] or 0)))
-    for vno, days in stale[:max(0, 6 - len(actions))]:
-        if days is None:
-            actions.append({'icon': '⚠️', 'label': 'No Maintenance History', 'vehicle': vno, 'detail': 'No records yet', 'kind': 'warn'})
-        else:
-            actions.append({'icon': '⏱', 'label': 'No Recent Maintenance', 'vehicle': vno, 'detail': f"{days} days since last entry", 'kind': 'warn'})
+    no_history_vnos = [vno for vno, days in stale if days is None]
+    overdue = [(vno, days) for vno, days in stale if days is not None]
+
+    def _vehicle_list_label(vnos, limit=3):
+        shown = ', '.join(vnos[:limit])
+        return shown + (f" +{len(vnos) - limit} more" if len(vnos) > limit else '')
+
+    if no_history_vnos:
+        actions.append({'icon': '⚠️', 'label': 'No Maintenance History', 'vehicle': _vehicle_list_label(no_history_vnos),
+                         'detail': f"{len(no_history_vnos)} vehicle{'s' if len(no_history_vnos) != 1 else ''} — no records yet", 'kind': 'warn'})
+    if overdue:
+        overdue_vnos = [vno for vno, _ in overdue]
+        actions.append({'icon': '⏱', 'label': 'No Recent Maintenance', 'vehicle': _vehicle_list_label(overdue_vnos),
+                         'detail': f"{len(overdue)} vehicle{'s' if len(overdue) != 1 else ''} — over 90 days since last entry", 'kind': 'warn'})
 
     recent_entries = period_entries[:8]
     spend_by_vehicle = {}
@@ -2364,7 +2386,7 @@ def _maintenance_urea_tab(conn):
     base_qs = urlencode(base_params)
 
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    suppliers = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    suppliers = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     conn.close()
     return render_template('maintenance.html', tab='urea',
         rows=page_rows, total_count=total_count, current_stock=current_stock, total_value=total_value,
@@ -2571,7 +2593,7 @@ def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', activ
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    all_vehicles = conn.execute("SELECT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+    all_vehicles = conn.execute("SELECT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
     conn.close()
     return render_template(template, tab=tab_slug, tab_label=label,
                             rows=page_rows, total_count=total_count, total_amount=total_amount,
@@ -2666,7 +2688,7 @@ def _maintenance_tyres_tab(conn):
     base_qs = urlencode(base_params)
 
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    tyre_vendors = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    tyre_vendors = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     tyre_brands = sorted(set(r['tyre_brand'] for r in all_rows if r['tyre_brand']))
 
     # Vehicle Tyre Layout: for the picked vehicle, the latest real entry logged against each
@@ -2860,7 +2882,7 @@ def _maintenance_battery_tab(conn):
     base_qs = urlencode(base_params)
 
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    battery_vendors = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    battery_vendors = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     battery_brands = sorted(set(r['brand'] for r in all_rows if r['brand']))
     stock_batteries = [r for r in all_rows if not r['vehicle_id'] and r['status'] == 'In Stock']
 
@@ -3047,7 +3069,7 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
     base_qs = urlencode(base_params)
 
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    insurers = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    insurers = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     conn.close()
 
     return render_template(template, tab='insurance',
@@ -3162,7 +3184,7 @@ def _maintenance_service_tab(conn):
     base_qs = urlencode(base_params)
 
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    workshops = conn.execute("SELECT DISTINCT name FROM vendors ORDER BY name").fetchall()
+    workshops = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     service_types = sorted(set((r['service_type'] or r['category'] or '') for r in all_rows
                                 if _maintenance_classify(r['category'], r['service_type']) == 'Service' and (r['service_type'] or r['category'])))
     conn.close()
@@ -4383,7 +4405,8 @@ def _export_ledger_entries(name, entries):
         ws.cell(row=r_idx, column=4, value=e.get('ref', '')).alignment = wrap_top
         ws.cell(row=r_idx, column=5, value=e['debit'] or None).alignment = wrap_top_right
         ws.cell(row=r_idx, column=6, value=e['credit'] or None).alignment = wrap_top_right
-        ws.cell(row=r_idx, column=7, value=e['balance']).alignment = wrap_top_right
+        bal_suffix = ' Dr' if e['balance'] > 0 else ' Cr' if e['balance'] < 0 else ''
+        ws.cell(row=r_idx, column=7, value=f"{abs(e['balance']):,.0f}{bal_suffix}").alignment = wrap_top_right
     widths = {'A': 12, 'B': 14, 'C': 46, 'D': 20, 'E': 14, 'F': 14, 'G': 14}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
@@ -4586,11 +4609,14 @@ def _get_vendor_ledger_entries(vendor_id):
     for it in other_items:
         detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}"
         amt = it['amount'] or 0
-        # 'charge' = vendor supplied something, we owe them more (credit side, same convention as
-        # Fuel/Driver Advance above); 'deduction' reduces what's owed (debit side).
+        # Always a credit — a vendor tagged on an "Others" item supplied something real for the
+        # trip (fuel, a service, etc.), so we owe them for it regardless of how that same item is
+        # classified on the trip's own side. 'Addition'/'Deduction' on the trip form only answers
+        # whether this item raises or lowers the TRIP's own profit/party billing — a completely
+        # separate question from whether the vendor is owed money, and reusing that flag here used
+        # to make a vendor-supplied cost read as reducing (or even reversing) what we owe them.
         entries.append({'date': it['date'], 'detail': detail,
-                         'debit': amt if it['item_type'] == 'deduction' else 0,
-                         'credit': amt if it['item_type'] == 'charge' else 0,
+                         'debit': 0, 'credit': amt,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(it['trip_id']) or it['lr_number'] or '',
                          'vehicle_type': it['type'] or '', 'link': url_for('trip_view', trip_id=it['trip_id'])})
     for p in payments:
@@ -4686,9 +4712,10 @@ def _export_ledger_pdf(name, entries, role='', contact='', email='', address='')
 
     rows = [['Date', 'Type', 'Detail', 'Ref', 'Debit (Rs.)', 'Credit (Rs.)', 'Balance (Rs.)']]
     for e in entries:
+        bal_suffix = ' Dr' if e['balance'] > 0 else ' Cr' if e['balance'] < 0 else ''
         rows.append([cell(e['date'] or ''), cell(e.get('kind', '')), cell(e['detail'] or ''), cell(e.get('ref', '')),
                      num_cell(f"{e['debit']:,.0f}") if e['debit'] else '', num_cell(f"{e['credit']:,.0f}") if e['credit'] else '',
-                     num_cell(f"{e['balance']:,.0f}")])
+                     num_cell(f"{abs(e['balance']):,.0f}{bal_suffix}")])
     t = Table(rows, colWidths=[0.75*inch, 0.85*inch, 2.15*inch, 0.85*inch, 0.85*inch, 0.85*inch, 0.9*inch], repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1B2A4A')),
@@ -6030,8 +6057,8 @@ def invoice_center():
     date_to = request.args.get('date_to', '')
     status_f = request.args.get('invoice_status', '')
 
-    parties = conn.execute("SELECT id, name, contact, gstin FROM parties ORDER BY name").fetchall()
-    vendors = conn.execute("SELECT id, name, contact, linked_party_id, gstin FROM vendors ORDER BY name").fetchall()
+    parties = conn.execute("SELECT id, name, contact, gstin FROM parties WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+    vendors = conn.execute("SELECT id, name, contact, linked_party_id, gstin FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
 
     # Combined owner picker for Market Vehicle Invoices: every vendor, plus every party not already
     # linked to a vendor — so any organization can be picked as an owner regardless of which
@@ -6108,7 +6135,7 @@ def invoice_center():
     entity_state = _gstin_state(entity_gstin)
     invoice_settings = _get_invoice_settings(conn, session.get('company_id', 1))
 
-    vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
+    vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
     conn.close()
     import datetime as _dt
     today_str = _dt.date.today().strftime('%Y-%m-%d')
@@ -7973,7 +8000,7 @@ def fleet_utilization():
         tick_val = round(trend_max * k / 4)
         y_ticks.append({'value': tick_val, 'y': round(pad_t + plot_h - (tick_val / trend_max * plot_h if trend_max else 0), 1)})
 
-    all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
+    all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type != 'Market' AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
     conn.close()
     return render_template('fleet_utilization.html',
         rows=rows, most_idle=most_idle, empty_rows=empty_rows, trend=trend, trend_max=trend_max,
