@@ -42,7 +42,7 @@
   .sidebar .brand-badge svg { width:19px; height:19px; }
   .sidebar.collapsed { width:0; padding:20px 0; overflow:hidden; border-right:none; }
   .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-  .hamburger-btn { background:none; border:none; cursor:pointer; padding:6px; border-radius:4px; display:flex; align-items:center; flex-shrink:0; }
+  .hamburger-btn { background:none; border:none; cursor:pointer; padding:6px; border-radius:999px; display:flex; align-items:center; flex-shrink:0; }
   .hamburger-btn:hover { background:var(--paper); }
   .hamburger-btn svg { width:20px; height:20px; }
   .topbar-right { display:flex; align-items:center; gap:14px; }
@@ -54,7 +54,7 @@
   .theme-toggle-ic svg { width:100%; height:100%; }
   .theme-switch { position:relative; display:inline-block; width:38px; height:21px; flex-shrink:0; }
   .theme-switch input { opacity:0; width:0; height:0; position:absolute; }
-  .theme-switch-track { position:absolute; inset:0; background:var(--line); border-radius:11px; transition:background .15s; cursor:pointer; }
+  .theme-switch-track { position:absolute; inset:0; background:var(--line); border-radius:999px; transition:background .15s; cursor:pointer; }
   .theme-switch-track::before { content:''; position:absolute; width:15px; height:15px; left:3px; top:3px; background:#fff; border-radius:50%; transition:transform .15s; box-shadow:0 1px 2px rgba(20,33,61,0.25); }
   .theme-switch input:checked + .theme-switch-track { background:var(--accent); }
   .theme-switch input:checked + .theme-switch-track::before { transform:translateX(17px); }
@@ -83,9 +83,9 @@
     box-shadow:0 4px 16px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto; z-index:500; display:none; }
   .autocomplete-item { padding:8px 12px; font-size:0.88rem; cursor:pointer; }
   .autocomplete-item:hover, .autocomplete-item.highlighted { background:var(--paper); }
-  .modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:4px; }
+  .modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:999px; }
   .modal-close-x:hover { background:var(--paper); color:var(--ink); }
-  .modal-save-btn { display:block; width:100%; padding:13px; margin-top:16px; background:var(--white); color:var(--accent); border:1.5px solid var(--accent); border-radius:7px; font-size:0.95rem; font-weight:700; cursor:pointer; text-align:center; font-family:inherit; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
+  .modal-save-btn { display:block; width:100%; padding:13px; margin-top:16px; background:var(--white); color:var(--accent); border:1.5px solid var(--accent); border-radius:999px; font-size:0.95rem; font-weight:700; cursor:pointer; text-align:center; font-family:inherit; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
   .modal-save-btn:hover { background:var(--accent); color:#fff; box-shadow:0 2px 6px rgba(192,86,33,0.25); }
   .modal-save-btn:active { transform:translateY(1px); box-shadow:none; }
   .modal-overlay { display:none; position:fixed; inset:0; background:rgba(20,25,40,0.5); z-index:100; align-items:center; justify-content:center; }
@@ -97,7 +97,7 @@
   /* Every "Export" button in the app shares this style — filter-aware Excel/PDF export. Its own
      green outline tier, same shape/weight as the orange Add/Save/Apply tier so Export always
      reads as its own distinct action next to whatever button it sits beside. */
-  .download-btn { background:var(--white); color:var(--green); border:1.5px solid var(--green); padding:10px 20px; border-radius:7px; font-size:0.84rem; font-weight:700; cursor:pointer; font-family:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
+  .download-btn { background:var(--white); color:var(--green); border:1.5px solid var(--green); padding:10px 20px; border-radius:999px; font-size:0.84rem; font-weight:700; cursor:pointer; font-family:inherit; text-decoration:none; display:inline-flex; align-items:center; gap:8px; white-space:nowrap; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
   .download-btn:hover { background:var(--green); color:#fff; box-shadow:0 2px 6px rgba(26,122,76,0.25); }
   .download-btn:active { transform:translateY(1px); box-shadow:none; }
   /* Small "✎ Edit" toggle that sits inline in a .mt-panel-head next to a tab title (Fitness/
@@ -105,7 +105,7 @@
      which rendered as the raw browser default and clashed with everything else on the page.
      Same shape/weight/interaction as .download-btn's outline tier, just in the accent color and
      more compact since it's a secondary in-panel action rather than a standalone CTA. */
-  .edit-toggle-btn { background:var(--white); color:var(--accent); border:1.5px solid var(--accent); padding:6px 14px; border-radius:7px; font-size:0.78rem; font-weight:700; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
+  .edit-toggle-btn { background:var(--white); color:var(--accent); border:1.5px solid var(--accent); padding:6px 14px; border-radius:999px; font-size:0.78rem; font-weight:700; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; transition:background .15s, color .15s, box-shadow .15s, transform .08s; }
   .edit-toggle-btn:hover { background:var(--accent); color:#fff; box-shadow:0 2px 6px rgba(192,86,33,0.25); }
   .edit-toggle-btn:active { transform:translateY(1px); box-shadow:none; }
   .nav-group { padding:0 12px; margin-bottom:16px; }
@@ -140,7 +140,7 @@
   }
   .sidebar-footer { margin-top:auto; padding:14px 20px 0; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .sidebar-footer .copy { font-size:0.68rem; color:var(--steel); line-height:1.5; }
-  .sidebar-collapse-btn { width:26px; height:26px; flex-shrink:0; border-radius:7px; border:1px solid var(--line); background:none; color:var(--steel); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:0.8rem; }
+  .sidebar-collapse-btn { width:26px; height:26px; flex-shrink:0; border-radius:999px; border:1px solid var(--line); background:none; color:var(--steel); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:0.8rem; }
   .sidebar-collapse-btn:hover { background:var(--paper); color:var(--ink); }
   .main-content { flex:1; min-width:0; padding:28px 32px 60px; transition:width 0.25s ease; }
   .detail-panel {
@@ -210,7 +210,7 @@
   .rd-hd h2 { margin:0; font-size:1.15rem; }
   .rd-badge { font-size:0.66rem; font-weight:800; text-transform:uppercase; letter-spacing:0.03em; padding:4px 10px; border-radius:10px; background:rgba(42,120,214,0.1); color:#2a78d6; }
   .rd-hd-right { display:flex; align-items:center; gap:8px; }
-  .rd-nav-btn, .rd-close-btn { background:none; border:1px solid var(--line); border-radius:7px; font-size:1rem; cursor:pointer; color:var(--steel); padding:5px 10px; line-height:1; }
+  .rd-nav-btn, .rd-close-btn { background:none; border:1px solid var(--line); border-radius:999px; font-size:1rem; cursor:pointer; color:var(--steel); padding:5px 10px; line-height:1; }
   .rd-close-btn { border:none; font-size:1.2rem; padding:4px; }
   .rd-nav-btn:hover:not(:disabled), .rd-close-btn:hover { color:var(--ink); border-color:var(--steel); }
   .rd-nav-btn:disabled { opacity:0.35; cursor:default; }

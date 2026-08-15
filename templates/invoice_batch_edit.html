@@ -1,51 +1,89 @@
 {% extends "base.html" %}
 {% block title %}Edit Invoice — {{ b['invoice_number'] }}{% endblock %}
+{% block extra_head %}
+<style>
+  .ibe-crumb { font-size:0.8rem; color:var(--steel); margin-bottom:6px; }
+  .ibe-crumb a { color:var(--steel); text-decoration:none; }
+  .ibe-crumb a:hover { color:var(--accent); }
+  .ibe-head { margin-bottom:18px; }
+  .ibe-head h1 { margin:0 0 4px; font-size:1.5rem; }
+  .ibe-head .sub { color:var(--steel); font-size:0.85rem; line-height:1.5; }
+  .ibe-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:24px; max-width:820px; margin-bottom:22px; }
+  .ibe-card h3 { margin:0 0 4px; font-size:0.95rem; }
+  .ibe-card .card-sub { color:var(--steel); font-size:0.78rem; margin-bottom:16px; }
+  .ibe-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  @media (max-width:640px) { .ibe-grid { grid-template-columns:1fr; } }
+  .ibe-fld label { display:block; font-size:0.72rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:6px; }
+  .ibe-fld input, .ibe-fld select { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:6px; font-size:0.88rem; box-sizing:border-box; font-family:inherit; background:var(--white); color:var(--ink); }
+  .ibe-fld input:focus, .ibe-fld select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(192,86,33,0.12); }
+  .ibe-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
+  .ibe-items-table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+  .ibe-items-table th { text-align:left; font-size:0.72rem; font-weight:700; color:var(--steel); text-transform:uppercase; letter-spacing:0.02em; padding:8px 10px; border-bottom:1px solid var(--line); }
+  .ibe-items-table td { padding:9px 10px; border-bottom:1px solid var(--line); font-size:0.85rem; }
+  .ibe-items-table th.num, .ibe-items-table td.num { text-align:right; }
+  .ibe-add-item-row { display:grid; grid-template-columns:1fr 180px 160px auto; gap:12px; align-items:end; }
+  @media (max-width:760px) { .ibe-add-item-row { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
 {% block content %}
-<div class="wrap">
-  <a class="back" href="/invoices/generated">&larr; Back to Generated Invoices</a>
-  <h1>Edit Invoice — {{ b['invoice_number'] }}</h1>
-  <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">
-    {{ 'Freight Bill' if b['invoice_type']=='vehicle_owner' else 'Party Invoice' }} for
-    <b>{{ b['vendor_name'] if b['invoice_type']=='vehicle_owner' else b['party_name'] }}</b>.
-    Changes here are reflected the next time this invoice is downloaded. To change the trips included, generate a new invoice from Invoice Center.
+<div class="wrap" style="max-width:none; width:100%;">
+  <div class="ibe-crumb"><a href="/invoices/generated">Generated Invoices</a> &nbsp;&rsaquo;&nbsp; Edit Invoice</div>
+  <div class="ibe-head">
+    <h1>Edit Invoice — {{ b['invoice_number'] }}</h1>
+    <div class="sub">
+      {{ 'Freight Bill' if b['invoice_type']=='vehicle_owner' else 'Party Invoice' }} for
+      <b>{{ b['vendor_name'] if b['invoice_type']=='vehicle_owner' else b['party_name'] }}</b>.
+      Changes here are reflected the next time this invoice is downloaded. To change the trips included,
+      <a href="/invoice-center" style="color:var(--accent); font-weight:600; text-decoration:none;">generate a new invoice</a> from Invoice Center.
+    </div>
   </div>
-  <form class="stack" method="POST">
-    <div class="row2">
-      <div><label>Invoice Date</label><input type="date" name="invoice_date" value="{{ b['invoice_date'] }}"></div>
-      <div><label>Due Date</label><input type="date" name="due_date" value="{{ b['due_date'] or '' }}"></div>
-    </div>
-    <div class="row2">
-      <div><label>Payment Terms</label><input type="text" name="payment_terms" value="{{ b['payment_terms'] or '' }}"></div>
-      <div><label>Place of Supply</label><input type="text" name="place_of_supply" value="{{ b['place_of_supply'] or '' }}"></div>
-    </div>
-    <div><label>Payment Status</label>
-      <select name="payment_status">
-        <option value="PENDING" {% if b['payment_status']=='PENDING' %}selected{% endif %}>Pending</option>
-        <option value="PAID" {% if b['payment_status']=='PAID' %}selected{% endif %}>Paid</option>
-      </select>
-    </div>
-    <div><label>Remarks</label><input type="text" name="remarks" value="{{ b['remarks'] or '' }}"></div>
-    <div class="row2">
-      <div><label>Loading / Unloading (₹)</label><input type="number" step="0.01" name="loading_charges" value="{{ b['loading_charges'] or 0 }}"></div>
-      <div><label>Other Charges (₹)</label><input type="number" step="0.01" name="other_charges" value="{{ b['other_charges'] or 0 }}"></div>
-    </div>
-    {% if b['invoice_type'] == 'tax' %}
-    <div class="row2">
-      <div><label>GST Rate (%)</label><input type="number" step="0.01" name="gst_rate" value="{{ b['gst_rate'] or 0 }}"></div>
-      <div><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate" value="{{ b['tds_rate'] or 0 }}"></div>
-    </div>
-    {% else %}
-    <input type="hidden" name="gst_rate" value="{{ b['gst_rate'] or 0 }}">
-    <input type="hidden" name="tds_rate" value="{{ b['tds_rate'] or 0 }}">
-    {% endif %}
-    <button type="submit" class="submit">Save Changes</button>
-  </form>
 
-  <div style="margin-top:24px;">
-    <h3 style="font-size:0.95rem;margin-bottom:4px;">Additional Line Items</h3>
-    <div style="font-size:0.78rem;color:var(--steel);margin-bottom:12px;">Add extra charges or deductions to this invoice — folded into Other Charges the next time this PDF is viewed or regenerated.</div>
+  <div class="ibe-card">
+    <form method="POST">
+      <div class="ibe-grid">
+        <div class="ibe-fld"><label>Invoice Date</label><input type="date" name="invoice_date" value="{{ b['invoice_date'] }}"></div>
+        <div class="ibe-fld"><label>Due Date</label><input type="date" name="due_date" value="{{ b['due_date'] or '' }}"></div>
+      </div>
+      <div class="ibe-grid">
+        <div class="ibe-fld"><label>Payment Terms</label><input type="text" name="payment_terms" value="{{ b['payment_terms'] or '' }}" placeholder="e.g. 15 Days, Immediate"></div>
+        <div class="ibe-fld"><label>Place of Supply</label><input type="text" name="place_of_supply" value="{{ b['place_of_supply'] or '' }}" placeholder="Enter place of supply"></div>
+      </div>
+      <div class="ibe-grid">
+        <div class="ibe-fld">
+          <label>Payment Status</label>
+          <select name="payment_status">
+            <option value="PENDING" {% if b['payment_status']=='PENDING' %}selected{% endif %}>Pending</option>
+            <option value="PAID" {% if b['payment_status']=='PAID' %}selected{% endif %}>Paid</option>
+          </select>
+        </div>
+        <div class="ibe-fld"><label>Remarks</label><input type="text" name="remarks" value="{{ b['remarks'] or '' }}" placeholder="Enter any remarks (optional)"></div>
+      </div>
+      <div class="ibe-grid" style="margin-bottom:6px;">
+        <div class="ibe-fld"><label>Loading / Unloading (₹)</label><input type="number" step="0.01" name="loading_charges" value="{{ b['loading_charges'] or 0 }}"></div>
+        <div class="ibe-fld"><label>Other Charges (₹)</label><input type="number" step="0.01" name="other_charges" value="{{ b['other_charges'] or 0 }}"></div>
+      </div>
+      {% if b['invoice_type'] == 'tax' %}
+      <div class="ibe-grid">
+        <div class="ibe-fld"><label>GST Rate (%)</label><input type="number" step="0.01" name="gst_rate" value="{{ b['gst_rate'] or 0 }}"></div>
+        <div class="ibe-fld"><label>TDS Rate (%)</label><input type="number" step="0.01" name="tds_rate" value="{{ b['tds_rate'] or 0 }}"></div>
+      </div>
+      {% else %}
+      <input type="hidden" name="gst_rate" value="{{ b['gst_rate'] or 0 }}">
+      <input type="hidden" name="tds_rate" value="{{ b['tds_rate'] or 0 }}">
+      {% endif %}
+      <div class="ibe-actions">
+        <a href="/invoices/generated" class="btn-cancel" style="text-decoration:none;display:inline-flex;align-items:center;">Cancel</a>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">&#128190; Save Changes</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="ibe-card">
+    <h3>Additional Line Items</h3>
+    <div class="card-sub">Add extra charges or deductions to this invoice — folded into Other Charges the next time this PDF is viewed or regenerated.</div>
+
     {% if batch_items %}
-    <table style="margin-bottom:14px;">
+    <table class="ibe-items-table">
       <tr><th>Description</th><th>Type</th><th class="num">Amount (₹)</th><th></th></tr>
       {% for it in batch_items %}
       <tr>
@@ -61,15 +99,18 @@
       {% endfor %}
     </table>
     {% endif %}
-    <form method="POST" action="/invoices/generated/{{ b['id'] }}/items/add" class="row2" style="align-items:end;">
-      <div><label>Description</label><input type="text" name="description" required placeholder="e.g. Route deviation charge"></div>
-      <div style="display:flex;gap:10px;">
-        <div style="flex:1;"><label>Amount (₹)</label><input type="number" step="0.01" name="amount" required></div>
-        <div style="flex:1;"><label>Type</label>
-          <select name="item_type"><option value="charge">Charge</option><option value="deduction">Deduction</option></select>
-        </div>
+
+    <form method="POST" action="/invoices/generated/{{ b['id'] }}/items/add" class="ibe-add-item-row">
+      <div class="ibe-fld"><label>Description</label><input type="text" name="description" placeholder="e.g. Route deviation charge" required></div>
+      <div class="ibe-fld"><label>Amount (₹)</label><input type="number" step="0.01" name="amount" value="0.00" required></div>
+      <div class="ibe-fld">
+        <label>Type</label>
+        <select name="item_type">
+          <option value="charge">Charge</option>
+          <option value="deduction">Deduction</option>
+        </select>
       </div>
-      <button type="submit" class="submit" style="margin-top:0;grid-column:1/-1;width:auto;padding:9px 18px;">+ Add Item</button>
+      <button type="submit" class="add-btn" style="white-space:nowrap;">+ Add Item</button>
     </form>
   </div>
 </div>

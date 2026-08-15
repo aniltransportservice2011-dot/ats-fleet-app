@@ -14,10 +14,29 @@
      button — without this override the flex row's stretch/centering math squashes it noticeably
      shorter than its neighbors. */
   .tf-head-actions a.back { margin-bottom:0; padding:10px 16px; }
-  .tf-btn-primary { background:var(--white); border:1.5px solid var(--accent); color:var(--accent); padding:10px 18px; border-radius:6px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; transition:background .15s, color .15s; }
+  .tf-btn-primary { background:var(--white); border:1.5px solid var(--accent); color:var(--accent); padding:10px 18px; border-radius:999px; font-size:0.85rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; transition:background .15s, color .15s; }
   .tf-btn-primary:hover { background:var(--accent); color:#fff; }
 
-  .tf-empty-toggle { display:flex; align-items:center; gap:10px; background:var(--white); border:1.5px solid var(--line); border-radius:6px; padding:9px 14px; font-size:0.85rem; font-weight:600; cursor:pointer; }
+  /* Duplicate-LR (and future validation) error popup — anchored to the LR Number field itself
+     (its .tf-field parent is position:relative) rather than floating in a page corner, so it's
+     obvious which field the error is about. Small bubble, slides/fades in, auto-dismisses after
+     2s; the X lets it be closed sooner. z-index clears neighboring fields/dropdowns. */
+  .tf-error-toast { position:absolute; top:100%; left:0; margin-top:7px; z-index:50; width:max-content; max-width:280px;
+    display:flex; align-items:flex-start; gap:8px; background:var(--white); color:var(--ink);
+    border:1px solid rgba(200,48,48,0.3); border-left:4px solid var(--red); border-radius:8px;
+    padding:10px 12px; font-size:0.78rem; box-shadow:0 8px 20px rgba(20,33,61,0.18);
+    opacity:0; transform:translateY(-6px); pointer-events:none;
+    transition:opacity .25s ease, transform .25s ease; }
+  .tf-error-toast::before { content:''; position:absolute; top:-5px; left:16px; width:9px; height:9px;
+    background:var(--white); border-left:1px solid rgba(200,48,48,0.3); border-top:1px solid rgba(200,48,48,0.3);
+    transform:rotate(45deg); }
+  .tf-error-toast.show { opacity:1; transform:translateY(0); pointer-events:auto; }
+  .tf-error-toast-icon { color:var(--red); font-size:0.95rem; line-height:1.4; flex-shrink:0; }
+  .tf-error-toast-msg { flex:1; line-height:1.4; font-weight:600; }
+  .tf-error-toast-dismiss { background:none; border:none; color:var(--steel); cursor:pointer; font-size:0.8rem; padding:1px 3px; flex-shrink:0; line-height:1; }
+  .tf-error-toast-dismiss:hover { color:var(--ink); }
+
+  .tf-empty-toggle { display:flex; align-items:center; gap:10px; background:var(--white); border:1.5px solid var(--line); border-radius:999px; padding:9px 14px; font-size:0.85rem; font-weight:600; cursor:pointer; }
   .tf-switch { position:relative; display:inline-block; width:38px; height:21px; flex-shrink:0; }
   .tf-switch input { opacity:0; width:0; height:0; }
   .tf-switch-track { position:absolute; inset:0; background:var(--line); border-radius:11px; transition:background .15s; }
@@ -50,7 +69,7 @@
   .tf-others-total { font-weight:700; white-space:nowrap; padding-top:9px; display:block; }
   .tf-others-remove { background:none; border:none; color:var(--red); cursor:pointer; font-size:1rem; padding:6px; }
   .tf-others-empty { text-align:center; color:var(--steel); font-size:0.85rem; padding:24px 10px; }
-  .tf-add-item-btn { background:var(--accent); color:#fff; border:none; padding:8px 14px; border-radius:6px; font-size:0.8rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .tf-add-item-btn { background:var(--accent); color:#fff; border:none; padding:8px 14px; border-radius:999px; font-size:0.8rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
   .tf-add-item-btn:hover { opacity:0.92; }
   .tf-others-note { font-size:0.74rem; color:var(--steel); padding:10px 18px 14px; border-top:1px solid var(--line); background:var(--paper); }
 
@@ -105,7 +124,24 @@
           </div>
           <div class="tf-section-body">
             <div class="tf-field"><label>Trip Date <span class="req">*</span></label><input type="date" name="date" value="{{ t.get('date','') }}" required></div>
-            <div class="tf-field"><label>LR Number <span class="req">*</span></label><input type="text" name="lr_number" value="{{ t.get('lr_number','') or '' }}" placeholder="Enter LR Number" required></div>
+            <div class="tf-field" style="position:relative;">
+              <label>LR Number <span class="req">*</span></label>
+              <input type="text" name="lr_number" value="{{ t.get('lr_number','') or '' }}" placeholder="Enter LR Number" required>
+              {% if error %}
+              <div id="tfErrorToast" class="tf-error-toast">
+                <span class="tf-error-toast-icon">&#9888;</span>
+                <span class="tf-error-toast-msg">{{ error }}</span>
+                <button type="button" class="tf-error-toast-dismiss" onclick="document.getElementById('tfErrorToast').classList.remove('show')" aria-label="Dismiss">&#10005;</button>
+              </div>
+              <script>
+              (function() {
+                var el = document.getElementById('tfErrorToast');
+                requestAnimationFrame(function() { el.classList.add('show'); });
+                setTimeout(function() { el.classList.remove('show'); }, 2000);
+              })();
+              </script>
+              {% endif %}
+            </div>
             <div class="tf-field"><label>Vehicle No <span class="req">*</span></label><input type="text" name="vehicle_no" value="{{ t.get('vehicle_no','') or '' }}" list="vehicle-list" required></div>
             <div class="tf-field"><label>Type <span class="req">*</span></label>
               <select name="type">
