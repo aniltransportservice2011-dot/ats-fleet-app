@@ -267,7 +267,9 @@ def get_or_create_party(conn, name):
     row = conn.execute("SELECT id FROM parties WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
     if row:
         return row[0]
-    cur = conn.execute("INSERT INTO parties (name) VALUES (?)", (name,))
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cur = conn.execute("INSERT INTO parties (name, created_by, created_at) VALUES (?,?,?)",
+                        (name, session.get('user_id'), now))
     party_id = cur.lastrowid
     # A vendor record with the same name may already exist (e.g. created first via
     # Maintenance/Fuel). Link it here too, so both sides share one combined ledger
@@ -275,7 +277,8 @@ def get_or_create_party(conn, name):
     vendor_match = conn.execute(
         "SELECT id FROM vendors WHERE name = ? COLLATE NOCASE AND linked_party_id IS NULL", (name,)).fetchone()
     if vendor_match:
-        conn.execute("UPDATE vendors SET linked_party_id = ? WHERE id = ?", (party_id, vendor_match[0]))
+        conn.execute("UPDATE vendors SET linked_party_id = ?, updated_by=?, updated_at=? WHERE id = ?",
+                     (party_id, session.get('user_id'), now, vendor_match[0]))
     return party_id
 
 def get_or_create_vendor(conn, name):
@@ -285,6 +288,7 @@ def get_or_create_vendor(conn, name):
     row = conn.execute("SELECT id FROM vendors WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
     if row:
         return row[0]
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     # If this name already exists as a Party, link this vendor record to that party
     # instead of creating a fully independent one — keeps ledgers combined.
     party_match = conn.execute("SELECT id FROM parties WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
@@ -292,9 +296,11 @@ def get_or_create_vendor(conn, name):
         existing_link = conn.execute("SELECT id FROM vendors WHERE linked_party_id = ?", (party_match[0],)).fetchone()
         if existing_link:
             return existing_link[0]
-        cur = conn.execute("INSERT INTO vendors (name, linked_party_id) VALUES (?,?)", (name, party_match[0]))
+        cur = conn.execute("INSERT INTO vendors (name, linked_party_id, created_by, created_at) VALUES (?,?,?,?)",
+                            (name, party_match[0], session.get('user_id'), now))
         return cur.lastrowid
-    cur = conn.execute("INSERT INTO vendors (name) VALUES (?)", (name,))
+    cur = conn.execute("INSERT INTO vendors (name, created_by, created_at) VALUES (?,?,?)",
+                        (name, session.get('user_id'), now))
     return cur.lastrowid
 
 def _accounts_rows(conn):
@@ -439,15 +445,16 @@ def add_account():
     gstin = f.get('gstin') or None
     credit_limit = float(f.get('credit_limit') or 0) or None
     opening_balance = float(f.get('opening_balance') or 0)
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         if role == 'Vendor':
-            conn.execute("""INSERT INTO vendors (name, category, contact, email, address, credit_limit, opening_balance, gstin)
-                            VALUES (?,?,?,?,?,?,?,?)""",
-                         (name, category, contact, email, address, credit_limit, opening_balance, gstin))
+            conn.execute("""INSERT INTO vendors (name, category, contact, email, address, credit_limit, opening_balance, gstin, created_by, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                         (name, category, contact, email, address, credit_limit, opening_balance, gstin, session.get('user_id'), now))
         else:
-            conn.execute("""INSERT INTO parties (name, contact, email, address, credit_limit, opening_balance, category, gstin)
-                            VALUES (?,?,?,?,?,?,?,?)""",
-                         (name, contact, email, address, credit_limit, opening_balance, category, gstin))
+            conn.execute("""INSERT INTO parties (name, contact, email, address, credit_limit, opening_balance, category, gstin, created_by, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                         (name, contact, email, address, credit_limit, opening_balance, category, gstin, session.get('user_id'), now))
         conn.commit()
     except sqlite3.IntegrityError:
         pass
@@ -460,7 +467,8 @@ def toggle_account_status(role, account_id):
     table = 'vendors' if role == 'vendor' else 'parties'
     current = conn.execute(f"SELECT status FROM {table} WHERE id=?", (account_id,)).fetchone()
     new_status = 'Inactive' if (current and current['status'] == 'Active') else 'Active'
-    conn.execute(f"UPDATE {table} SET status=? WHERE id=?", (new_status, account_id))
+    conn.execute(f"UPDATE {table} SET status=?, updated_by=?, updated_at=? WHERE id=?",
+                 (new_status, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), account_id))
     conn.commit()
     conn.close()
     return redirect(url_for('accounts', **request.args.to_dict()))
@@ -949,8 +957,8 @@ def vehicle_sync_now(v_id):
 
         rc_result = fetch_rc(v['vehicle_no'], api_key)
         if rc_result['ok']:
-            conn.execute("UPDATE vehicles SET rc_synced_data=?, rc_last_synced=? WHERE id=?",
-                         (json.dumps(rc_result['data']), now, v_id))
+            conn.execute("UPDATE vehicles SET rc_synced_data=?, rc_last_synced=?, updated_by=?, updated_at=? WHERE id=?",
+                         (json.dumps(rc_result['data']), now, session.get('user_id'), now, v_id))
             _backfill_from_rc(conn, v_id, v['vehicle_no'], rc_result['data'], now)
             conn.commit()
 
@@ -973,18 +981,20 @@ def vehicle_sync_now(v_id):
                      fine_imposed, amount_of_fine_imposed, department, driver_name, name_of_violator,
                      owner_name, dl_no, document_impounded, remark, rto_distric_name, state_code,
                      court_name, court_address, date_of_proceeding, sent_to_court_on, sent_to_reg_court,
-                     sent_to_virtual_court, offence_details, source_created_at, source_updated_at, last_synced)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     sent_to_virtual_court, offence_details, source_created_at, source_updated_at, last_synced,
+                     created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (v_id, c.get('_id'), c.get('challan_no'), c.get('challan_date_time'), c.get('challan_place'),
                      c.get('challan_status'), fine_val, c.get('amount_of_fine_imposed'), c.get('department'),
                      c.get('driver_name'), c.get('name_of_violator'), c.get('owner_name'), c.get('dl_no'),
                      c.get('document_impounded'), c.get('remark'), c.get('rto_distric_name'), c.get('state_code'),
                      c.get('court_name'), c.get('court_address'), c.get('date_of_proceeding'),
                      c.get('sent_to_court_on'), c.get('sent_to_reg_court'), c.get('sent_to_virtual_court'),
-                     json.dumps(c.get('offence_details') or []), c.get('createdAt'), c.get('updatedAt'), now))
+                     json.dumps(c.get('offence_details') or []), c.get('createdAt'), c.get('updatedAt'), now,
+                     session.get('user_id'), now))
             pending_count = data.get('pending_count', sum(1 for c in challans if (c.get('challan_status') or '').lower() == 'pending'))
-            conn.execute("UPDATE vehicles SET challan_count=?, challan_amount=?, challan_last_synced=? WHERE id=?",
-                         (pending_count, pending_amount, now, v_id))
+            conn.execute("UPDATE vehicles SET challan_count=?, challan_amount=?, challan_last_synced=?, updated_by=?, updated_at=? WHERE id=?",
+                         (pending_count, pending_amount, now, session.get('user_id'), now, v_id))
             conn.commit()
     conn.close()
     return redirect(return_to)
@@ -1231,9 +1241,14 @@ def _employee_initials(name):
     return (parts[0][0] + parts[1][0]).upper()
 
 def _employee_outstanding_advance(conn, name):
+    """given - repaid, PLUS any carried-over opening balance — same formula
+    `_employee_ledger_entries()`'s running advance_balance uses (with no date filter), so this
+    number always matches what the employee's own Ledger page shows as 'Advance outstanding'."""
     given = conn.execute("SELECT COALESCE(SUM(amount),0) FROM advances WHERE employee=? COLLATE NOCASE AND type='given'", (name,)).fetchone()[0]
     repaid = conn.execute("SELECT COALESCE(SUM(amount),0) FROM advances WHERE employee=? COLLATE NOCASE AND type='repaid'", (name,)).fetchone()[0]
-    return given - repaid
+    emp_row = conn.execute("SELECT opening_balance FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
+    opening_balance = (emp_row['opening_balance'] or 0) if emp_row else 0
+    return opening_balance + given - repaid
 
 def _employee_attendance_stats(conn, employee_id, date_from, date_to):
     """(present, absent, leave, half_day, working_days, pct) for one employee over an arbitrary
@@ -1949,7 +1964,8 @@ def add_trip():
             row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
             if row:
                 return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             return cur.lastrowid
         def n(key):
             return float(f.get(key) or 0)
@@ -2006,6 +2022,8 @@ def add_trip():
                 n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
                 n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
                 f.get('lr_received') or None, 1 if f.get('is_empty') else 0]
+        cols.extend(['created_by', 'created_at'])
+        vals.extend([session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
         placeholders = ','.join('?' * len(cols))
         cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
         _save_trip_custom_items(conn, cur.lastrowid, f)
@@ -2051,8 +2069,10 @@ def _save_trip_custom_items(conn, trip_id, form):
         item_type = types[i] if i < len(types) and types[i] in ('charge', 'deduction') else 'charge'
         vendor_name = (vendor_names[i].strip() if i < len(vendor_names) and vendor_names[i] else '')
         vendor_id = get_or_create_vendor(conn, vendor_name) if vendor_name else None
-        conn.execute("INSERT INTO invoice_items (trip_id, description, amount, item_type, vendor_id) VALUES (?,?,?,?,?)",
-                     (trip_id, desc, rate * (qty or 1), item_type, vendor_id))
+        conn.execute("""INSERT INTO invoice_items (trip_id, description, amount, item_type, vendor_id, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?)""",
+                     (trip_id, desc, rate * (qty or 1), item_type, vendor_id, session.get('user_id'),
+                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
 def _get_autocomplete_lists():
     conn = get_db()
@@ -3211,14 +3231,16 @@ def add_maintenance():
             row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
             if row:
                 return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             return cur.lastrowid
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
-        conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes)
-                        VALUES (?,?,?,?,?,?,?)""",
+        conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)""",
                      (f.get('date'), vehicle_id, f.get('category'), float(f.get('amount') or 0),
-                      float(f.get('paid_amount') or 0), vendor_id, f.get('notes')))
+                      float(f.get('paid_amount') or 0), vendor_id, f.get('notes'), session.get('user_id'),
+                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         conn.commit()
         conn.close()
         return redirect(url_for('maintenance_list'))
@@ -3241,8 +3263,10 @@ def _save_service_items(conn, service_id, form):
         rate = float(rates[i]) if i < len(rates) and rates[i] else 0
         cat = cats[i] if i < len(cats) else ''
         unit = units[i] if i < len(units) else ''
-        conn.execute("""INSERT INTO maintenance_items (maintenance_id, item_name, category, qty, unit, rate, amount)
-                        VALUES (?,?,?,?,?,?,?)""", (service_id, name, cat, qty, unit, rate, qty * rate))
+        conn.execute("""INSERT INTO maintenance_items (maintenance_id, item_name, category, qty, unit, rate, amount, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)""",
+                     (service_id, name, cat, qty, unit, rate, qty * rate, session.get('user_id'),
+                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
 @app.route('/maintenance/service/add', methods=['POST'])
 def add_service():
@@ -3255,7 +3279,8 @@ def add_service():
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -3266,12 +3291,13 @@ def add_service():
     paid_amount = float(f.get('paid_amount') or 0)
     checklist = ','.join(request.form.getlist('checklist'))
     cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, service_type, amount, paid_amount, vendor_id, notes,
-                          km_reading, next_due_km, next_service_date, invoice_no, invoice_date, status, checklist_done)
-                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          km_reading, next_due_km, next_service_date, invoice_no, invoice_date, status, checklist_done, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (f.get('date'), vehicle_id, f.get('service_type'), f.get('service_type'), amount, paid_amount, vendor_id,
          f.get('notes') or None, float(f.get('km_reading') or 0) or None, float(f.get('next_due_km') or 0) or None,
          f.get('next_service_date') or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
-         f.get('status') or 'Completed', checklist or None))
+         f.get('status') or 'Completed', checklist or None, session.get('user_id'),
+         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     service_id = cur.lastrowid
     _save_service_items(conn, service_id, request.form)
     conn.commit()
@@ -3289,7 +3315,8 @@ def edit_service(m_id):
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -3298,12 +3325,14 @@ def edit_service(m_id):
     paid_amount = float(f.get('paid_amount') or 0)
     checklist = ','.join(request.form.getlist('checklist'))
     conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, category=?, service_type=?, amount=?, paid_amount=?, vendor_id=?,
-                    notes=?, km_reading=?, next_due_km=?, next_service_date=?, invoice_no=?, invoice_date=?, status=?, checklist_done=?
+                    notes=?, km_reading=?, next_due_km=?, next_service_date=?, invoice_no=?, invoice_date=?, status=?, checklist_done=?,
+                    updated_by=?, updated_at=?
                     WHERE id=?""",
         (f.get('date'), vehicle_id, f.get('service_type'), f.get('service_type'), amount, paid_amount, vendor_id,
          f.get('notes') or None, float(f.get('km_reading') or 0) or None, float(f.get('next_due_km') or 0) or None,
          f.get('next_service_date') or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
-         f.get('status') or 'Completed', checklist or None, m_id))
+         f.get('status') or 'Completed', checklist or None, session.get('user_id'),
+         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), m_id))
     _save_service_items(conn, m_id, request.form)
     conn.commit()
     conn.close()
@@ -3320,7 +3349,8 @@ def add_tyre():
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -3334,11 +3364,13 @@ def add_tyre():
             # The ledger date stays the purchase date — the cost was incurred then, not now —
             # matching the Tyre Stock table's own Install action.
             km_reading = float(f.get('km_reading') or 0) or None
-            conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=? WHERE id=?",
+            conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=?, updated_by=?, updated_at=? WHERE id=?",
                 (vehicle_id, f.get('tyre_position') or None, f.get('tyre_action') or 'New Tyre Fitted',
-                 km_reading, stock['maintenance_id']))
+                 km_reading, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock['maintenance_id']))
             conn.execute("""UPDATE tyre_stock SET status='Installed', installed_vehicle_id=?, installed_position=?,
-                            installed_date=? WHERE id=?""", (vehicle_id, f.get('tyre_position') or None, f.get('date'), stock['id']))
+                            installed_date=?, updated_by=?, updated_at=? WHERE id=?""",
+                (vehicle_id, f.get('tyre_position') or None, f.get('date'),
+                 session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock['id']))
             conn.commit()
             conn.close()
             return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3349,12 +3381,14 @@ def add_tyre():
     amount = float(f.get('amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
     conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes,
-                    km_reading, invoice_no, invoice_date, tyre_action, tyre_id, tyre_brand, tyre_position, status)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    km_reading, invoice_no, invoice_date, tyre_action, tyre_id, tyre_brand, tyre_position, status,
+                    created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (f.get('date'), vehicle_id, 'Tyres', amount, paid_amount, vendor_id, f.get('notes') or None,
          float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
          f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
-         f.get('tyre_position') or None, 'Completed'))
+         f.get('tyre_position') or None, 'Completed', session.get('user_id'),
+         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3370,7 +3404,8 @@ def edit_tyre(m_id):
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -3378,12 +3413,14 @@ def edit_tyre(m_id):
     amount = float(f.get('amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
     conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=?,
-                    km_reading=?, invoice_no=?, invoice_date=?, tyre_action=?, tyre_id=?, tyre_brand=?, tyre_position=?
+                    km_reading=?, invoice_no=?, invoice_date=?, tyre_action=?, tyre_id=?, tyre_brand=?, tyre_position=?,
+                    updated_by=?, updated_at=?
                     WHERE id=?""",
         (f.get('date'), vehicle_id, amount, paid_amount, vendor_id, f.get('notes') or None,
          float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
          f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
-         f.get('tyre_position') or None, m_id))
+         f.get('tyre_position') or None, session.get('user_id'),
+         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), m_id))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3397,16 +3434,19 @@ def add_tyre_stock():
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
     cost = float(f.get('purchase_cost') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes,
-                          invoice_no, tyre_action, tyre_id, tyre_brand, status)
-                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          invoice_no, tyre_action, tyre_id, tyre_brand, status, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (f.get('purchase_date'), None, 'Tyres', cost, paid_amount, vendor_id, f.get('notes') or None,
-         f.get('invoice_no') or None, 'Stock Purchase', f.get('tyre_id') or None, f.get('brand') or None, 'Completed'))
+         f.get('invoice_no') or None, 'Stock Purchase', f.get('tyre_id') or None, f.get('brand') or None, 'Completed',
+         session.get('user_id'), _now))
     maintenance_id = cur.lastrowid
     conn.execute("""INSERT INTO tyre_stock (maintenance_id, tyre_id, brand, tyre_type, purchase_date, purchase_cost,
-                    vendor_id, invoice_no, status, notes) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    vendor_id, invoice_no, status, notes, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (maintenance_id, f.get('tyre_id') or None, f.get('brand') or None, f.get('tyre_type') or 'New',
-         f.get('purchase_date'), cost, vendor_id, f.get('invoice_no') or None, 'In Stock', f.get('notes') or None))
+         f.get('purchase_date'), cost, vendor_id, f.get('invoice_no') or None, 'In Stock', f.get('notes') or None,
+         session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3422,7 +3462,8 @@ def install_tyre_stock(stock_id):
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     stock = conn.execute("SELECT * FROM tyre_stock WHERE id=?", (stock_id,)).fetchone()
@@ -3430,10 +3471,13 @@ def install_tyre_stock(stock_id):
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         install_date = f.get('install_date') or stock['purchase_date']
         km_reading = float(f.get('km_reading') or 0) or None
-        conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=? WHERE id=?",
-            (vehicle_id, f.get('position'), 'New Tyre Fitted', km_reading, stock['maintenance_id']))
+        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=?, updated_by=?, updated_at=? WHERE id=?",
+            (vehicle_id, f.get('position'), 'New Tyre Fitted', km_reading, session.get('user_id'), _now, stock['maintenance_id']))
         conn.execute("""UPDATE tyre_stock SET status='Installed', installed_vehicle_id=?, installed_position=?,
-                        installed_date=? WHERE id=?""", (vehicle_id, f.get('position'), install_date, stock_id))
+                        installed_date=?, updated_by=?, updated_at=? WHERE id=?""",
+            (vehicle_id, f.get('position'), install_date,
+             session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock_id))
         conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3441,7 +3485,8 @@ def install_tyre_stock(stock_id):
 @app.route('/maintenance/tyre/stock/<int:stock_id>/scrap', methods=['POST'])
 def scrap_tyre_stock(stock_id):
     conn = get_db()
-    conn.execute("UPDATE tyre_stock SET status='Scrapped' WHERE id=? AND status='In Stock'", (stock_id,))
+    conn.execute("UPDATE tyre_stock SET status='Scrapped', updated_by=?, updated_at=? WHERE id=? AND status='In Stock'",
+                 (session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock_id))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3468,7 +3513,8 @@ def add_battery():
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     mode = f.get('mode', 'install')
@@ -3482,29 +3528,34 @@ def add_battery():
     voltage = float(f.get('voltage') or 0) or None
     temp_c = float(f.get('temp_c') or 0) or None
 
-    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, invoice_no, status)
-                          VALUES (?,?,?,?,?,?,?,?,?)""",
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, invoice_no, status, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         (f.get('purchase_date'), vehicle_id, 'Battery', price, float(f.get('paid_amount') or 0), vendor_id,
-         f.get('notes') or None, f.get('invoice_no') or None, 'Completed'))
+         f.get('notes') or None, f.get('invoice_no') or None, 'Completed', session.get('user_id'), now))
     maintenance_id = cur.lastrowid
 
     install_date = f.get('install_date') if mode == 'install' else None
     cur2 = conn.execute("""INSERT INTO batteries (battery_no, brand, model, capacity_ah, battery_type, voltage_rating, serial_no,
                            vehicle_id, installed_location, install_date, purchase_date, purchase_price, vendor_id, invoice_no,
-                           warranty_months, maintenance_id, health_pct, voltage, temp_c, last_checked_date, notes)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           warranty_months, maintenance_id, health_pct, voltage, temp_c, last_checked_date, notes,
+                           created_by, created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (battery_no, f.get('brand') or None, f.get('model') or None, float(f.get('capacity_ah') or 0) or None,
          f.get('battery_type') or None, f.get('voltage_rating') or None, f.get('serial_no') or None,
          vehicle_id, f.get('installed_location') or None, install_date, f.get('purchase_date'), price, vendor_id,
          f.get('invoice_no') or None, int(f.get('warranty_months') or 0) or None, maintenance_id,
-         health, voltage, temp_c, install_date or f.get('purchase_date'), f.get('notes') or None))
+         health, voltage, temp_c, install_date or f.get('purchase_date'), f.get('notes') or None,
+         session.get('user_id'), now))
     battery_id = cur2.lastrowid
 
-    conn.execute("INSERT INTO battery_checks (battery_id, date, event) VALUES (?,?,?)",
-                 (battery_id, f.get('purchase_date'), 'Purchased'))
+    conn.execute("INSERT INTO battery_checks (battery_id, date, event, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (battery_id, f.get('purchase_date'), 'Purchased', session.get('user_id'), now))
     if mode == 'install' and install_date:
-        conn.execute("INSERT INTO battery_checks (battery_id, date, event, health_pct, voltage, temp_c) VALUES (?,?,?,?,?,?)",
-                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", health, voltage, temp_c))
+        conn.execute("""INSERT INTO battery_checks (battery_id, date, event, health_pct, voltage, temp_c, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?,?)""",
+                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", health, voltage, temp_c,
+                      session.get('user_id'), now))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
@@ -3520,19 +3571,24 @@ def install_battery(battery_id):
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     battery = conn.execute("SELECT * FROM batteries WHERE id=?", (battery_id,)).fetchone()
     if battery and not battery['vehicle_id']:
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         install_date = f.get('install_date')
-        conn.execute("UPDATE batteries SET vehicle_id=?, installed_location=?, install_date=?, last_checked_date=? WHERE id=?",
-                     (vehicle_id, f.get('installed_location') or None, install_date, install_date, battery_id))
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute("""UPDATE batteries SET vehicle_id=?, installed_location=?, install_date=?, last_checked_date=?,
+                        updated_by=?, updated_at=? WHERE id=?""",
+                     (vehicle_id, f.get('installed_location') or None, install_date, install_date,
+                      session.get('user_id'), now, battery_id))
         if battery['maintenance_id']:
-            conn.execute("UPDATE maintenance SET vehicle_id=? WHERE id=?", (vehicle_id, battery['maintenance_id']))
-        conn.execute("INSERT INTO battery_checks (battery_id, date, event) VALUES (?,?,?)",
-                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}"))
+            conn.execute("UPDATE maintenance SET vehicle_id=?, updated_by=?, updated_at=? WHERE id=?",
+                         (vehicle_id, session.get('user_id'), now, battery['maintenance_id']))
+        conn.execute("INSERT INTO battery_checks (battery_id, date, event, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", session.get('user_id'), now))
         conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
@@ -3545,10 +3601,13 @@ def check_battery(battery_id):
     voltage = float(f.get('voltage') or 0) or None
     temp_c = float(f.get('temp_c') or 0) or None
     date = f.get('date') or datetime.date.today().isoformat()
-    conn.execute("UPDATE batteries SET health_pct=?, voltage=?, temp_c=?, last_checked_date=? WHERE id=?",
-                 (health, voltage, temp_c, date, battery_id))
-    conn.execute("INSERT INTO battery_checks (battery_id, date, event, health_pct, voltage, temp_c, remarks) VALUES (?,?,?,?,?,?,?)",
-                 (battery_id, date, 'Health Check', health, voltage, temp_c, f.get('remarks') or None))
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("UPDATE batteries SET health_pct=?, voltage=?, temp_c=?, last_checked_date=?, updated_by=?, updated_at=? WHERE id=?",
+                 (health, voltage, temp_c, date, session.get('user_id'), now, battery_id))
+    conn.execute("""INSERT INTO battery_checks (battery_id, date, event, health_pct, voltage, temp_c, remarks, created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                 (battery_id, date, 'Health Check', health, voltage, temp_c, f.get('remarks') or None,
+                  session.get('user_id'), now))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
@@ -3557,8 +3616,11 @@ def check_battery(battery_id):
 def mark_battery_dead(battery_id):
     conn = get_db()
     today = datetime.date.today().isoformat()
-    conn.execute("UPDATE batteries SET status_override='Dead' WHERE id=?", (battery_id,))
-    conn.execute("INSERT INTO battery_checks (battery_id, date, event) VALUES (?,?,?)", (battery_id, today, 'Marked Dead'))
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("UPDATE batteries SET status_override='Dead', updated_by=?, updated_at=? WHERE id=?",
+                 (session.get('user_id'), now, battery_id))
+    conn.execute("INSERT INTO battery_checks (battery_id, date, event, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (battery_id, today, 'Marked Dead', session.get('user_id'), now))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
@@ -3591,7 +3653,8 @@ def add_urea():
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     mode = f.get('mode')
@@ -3606,35 +3669,36 @@ def add_urea():
     if mode == 'stock_in':
         supplier_id = get_or_create_vendor(conn, f.get('supplier_name'))
         cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
-                                vendor_id, notes, invoice_no) VALUES (?,?,?,?,?,?,?,?)""",
+                                vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                               (date, None, 'Urea', total_value, float(f.get('paid_amount') or 0),
-                               supplier_id, notes, f.get('invoice_no')))
+                               supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, supplier_id,
-                        invoice_no, quantity_l, unit_price, total_value, location, notes, maintenance_id, created_at)
-                        VALUES (?, 'stock_in', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        invoice_no, quantity_l, unit_price, total_value, location, notes, maintenance_id, created_at,
+                        created_by)
+                        VALUES (?, 'stock_in', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                      (date, f.get('batch_no'), supplier_id, f.get('invoice_no'), qty, unit_price,
-                      total_value, location, notes, cur_m.lastrowid, now))
+                      total_value, location, notes, cur_m.lastrowid, now, session.get('user_id')))
     elif mode == 'stock_out':
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
-                        quantity_l, unit_price, total_value, location, odometer_km, notes, created_at)
-                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        quantity_l, unit_price, total_value, location, odometer_km, notes, created_at, created_by)
+                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                      (date, f.get('batch_no'), vehicle_id, qty, unit_price, total_value, location,
-                      float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now))
+                      float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now, session.get('user_id')))
     elif mode == 'direct':
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         supplier_id = get_or_create_vendor(conn, f.get('supplier_name')) if f.get('supplier_name') else None
         cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
-                                vendor_id, notes, invoice_no) VALUES (?,?,?,?,?,?,?,?)""",
+                                vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                               (date, vehicle_id, 'Urea', total_value, float(f.get('paid_amount') or 0),
-                               supplier_id, notes, f.get('invoice_no')))
+                               supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, supplier_id, invoice_no,
                         vehicle_id, quantity_l, unit_price, total_value, location, odometer_km, notes,
-                        maintenance_id, created_at)
-                        VALUES (?, 'stock_out', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        maintenance_id, created_at, created_by)
+                        VALUES (?, 'stock_out', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                      (date, supplier_id, f.get('invoice_no'), vehicle_id, qty, unit_price, total_value,
                       location, float(f.get('odometer_km')) if f.get('odometer_km') else None, notes,
-                      cur_m.lastrowid, now))
+                      cur_m.lastrowid, now, session.get('user_id')))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='urea'))
@@ -3647,16 +3711,18 @@ def edit_urea(txn_id):
         qty = float(f.get('quantity_l') or 0)
         unit_price = float(f.get('unit_price') or 0)
         total_value = round(qty * unit_price, 2)
+        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         conn.execute("""UPDATE urea_transactions SET date=?, batch_no=?, quantity_l=?, unit_price=?,
-                        total_value=?, location=?, odometer_km=?, notes=? WHERE id=?""",
+                        total_value=?, location=?, odometer_km=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
                      (f.get('date'), f.get('batch_no'), qty, unit_price, total_value, f.get('location'),
-                      float(f.get('odometer_km')) if f.get('odometer_km') else None, f.get('notes'), txn_id))
+                      float(f.get('odometer_km')) if f.get('odometer_km') else None, f.get('notes'),
+                      session.get('user_id'), _now, txn_id))
         # Keep the linked cost entry (if any) in sync so Overview's Urea card never disagrees
         # with what this ledger shows.
         txn = conn.execute("SELECT maintenance_id FROM urea_transactions WHERE id=?", (txn_id,)).fetchone()
         if txn and txn['maintenance_id']:
-            conn.execute("UPDATE maintenance SET date=?, amount=?, notes=? WHERE id=?",
-                         (f.get('date'), total_value, f.get('notes'), txn['maintenance_id']))
+            conn.execute("UPDATE maintenance SET date=?, amount=?, notes=?, updated_by=?, updated_at=? WHERE id=?",
+                         (f.get('date'), total_value, f.get('notes'), session.get('user_id'), _now, txn['maintenance_id']))
         conn.commit()
         conn.close()
         return redirect(url_for('maintenance_list', tab='urea'))
@@ -3704,14 +3770,16 @@ def add_toll():
     receipt_path = _save_toll_receipt(request.files.get('receipt'), session.get('company_id', 1))
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes)
-                            VALUES (?,?,?,?,?,?)""", (date, vehicle_id, 'Toll', amount, amount, notes))
+    cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes, created_by, created_at)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                          (date, vehicle_id, 'Toll', amount, amount, notes, session.get('user_id'), now))
     conn.execute("""INSERT INTO toll_entries (date, time, vehicle_id, trip_id, toll_plaza, highway, state,
-                    amount, source, payment_mode, status, receipt_path, notes, maintenance_id, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    amount, source, payment_mode, status, receipt_path, notes, maintenance_id, created_at,
+                    created_by)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                  (date, time_, vehicle_id, trip_id, f.get('toll_plaza'), f.get('highway') or None,
                   f.get('state') or None, amount, source, payment_mode, status, receipt_path, notes,
-                  cur_m.lastrowid, now))
+                  cur_m.lastrowid, now, session.get('user_id')))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
@@ -3730,7 +3798,8 @@ def delete_toll(entry_id):
 @app.route('/maintenance/toll/<int:entry_id>/approve', methods=['POST'])
 def approve_toll(entry_id):
     conn = get_db()
-    conn.execute("UPDATE toll_entries SET status='approved' WHERE id=? AND status='pending'", (entry_id,))
+    conn.execute("UPDATE toll_entries SET status='approved', updated_by=?, updated_at=? WHERE id=? AND status='pending'",
+                 (session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entry_id))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
@@ -3738,7 +3807,8 @@ def approve_toll(entry_id):
 @app.route('/maintenance/toll/<int:entry_id>/reject', methods=['POST'])
 def reject_toll(entry_id):
     conn = get_db()
-    conn.execute("UPDATE toll_entries SET status='rejected' WHERE id=? AND status='pending'", (entry_id,))
+    conn.execute("UPDATE toll_entries SET status='rejected', updated_by=?, updated_at=? WHERE id=? AND status='pending'",
+                 (session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entry_id))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
@@ -3775,16 +3845,20 @@ def sync_fastag_toll():
         ref_no = f"FT{txn_time.strftime('%y%m%d%H%M%S')}{v['id']}"
         if conn.execute("SELECT 1 FROM toll_entries WHERE reference_no=?", (ref_no,)).fetchone():
             continue
-        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount)
-                                VALUES (?,?,?,?,?)""", (txn_time.strftime('%Y-%m-%d'), v['id'], 'Toll', amount, amount))
+        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, created_by, created_at)
+                                VALUES (?,?,?,?,?,?,?)""",
+                             (txn_time.strftime('%Y-%m-%d'), v['id'], 'Toll', amount, amount,
+                              session.get('user_id'), now.strftime('%Y-%m-%d %H:%M:%S')))
         conn.execute("""INSERT INTO toll_entries (date, time, vehicle_id, toll_plaza, highway, state, amount,
-                        source, payment_mode, status, reference_no, maintenance_id, created_at)
-                        VALUES (?,?,?,?,?,?,?, 'fastag', 'FASTag Wallet', 'synced', ?, ?, ?)""",
+                        source, payment_mode, status, reference_no, maintenance_id, created_at, created_by)
+                        VALUES (?,?,?,?,?,?,?, 'fastag', 'FASTag Wallet', 'synced', ?, ?, ?, ?)""",
                      (txn_time.strftime('%Y-%m-%d'), txn_time.strftime('%H:%M'), v['id'], plaza, hwy, state,
-                      amount, ref_no, cur_m.lastrowid, now.strftime('%Y-%m-%d %H:%M:%S')))
+                      amount, ref_no, cur_m.lastrowid, now.strftime('%Y-%m-%d %H:%M:%S'), session.get('user_id')))
         inserted += 1
-    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('toll_fastag_last_sync', ?)",
-                 (now.strftime('%Y-%m-%d %H:%M:%S'),))
+    conn.execute("""INSERT OR REPLACE INTO settings (key, value, created_by, created_at, updated_by, updated_at)
+                    VALUES ('toll_fastag_last_sync', ?, ?, ?, ?, ?)""",
+                 (now.strftime('%Y-%m-%d %H:%M:%S'), session.get('user_id'), now.strftime('%Y-%m-%d %H:%M:%S'),
+                  session.get('user_id'), now.strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll', synced=inserted))
@@ -4067,29 +4141,33 @@ def toll_excel_import():
                     existing = conn.execute("SELECT maintenance_id FROM toll_entries WHERE id=?",
                                              (row['existing_id'],)).fetchone()
                     conn.execute("""UPDATE toll_entries SET date=?, time=?, vehicle_id=?, trip_id=?, toll_plaza=?,
-                                    highway=?, state=?, amount=?, payment_mode=?, notes=? WHERE id=?""",
+                                    highway=?, state=?, amount=?, payment_mode=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
                                  (row['date'], row['time'] or None, row['vehicle_id'], trip_id, row['toll_plaza'],
                                   row['highway'] or None, row['state'] or None, row['amount'],
-                                  row['payment_mode'] or None, row['notes'] or None, row['existing_id']))
+                                  row['payment_mode'] or None, row['notes'] or None,
+                                  session.get('user_id'), now, row['existing_id']))
                     if existing and existing['maintenance_id']:
-                        conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, notes=?
+                        conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, notes=?,
+                                        updated_by=?, updated_at=?
                                         WHERE id=?""",
                                      (row['date'], row['vehicle_id'], row['amount'], row['amount'],
-                                      row['notes'] or None, existing['maintenance_id']))
+                                      row['notes'] or None, session.get('user_id'), now, existing['maintenance_id']))
                     updated += 1
                 continue  # unchanged duplicate, or changed-but-override-not-requested: leave as-is
 
             status = 'synced' if row['source'] == 'fastag' else ('approved' if auto_approve else 'pending')
-            cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes)
-                                    VALUES (?,?,?,?,?,?)""",
-                                  (row['date'], row['vehicle_id'], 'Toll', row['amount'], row['amount'], row['notes'] or None))
+            cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes, created_by, created_at)
+                                    VALUES (?,?,?,?,?,?,?,?)""",
+                                  (row['date'], row['vehicle_id'], 'Toll', row['amount'], row['amount'], row['notes'] or None,
+                                   session.get('user_id'), now))
             conn.execute("""INSERT INTO toll_entries (date, time, vehicle_id, trip_id, toll_plaza, highway, state,
-                            amount, source, payment_mode, status, reference_no, notes, maintenance_id, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            amount, source, payment_mode, status, reference_no, notes, maintenance_id, created_at,
+                            created_by)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          (row['date'], row['time'] or None, row['vehicle_id'], trip_id, row['toll_plaza'],
                           row['highway'] or None, row['state'] or None, row['amount'], row['source'],
                           row['payment_mode'] or None, status, row['reference_no'] or None, row['notes'] or None,
-                          cur_m.lastrowid, now))
+                          cur_m.lastrowid, now, session.get('user_id')))
             imported += 1
         conn.commit()
     conn.close()
@@ -4106,7 +4184,8 @@ def add_insurance():
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -4115,9 +4194,10 @@ def add_insurance():
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
 
-    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, status)
-                          VALUES (?,?,?,?,?,?,?,?)""",
-        (f.get('start_date'), vehicle_id, 'Insurance', premium, premium, insurer_id, f.get('notes') or None, 'Completed'))
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, status, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (f.get('start_date'), vehicle_id, 'Insurance', premium, premium, insurer_id, f.get('notes') or None, 'Completed',
+         session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     maintenance_id = cur.lastrowid
 
     _cid = session.get('company_id', 1)
@@ -4126,19 +4206,22 @@ def add_insurance():
     rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
                     expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
-                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id,
+                    created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date'),
          f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
          f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
          f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or None, status_override,
-         policy_doc, invoice_doc, rc_doc, maintenance_id))
+         policy_doc, invoice_doc, rc_doc, maintenance_id, session.get('user_id'), _now))
 
     # Keep the vehicle's own insurance_expiry (shown on the Vehicles page) in sync with this policy.
     if vehicle_id and f.get('expiry_date'):
-        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
+        conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
+                     (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
     conn.commit()
     conn.close()
     return redirect(request.form.get('return_to') or url_for('vehicles_list'))
@@ -4159,7 +4242,8 @@ def edit_insurance(policy_id):
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -4172,21 +4256,24 @@ def edit_insurance(policy_id):
     rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid) or policy['rc_doc_path']
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE insurance_policies SET vehicle_id=?, insurance_type=?, insurer_id=?, policy_number=?,
                     start_date=?, expiry_date=?, premium_amount=?, idv=?, ncb_pct=?, gst_included=?, agent_name=?,
                     agent_contact=?, agent_email=?, reminder_days=?, notes=?, status_override=?, policy_doc_path=?,
-                    invoice_doc_path=?, rc_doc_path=? WHERE id=?""",
+                    invoice_doc_path=?, rc_doc_path=?, updated_by=?, updated_at=? WHERE id=?""",
         (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date'),
          f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
          f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
          f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or None, status_override,
-         policy_doc, invoice_doc, rc_doc, policy_id))
+         policy_doc, invoice_doc, rc_doc, session.get('user_id'), _now, policy_id))
 
     if policy['maintenance_id']:
-        conn.execute("UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=? WHERE id=?",
-            (f.get('start_date'), vehicle_id, premium, premium, insurer_id, f.get('notes') or None, policy['maintenance_id']))
+        conn.execute("UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=?, updated_by=?, updated_at=? WHERE id=?",
+            (f.get('start_date'), vehicle_id, premium, premium, insurer_id, f.get('notes') or None,
+             session.get('user_id'), _now, policy['maintenance_id']))
     if vehicle_id and f.get('expiry_date'):
-        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
+        conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
+                     (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
     conn.commit()
     conn.close()
     return redirect(request.form.get('return_to') or url_for('vehicles_list'))
@@ -4227,7 +4314,8 @@ def convert_legacy_insurance(maintenance_id):
         row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
         if row:
             return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) or m['vehicle_id']
@@ -4240,20 +4328,23 @@ def convert_legacy_insurance(maintenance_id):
     invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid)
     rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
 
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
                     expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
-                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id,
+                    created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date') or m['date'],
          f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
          f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
          f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or m['notes'], status_override,
-         policy_doc, invoice_doc, rc_doc, maintenance_id))
+         policy_doc, invoice_doc, rc_doc, maintenance_id, session.get('user_id'), _now))
 
-    conn.execute("UPDATE maintenance SET vehicle_id=?, date=?, vendor_id=?, amount=?, paid_amount=? WHERE id=?",
-        (vehicle_id, f.get('start_date') or m['date'], insurer_id, premium, premium, maintenance_id))
+    conn.execute("UPDATE maintenance SET vehicle_id=?, date=?, vendor_id=?, amount=?, paid_amount=?, updated_by=?, updated_at=? WHERE id=?",
+        (vehicle_id, f.get('start_date') or m['date'], insurer_id, premium, premium, session.get('user_id'), _now, maintenance_id))
     if vehicle_id and f.get('expiry_date'):
-        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (f.get('expiry_date'), vehicle_id))
+        conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
+                     (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
     conn.commit()
     conn.close()
     return redirect(url_for('vehicles_list', tab='insurance'))
@@ -4758,9 +4849,11 @@ def add_party_payment(party_id):
     if request.method == 'POST':
         f = request.form
         total_amount = float(f.get('amount') or 0)
-        cur = conn.execute("INSERT INTO payments (date, payment_type, amount, party_id, mode, reference_id, remarks) VALUES (?,?,?,?,?,?,?)",
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, party_id, mode, reference_id, remarks, created_by, created_at)
+                              VALUES (?,?,?,?,?,?,?,?,?)""",
                             (f.get('date'), 'received', total_amount, party_id, f.get('mode'),
-                             f.get('reference_id') or None, f.get('remarks') or None))
+                             f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
         payment_id = cur.lastrowid
         # Pending is computed live (billed_amount - payment_received - party_advance) since it
         # isn't a stored column; allocation fills each selected trip's balance in submitted
@@ -4778,11 +4871,14 @@ def add_party_payment(party_id):
             if pending <= 0.004:
                 continue
             alloc = min(pending, remaining)
-            conn.execute("UPDATE trips SET payment_received = COALESCE(payment_received,0) + ? WHERE id=?", (alloc, tid))
-            conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount) VALUES (?,?,?)", (payment_id, tid, alloc))
+            conn.execute("UPDATE trips SET payment_received = COALESCE(payment_received,0) + ?, updated_by=?, updated_at=? WHERE id=?",
+                         (alloc, session.get('user_id'), now, tid))
+            conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
+                         (payment_id, tid, alloc, session.get('user_id'), now))
             remaining -= alloc
             allocated_total += alloc
-        conn.execute("UPDATE payments SET allocated_amount=? WHERE id=?", (allocated_total, payment_id))
+        conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
+                     (allocated_total, session.get('user_id'), now, payment_id))
         conn.commit()
         conn.close()
         return redirect(url_for('party_ledger', party_id=party_id))
@@ -4796,9 +4892,11 @@ def add_vendor_payment(vendor_id):
     if request.method == 'POST':
         f = request.form
         total_amount = float(f.get('amount') or 0)
-        cur = conn.execute("INSERT INTO payments (date, payment_type, amount, vendor_id, mode, reference_id, remarks) VALUES (?,?,?,?,?,?,?)",
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, vendor_id, mode, reference_id, remarks, created_by, created_at)
+                              VALUES (?,?,?,?,?,?,?,?,?)""",
                             (f.get('date'), 'paid', total_amount, vendor_id, f.get('mode'),
-                             f.get('reference_id') or None, f.get('remarks') or None))
+                             f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
         payment_id = cur.lastrowid
         trip_ids = f.getlist('trip_ids')
         remaining = total_amount
@@ -4814,11 +4912,14 @@ def add_vendor_payment(vendor_id):
             if pending <= 0.004:
                 continue
             alloc = min(pending, remaining)
-            conn.execute("UPDATE trips SET paid_to_owner = COALESCE(paid_to_owner,0) + ? WHERE id=?", (alloc, tid))
-            conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount) VALUES (?,?,?)", (payment_id, tid, alloc))
+            conn.execute("UPDATE trips SET paid_to_owner = COALESCE(paid_to_owner,0) + ?, updated_by=?, updated_at=? WHERE id=?",
+                         (alloc, session.get('user_id'), now, tid))
+            conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
+                         (payment_id, tid, alloc, session.get('user_id'), now))
             remaining -= alloc
             allocated_total += alloc
-        conn.execute("UPDATE payments SET allocated_amount=? WHERE id=?", (allocated_total, payment_id))
+        conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
+                     (allocated_total, session.get('user_id'), now, payment_id))
         conn.commit()
         conn.close()
         return redirect(url_for('vendor_ledger', vendor_id=vendor_id))
@@ -4868,11 +4969,13 @@ def add_salary():
         emp_type = f.get('employee_type')
         existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (emp_name,)).fetchone()
         if existing:
-            conn.execute("UPDATE employees SET type=? WHERE id=?", (emp_type, existing[0]))
+            conn.execute("UPDATE employees SET type=?, updated_by=?, updated_at=? WHERE id=?",
+                         (emp_type, session.get('user_id'), now, existing[0]))
         else:
-            conn.execute("INSERT INTO employees (name, type) VALUES (?,?)", (emp_name, emp_type))
-        conn.execute("INSERT INTO salaries (employee, month, amount, date, created_at) VALUES (?,?,?,?,?)",
-                     (emp_name, month_label, float(f.get('amount') or 0), tx_date, now))
+            conn.execute("INSERT INTO employees (name, type, created_by, created_at) VALUES (?,?,?,?)",
+                         (emp_name, emp_type, session.get('user_id'), now))
+        conn.execute("INSERT INTO salaries (employee, month, amount, date, created_at, created_by) VALUES (?,?,?,?,?,?)",
+                     (emp_name, month_label, float(f.get('amount') or 0), tx_date, now, session.get('user_id')))
         conn.commit()
         conn.close()
         return redirect(url_for('salaries_list'))
@@ -4888,12 +4991,13 @@ def add_overhead():
         is_recurring = 1 if f.get('is_recurring') == 'on' else 0
         status = f.get('status') or 'Paid'
         conn.execute("""INSERT INTO overheads (date, category, amount, notes, payment_mode, receipt_number,
-                        vendor, description, status, is_recurring, recurring_frequency, due_date)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        vendor, description, status, is_recurring, recurring_frequency, due_date, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
                       f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
                       status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
-                      f.get('due_date') if status == 'Pending' else None))
+                      f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
+                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         conn.commit()
         conn.close()
         return redirect(url_for('overheads_list'))
@@ -4907,11 +5011,13 @@ def edit_overhead(o_id):
     is_recurring = 1 if f.get('is_recurring') == 'on' else 0
     status = f.get('status') or 'Paid'
     conn.execute("""UPDATE overheads SET date=?, category=?, amount=?, notes=?, payment_mode=?, receipt_number=?,
-                    vendor=?, description=?, status=?, is_recurring=?, recurring_frequency=?, due_date=? WHERE id=?""",
+                    vendor=?, description=?, status=?, is_recurring=?, recurring_frequency=?, due_date=?,
+                    updated_by=?, updated_at=? WHERE id=?""",
                  (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
                   f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
                   status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
-                  f.get('due_date') if status == 'Pending' else None, o_id))
+                  f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), o_id))
     conn.commit()
     conn.close()
     return redirect(url_for('overheads_list'))
@@ -4945,12 +5051,13 @@ def end_trip(trip_id):
 
     conn.execute("""UPDATE trips SET end_date=?, end_time=?, actual_km=?, lr_received=?,
                     shortage_qty=?, shortage_unit=?, shortage_amount=?, shortage_date=?, shortage_remarks=?,
-                    remarks=?, billed_amount=?
+                    remarks=?, billed_amount=?, updated_by=?, updated_at=?
                     WHERE id=?""",
                  (end_date, f.get('end_time') or None, n('actual_km') or None, f.get('lr_received') or None,
                   shortage_qty or None, f.get('shortage_unit') or None, shortage_amount,
                   end_date if shortage_amount else None, f.get('shortage_remarks') or None,
-                  f.get('remarks') or None, new_billed_amount, trip_id))
+                  f.get('remarks') or None, new_billed_amount, session.get('user_id'),
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), trip_id))
     conn.commit()
     conn.close()
     return redirect(url_for('trips_list', **request.args.to_dict()))
@@ -4979,14 +5086,18 @@ def edit_maintenance(m_id):
             row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
             if row:
                 return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             return cur.lastrowid
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
-        conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, category=?, amount=?, paid_amount=?, vendor_id=?, notes=?
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, category=?, amount=?, paid_amount=?, vendor_id=?, notes=?,
+                        updated_by=?, updated_at=?
                         WHERE id=?""",
                      (f.get('date'), vehicle_id, f.get('category'), float(f.get('amount') or 0),
-                      float(f.get('paid_amount') or 0), vendor_id, f.get('notes'), m_id))
+                      float(f.get('paid_amount') or 0), vendor_id, f.get('notes'),
+                      session.get('user_id'), now, m_id))
         conn.commit()
         conn.close()
         return_to = f.get('return_to')
@@ -5029,12 +5140,13 @@ def edit_employee(employee_id):
     f = request.form
     conn.execute("""UPDATE employees SET name=?, type=?, role=?, mobile=?, email=?, address=?, joining_date=?,
                     date_of_birth=?, bank_account=?, ifsc_code=?, upi_id=?, emergency_contact=?, aadhaar=?, pan=?,
-                    driving_license=?, basic_salary=? WHERE id=?""",
+                    driving_license=?, basic_salary=?, updated_by=?, updated_at=? WHERE id=?""",
                  (f.get('name'), f.get('type'), f.get('role'), f.get('mobile') or None, f.get('email') or None,
                   f.get('address') or None, f.get('joining_date') or None, f.get('date_of_birth') or None,
                   f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
                   f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
-                  f.get('driving_license') or None, float(f.get('basic_salary') or 0), employee_id))
+                  f.get('driving_license') or None, float(f.get('basic_salary') or 0),
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee_id))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab=request.form.get('return_tab') or 'overview'))
@@ -5044,7 +5156,9 @@ def deactivate_employee(employee_id):
     conn = get_db()
     row = conn.execute("SELECT status FROM employees WHERE id=?", (employee_id,)).fetchone()
     new_status = 'Inactive' if (row and row['status'] != 'Inactive') else 'Active'
-    conn.execute("UPDATE employees SET status=? WHERE id=?", (new_status, employee_id))
+    conn.execute("UPDATE employees SET status=?, updated_by=?, updated_at=? WHERE id=?",
+                 (new_status, session.get('user_id'),
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee_id))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list'))
@@ -5072,9 +5186,9 @@ def process_payroll():
             skipped_no_salary.append(e['name'])
             continue
         conn.execute("""INSERT INTO salaries (employee, month, amount, date, created_at, employee_id, month_key,
-                        basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'pending')""",
-                     (e['name'], month_key, basic, None, now, e['id'], month_key, basic, basic, basic))
+                        basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'pending', ?)""",
+                     (e['name'], month_key, basic, None, now, e['id'], month_key, basic, basic, basic, session.get('user_id')))
         created += 1
     conn.commit()
     conn.close()
@@ -5117,20 +5231,22 @@ def save_employee_salary(employee_id, month_key):
     if existing:
         salary_id = existing['id']
         conn.execute("""UPDATE salaries SET basic_salary=?, gross_salary=?, total_deductions=?, advance_recovery=?,
-                        net_salary=?, amount=?, month=?, remarks=? WHERE id=?""",
-                     (basic, gross, deductions_total, advance_recovery, net, net, month_key, f.get('remarks') or None, salary_id))
+                        net_salary=?, amount=?, month=?, remarks=?, updated_by=?, updated_at=? WHERE id=?""",
+                     (basic, gross, deductions_total, advance_recovery, net, net, month_key, f.get('remarks') or None,
+                      session.get('user_id'), now, salary_id))
         conn.execute("DELETE FROM salary_items WHERE salary_id=?", (salary_id,))
     else:
         emp_name = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()['name']
         cur = conn.execute("""INSERT INTO salaries (employee, month, amount, date, created_at, employee_id, month_key,
-                              basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status, remarks)
-                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending', ?)""",
+                              basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status, remarks,
+                              created_by)
+                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending', ?, ?)""",
                      (emp_name, month_key, net, None, now, employee_id, month_key, basic, gross,
-                      deductions_total, advance_recovery, net, f.get('remarks') or None))
+                      deductions_total, advance_recovery, net, f.get('remarks') or None, session.get('user_id')))
         salary_id = cur.lastrowid
     for desc, amt, item_type in items:
-        conn.execute("INSERT INTO salary_items (salary_id, item_type, description, amount) VALUES (?,?,?,?)",
-                     (salary_id, item_type, desc, amt))
+        conn.execute("INSERT INTO salary_items (salary_id, item_type, description, amount, created_by, created_at) VALUES (?,?,?,?,?,?)",
+                     (salary_id, item_type, desc, amt, session.get('user_id'), now))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab='salary', month=month_key))
@@ -5144,9 +5260,10 @@ def add_employee_advance(employee_id):
     emp = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
     if emp:
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at) VALUES (?,?,?,?,?,?)",
+        conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
                      (emp['name'], f.get('date') or datetime.date.today().isoformat(), float(f.get('amount') or 0),
-                      f.get('type') if f.get('type') in ('given', 'repaid') else 'given', f.get('notes') or None, now))
+                      f.get('type') if f.get('type') in ('given', 'repaid') else 'given', f.get('notes') or None,
+                      now, session.get('user_id')))
         conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab=f.get('return_tab') or 'overview'))
@@ -5155,10 +5272,12 @@ def add_employee_advance(employee_id):
 def mark_salary_paid(salary_id):
     conn = get_db()
     now = datetime.datetime.now()
-    conn.execute("""UPDATE salaries SET payment_status='paid', payment_date=?, payment_mode=?, transaction_id=?, paid_by=?
+    conn.execute("""UPDATE salaries SET payment_status='paid', payment_date=?, payment_mode=?, transaction_id=?, paid_by=?,
+                    updated_by=?, updated_at=?
                     WHERE id=?""",
                  (request.form.get('payment_date') or now.strftime('%Y-%m-%d'), request.form.get('payment_mode') or None,
-                  request.form.get('transaction_id') or None, request.form.get('paid_by') or 'Admin', salary_id))
+                  request.form.get('transaction_id') or None, request.form.get('paid_by') or 'Admin',
+                  session.get('user_id'), now.strftime('%Y-%m-%d %H:%M:%S'), salary_id))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab='salary'))
@@ -5168,8 +5287,10 @@ def bulk_mark_salary_paid():
     conn = get_db()
     ids = request.form.getlist('salary_ids')
     now = datetime.datetime.now().strftime('%Y-%m-%d')
+    now_ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     for sid in ids:
-        conn.execute("UPDATE salaries SET payment_status='paid', payment_date=? WHERE id=?", (now, sid))
+        conn.execute("UPDATE salaries SET payment_status='paid', payment_date=?, updated_by=?, updated_at=? WHERE id=?",
+                     (now, session.get('user_id'), now_ts, sid))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab='salary'))
@@ -5181,12 +5302,14 @@ def mark_attendance():
     conn = get_db()
     f = request.form
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    conn.execute("""INSERT INTO attendance (employee_id, date, status, in_time, out_time, remarks, marked_by, created_at)
-                    VALUES (?,?,?,?,?,?,?,?)
+    conn.execute("""INSERT INTO attendance (employee_id, date, status, in_time, out_time, remarks, marked_by, created_at,
+                    created_by)
+                    VALUES (?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, in_time=excluded.in_time,
-                    out_time=excluded.out_time, remarks=excluded.remarks, marked_by=excluded.marked_by""",
+                    out_time=excluded.out_time, remarks=excluded.remarks, marked_by=excluded.marked_by,
+                    updated_by=excluded.created_by, updated_at=excluded.created_at""",
                  (f.get('employee_id'), f.get('date'), f.get('status'), f.get('in_time') or None, f.get('out_time') or None,
-                  f.get('remarks') or None, 'Admin', now))
+                  f.get('remarks') or None, 'Admin', now, session.get('user_id')))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab='attendance', month=(f.get('date') or '')[:7]))
@@ -5202,9 +5325,10 @@ def bulk_mark_attendance():
     status = f.get('status')
     emp_ids = f.getlist('employee_ids')
     for eid in emp_ids:
-        conn.execute("""INSERT INTO attendance (employee_id, date, status, marked_by, created_at) VALUES (?,?,?,?,?)
-                        ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, marked_by=excluded.marked_by""",
-                     (eid, date, status, 'Admin', now))
+        conn.execute("""INSERT INTO attendance (employee_id, date, status, marked_by, created_at, created_by) VALUES (?,?,?,?,?,?)
+                        ON CONFLICT(employee_id, date) DO UPDATE SET status=excluded.status, marked_by=excluded.marked_by,
+                        updated_by=excluded.created_by, updated_at=excluded.created_at""",
+                     (eid, date, status, 'Admin', now, session.get('user_id')))
     conn.commit()
     conn.close()
     return redirect(url_for('salaries_list', tab='attendance', month=date[:7]))
@@ -5283,24 +5407,26 @@ def add_vehicle():
         vno = (f.get('vehicle_no') or '').strip()
         vtype = f.get('type')
         existing = conn.execute("SELECT id FROM vehicles WHERE vehicle_no=?", (vno,)).fetchone()
+        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if existing:
             conn.execute("""UPDATE vehicles SET type=?, registration_date=?, capacity_mt=?,
                             insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
-                            status=?, body_type=?, chassis_number=?, engine_number=?, notes=? WHERE id=?""",
+                            status=?, body_type=?, chassis_number=?, engine_number=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
                          (vtype, f.get('registration_date'), f.get('capacity_mt') or None,
                           f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
                           f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
                           f.get('chassis_number') or None, f.get('engine_number') or None,
-                          f.get('notes'), existing[0]))
+                          f.get('notes'), session.get('user_id'), _now, existing[0]))
         else:
             conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
                             insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
-                            status, body_type, chassis_number, engine_number, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            status, body_type, chassis_number, engine_number, notes, created_by, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          (vno, vtype, f.get('registration_date'), f.get('capacity_mt') or None,
                           f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
                           f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
                           f.get('chassis_number') or None, f.get('engine_number') or None,
-                          f.get('notes')))
+                          f.get('notes'), session.get('user_id'), _now))
         conn.commit()
         conn.close()
         return redirect(url_for('vehicles_list'))
@@ -5539,8 +5665,9 @@ def add_advance():
     if request.method == 'POST':
         f = request.form
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at) VALUES (?,?,?,?,?,?)",
-                     (f.get('employee'), f.get('date'), float(f.get('amount') or 0), f.get('type'), f.get('notes'), now))
+        conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
+                     (f.get('employee'), f.get('date'), float(f.get('amount') or 0), f.get('type'), f.get('notes'),
+                      now, session.get('user_id')))
         conn.commit()
         conn.close()
         return redirect(url_for('advances_list'))
@@ -5554,12 +5681,13 @@ def edit_vehicle(vehicle_id):
         f = request.form
         conn.execute("""UPDATE vehicles SET vehicle_no=?, type=?, registration_date=?, capacity_mt=?,
                         insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
-                        status=?, body_type=?, chassis_number=?, engine_number=?, notes=? WHERE id=?""",
+                        status=?, body_type=?, chassis_number=?, engine_number=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
                      (f.get('vehicle_no'), f.get('type'), f.get('registration_date'), f.get('capacity_mt') or None,
                       f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
                       f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
                       f.get('chassis_number') or None, f.get('engine_number') or None,
-                      f.get('notes'), vehicle_id))
+                      f.get('notes'), session.get('user_id'),
+                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), vehicle_id))
         conn.commit()
         conn.close()
         return redirect(url_for('vehicles_list'))
@@ -5575,7 +5703,8 @@ def toggle_vehicle_status(vehicle_id):
     v = conn.execute("SELECT status FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if v:
         new_status = 'Inactive' if (v['status'] or 'Active') == 'Active' else 'Active'
-        conn.execute("UPDATE vehicles SET status=? WHERE id=?", (new_status, vehicle_id))
+        conn.execute("UPDATE vehicles SET status=?, updated_by=?, updated_at=? WHERE id=?",
+                     (new_status, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), vehicle_id))
         conn.commit()
     conn.close()
     tab = request.args.get('tab') or 'all'
@@ -5608,25 +5737,27 @@ def vehicle_compliance_renew(vehicle_id, ctype):
     if existing:
         if permit_subtype is not None:
             conn.execute("""UPDATE vehicle_compliance SET document_number=?, valid_upto=?, permit_subtype=?,
-                            source='manual', sync_status='Not Synced', updated_at=? WHERE id=?""",
-                         (f.get('document_number') or None, f.get('valid_upto') or None, permit_subtype or None, now, existing['id']))
+                            source='manual', sync_status='Not Synced', updated_at=?, updated_by=? WHERE id=?""",
+                         (f.get('document_number') or None, f.get('valid_upto') or None, permit_subtype or None,
+                          now, session.get('user_id'), existing['id']))
         else:
             conn.execute("""UPDATE vehicle_compliance SET document_number=?, valid_upto=?, source='manual',
-                            sync_status='Not Synced', updated_at=? WHERE id=?""",
-                         (f.get('document_number') or None, f.get('valid_upto') or None, now, existing['id']))
+                            sync_status='Not Synced', updated_at=?, updated_by=? WHERE id=?""",
+                         (f.get('document_number') or None, f.get('valid_upto') or None, now, session.get('user_id'), existing['id']))
     else:
         conn.execute("""INSERT INTO vehicle_compliance
                         (vehicle_id, compliance_type, document_number, valid_upto, permit_subtype, source,
-                         sync_status, created_at, updated_at)
-                        VALUES (?,?,?,?,?,'manual','Not Synced',?,?)""",
+                         sync_status, created_at, updated_at, created_by)
+                        VALUES (?,?,?,?,?,'manual','Not Synced',?,?,?)""",
                      (vehicle_id, ctype, f.get('document_number') or None, f.get('valid_upto') or None,
-                      permit_subtype or None, now, now))
+                      permit_subtype or None, now, now, session.get('user_id')))
     # Keep the vehicle's own quick-glance column in sync too, same pattern already used for
     # Insurance's expiry — so the plain date field in the Edit Vehicle form never disagrees
     # with what Compliance shows.
     col = {'fitness': 'fitness_expiry', 'puc': 'puc_valid_upto', 'permit': 'permit_valid_upto'}[ctype]
     if f.get('valid_upto'):
-        conn.execute(f"UPDATE vehicles SET {col}=? WHERE id=?", (f.get('valid_upto'), vehicle_id))
+        conn.execute(f"UPDATE vehicles SET {col}=?, updated_by=?, updated_at=? WHERE id=?",
+                     (f.get('valid_upto'), session.get('user_id'), now, vehicle_id))
     conn.commit()
     conn.close()
     # This route is posted to from two different places (the old Edit Vehicle modal on the
@@ -5640,7 +5771,7 @@ def vehicle_compliance_sync(vehicle_id):
     """Manual per-vehicle 'Sync Now' — calls the same mock providers the nightly job uses,
     just for one vehicle, so a user doesn't have to wait for 2 AM to see it work."""
     conn = get_db()
-    cs.sync_vehicle(conn, vehicle_id)
+    cs.sync_vehicle(conn, vehicle_id, created_by=session.get('user_id'))
     conn.commit()
     conn.close()
     return redirect(url_for('vehicles_list', tab='all'))
@@ -5715,14 +5846,15 @@ def employee_ledger(employee):
             conn.execute("""INSERT INTO salaries
                              (employee, month, amount, date, created_at,
                               employee_id, month_key, basic_salary, gross_salary, total_deductions,
-                              advance_recovery, net_salary, payment_status, payment_date, payment_mode, remarks)
-                             VALUES (?,?,?,?,?, ?,?,?,?,0, 0,?,'paid',?,?,?)""",
+                              advance_recovery, net_salary, payment_status, payment_date, payment_mode, remarks,
+                              created_by)
+                             VALUES (?,?,?,?,?, ?,?,?,?,0, 0,?,'paid',?,?,?, ?)""",
                          (employee, month_label, amount, tx_date, now,
                           emp_id, month_key, basic, amount, amount, tx_date,
-                          f.get('payment_mode') or '', f.get('notes') or ''))
+                          f.get('payment_mode') or '', f.get('notes') or '', session.get('user_id')))
         else:
-            conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at) VALUES (?,?,?,?,?,?)",
-                         (employee, tx_date, amount, entry_kind, f.get('notes'), now))
+            conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
+                         (employee, tx_date, amount, entry_kind, f.get('notes'), now, session.get('user_id')))
         conn.commit()
         conn.close()
         return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
@@ -5743,8 +5875,9 @@ def update_employee_opening_balance(employee):
     conn = get_db()
     f = request.form
     from_tab = f.get('from_tab', 'overview')
-    conn.execute("UPDATE employees SET opening_balance=?, opening_balance_date=? WHERE name=? COLLATE NOCASE",
-                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None, employee))
+    conn.execute("UPDATE employees SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE name=? COLLATE NOCASE",
+                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee))
     conn.commit()
     conn.close()
     return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
@@ -6005,20 +6138,22 @@ def add_employee():
         etype = f.get('type')
         existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
         if not existing:
+            now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             cur = conn.execute("""INSERT INTO employees (name, type, employee_code, role, mobile, email, address,
                                   joining_date, date_of_birth, bank_account, ifsc_code, upi_id, emergency_contact,
-                                  aadhaar, pan, driving_license, status, basic_salary)
-                                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active', ?)""",
+                                  aadhaar, pan, driving_license, status, basic_salary, created_by, created_at)
+                                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active', ?, ?, ?)""",
                                 (name, etype, f.get('employee_code') or None, f.get('role') or etype,
                                  f.get('mobile') or None, f.get('email') or None, f.get('address') or None,
                                  f.get('joining_date') or None, f.get('date_of_birth') or None,
                                  f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
                                  f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
-                                 f.get('driving_license') or None, float(f.get('basic_salary') or 0)))
+                                 f.get('driving_license') or None, float(f.get('basic_salary') or 0),
+                                 session.get('user_id'), now))
             new_id = cur.lastrowid
             if not f.get('employee_code'):
-                conn.execute("UPDATE employees SET employee_code=? WHERE id=?",
-                             (f"{'DR' if etype=='Driver' else 'ST'}-{new_id:03d}", new_id))
+                conn.execute("UPDATE employees SET employee_code=?, updated_by=?, updated_at=? WHERE id=?",
+                             (f"{'DR' if etype=='Driver' else 'ST'}-{new_id:03d}", session.get('user_id'), now, new_id))
             conn.commit()
         # 'next' lets the Add Employee modal (which lives on the tabbed Employees page) return the
         # admin to that page instead of the old standalone employee_ledger detail view.
@@ -6259,7 +6394,10 @@ def upload_company_logo():
             os.makedirs(company_dir, exist_ok=True)
             f.save(os.path.join(company_dir, unique))
             rel_path = f"uploads/logo/{company_id}/{unique}"
-            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('logo_path', ?)", (rel_path,))
+            _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            conn.execute("""INSERT OR REPLACE INTO settings (key, value, created_by, created_at, updated_by, updated_at)
+                            VALUES ('logo_path', ?, ?, ?, ?, ?)""",
+                         (rel_path, session.get('user_id'), _now, session.get('user_id'), _now))
             conn.commit()
     conn.close()
     return redirect(url_for('settings_page', tab='company'))
@@ -6835,21 +6973,27 @@ def invoice_center_generate():
         return send_file(buf, download_name=f'preview-{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
     now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    audit_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     status = 'draft' if mode == 'draft' else 'generated'
     cur = conn.execute("""INSERT INTO invoice_batches (invoice_number, invoice_type, party_id, vendor_id, invoice_date, due_date,
-                          payment_terms, place_of_supply, remarks, gst_rate, tds_rate, loading_charges, other_charges, status, payment_status, created_at)
-                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                          payment_terms, place_of_supply, remarks, gst_rate, tds_rate, loading_charges, other_charges, status, payment_status, created_at,
+                          created_by)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                  (invoice_number, invoice_type, party_id, vendor_id, invoice_date, due_date, payment_terms,
                   place_of_supply, remarks, cgst_rate+sgst_rate, tds_rate, extra_loading, extra_other,
-                  status, payment_status, now))
+                  status, payment_status, now, session.get('user_id')))
     batch_id = cur.lastrowid
     for tid in trip_ids:
-        conn.execute("INSERT INTO invoice_batch_trips (invoice_batch_id, trip_id) VALUES (?,?)", (batch_id, tid))
+        conn.execute("INSERT INTO invoice_batch_trips (invoice_batch_id, trip_id, created_by, created_at) VALUES (?,?,?,?)",
+                     (batch_id, tid, session.get('user_id'), audit_now))
     for desc, amt, item_type in new_items:
-        conn.execute("INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type) VALUES (?,?,?,?)",
-                     (batch_id, desc, amt, item_type))
-    conn.execute("INSERT OR REPLACE INTO settings (key, value, company_id) VALUES ('next_invoice_number', ?, ?)",
-                 (str(next_num + 1), session.get('company_id', 1)))
+        conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, created_by, created_at)
+                        VALUES (?,?,?,?,?,?)""",
+                     (batch_id, desc, amt, item_type, session.get('user_id'), audit_now))
+    conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
+                    VALUES ('next_invoice_number', ?, ?, ?, ?, ?, ?)""",
+                 (str(next_num + 1), session.get('company_id', 1), session.get('user_id'), audit_now,
+                  session.get('user_id'), audit_now))
     conn.commit()
     conn.close()
 
@@ -6890,11 +7034,13 @@ def invoice_batch_edit(batch_id):
     if request.method == 'POST':
         f = request.form
         conn.execute("""UPDATE invoice_batches SET invoice_date=?, due_date=?, payment_terms=?, place_of_supply=?,
-                        remarks=?, payment_status=?, gst_rate=?, tds_rate=?, loading_charges=?, other_charges=?
+                        remarks=?, payment_status=?, gst_rate=?, tds_rate=?, loading_charges=?, other_charges=?,
+                        updated_by=?, updated_at=?
                         WHERE id=?""",
                      (f.get('invoice_date'), f.get('due_date'), f.get('payment_terms'), f.get('place_of_supply'),
                       f.get('remarks'), f.get('payment_status'), float(f.get('gst_rate') or 0), float(f.get('tds_rate') or 0),
-                      float(f.get('loading_charges') or 0), float(f.get('other_charges') or 0), batch_id))
+                      float(f.get('loading_charges') or 0), float(f.get('other_charges') or 0),
+                      session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), batch_id))
         conn.commit()
         conn.close()
         return redirect(url_for('invoice_batches_list'))
@@ -6909,8 +7055,10 @@ def invoice_batch_edit(batch_id):
 def invoice_batch_item_add(batch_id):
     conn = get_db()
     f = request.form
-    conn.execute("INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type) VALUES (?,?,?,?)",
-                 (batch_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type') or 'charge'))
+    conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, created_by, created_at)
+                    VALUES (?,?,?,?,?,?)""",
+                 (batch_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type') or 'charge',
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     return redirect(url_for('invoice_batch_edit', batch_id=batch_id))
@@ -7028,12 +7176,14 @@ def invoice_edit(trip_id):
     if request.method == 'POST':
         f = request.form
         existing = conn.execute("SELECT id FROM invoices WHERE trip_id=?", (trip_id,)).fetchone()
+        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if existing:
-            conn.execute("UPDATE invoices SET invoice_number=?, due_date=?, notes=? WHERE trip_id=?",
-                         (f.get('invoice_number'), f.get('due_date'), f.get('notes'), trip_id))
+            conn.execute("UPDATE invoices SET invoice_number=?, due_date=?, notes=?, updated_by=?, updated_at=? WHERE trip_id=?",
+                         (f.get('invoice_number'), f.get('due_date'), f.get('notes'), session.get('user_id'), _now, trip_id))
         else:
-            conn.execute("INSERT INTO invoices (trip_id, invoice_number, due_date, notes) VALUES (?,?,?,?)",
-                         (trip_id, f.get('invoice_number'), f.get('due_date'), f.get('notes')))
+            conn.execute("""INSERT INTO invoices (trip_id, invoice_number, due_date, notes, created_by, created_at)
+                            VALUES (?,?,?,?,?,?)""",
+                         (trip_id, f.get('invoice_number'), f.get('due_date'), f.get('notes'), session.get('user_id'), _now))
         conn.commit()
         conn.close()
         return redirect(url_for('invoice_preview', trip_id=trip_id))
@@ -7049,8 +7199,10 @@ def invoice_edit(trip_id):
 def invoice_item_add(trip_id):
     conn = get_db()
     f = request.form
-    conn.execute("INSERT INTO invoice_items (trip_id, description, amount, item_type) VALUES (?,?,?,?)",
-                 (trip_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type')))
+    conn.execute("""INSERT INTO invoice_items (trip_id, description, amount, item_type, created_by, created_at)
+                    VALUES (?,?,?,?,?,?)""",
+                 (trip_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type'),
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     return redirect(url_for('invoice_edit', trip_id=trip_id))
@@ -7182,9 +7334,10 @@ def update_contact(entity_type, entity_id):
     f = request.form
     table = 'parties' if entity_type == 'party' else 'vendors'
     status = f.get('status') if f.get('status') in ('Active', 'Inactive') else 'Active'
-    conn.execute(f"UPDATE {table} SET address=?, contact=?, email=?, credit_limit=?, gstin=?, category=?, status=? WHERE id=?",
+    conn.execute(f"UPDATE {table} SET address=?, contact=?, email=?, credit_limit=?, gstin=?, category=?, status=?, updated_by=?, updated_at=? WHERE id=?",
                  (f.get('address'), f.get('contact'), f.get('email'), f.get('credit_limit') or None,
-                  f.get('gstin') or None, f.get('category') or None, status, entity_id))
+                  f.get('gstin') or None, f.get('category') or None, status,
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entity_id))
     conn.commit()
     conn.close()
     if entity_type == 'party':
@@ -7196,8 +7349,9 @@ def update_opening_balance(entity_type, entity_id):
     conn = get_db()
     f = request.form
     table = 'parties' if entity_type == 'party' else 'vendors'
-    conn.execute(f"UPDATE {table} SET opening_balance=?, opening_balance_date=? WHERE id=?",
-                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None, entity_id))
+    conn.execute(f"UPDATE {table} SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE id=?",
+                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entity_id))
     conn.commit()
     conn.close()
     if entity_type == 'party':
@@ -7257,6 +7411,8 @@ def inject_challan_alerts():
         return {'challan_alert_vehicles': [], 'challan_alert_count': 0,
                 'login_token': session.get('login_at', ''), 'fleet_warning_marker': ''}
 
+IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero requests, any request resets it
+
 @app.before_request
 def require_login():
     exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick']
@@ -7264,11 +7420,25 @@ def require_login():
         return
     if not session.get('user_id'):
         return redirect(url_for('login'))
+    # Idle timeout — genuinely idle time, not a fixed session length: every authenticated request
+    # (including "Remember me" sessions) refreshes this timestamp, so someone actively using the
+    # app never gets logged out mid-work; only real inactivity for 3+ hours does.
+    now = datetime.datetime.now()
+    last_activity = session.get('last_activity')
+    if last_activity:
+        try:
+            idle_seconds = (now - datetime.datetime.fromisoformat(last_activity)).total_seconds()
+        except (ValueError, TypeError):
+            idle_seconds = 0
+        if idle_seconds > IDLE_TIMEOUT_SECONDS:
+            session.clear()
+            return redirect(url_for('login', timeout='1'))
+    session['last_activity'] = now.isoformat()
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     from werkzeug.security import check_password_hash
-    error = None
+    error = 'You were signed out after 3 hours of inactivity. Please sign in again.' if request.args.get('timeout') else None
     if request.method == 'POST':
         f = request.form
         conn = get_db()
@@ -7285,7 +7455,8 @@ def login():
             now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             session['login_at'] = now  # lets dismissed-warning state reset on every fresh login, see inject_challan_alerts
             session['show_zoom_tip'] = True  # one-shot — shown at most once, then popped by base.html on the next render
-            conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user['id']))
+            conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?",
+                         (now, user['id'], now, user['id']))
             conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login', now))
             conn.commit()
             conn.close()
@@ -7375,7 +7546,8 @@ def verify_login_otp():
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     session['login_at'] = now  # lets dismissed-warning state reset on every fresh login, see inject_challan_alerts
     session['show_zoom_tip'] = True  # one-shot — shown at most once, then popped by base.html on the next render
-    conn.execute("UPDATE users SET last_login=? WHERE id=?", (now, user['id']))
+    conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?",
+                 (now, user['id'], now, user['id']))
     conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login (OTP)', now))
     conn.commit()
     conn.close()
@@ -7432,14 +7604,17 @@ def settings_page():
             # row exists yet for that key (no error, no rows affected), which is exactly how a
             # setting could look "saved" (200 OK, page reloads fine) while never actually taking
             # effect. This is the same pattern already used correctly for logo_path just below.
+            _settings_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             for key in field_groups[form_type]:
                 if key in ['show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words',
                            'reverse_charge_applicable', 'rcm_on_transport', 'tds_applicable', 'eway_bill_mandatory']:
                     val = '1' if request.form.get(key) == 'on' else '0'
                 else:
                     val = request.form.get(key, '')
-                conn.execute("INSERT OR REPLACE INTO settings (key, value, company_id) VALUES (?, ?, ?)",
-                             (key, val, session.get('company_id', 1)))
+                conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                             (key, val, session.get('company_id', 1), session.get('user_id'), _settings_now,
+                              session.get('user_id'), _settings_now))
             conn.commit()
 
     users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
@@ -7484,12 +7659,13 @@ def add_user():
     pw_hash = generate_password_hash(pw) if pw else generate_password_hash(secrets.token_hex(16))
     try:
         conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone, full_name, email,
-                        access_level, module_access, status, created_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        access_level, module_access, status, created_at, created_by)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (f.get('username'), pw_hash, f.get('role'),
                       1 if access_level == 'Full Access' else 0, (f.get('phone') or '').strip() or None,
                       f.get('full_name') or None, f.get('email') or None, access_level, modules,
-                      f.get('status') or 'Active', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                      f.get('status') or 'Active', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                      session.get('user_id')))
         conn.commit()
         conn.close()
     except sqlite3.IntegrityError:
@@ -7518,15 +7694,17 @@ def edit_user(user_id):
     conn = get_db()
     access_level = f.get('access_level') or 'Read Only'
     modules = ','.join(request.form.getlist('modules')) if access_level == 'Limited Access' else None
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE users SET full_name=?, role=?, phone=?, email=?, access_level=?, module_access=?,
-                    status=?, is_admin=? WHERE id=?""",
+                    status=?, is_admin=?, updated_by=?, updated_at=? WHERE id=?""",
                  (f.get('full_name') or None, f.get('role'), (f.get('phone') or '').strip() or None,
                   f.get('email') or None, access_level, modules, f.get('status') or 'Active',
-                  1 if access_level == 'Full Access' else 0, user_id))
+                  1 if access_level == 'Full Access' else 0, session.get('user_id'), _now, user_id))
     # Leave the password untouched unless a new one was actually typed in.
     new_pw = f.get('password') or ''
     if new_pw:
-        conn.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(new_pw), user_id))
+        conn.execute("UPDATE users SET password_hash=?, updated_by=?, updated_at=? WHERE id=?",
+                     (generate_password_hash(new_pw), session.get('user_id'), _now, user_id))
     conn.commit()
     conn.close()
     return redirect(url_for('settings_page', tab='users'))
@@ -7534,7 +7712,9 @@ def edit_user(user_id):
 @app.route('/settings/users/<int:user_id>/phone', methods=['POST'])
 def update_user_phone(user_id):
     conn = get_db()
-    conn.execute("UPDATE users SET phone=? WHERE id=?", ((request.form.get('phone') or '').strip() or None, user_id))
+    conn.execute("UPDATE users SET phone=?, updated_by=?, updated_at=? WHERE id=?",
+                 ((request.form.get('phone') or '').strip() or None, session.get('user_id'),
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
     conn.commit()
     conn.close()
     return redirect(url_for('settings_page', tab='users'))
@@ -8086,7 +8266,8 @@ def edit_trip(trip_id):
             row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
             if row:
                 return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no) VALUES (?)", (vno,))
+            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             return cur.lastrowid
 
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -8126,7 +8307,7 @@ def edit_trip(trip_id):
             owner_name=?, fixed_rate_amount=?, owner_rate=?, owner_rate_type=?, owner_fixed_amount=?, paid_to_owner=?, owner_vendor_id=?,
             agent_commission=?, builty_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
             toll=?, urea=?, loading_expense=?, unloading_expense=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
-            lr_received=?, is_empty=?
+            lr_received=?, is_empty=?, updated_by=?, updated_at=?
             WHERE id=?""",
             (f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
              quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
@@ -8139,7 +8320,8 @@ def edit_trip(trip_id):
              n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
              n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
              n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
-             f.get('lr_received') or None, 1 if f.get('is_empty') else 0, trip_id))
+             f.get('lr_received') or None, 1 if f.get('is_empty') else 0,
+             session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), trip_id))
         _save_trip_custom_items(conn, trip_id, f)
         conn.commit()
         conn.close()

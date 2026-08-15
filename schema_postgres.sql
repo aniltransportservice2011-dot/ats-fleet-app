@@ -41,7 +41,10 @@
 CREATE TABLE companies (
     id         SERIAL PRIMARY KEY,
     name       TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now()
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by INTEGER,
+    updated_by INTEGER,
+    updated_at TEXT
 );
 
 -- ============================================================================
@@ -68,6 +71,10 @@ CREATE TABLE vehicles (
     challan_count       INTEGER DEFAULT 0,
     challan_amount      REAL DEFAULT 0,
     challan_last_synced TEXT,
+    created_by          INTEGER,
+    created_at          TEXT,
+    updated_by          INTEGER,
+    updated_at          TEXT,
     company_id          INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(company_id, vehicle_no)
 );
@@ -90,6 +97,8 @@ CREATE TABLE vehicle_compliance (
     remarks           TEXT,
     created_at        TEXT,
     updated_at        TEXT,
+    created_by        INTEGER,
+    updated_by        INTEGER,
     company_id        INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(vehicle_id, compliance_type)
 );
@@ -125,6 +134,10 @@ CREATE TABLE vehicle_challans (
     source_created_at      TEXT,
     source_updated_at      TEXT,
     last_synced            TEXT,
+    created_by             INTEGER,
+    created_at             TEXT,
+    updated_by             INTEGER,
+    updated_at             TEXT,
     company_id             INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_vehicle_challans_vehicle ON vehicle_challans(vehicle_id);
@@ -155,6 +168,10 @@ CREATE TABLE insurance_policies (
     invoice_doc_path TEXT,
     rc_doc_path      TEXT,
     maintenance_id   INTEGER,
+    created_by       INTEGER,
+    created_at       TEXT,
+    updated_by       INTEGER,
+    updated_at       TEXT,
     company_id       INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_insurance_policies_company ON insurance_policies(company_id);
@@ -185,6 +202,10 @@ CREATE TABLE batteries (
     last_checked_date  TEXT,
     status_override    TEXT,
     notes              TEXT,
+    created_by         INTEGER,
+    created_at         TEXT,
+    updated_by         INTEGER,
+    updated_at         TEXT,
     company_id         INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(company_id, battery_no)
 );
@@ -199,6 +220,10 @@ CREATE TABLE battery_checks (
     voltage    REAL,
     temp_c     REAL,
     remarks    TEXT,
+    created_by INTEGER,
+    created_at TEXT,
+    updated_by INTEGER,
+    updated_at TEXT,
     company_id INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_battery_checks_company ON battery_checks(company_id);
@@ -220,6 +245,10 @@ CREATE TABLE tyre_stock (
     installed_vehicle_id INTEGER REFERENCES vehicles(id),
     installed_position   TEXT,
     installed_date       TEXT,
+    created_by           INTEGER,
+    created_at           TEXT,
+    updated_by           INTEGER,
+    updated_at           TEXT,
     company_id           INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_tyre_stock_company ON tyre_stock(company_id);
@@ -242,6 +271,10 @@ CREATE TABLE parties (
     gstin                TEXT,
     category             TEXT,
     status               TEXT DEFAULT 'Active',
+    created_by           INTEGER,
+    created_at           TEXT,
+    updated_by           INTEGER,
+    updated_at           TEXT,
     company_id           INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(company_id, name)
 );
@@ -261,6 +294,10 @@ CREATE TABLE vendors (
     opening_balance_date TEXT,
     gstin                TEXT,
     status               TEXT DEFAULT 'Active',
+    created_by           INTEGER,
+    created_at           TEXT,
+    updated_by           INTEGER,
+    updated_at           TEXT,
     company_id           INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(company_id, name)
 );
@@ -277,6 +314,10 @@ CREATE TABLE payments (
     reference_id     TEXT,
     remarks          TEXT,
     allocated_amount REAL DEFAULT 0,
+    created_by       INTEGER,
+    created_at       TEXT,
+    updated_by       INTEGER,
+    updated_at       TEXT,
     company_id       INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_payments_company ON payments(company_id);
@@ -287,6 +328,10 @@ CREATE TABLE payment_allocations (
     payment_id INTEGER NOT NULL REFERENCES payments(id),
     trip_id    INTEGER NOT NULL,
     amount     REAL NOT NULL,
+    created_by INTEGER,
+    created_at TEXT,
+    updated_by INTEGER,
+    updated_at TEXT,
     company_id INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_payment_allocations_company ON payment_allocations(company_id);
@@ -370,6 +415,10 @@ CREATE TABLE trips (
     owner_fixed_amount   REAL DEFAULT 0,
     fuel_liters          TEXT,
     fuel_price           REAL DEFAULT 0,
+    created_by           INTEGER,
+    created_at           TEXT,
+    updated_by           INTEGER,
+    updated_at           TEXT,
     company_id           INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_trips_company ON trips(company_id);
@@ -381,6 +430,10 @@ CREATE TABLE invoices (
     invoice_number TEXT,
     due_date       TEXT,
     notes          TEXT,
+    created_by     INTEGER,
+    created_at     TEXT,
+    updated_by     INTEGER,
+    updated_at     TEXT,
     company_id     INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_invoices_company ON invoices(company_id);
@@ -392,6 +445,10 @@ CREATE TABLE invoice_items (
     amount      REAL,
     item_type   TEXT CHECK(item_type IN ('charge','deduction')),
     vendor_id   INTEGER REFERENCES vendors(id),
+    created_by  INTEGER,
+    created_at  TEXT,
+    updated_by  INTEGER,
+    updated_at  TEXT,
     company_id  INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_invoice_items_company ON invoice_items(company_id);
@@ -414,6 +471,9 @@ CREATE TABLE invoice_batches (
     status          TEXT DEFAULT 'draft',
     created_at      TEXT,
     payment_status  TEXT DEFAULT 'PENDING',
+    created_by      INTEGER,
+    updated_by      INTEGER,
+    updated_at      TEXT,
     company_id      INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_invoice_batches_company ON invoice_batches(company_id);
@@ -422,6 +482,10 @@ CREATE TABLE invoice_batch_trips (
     id               SERIAL PRIMARY KEY,
     invoice_batch_id INTEGER,
     trip_id          INTEGER,
+    created_by       INTEGER,
+    created_at       TEXT,
+    updated_by       INTEGER,
+    updated_at       TEXT,
     company_id       INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_invoice_batch_trips_company ON invoice_batch_trips(company_id);
@@ -432,6 +496,10 @@ CREATE TABLE invoice_batch_items (
     description      TEXT,
     amount           REAL,
     item_type        TEXT CHECK(item_type IN ('charge','deduction')),
+    created_by       INTEGER,
+    created_at       TEXT,
+    updated_by       INTEGER,
+    updated_at       TEXT,
     company_id       INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_invoice_batch_items_company ON invoice_batch_items(company_id);
@@ -461,6 +529,10 @@ CREATE TABLE maintenance (
     tyre_id           TEXT,
     tyre_brand        TEXT,
     tyre_position     TEXT,
+    created_by        INTEGER,
+    created_at        TEXT,
+    updated_by        INTEGER,
+    updated_at        TEXT,
     company_id        INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_maintenance_company ON maintenance(company_id);
@@ -474,6 +546,10 @@ CREATE TABLE maintenance_items (
     unit           TEXT,
     rate           REAL,
     amount         REAL,
+    created_by     INTEGER,
+    created_at     TEXT,
+    updated_by     INTEGER,
+    updated_at     TEXT,
     company_id     INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_maintenance_items_company ON maintenance_items(company_id);
@@ -496,6 +572,9 @@ CREATE TABLE urea_transactions (
     notes           TEXT,
     maintenance_id  INTEGER REFERENCES maintenance(id),
     created_at      TEXT,
+    created_by      INTEGER,
+    updated_by      INTEGER,
+    updated_at      TEXT,
     company_id      INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_urea_txn_date ON urea_transactions(date);
@@ -519,6 +598,9 @@ CREATE TABLE toll_entries (
     notes          TEXT,
     maintenance_id INTEGER REFERENCES maintenance(id),
     created_at     TEXT,
+    created_by     INTEGER,
+    updated_by     INTEGER,
+    updated_at     TEXT,
     company_id     INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_toll_date ON toll_entries(date);
@@ -551,6 +633,10 @@ CREATE TABLE employees (
     driving_license      TEXT,
     status               TEXT DEFAULT 'Active',
     basic_salary         REAL DEFAULT 0,
+    created_by           INTEGER,
+    created_at           TEXT,
+    updated_by           INTEGER,
+    updated_at           TEXT,
     company_id           INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(company_id, name)
 );
@@ -576,6 +662,9 @@ CREATE TABLE salaries (
     transaction_id   TEXT,
     paid_by          TEXT,
     remarks          TEXT,
+    created_by       INTEGER,
+    updated_by       INTEGER,
+    updated_at       TEXT,
     company_id       INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_salaries_month_key ON salaries(month_key);
@@ -587,6 +676,10 @@ CREATE TABLE salary_items (
     item_type   TEXT NOT NULL CHECK(item_type IN ('allowance','deduction')),
     description TEXT NOT NULL,
     amount      REAL NOT NULL DEFAULT 0,
+    created_by  INTEGER,
+    created_at  TEXT,
+    updated_by  INTEGER,
+    updated_at  TEXT,
     company_id  INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_salary_items_company ON salary_items(company_id);
@@ -599,6 +692,9 @@ CREATE TABLE advances (
     type       TEXT CHECK(type IN ('given','repaid')),
     notes      TEXT,
     created_at TEXT,
+    created_by INTEGER,
+    updated_by INTEGER,
+    updated_at TEXT,
     company_id INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_advances_company ON advances(company_id);
@@ -613,6 +709,9 @@ CREATE TABLE attendance (
     remarks     TEXT,
     marked_by   TEXT,
     created_at  TEXT,
+    created_by  INTEGER,
+    updated_by  INTEGER,
+    updated_at  TEXT,
     company_id  INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(employee_id, date)
 );
@@ -638,6 +737,10 @@ CREATE TABLE overheads (
     is_recurring        INTEGER DEFAULT 0,
     recurring_frequency TEXT,
     due_date            TEXT,
+    created_by          INTEGER,
+    created_at          TEXT,
+    updated_by          INTEGER,
+    updated_at          TEXT,
     company_id          INTEGER NOT NULL REFERENCES companies(id)
 );
 CREATE INDEX idx_overheads_company ON overheads(company_id);
@@ -660,6 +763,9 @@ CREATE TABLE users (
     module_access TEXT,
     status        TEXT DEFAULT 'Active',
     last_login    TEXT,
+    created_by    INTEGER,
+    updated_by    INTEGER,
+    updated_at    TEXT,
     company_id    INTEGER NOT NULL REFERENCES companies(id),
     UNIQUE(company_id, username)
 );
@@ -679,6 +785,10 @@ CREATE TABLE settings (
     company_id INTEGER NOT NULL REFERENCES companies(id),
     key        TEXT NOT NULL,
     value      TEXT,
+    created_by INTEGER,
+    created_at TEXT,
+    updated_by INTEGER,
+    updated_at TEXT,
     PRIMARY KEY (company_id, key)
 );
 
@@ -712,6 +822,70 @@ ALTER TABLE batteries ADD CONSTRAINT fk_batteries_maintenance FOREIGN KEY (maint
 ALTER TABLE tyre_stock ADD CONSTRAINT fk_tyre_stock_maintenance FOREIGN KEY (maintenance_id) REFERENCES maintenance(id);
 ALTER TABLE tyre_stock ADD CONSTRAINT fk_tyre_stock_vendor FOREIGN KEY (vendor_id) REFERENCES vendors(id);
 ALTER TABLE payment_allocations ADD CONSTRAINT fk_payment_allocations_trip FOREIGN KEY (trip_id) REFERENCES trips(id);
+
+-- created_by / updated_by -> users(id), deferred for the same reason: users is defined near
+-- the end of this file (after most tenant tables), and users' own created_by/updated_by are
+-- self-referential, which Postgres only allows via ALTER TABLE after the table exists anyway.
+ALTER TABLE companies             ADD CONSTRAINT fk_companies_created_by             FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE companies             ADD CONSTRAINT fk_companies_updated_by             FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE vehicles              ADD CONSTRAINT fk_vehicles_created_by              FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE vehicles              ADD CONSTRAINT fk_vehicles_updated_by              FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE vehicle_compliance    ADD CONSTRAINT fk_vehicle_compliance_created_by    FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE vehicle_compliance    ADD CONSTRAINT fk_vehicle_compliance_updated_by    FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE vehicle_challans      ADD CONSTRAINT fk_vehicle_challans_created_by      FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE vehicle_challans      ADD CONSTRAINT fk_vehicle_challans_updated_by      FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE insurance_policies    ADD CONSTRAINT fk_insurance_policies_created_by    FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE insurance_policies    ADD CONSTRAINT fk_insurance_policies_updated_by    FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE batteries             ADD CONSTRAINT fk_batteries_created_by             FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE batteries             ADD CONSTRAINT fk_batteries_updated_by             FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE battery_checks        ADD CONSTRAINT fk_battery_checks_created_by        FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE battery_checks        ADD CONSTRAINT fk_battery_checks_updated_by        FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE tyre_stock             ADD CONSTRAINT fk_tyre_stock_created_by           FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE tyre_stock             ADD CONSTRAINT fk_tyre_stock_updated_by           FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE parties               ADD CONSTRAINT fk_parties_created_by               FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE parties               ADD CONSTRAINT fk_parties_updated_by               FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE vendors               ADD CONSTRAINT fk_vendors_created_by               FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE vendors               ADD CONSTRAINT fk_vendors_updated_by               FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE payments              ADD CONSTRAINT fk_payments_created_by              FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE payments              ADD CONSTRAINT fk_payments_updated_by              FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE payment_allocations   ADD CONSTRAINT fk_payment_allocations_created_by   FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE payment_allocations   ADD CONSTRAINT fk_payment_allocations_updated_by   FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE trips                 ADD CONSTRAINT fk_trips_created_by                 FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE trips                 ADD CONSTRAINT fk_trips_updated_by                 FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE invoices              ADD CONSTRAINT fk_invoices_created_by              FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE invoices              ADD CONSTRAINT fk_invoices_updated_by              FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE invoice_items         ADD CONSTRAINT fk_invoice_items_created_by         FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE invoice_items         ADD CONSTRAINT fk_invoice_items_updated_by         FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE invoice_batches       ADD CONSTRAINT fk_invoice_batches_created_by       FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE invoice_batches       ADD CONSTRAINT fk_invoice_batches_updated_by       FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE invoice_batch_trips   ADD CONSTRAINT fk_invoice_batch_trips_created_by   FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE invoice_batch_trips   ADD CONSTRAINT fk_invoice_batch_trips_updated_by   FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE invoice_batch_items   ADD CONSTRAINT fk_invoice_batch_items_created_by   FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE invoice_batch_items   ADD CONSTRAINT fk_invoice_batch_items_updated_by   FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE maintenance           ADD CONSTRAINT fk_maintenance_created_by           FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE maintenance           ADD CONSTRAINT fk_maintenance_updated_by           FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE maintenance_items     ADD CONSTRAINT fk_maintenance_items_created_by     FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE maintenance_items     ADD CONSTRAINT fk_maintenance_items_updated_by     FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE urea_transactions     ADD CONSTRAINT fk_urea_transactions_created_by     FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE urea_transactions     ADD CONSTRAINT fk_urea_transactions_updated_by     FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE toll_entries          ADD CONSTRAINT fk_toll_entries_created_by          FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE toll_entries          ADD CONSTRAINT fk_toll_entries_updated_by          FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE employees             ADD CONSTRAINT fk_employees_created_by             FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE employees             ADD CONSTRAINT fk_employees_updated_by             FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE salaries              ADD CONSTRAINT fk_salaries_created_by              FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE salaries              ADD CONSTRAINT fk_salaries_updated_by              FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE salary_items          ADD CONSTRAINT fk_salary_items_created_by          FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE salary_items          ADD CONSTRAINT fk_salary_items_updated_by          FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE advances              ADD CONSTRAINT fk_advances_created_by              FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE advances              ADD CONSTRAINT fk_advances_updated_by              FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE attendance            ADD CONSTRAINT fk_attendance_created_by            FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE attendance            ADD CONSTRAINT fk_attendance_updated_by            FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE overheads              ADD CONSTRAINT fk_overheads_created_by            FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE overheads              ADD CONSTRAINT fk_overheads_updated_by            FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE users                 ADD CONSTRAINT fk_users_created_by                 FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE users                 ADD CONSTRAINT fk_users_updated_by                 FOREIGN KEY (updated_by) REFERENCES users(id);
+ALTER TABLE settings              ADD CONSTRAINT fk_settings_created_by              FOREIGN KEY (created_by) REFERENCES users(id);
+ALTER TABLE settings              ADD CONSTRAINT fk_settings_updated_by              FOREIGN KEY (updated_by) REFERENCES users(id);
 
 -- ============================================================================
 -- Row-Level Security — the actual isolation mechanism, on every tenant table

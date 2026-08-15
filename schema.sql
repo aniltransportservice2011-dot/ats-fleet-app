@@ -31,7 +31,10 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE companies (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL,
-    created_at TEXT
+    created_at TEXT,
+    created_by INTEGER REFERENCES users(id),
+    updated_by INTEGER REFERENCES users(id),
+    updated_at TEXT
 );
 
 -- ============================================================================
@@ -58,6 +61,10 @@ CREATE TABLE vehicles (
     challan_count       INTEGER DEFAULT 0,
     challan_amount      REAL DEFAULT 0,
     challan_last_synced TEXT,
+    created_by          INTEGER REFERENCES users(id),
+    created_at          TEXT,
+    updated_by          INTEGER REFERENCES users(id),
+    updated_at          TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -78,6 +85,8 @@ CREATE TABLE vehicle_compliance (
     remarks           TEXT,
     created_at        TEXT,
     updated_at        TEXT,
+    created_by        INTEGER REFERENCES users(id),
+    updated_by        INTEGER REFERENCES users(id),
     company_id            INTEGER NOT NULL DEFAULT 1,
     UNIQUE(vehicle_id, compliance_type)
 );
@@ -112,6 +121,10 @@ CREATE TABLE vehicle_challans (
     source_created_at     TEXT,
     source_updated_at     TEXT,
     last_synced           TEXT,
+    created_by            INTEGER REFERENCES users(id),
+    created_at            TEXT,
+    updated_by            INTEGER REFERENCES users(id),
+    updated_at            TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
 );
@@ -138,6 +151,10 @@ CREATE TABLE insurance_policies (
     invoice_doc_path TEXT,
     rc_doc_path      TEXT,
     maintenance_id   INTEGER REFERENCES maintenance(id),
+    created_by       INTEGER REFERENCES users(id),
+    created_at       TEXT,
+    updated_by       INTEGER REFERENCES users(id),
+    updated_at       TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -165,6 +182,10 @@ CREATE TABLE batteries (
     last_checked_date  TEXT,
     status_override    TEXT,
     notes              TEXT,
+    created_by         INTEGER REFERENCES users(id),
+    created_at         TEXT,
+    updated_by         INTEGER REFERENCES users(id),
+    updated_at         TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -177,6 +198,10 @@ CREATE TABLE battery_checks (
     voltage    REAL,
     temp_c     REAL,
     remarks    TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT,
+    updated_by INTEGER REFERENCES users(id),
+    updated_at TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -195,6 +220,10 @@ CREATE TABLE tyre_stock (
     installed_vehicle_id INTEGER REFERENCES vehicles(id),
     installed_position   TEXT,
     installed_date       TEXT,
+    created_by           INTEGER REFERENCES users(id),
+    created_at           TEXT,
+    updated_by           INTEGER REFERENCES users(id),
+    updated_at           TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -216,6 +245,10 @@ CREATE TABLE parties (
     gstin                 TEXT,
     category              TEXT,
     status                TEXT DEFAULT 'Active',
+    created_by            INTEGER REFERENCES users(id),
+    created_at            TEXT,
+    updated_by            INTEGER REFERENCES users(id),
+    updated_at            TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -233,6 +266,10 @@ CREATE TABLE vendors (
     opening_balance_date  TEXT,
     gstin                 TEXT,
     status                TEXT DEFAULT 'Active',
+    created_by            INTEGER REFERENCES users(id),
+    created_at            TEXT,
+    updated_by            INTEGER REFERENCES users(id),
+    updated_at            TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -247,6 +284,10 @@ CREATE TABLE payments (
     reference_id    TEXT,
     remarks         TEXT,
     allocated_amount REAL DEFAULT 0,
+    created_by       INTEGER REFERENCES users(id),
+    created_at       TEXT,
+    updated_by       INTEGER REFERENCES users(id),
+    updated_at       TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -255,6 +296,10 @@ CREATE TABLE payment_allocations (
     payment_id INTEGER NOT NULL REFERENCES payments(id),
     trip_id    INTEGER NOT NULL REFERENCES trips(id),
     amount     REAL NOT NULL,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT,
+    updated_by INTEGER REFERENCES users(id),
+    updated_at TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -337,6 +382,10 @@ CREATE TABLE trips (
     owner_fixed_amount    REAL DEFAULT 0,
     fuel_liters           TEXT,
     fuel_price            REAL DEFAULT 0,
+    created_by            INTEGER REFERENCES users(id),
+    created_at            TEXT,
+    updated_by            INTEGER REFERENCES users(id),
+    updated_at            TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -346,6 +395,10 @@ CREATE TABLE invoices (
     invoice_number TEXT,
     due_date       TEXT,
     notes          TEXT,
+    created_by     INTEGER REFERENCES users(id),
+    created_at     TEXT,
+    updated_by     INTEGER REFERENCES users(id),
+    updated_at     TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -356,6 +409,10 @@ CREATE TABLE invoice_items (
     amount      REAL,
     item_type   TEXT CHECK(item_type IN ('charge','deduction')),
     vendor_id   INTEGER REFERENCES vendors(id),
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TEXT,
+    updated_by  INTEGER REFERENCES users(id),
+    updated_at  TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -377,6 +434,9 @@ CREATE TABLE invoice_batches (
     status           TEXT DEFAULT 'draft',
     created_at       TEXT,
     payment_status   TEXT DEFAULT "PENDING",
+    created_by       INTEGER REFERENCES users(id),
+    updated_by       INTEGER REFERENCES users(id),
+    updated_at       TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -384,6 +444,10 @@ CREATE TABLE invoice_batch_trips (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_batch_id  INTEGER,
     trip_id           INTEGER,
+    created_by        INTEGER REFERENCES users(id),
+    created_at        TEXT,
+    updated_by        INTEGER REFERENCES users(id),
+    updated_at        TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -393,6 +457,10 @@ CREATE TABLE invoice_batch_items (
     description       TEXT,
     amount            REAL,
     item_type         TEXT CHECK(item_type IN ('charge','deduction')),
+    created_by        INTEGER REFERENCES users(id),
+    created_at        TEXT,
+    updated_by        INTEGER REFERENCES users(id),
+    updated_at        TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -421,6 +489,10 @@ CREATE TABLE maintenance (
     tyre_id           TEXT,
     tyre_brand        TEXT,
     tyre_position     TEXT,
+    created_by        INTEGER REFERENCES users(id),
+    created_at        TEXT,
+    updated_by        INTEGER REFERENCES users(id),
+    updated_at        TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -433,6 +505,10 @@ CREATE TABLE maintenance_items (
     unit           TEXT,
     rate           REAL,
     amount         REAL,
+    created_by     INTEGER REFERENCES users(id),
+    created_at     TEXT,
+    updated_by     INTEGER REFERENCES users(id),
+    updated_at     TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -454,6 +530,9 @@ CREATE TABLE urea_transactions (
     notes           TEXT,
     maintenance_id  INTEGER REFERENCES maintenance(id),
     created_at      TEXT,
+    created_by      INTEGER REFERENCES users(id),
+    updated_by      INTEGER REFERENCES users(id),
+    updated_at      TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX idx_urea_txn_date ON urea_transactions(date);
@@ -476,6 +555,9 @@ CREATE TABLE toll_entries (
     notes         TEXT,
     maintenance_id INTEGER REFERENCES maintenance(id),
     created_at    TEXT,
+    created_by    INTEGER REFERENCES users(id),
+    updated_by    INTEGER REFERENCES users(id),
+    updated_at    TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX idx_toll_date ON toll_entries(date);
@@ -507,6 +589,10 @@ CREATE TABLE employees (
     driving_license      TEXT,
     status               TEXT DEFAULT 'Active',
     basic_salary         REAL DEFAULT 0,
+    created_by           INTEGER REFERENCES users(id),
+    created_at           TEXT,
+    updated_by           INTEGER REFERENCES users(id),
+    updated_at           TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -530,6 +616,9 @@ CREATE TABLE salaries (
     transaction_id   TEXT,
     paid_by          TEXT,
     remarks          TEXT,
+    created_by       INTEGER REFERENCES users(id),
+    updated_by       INTEGER REFERENCES users(id),
+    updated_at       TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX idx_salaries_month_key ON salaries(month_key);
@@ -540,6 +629,10 @@ CREATE TABLE salary_items (
     item_type   TEXT NOT NULL CHECK(item_type IN ('allowance','deduction')),
     description TEXT NOT NULL,
     amount      REAL NOT NULL DEFAULT 0,
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TEXT,
+    updated_by  INTEGER REFERENCES users(id),
+    updated_at  TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -551,6 +644,9 @@ CREATE TABLE advances (
     type       TEXT CHECK(type IN ('given','repaid')),
     notes      TEXT,
     created_at TEXT,
+    created_by INTEGER REFERENCES users(id),
+    updated_by INTEGER REFERENCES users(id),
+    updated_at TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -564,6 +660,9 @@ CREATE TABLE attendance (
     remarks     TEXT,
     marked_by   TEXT,
     created_at  TEXT,
+    created_by  INTEGER REFERENCES users(id),
+    updated_by  INTEGER REFERENCES users(id),
+    updated_at  TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1,
     UNIQUE(employee_id, date)
 );
@@ -588,6 +687,10 @@ CREATE TABLE overheads (
     is_recurring        INTEGER DEFAULT 0,
     recurring_frequency TEXT,
     due_date            TEXT,
+    created_by          INTEGER REFERENCES users(id),
+    created_at          TEXT,
+    updated_by          INTEGER REFERENCES users(id),
+    updated_at          TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -609,6 +712,9 @@ CREATE TABLE users (
     module_access TEXT,
     status        TEXT DEFAULT 'Active',
     last_login    TEXT,
+    created_by    INTEGER REFERENCES users(id),
+    updated_by    INTEGER REFERENCES users(id),
+    updated_at    TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
@@ -626,8 +732,12 @@ CREATE TABLE access_logs (
 -- structural redesign to a (company_id, key) composite key once this app supports more than
 -- one company.
 CREATE TABLE settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT,
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT,
+    updated_by INTEGER REFERENCES users(id),
+    updated_at TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 

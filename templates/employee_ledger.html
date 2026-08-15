@@ -43,15 +43,14 @@
 
   {% if entries %}
   <table>
-    <tr><th>Date</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Advance Balance</th><th>Entry Recorded</th></tr>
+    <tr><th>Date</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Advance Balance</th></tr>
     {% for e in entries %}
     <tr class="clickable-row" onclick="document.getElementById('noteModal{{ loop.index }}').classList.add('open')">
-      <td>{{ e['date'] }}</td>
+      <td>{{ e['date'] or '—' }}</td>
       <td>{{ e['entry_type'] }}</td>
       <td class="num">{% if e['debit'] %}₹{{ '{:,.0f}'.format(e['debit']) }}{% endif %}</td>
       <td class="num">{% if e['credit'] %}₹{{ '{:,.0f}'.format(e['credit']) }}{% endif %}</td>
       <td class="num">{% if e['affects_advance'] %}₹{{ '{:,.0f}'.format(e['running_advance_balance']) }}{% endif %}</td>
-      <td style="font-size:0.75rem;color:var(--steel);">{{ e['created_at'] }}</td>
     </tr>
     {% endfor %}
   </table>
@@ -64,7 +63,7 @@
 <div class="modal-overlay" id="noteModal{{ loop.index }}">
   <div class="modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('noteModal{{ loop.index }}').classList.remove('open')">&#10005;</button>
-    <h3>{{ e['entry_type'] }} — {{ e['date'] }}</h3>
+    <h3>{{ e['entry_type'] }} — {{ e['date'] or '—' }}</h3>
     <div class="detail-row"><div class="lbl">Debit</div>{% if e['debit'] %}₹{{ '{:,.0f}'.format(e['debit']) }}{% else %}—{% endif %}</div>
     <div class="detail-row"><div class="lbl">Credit</div>{% if e['credit'] %}₹{{ '{:,.0f}'.format(e['credit']) }}{% else %}—{% endif %}</div>
     <div class="detail-row"><div class="lbl">Notes</div>{{ e['notes'] or 'No notes for this entry' }}</div>

@@ -86,13 +86,16 @@ def own_fleet_vehicles(conn):
     return conn.execute("SELECT id, vehicle_no, type FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
 
 
-def sync_vehicle(conn, vehicle_id):
+def sync_vehicle(conn, vehicle_id, created_by=None):
     """Call every provider (fitness/puc/permit) for one vehicle, compare each result against
     what was already on file, and upsert vehicle_compliance. Insurance is included in the
     results too — but never provider-synced, see providers/insurance_provider.py — its entry
     just re-confirms the current status already computed from the real Insurance module, so
     every sync summary reports on all 4 types without a second system ever being able to
     disagree with the real one.
+
+    created_by is None for the automated weekly scheduler (no logged-in user), or the actual
+    user id when triggered via the manual per-vehicle "Refresh Compliance" button (app.py).
 
     Returns {compliance_type: {'outcome': 'ok'|'failed'|'skipped', 'changed': bool,
                                 'old_expiry': str|None, 'new_expiry': str|None}}
@@ -126,19 +129,19 @@ def sync_vehicle(conn, vehicle_id):
             if existing:
                 conn.execute("""UPDATE vehicle_compliance SET document_number=?, issuing_authority=?,
                                 permit_subtype=?, valid_upto=?, source=?, provider_name=?,
-                                last_sync_time=?, sync_status='Synced', updated_at=? WHERE id=?""",
+                                last_sync_time=?, sync_status='Synced', updated_at=?, updated_by=? WHERE id=?""",
                              (data.get('document_number'), data.get('issuing_authority'),
                               data.get('permit_subtype'), new_expiry, data.get('source'),
-                              provider.label, now, now, existing['id']))
+                              provider.label, now, now, created_by, existing['id']))
             else:
                 conn.execute("""INSERT INTO vehicle_compliance
                                 (vehicle_id, compliance_type, document_number, issuing_authority,
                                  permit_subtype, valid_upto, source, provider_name, last_sync_time,
-                                 sync_status, created_at, updated_at)
-                                VALUES (?,?,?,?,?,?,?,?,?,'Synced',?,?)""",
+                                 sync_status, created_at, updated_at, created_by)
+                                VALUES (?,?,?,?,?,?,?,?,?,'Synced',?,?,?)""",
                              (vehicle_id, ctype, data.get('document_number'), data.get('issuing_authority'),
                               data.get('permit_subtype'), new_expiry, data.get('source'),
-                              provider.label, now, now, now))
+                              provider.label, now, now, now, created_by))
             results[ctype] = {'outcome': 'ok', 'changed': old_expiry != new_expiry,
                                'old_expiry': old_expiry, 'new_expiry': new_expiry}
         except Exception as e:
@@ -146,8 +149,8 @@ def sync_vehicle(conn, vehicle_id):
             # can show "last sync failed" without losing whatever was last known-good.
             now = _now()
             if existing:
-                conn.execute("UPDATE vehicle_compliance SET sync_status='Failed', last_sync_time=?, updated_at=? WHERE id=?",
-                             (now, now, existing['id']))
+                conn.execute("UPDATE vehicle_compliance SET sync_status='Failed', last_sync_time=?, updated_at=?, updated_by=? WHERE id=?",
+                             (now, now, created_by, existing['id']))
             results[ctype] = {'outcome': 'failed', 'changed': False, 'old_expiry': old_expiry,
                                'new_expiry': None, 'error': str(e)}
 
