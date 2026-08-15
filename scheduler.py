@@ -94,20 +94,23 @@ def _parse_rc_date(value):
         return None
 
 
-def _get_or_create_vendor(conn, name):
+def _get_or_create_vendor(conn, name, created_by=None):
     """Local, minimal vendor lookup — deliberately not importing app.py's get_or_create_vendor
     to avoid a circular import (app.py is the __main__ module when this runs); just enough to
-    resolve an insurer name from the RC response into a vendors.id."""
+    resolve an insurer name from the RC response into a vendors.id.
+    created_by is None for the automated scheduler (no logged-in user), or the actual user id
+    when this is reached via the manual "Sync Latest Data" route (app.py)."""
     if not name:
         return None
     row = conn.execute("SELECT id FROM vendors WHERE name=? COLLATE NOCASE", (name,)).fetchone()
     if row:
         return row['id']
-    cur = conn.execute("INSERT INTO vendors (name) VALUES (?)", (name,))
+    cur = conn.execute("INSERT INTO vendors (name, created_by, created_at) VALUES (?,?,?)",
+                        (name, created_by, _now_str()))
     return cur.lastrowid
 
 
-def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now):
+def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now, created_by=None):
     """Fills real gaps from the synced RC response — never overwrites data that's already on
     file, since a manually-entered value is trusted over the cache. Two things:
       - vehicles.registration_date (feeds the Age column) — filled only if currently blank.
@@ -115,12 +118,15 @@ def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now):
         if one was already auto-created by an earlier RC sync (tagged via _RC_AUTO_POLICY_MARKER
         in its notes), that same row is refreshed in place rather than duplicated. A vehicle
         with a real, manually-entered policy is left alone entirely.
+    created_by is None when this runs from the automated scheduler (no logged-in user) or the
+    actual user id when triggered via the manual "Sync Latest Data" route (app.py).
     """
     reg = conn.execute("SELECT registration_date FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if reg and not (reg['registration_date'] or '').strip():
         regn_dt = _parse_rc_date(rc_data.get('rc_regn_dt'))
         if regn_dt:
-            conn.execute("UPDATE vehicles SET registration_date=? WHERE id=?", (regn_dt, vehicle_id))
+            conn.execute("UPDATE vehicles SET registration_date=?, updated_by=?, updated_at=? WHERE id=?",
+                         (regn_dt, created_by, now, vehicle_id))
 
     insurer_name = rc_data.get('rc_insurance_comp')
     policy_no = rc_data.get('rc_insurance_policy_no')
@@ -131,19 +137,20 @@ def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now):
     auto_row = next((r for r in existing if r['notes'] and _RC_AUTO_POLICY_MARKER in r['notes']), None)
     if existing and not auto_row:
         return  # a real, manually-entered policy already exists — never touch it
-    insurer_id = _get_or_create_vendor(conn, insurer_name)
+    insurer_id = _get_or_create_vendor(conn, insurer_name, created_by=created_by)
     note = f"{_RC_AUTO_POLICY_MARKER} on {now[:10]}."
     if auto_row:
-        conn.execute("UPDATE insurance_policies SET insurer_id=?, policy_number=?, expiry_date=?, notes=? WHERE id=?",
-                     (insurer_id, policy_no, expiry, note, auto_row['id']))
+        conn.execute("UPDATE insurance_policies SET insurer_id=?, policy_number=?, expiry_date=?, notes=?, updated_by=?, updated_at=? WHERE id=?",
+                     (insurer_id, policy_no, expiry, note, created_by, now, auto_row['id']))
     else:
-        conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurer_id, policy_number, expiry_date, notes)
-                        VALUES (?,?,?,?,?)""", (vehicle_id, insurer_id, policy_no, expiry, note))
+        conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurer_id, policy_number, expiry_date, notes, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?)""", (vehicle_id, insurer_id, policy_no, expiry, note, created_by, now))
     # Same sync the manual "Add/Edit Insurance" routes already do (app.py) — vehicles.insurance_expiry
     # is what the All Vehicles table's Insurance badge and compliance_service.refresh_compliance()
     # actually read, so without this the policy above would exist but never surface there.
     if expiry:
-        conn.execute("UPDATE vehicles SET insurance_expiry=? WHERE id=?", (expiry, vehicle_id))
+        conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
+                     (expiry, created_by, now, vehicle_id))
 
 
 def run_rc_sync(get_db_fn):
@@ -168,9 +175,9 @@ def run_rc_sync(get_db_fn):
         for v in vehicles:
             result = fetch_rc(v['vehicle_no'], api_key)
             if result['ok']:
-                conn.execute("UPDATE vehicles SET rc_synced_data=?, rc_last_synced=? WHERE id=?",
-                             (json.dumps(result['data']), now, v['id']))
-                _backfill_from_rc(conn, v['id'], v['vehicle_no'], result['data'], now)
+                conn.execute("UPDATE vehicles SET rc_synced_data=?, rc_last_synced=?, updated_at=? WHERE id=?",
+                             (json.dumps(result['data']), now, now, v['id']))
+                _backfill_from_rc(conn, v['id'], v['vehicle_no'], result['data'], now, created_by=None)
                 synced += 1
             else:
                 logger.warning("RC sync failed for %s: %s", v['vehicle_no'], result['error'])
@@ -223,18 +230,19 @@ def run_challan_sync(get_db_fn):
                          fine_imposed, amount_of_fine_imposed, department, driver_name, name_of_violator,
                          owner_name, dl_no, document_impounded, remark, rto_distric_name, state_code,
                          court_name, court_address, date_of_proceeding, sent_to_court_on, sent_to_reg_court,
-                         sent_to_virtual_court, offence_details, source_created_at, source_updated_at, last_synced)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                         sent_to_virtual_court, offence_details, source_created_at, source_updated_at, last_synced,
+                         created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (v['id'], c.get('_id'), c.get('challan_no'), c.get('challan_date_time'), c.get('challan_place'),
                          c.get('challan_status'), fine_val, c.get('amount_of_fine_imposed'), c.get('department'),
                          c.get('driver_name'), c.get('name_of_violator'), c.get('owner_name'), c.get('dl_no'),
                          c.get('document_impounded'), c.get('remark'), c.get('rto_distric_name'), c.get('state_code'),
                          c.get('court_name'), c.get('court_address'), c.get('date_of_proceeding'),
                          c.get('sent_to_court_on'), c.get('sent_to_reg_court'), c.get('sent_to_virtual_court'),
-                         json.dumps(c.get('offence_details') or []), c.get('createdAt'), c.get('updatedAt'), now))
+                         json.dumps(c.get('offence_details') or []), c.get('createdAt'), c.get('updatedAt'), now, now))
                 pending_count = data.get('pending_count', sum(1 for c in challans if (c.get('challan_status') or '').lower() == 'pending'))
-                conn.execute("UPDATE vehicles SET challan_count=?, challan_amount=?, challan_last_synced=? WHERE id=?",
-                             (pending_count, pending_amount, now, v['id']))
+                conn.execute("UPDATE vehicles SET challan_count=?, challan_amount=?, challan_last_synced=?, updated_at=? WHERE id=?",
+                             (pending_count, pending_amount, now, now, v['id']))
                 synced += 1
             else:
                 logger.warning("Challan sync failed for %s: %s", v['vehicle_no'], result['error'])
