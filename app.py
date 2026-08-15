@@ -1957,6 +1957,30 @@ def add_trip():
     conn = get_db()
     if request.method == 'POST':
         f = request.form
+
+        # LR Number is a real-world serially-numbered document (Lorry Receipt) — two trips
+        # sharing one is a data-integrity problem (duplicate billing, reconciliation confusion),
+        # not a legitimate case like two parties sharing a name. Checked here, before any of the
+        # get_or_create_* calls below, so a rejected duplicate never leaves behind a stray new
+        # vehicle/party/vendor row from a save that's about to be refused anyway.
+        lr_number = (f.get('lr_number') or '').strip()
+        if lr_number:
+            dup = conn.execute("""SELECT t.id, t.date, v.vehicle_no FROM trips t
+                                  LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                                  WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != ''""",
+                               (lr_number,)).fetchone()
+            if dup:
+                conn.close()
+                vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+                conn2 = get_db()
+                employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+                conn2.close()
+                error = (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
+                         f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+                return render_template('trip_form.html', mode='add', t=f, custom_items=[],
+                                        vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
+                                        employees=employees, return_to=f.get('return_to', ''), active='trips', error=error)
+
         def get_or_create_vehicle(vno):
             if not vno or not vno.strip():
                 return None
@@ -8257,6 +8281,33 @@ def edit_trip(trip_id):
     conn = get_db()
     if request.method == 'POST':
         f = request.form
+
+        # Same duplicate-LR guard as add_trip (see the comment there) — excludes this trip's own
+        # row so re-saving a trip without changing its LR Number doesn't trip over itself.
+        lr_number = (f.get('lr_number') or '').strip()
+        if lr_number:
+            dup = conn.execute("""SELECT t.id, t.date, v.vehicle_no FROM trips t
+                                  LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                                  WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != '' AND t.id != ?""",
+                               (lr_number, trip_id)).fetchone()
+            if dup:
+                custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
+                                                   FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
+                                                   WHERE ii.trip_id=?""", (trip_id,)).fetchall()
+                custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
+                                  'vendor_name': r['vendor_name'] or ''}
+                                 for r in custom_item_rows]
+                conn.close()
+                vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+                conn2 = get_db()
+                employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+                conn2.close()
+                error = (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
+                         f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+                return render_template('trip_form.html', mode='edit', t=f, custom_items=custom_items,
+                                        vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
+                                        employees=employees, return_to=f.get('return_to', ''), active='trips', error=error)
+
         def n(key):
             return float(f.get(key) or 0)
         def get_or_create_vehicle(vno):

@@ -12,9 +12,12 @@
   .lr-badge.no { background:#fdecea; color:var(--red); }
   .modal-box { width:400px; }
   .modal-box h3 { margin:0 0 16px; font-size:1.05rem; }
-  .end-trip-btn { background:var(--accent); color:#fff; border:none; padding:6px 14px; border-radius:4px; font-size:0.78rem; font-weight:600; cursor:pointer; white-space:nowrap; }
-  .end-trip-btn:hover { opacity:0.9; }
-  .completed-badge { padding:3px 10px; border-radius:10px; font-size:0.72rem; font-weight:600; background:#e8f5ee; color:var(--green); white-space:nowrap; }
+  /* "Clean & Soft" treatment — fully-rounded pill shape, a touch more breathing room than the
+     old 4px-radius button, and a soft matching-hue shadow instead of a hard edge. */
+  .end-trip-btn { background:var(--accent); color:#fff; border:none; padding:7px 18px; border-radius:999px; font-size:0.78rem; font-weight:600; cursor:pointer; white-space:nowrap; box-shadow:0 2px 6px rgba(192,86,33,0.28); transition:box-shadow .15s ease, transform .15s ease; }
+  .end-trip-btn:hover { opacity:0.95; box-shadow:0 3px 10px rgba(192,86,33,0.36); transform:translateY(-1px); }
+  .end-trip-btn:active { transform:translateY(0); box-shadow:0 1px 4px rgba(192,86,33,0.3); }
+  .completed-badge { padding:5px 14px; border-radius:999px; font-size:0.72rem; font-weight:700; background:#e8f5ee; color:var(--green); white-space:nowrap; box-shadow:0 1px 3px rgba(29,140,89,0.14); }
   .action-menu-wrap { position:relative; display:inline-block; }
   .action-menu-btn { background:none; border:none; cursor:pointer; color:var(--steel); font-size:1.1rem; padding:4px 10px; line-height:1; }
   .action-menu-btn:hover { color:var(--ink); }
