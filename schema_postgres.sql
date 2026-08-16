@@ -496,6 +496,7 @@ CREATE TABLE invoice_batch_items (
     description      TEXT,
     amount           REAL,
     item_type        TEXT CHECK(item_type IN ('charge','deduction')),
+    vendor_id        INTEGER REFERENCES vendors(id),
     created_by       INTEGER,
     created_at       TEXT,
     updated_by       INTEGER,
