@@ -23,8 +23,9 @@
   .action-menu-btn:hover { color:var(--ink); }
   .action-menu-dropdown { display:none; position:absolute; right:0; top:100%; margin-top:2px; background:var(--white); border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.14); z-index:50; min-width:130px; overflow:hidden; }
   .action-menu-dropdown.open { display:block; }
-  .action-menu-dropdown button { width:100%; text-align:left; padding:9px 14px; background:none; border:none; cursor:pointer; font-size:0.83rem; color:var(--red); display:flex; align-items:center; gap:8px; }
+  .action-menu-dropdown button { width:100%; text-align:left; padding:9px 14px; background:none; border:none; cursor:pointer; font-size:0.83rem; color:var(--ink); display:flex; align-items:center; gap:8px; }
   .action-menu-dropdown button:hover { background:var(--paper); }
+  .action-menu-dropdown button.danger { color:var(--red); }
   .end-trip-summary { background:var(--paper); border-radius:6px; padding:12px 14px; margin-bottom:16px; font-size:0.85rem; }
   .end-trip-summary .route { margin-top:4px; color:var(--steel); }
   .shortage-box { background:rgba(217,164,6,0.1); border:1px solid rgba(217,164,6,0.35); border-radius:6px; padding:14px; margin:14px 0; }
@@ -113,7 +114,7 @@
       <th>Date <a class="trip-sort-ic" title="Sort by Date" href="?{{ filter_qs }}&sort=date&dir={{ 'asc' if (f_sort=='date' and f_dir=='desc') or f_sort=='' else 'desc' }}">{% if f_sort=='date' or f_sort=='' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a></th>
       <th>LR Number</th><th>Vehicle</th>
       <th>Party <a class="trip-sort-ic" title="Sort by Party" href="?{{ filter_qs }}&sort=party&dir={{ 'desc' if (f_sort=='party' and f_dir=='asc') else 'asc' }}">{% if f_sort=='party' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a></th>
-      <th>From</th><th>To</th><th class="num">Billed</th><th class="num">Pending</th><th>End Trip</th><th>Action</th>
+      <th>From</th><th>To</th><th class="num">Billed</th><th class="num">Pending</th><th></th><th>Action</th>
     </tr>
     {% for t in trips %}
     <tr class="clickable-row" onclick="goTo('/trips/edit/{{ t['id'] }}')">
@@ -134,7 +135,7 @@
           <button type="button" class="action-menu-btn" onclick="toggleActionMenu({{ t['id'] }}, event)">&#8942;</button>
           <div class="action-menu-dropdown" id="actionMenu{{ t['id'] }}">
             <form method="POST" action="/trips/delete/{{ t['id'] }}" onsubmit="return confirm('Delete this trip permanently? This cannot be undone.');">
-              <button type="submit">&#128465; Delete</button>
+              <button type="submit" class="danger">&#128465; Delete</button>
             </form>
           </div>
         </div>

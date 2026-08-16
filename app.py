@@ -7071,18 +7071,22 @@ def invoice_batch_edit(batch_id):
     batch = conn.execute("""SELECT ib.*, p.name as party_name, v.name as vendor_name FROM invoice_batches ib
                             LEFT JOIN parties p ON ib.party_id=p.id LEFT JOIN vendors v ON ib.vendor_id=v.id
                             WHERE ib.id=?""", (batch_id,)).fetchone()
-    batch_items = conn.execute("SELECT * FROM invoice_batch_items WHERE invoice_batch_id=? ORDER BY id", (batch_id,)).fetchall()
+    batch_items = conn.execute("""SELECT ibi.*, ve.name as item_vendor_name FROM invoice_batch_items ibi
+                                  LEFT JOIN vendors ve ON ibi.vendor_id=ve.id
+                                  WHERE ibi.invoice_batch_id=? ORDER BY ibi.id""", (batch_id,)).fetchall()
+    vendors = conn.execute("SELECT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     conn.close()
-    return render_template('invoice_batch_edit.html', b=batch, batch_items=batch_items, active='invoices')
+    return render_template('invoice_batch_edit.html', b=batch, batch_items=batch_items, vendors=vendors, active='invoices')
 
 @app.route('/invoices/generated/<int:batch_id>/items/add', methods=['POST'])
 def invoice_batch_item_add(batch_id):
     conn = get_db()
     f = request.form
-    conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, created_by, created_at)
-                    VALUES (?,?,?,?,?,?)""",
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name')) if f.get('vendor_name') else None
+    conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, vendor_id, created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?)""",
                  (batch_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type') or 'charge',
-                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                  vendor_id, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     return redirect(url_for('invoice_batch_edit', batch_id=batch_id))
@@ -7143,6 +7147,45 @@ def invoice_batch_pdf(batch_id):
                               extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0,
                               tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map)
     return send_file(buf, as_attachment=True, download_name=f'{batch["invoice_number"].replace("/","-")}.pdf', mimetype='application/pdf')
+
+@app.route('/invoices/generated/<int:batch_id>/pdf/preview')
+def invoice_batch_pdf_preview(batch_id):
+    """Same PDF as invoice_batch_pdf above, byte-for-byte — just returned inline (no
+    Content-Disposition: attachment) so it can sit in an <iframe> on the Edit Invoice page
+    instead of triggering a download. Kept as its own route rather than adding a query-param
+    branch to invoice_batch_pdf so that route's existing behavior is never touched."""
+    from flask import send_file
+    conn = get_db()
+    batch = conn.execute("SELECT * FROM invoice_batches WHERE id=?", (batch_id,)).fetchone()
+    trip_id_rows = conn.execute("SELECT trip_id FROM invoice_batch_trips WHERE invoice_batch_id=?", (batch_id,)).fetchall()
+    trip_ids = [str(r['trip_id']) for r in trip_id_rows]
+    placeholders = ','.join('?' * len(trip_ids))
+    trips = conn.execute(f"""SELECT t.*, v.vehicle_no FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                             WHERE t.id IN ({placeholders})""", trip_ids).fetchall() if trip_ids else []
+
+    entity = None
+    if batch['invoice_type'] == 'vehicle_owner' and batch['vendor_id']:
+        entity = conn.execute("SELECT * FROM vendors WHERE id=?", (batch['vendor_id'],)).fetchone()
+    elif batch['party_id']:
+        entity = conn.execute("SELECT * FROM parties WHERE id=?", (batch['party_id'],)).fetchone()
+    s = _get_invoice_settings(conn, session.get('company_id', 1))
+
+    extra_items = []
+    for it in conn.execute("SELECT description, amount, item_type FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,)).fetchall():
+        extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+    if trip_ids:
+        for it in conn.execute(f"SELECT description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall():
+            extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+    toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
+    conn.close()
+
+    cgst_rate = sgst_rate = round((batch['gst_rate'] or 0) / 2, 4) if batch['invoice_type'] == 'tax' else 0
+    buf = _build_invoice_pdf(trips, batch['invoice_type'], entity, s, batch['invoice_number'], batch['invoice_date'],
+                              batch['due_date'], batch['payment_status'], batch['remarks'],
+                              cgst_rate=cgst_rate, sgst_rate=sgst_rate,
+                              extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0,
+                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map)
+    return send_file(buf, mimetype='application/pdf')
 
 @app.route('/invoices')
 def invoices_search():
@@ -7456,13 +7499,13 @@ def require_login():
             idle_seconds = 0
         if idle_seconds > IDLE_TIMEOUT_SECONDS:
             session.clear()
-            return redirect(url_for('login', timeout='1'))
+            return redirect(url_for('login'))
     session['last_activity'] = now.isoformat()
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     from werkzeug.security import check_password_hash
-    error = 'You were signed out after 3 hours of inactivity. Please sign in again.' if request.args.get('timeout') else None
+    error = None
     if request.method == 'POST':
         f = request.form
         conn = get_db()
