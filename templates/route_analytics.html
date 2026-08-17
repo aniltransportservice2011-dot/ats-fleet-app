@@ -106,9 +106,9 @@
       <label>Vehicle Type</label>
       <select name="vehicle_type">
         <option value="">All Types</option>
-        <option value="Line" {% if f_vehicle_type=='Line' %}selected{% endif %}>Line</option>
-        <option value="Local" {% if f_vehicle_type=='Local' %}selected{% endif %}>Local</option>
-        <option value="Market" {% if f_vehicle_type=='Market' %}selected{% endif %}>Market</option>
+        {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+        <option value="{{ code }}" {% if f_vehicle_type==code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
       </select>
     </div>
     <button type="submit">Apply</button>
@@ -246,7 +246,7 @@
         <tr>
           <td class="sticky-col sticky-from">{{ r.clean_from }}</td>
           <td class="sticky-col sticky-to">{{ r.clean_to }}</td>
-          <td>{{ r.type }}</td>
+          <td>{{ VEHICLE_TYPE_LABELS.get(r.type, r.type) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.highest) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.average) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.lowest) }}</td>
@@ -284,14 +284,12 @@
       </div>
       <div class="ra-panel" style="text-align:center;">
         <div class="ra-panel-head" style="text-align:left;"><h3>Rate Breakdown</h3></div>
-        {% set local_end = line_pct + local_pct %}
-        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ line_pct }}%, #1a9c5b {{ line_pct }}% {{ local_end }}%, #eda100 {{ local_end }}% 100%);">
+        <div class="donut" style="background:conic-gradient(#2a78d6 0% {{ own_pct }}%, #eda100 {{ own_pct }}% 100%);">
           <div class="donut-inner"><div class="num">₹{{ '{:,.0f}'.format(rr_avg_rate_overall) }}</div><div class="lbl">Total Avg Rate</div></div>
         </div>
         <div style="text-align:left;">
-          <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Line Routes &nbsp;₹{{ '{:,.0f}'.format(line_avg) }}</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Local Routes &nbsp;₹{{ '{:,.0f}'.format(local_avg) }}</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Market Routes &nbsp;₹{{ '{:,.0f}'.format(market_avg) }}</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>Own Routes &nbsp;₹{{ '{:,.0f}'.format(own_avg) }}</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Hired Routes &nbsp;₹{{ '{:,.0f}'.format(hired_avg) }}</div>
         </div>
       </div>
     </div>

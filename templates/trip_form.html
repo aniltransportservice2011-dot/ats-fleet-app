@@ -142,13 +142,14 @@
               </script>
               {% endif %}
             </div>
-            <div class="tf-field"><label>Vehicle No <span class="req">*</span></label><input type="text" name="vehicle_no" value="{{ t.get('vehicle_no','') or '' }}" list="vehicle-list" required></div>
+            <div class="tf-field"><label>Vehicle No <span class="req">*</span></label><input type="text" name="vehicle_no" id="tfVehicleNo" value="{{ t.get('vehicle_no','') or '' }}" list="vehicle-list" required oninput="tfSyncVehicleType()"></div>
             <div class="tf-field"><label>Type <span class="req">*</span></label>
-              <select name="type">
-                <option value="Line" {% if t.get('type')=='Line' %}selected{% endif %}>Line</option>
-                <option value="Local" {% if t.get('type')=='Local' %}selected{% endif %}>Local</option>
-                <option value="Market" {% if t.get('type')=='Market' %}selected{% endif %}>Market</option>
+              <select id="tfTypeSelect" disabled>
+                {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+                <option value="{{ code }}" {% if t.get('type')==code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
               </select>
+              <input type="hidden" name="type" id="tfTypeHidden" value="{{ t.get('type','') or '' }}">
             </div>
             <div class="tf-field tf-cargo-fld"><label>Party Name <span class="req">*</span></label><input type="text" name="party_name" id="tfPartyName" value="{{ t.get('party_name','') or '' }}" list="combined-list" required></div>
             <div class="tf-field"><label>Driver Name</label><input type="text" name="driver_name" value="{{ t.get('driver_name','') or '' }}" list="employee-list"></div>
@@ -232,10 +233,10 @@
           </div>
         </div>
 
-        <!-- 5. MARKET VEHICLE OWNER — only shown when Type = Market -->
-        <div class="tf-section" id="marketOwnerSection">
+        <!-- 5. HIRED VEHICLE OWNER — only shown when Type = Hired -->
+        <div class="tf-section" id="hiredOwnerSection">
           <div class="tf-section-head">
-            <div class="tf-section-title"><span class="tf-badge" style="background:#2a78d6;">M</span>Market Vehicle Owner</div>
+            <div class="tf-section-title"><span class="tf-badge" style="background:#2a78d6;">H</span>Hired Vehicle Owner</div>
             <div class="tf-section-total" style="color:#2a78d6;">Owner Amount: <span id="sumOwnerAmount">₹0.00</span></div>
           </div>
           <div class="tf-section-body">
@@ -289,7 +290,7 @@
         </div>
 
         <div class="tf-card" id="profitCard">
-          <h3>&#128176; Market Vehicle Profit</h3>
+          <h3>&#128176; Hired Vehicle Profit</h3>
           <div class="tf-summary-row"><span class="lbl">Billed Amount (Party)</span><span class="val" id="profitBilled">₹0.00</span></div>
           <div class="tf-summary-row"><span class="lbl">Owner Amount (Cost)</span><span class="val" style="color:var(--red);" id="profitOwnerCost">₹0.00</span></div>
           <div class="tf-net-box">
@@ -336,6 +337,28 @@
 <script>
 var tfItemCount = 0;
 var tfExistingItems = {{ custom_items|tojson }};
+
+// vehicle_no -> own/hired code, keyed exactly as vehicles.vehicle_no is stored. Drives the Type
+// field below, which is ALWAYS read-only in this form — never a choice made here, only ever a
+// reflection of the selected vehicle's own record (set on the Vehicles page). Server-side
+// enforced too, see _resolve_trip_type() in app.py — this JS is the display/UX half, not the
+// only guard. A vehicle_no that doesn't match any known vehicle yet (a brand-new one typed
+// straight into this form) has nothing to reflect, so it falls back to Own, the same default
+// get_or_create_vehicle() stamps onto that new vehicle row server-side — never left editable
+// here either way; if it should actually be Hired, set that on the Vehicles page first.
+var tfVehicleTypeMap = {{ vehicle_type_map|tojson }};
+var VEHICLE_TYPE_OWN = {{ VEHICLE_TYPE_OWN|tojson }};
+var VEHICLE_TYPE_HIRED = {{ VEHICLE_TYPE_HIRED|tojson }};
+
+function tfSyncVehicleType() {
+  var vno = document.getElementById('tfVehicleNo').value.trim();
+  var type = tfVehicleTypeMap[vno] || VEHICLE_TYPE_OWN;
+  var select = document.getElementById('tfTypeSelect');
+  select.value = type;
+  select.disabled = true;
+  document.getElementById('tfTypeHidden').value = type;
+  tfRecalc();
+}
 
 function tfRowHtml(idx, desc, type, rate, qty, vendor) {
   return '<tr data-idx="' + idx + '">' +
@@ -409,11 +432,11 @@ function tfRecalc() {
   document.getElementById('sideOthers').textContent = '₹' + othersNet.toFixed(2);
   document.getElementById('sideNet').textContent = '₹' + net.toFixed(2);
 
-  // Market Vehicle Owner section + Profit card — only relevant (and only shown) for Market
-  // trips, since Line/Local trips use the company's own vehicles with no external owner cost.
-  var isMarket = document.querySelector('select[name="type"]').value === 'Market';
-  document.getElementById('marketOwnerSection').style.display = isMarket ? '' : 'none';
-  document.getElementById('profitCard').style.display = isMarket ? '' : 'none';
+  // Hired Vehicle Owner section + Profit card — only relevant (and only shown) for Hired trips,
+  // since Own trips use the company's own vehicles with no external owner cost.
+  var isHired = document.getElementById('tfTypeHidden').value === VEHICLE_TYPE_HIRED;
+  document.getElementById('hiredOwnerSection').style.display = isHired ? '' : 'none';
+  document.getElementById('profitCard').style.display = isHired ? '' : 'none';
 
   // Owner's Charge Type is independent of the party's above — a trip can be billed to the party
   // Per MT while the owner is paid a Fixed amount, or vice versa.
@@ -426,7 +449,7 @@ function tfRecalc() {
   document.getElementById('sumOwnerAmount').textContent = '₹' + ownerAmount.toFixed(2);
   document.getElementById('ownerAmountField').value = '₹' + ownerAmount.toFixed(2);
 
-  if (isMarket) {
+  if (isHired) {
     var profit = net - ownerAmount;
     document.getElementById('profitBilled').textContent = '₹' + net.toFixed(2);
     document.getElementById('profitOwnerCost').textContent = '₹' + ownerAmount.toFixed(2);
@@ -458,6 +481,7 @@ function tfToggleEmptyTrip() {
   });
   tfToggleEmpty();
   tfToggleEmptyTrip();
+  tfSyncVehicleType();
   tfRecalc();
 })();
 </script>

@@ -33,6 +33,20 @@ os.makedirs(INSURANCE_UPLOAD_DIR, exist_ok=True)
 TOLL_RECEIPT_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'toll_receipts')
 os.makedirs(TOLL_RECEIPT_UPLOAD_DIR, exist_ok=True)
 
+# Vehicle ownership type — every vehicle (and every trip, which copies its vehicle's type at
+# creation) is either company-owned ("Own") or hired-in from an outside owner ("Hired"). This
+# used to be a 3-way free-text field (Line/Local/Market) with "Line" and "Local" both meaning
+# "own fleet" and only "Market" meaning "hired" — collapsed here to the 2 options that actually
+# matter for every piece of business logic in this app. The stored value is this stable lowercase
+# CODE, never the display word — so renaming the word shown in a dropdown later (e.g. "Own" ->
+# "Company Fleet") only ever means editing VEHICLE_TYPE_LABELS below, not touching a single query
+# or template comparison. Same pattern this codebase already uses for rate_type (PER_MT/FIXED)
+# and item_type (charge/deduction): the code is what's stored and compared, the label is what's
+# shown.
+VEHICLE_TYPE_OWN = 'own'
+VEHICLE_TYPE_HIRED = 'hired'
+VEHICLE_TYPE_LABELS = {VEHICLE_TYPE_OWN: 'Own', VEHICLE_TYPE_HIRED: 'Hired'}
+
 def get_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
@@ -41,6 +55,15 @@ def get_db():
     # conn.execute(sql, params) stay exactly as they are. Zero behavior change today: db.Connection
     # is a pure passthrough on the sqlite backend.
     return db.Connection(conn, backend='sqlite')
+
+@app.context_processor
+def inject_vehicle_type_labels():
+    """Makes the own/hired codes + their display labels available to every template (dropdown
+    options, badges, read-only display text) without every route that touches a vehicle/trip
+    type needing to pass them individually. See the VEHICLE_TYPE_* comment near the top of this
+    file for why the stored value and the shown word are kept separate."""
+    return {'VEHICLE_TYPE_OWN': VEHICLE_TYPE_OWN, 'VEHICLE_TYPE_HIRED': VEHICLE_TYPE_HIRED,
+            'VEHICLE_TYPE_LABELS': VEHICLE_TYPE_LABELS}
 
 @app.context_processor
 def inject_site_logo():
@@ -121,7 +144,7 @@ def _period_financials(conn, date_from, date_to):
                (t['loading_expense'] or 0) + (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) +
                (t['weighbridge_charges'] or 0) + (t['other_expense'] or 0) + (t['permit_charges'] or 0) for t in trips)
     owner_cost = sum((t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
-                      for t in trips if t['type'] == 'Market')
+                      for t in trips if t['type'] == VEHICLE_TYPE_HIRED)
     maint_all = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     # Toll Management (Maintenance > Toll) is the source of truth for period-level toll cost now —
     # 'maint' below means "maintenance excluding toll" so a breakdown chart showing both a
@@ -302,6 +325,37 @@ def get_or_create_vendor(conn, name):
     cur = conn.execute("INSERT INTO vendors (name, created_by, created_at) VALUES (?,?,?)",
                         (name, session.get('user_id'), now))
     return cur.lastrowid
+
+def get_or_create_vehicle(conn, vno, type_hint=None):
+    """Shared by add_trip/edit_trip (previously two separately hand-written copies of this same
+    lookup). type_hint is only ever used the moment a brand-new vehicle_no is typed straight into
+    the Trip form and doesn't exist yet — its own/hired Type field is still editable in that one
+    case (see trip_form.html), and whatever was picked there becomes that new vehicle's permanent
+    type. An already-existing vehicle keeps its own type untouched; _resolve_trip_type() below is
+    what actually decides the trip's own type value, not this function."""
+    if not vno or not vno.strip():
+        return None
+    vno = vno.strip()
+    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+    if row:
+        return row[0]
+    vtype = type_hint if type_hint in (VEHICLE_TYPE_OWN, VEHICLE_TYPE_HIRED) else VEHICLE_TYPE_OWN
+    cur = conn.execute("INSERT INTO vehicles (vehicle_no, type, created_by, created_at) VALUES (?,?,?,?)",
+                        (vno, vtype, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    return cur.lastrowid
+
+def _resolve_trip_type(conn, vehicle_id, posted_type):
+    """A trip's own/hired type always mirrors its vehicle's own type — never an independent
+    choice — so this re-reads the vehicle's actual stored type (the authoritative value) rather
+    than trusting whatever the form posted. The Type field is read-only in the UI once a vehicle
+    is selected (JS-driven, trip_form.html); this is the server-side backstop for that rule, not
+    just a client-side nicety someone could bypass by editing the page. Only a brand-new vehicle
+    (created by this very save, nothing to inherit from yet) falls back to the posted value — the
+    same one get_or_create_vehicle() just stamped onto that new row above."""
+    if not vehicle_id:
+        return posted_type if posted_type in (VEHICLE_TYPE_OWN, VEHICLE_TYPE_HIRED) else None
+    row = conn.execute("SELECT type FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
+    return row['type'] if row and row['type'] else posted_type
 
 def _accounts_rows(conn):
     """Shared party+vendor balance list used by the Ledger page, its export, Dashboard, and
@@ -497,11 +551,11 @@ def dashboard():
     # category='Toll') is the source of truth for toll cost now, folded into maint_total below.
     # Adding the old per-trip manual `toll` field here too would double-count the same real-world
     # toll charge once it's been synced/imported through Toll Management.
-    # Fuel/driver-advance recorded on a Market trip is the owner's own money (covered by the
+    # Fuel/driver-advance recorded on a Hired trip is the owner's own money (covered by the
     # contracted freight, same rule as the vendor ledger and invoice center) — not a real company
     # expense, so it's excluded here. Everything else in this sum applies regardless of vehicle type.
-    fuel_total = sum(t['fuel_amount'] or 0 for t in trips if t['type'] != 'Market')
-    driveradv_total = sum(t['driver_adv_amount'] or 0 for t in trips if t['type'] != 'Market')
+    fuel_total = sum(t['fuel_amount'] or 0 for t in trips if t['type'] == VEHICLE_TYPE_OWN)
+    driveradv_total = sum(t['driver_adv_amount'] or 0 for t in trips if t['type'] == VEHICLE_TYPE_OWN)
     other_charges_total = sum((t['agent_commission'] or 0)+(t['builty_expense'] or 0)+(t['conductor_expense'] or 0)+
                               (t['fine'] or 0)+(t['labour_charges'] or 0)+(t['parking'] or 0)+(t['puncture'] or 0)+
                               (t['urea'] or 0)+(t['loading_expense'] or 0)+(t['unloading_expense'] or 0)+
@@ -528,8 +582,8 @@ def dashboard():
     running_count = len(running_vnos)
     idle_count = len(all_vehicles) - running_count
 
-    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market'").fetchall()
-    own_running_ids = set(t['vehicle_id'] for t in trips if t['type'] != 'Market')
+    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type = 'own'").fetchall()
+    own_running_ids = set(t['vehicle_id'] for t in trips if t['type'] == VEHICLE_TYPE_OWN)
     own_idle_count = sum(1 for v in own_vehicles if v['id'] not in own_running_ids)
     own_vehicle_count = len(own_vehicles)
 
@@ -544,10 +598,10 @@ def dashboard():
     exp_max = max([v for _, v, _ in exp_items], default=1) or 1
     exp_breakdown = [{'label': l, 'value': v, 'color': c, 'pct': round((v/exp_max)*100, 1)} for l, v, c in exp_items]
 
-    # Vehicle-wise revenue, own vehicles only (Line + Local)
+    # Vehicle-wise revenue, own vehicles only
     veh_revenue = {}
     for t in trips:
-        if t['type'] != 'Market' and t['vehicle_no']:
+        if t['type'] == VEHICLE_TYPE_OWN and t['vehicle_no']:
             veh_revenue[t['vehicle_no']] = veh_revenue.get(t['vehicle_no'], 0) + (t['billed_amount'] or 0)
     veh_rev_list = sorted(veh_revenue.items(), key=lambda x: x[1], reverse=True)[:10]
     veh_rev_max = max([v for _, v in veh_rev_list], default=1) or 1
@@ -565,29 +619,29 @@ def dashboard():
     payables = sorted([r for r in _acct_rows if r['balance'] < 0], key=lambda r: r['balance'])
     total_payables = sum(-r['balance'] for r in payables)
 
-    own_vehicle_turnover = sum(t['billed_amount'] or 0 for t in trips if t['type'] != 'Market')
+    own_vehicle_turnover = sum(t['billed_amount'] or 0 for t in trips if t['type'] == VEHICLE_TYPE_OWN)
 
-    market_trips = [t for t in trips if t['type'] == 'Market']
-    market_trip_count = len(market_trips)
-    market_billed = sum(t['billed_amount'] or 0 for t in market_trips)
+    hired_trips = [t for t in trips if t['type'] == VEHICLE_TYPE_HIRED]
+    hired_trip_count = len(hired_trips)
+    hired_billed = sum(t['billed_amount'] or 0 for t in hired_trips)
     # Owner's actual contracted cost (fixed rate, or owner_rate x quantity) — not what's been paid
     # to them so far, so the margin holds regardless of whether that payment is still pending.
-    market_owner_cost = sum(
+    hired_owner_cost = sum(
         (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
-        for t in market_trips)
-    market_vehicle_profit = market_billed - market_owner_cost
+        for t in hired_trips)
+    hired_vehicle_profit = hired_billed - hired_owner_cost
 
-    market_veh_data = {}
-    for t in market_trips:
+    hired_veh_data = {}
+    for t in hired_trips:
         vn = t['vehicle_no'] or 'Unassigned'
-        if vn not in market_veh_data:
-            market_veh_data[vn] = {'revenue': 0, 'trips': 0}
-        market_veh_data[vn]['revenue'] += t['billed_amount'] or 0
-        market_veh_data[vn]['trips'] += 1
-    market_veh_list = sorted(market_veh_data.items(), key=lambda x: x[1]['revenue'], reverse=True)[:10]
-    market_veh_max = max([d['revenue'] for _, d in market_veh_list], default=1) or 1
-    market_vehicle_chart = [{'vehicle_no': vn, 'revenue': d['revenue'], 'trips': d['trips'],
-                              'pct': round((d['revenue']/market_veh_max)*100, 1)} for vn, d in market_veh_list]
+        if vn not in hired_veh_data:
+            hired_veh_data[vn] = {'revenue': 0, 'trips': 0}
+        hired_veh_data[vn]['revenue'] += t['billed_amount'] or 0
+        hired_veh_data[vn]['trips'] += 1
+    hired_veh_list = sorted(hired_veh_data.items(), key=lambda x: x[1]['revenue'], reverse=True)[:10]
+    hired_veh_max = max([d['revenue'] for _, d in hired_veh_list], default=1) or 1
+    hired_vehicle_chart = [{'vehicle_no': vn, 'revenue': d['revenue'], 'trips': d['trips'],
+                              'pct': round((d['revenue']/hired_veh_max)*100, 1)} for vn, d in hired_veh_list]
 
     recent_trips = conn.execute("""SELECT t.date, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, p.name as party_name,
                                     t.driver_name, t.billed_amount
@@ -638,12 +692,182 @@ def dashboard():
         verb = 'expired' if a['status'] == 'Expired' else f"expires in {a['days_left']}d"
         alerts.append({'text': f"{a['vehicle_no']} — {a['label']} {verb}", 'sub': f"Expiry {a['expiry']} — renew from Vehicles > Edit > Compliance"})
 
+    # ============================================================================
+    # Lower dashboard section — the six panels below the KPI row (Freight Revenue Trend,
+    # Expense Breakdown [unchanged, see above], Recent Activities, Trip Status,
+    # Payables & Receivables, Top Performing Vehicles). Everything here respects the same
+    # date_from/date_to/vehicle filters as the rest of the page wherever the metric is
+    # period-based; Recent Activities is deliberately a live "what just happened" feed instead,
+    # same idea as the reference design's timestamped list, not scoped to the filter.
+    # ============================================================================
+    d_from = datetime.date.fromisoformat(date_from)
+    d_to = datetime.date.fromisoformat(date_to)
+    period_days = (d_to - d_from).days + 1
+    today = datetime.date.today()
+    today_str = today.isoformat()
+
+    # 1. Freight Revenue Trend — monthly buckets for the selected period, plus the same-length
+    # immediately-preceding period as a lighter "Last Period" comparison line.
+    def _month_range(d1, d2):
+        keys = []
+        cur = d1.replace(day=1)
+        while cur <= d2:
+            keys.append(cur.strftime('%Y-%m'))
+            cur = (cur.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+        return keys
+
+    this_month_keys = _month_range(d_from, d_to)
+    this_period_buckets = {k: 0 for k in this_month_keys}
+    for t in trips:
+        k = (t['date'] or '')[:7]
+        if k in this_period_buckets:
+            this_period_buckets[k] += t['billed_amount'] or 0
+
+    prev_to = d_from - datetime.timedelta(days=1)
+    prev_from = prev_to - datetime.timedelta(days=period_days - 1)
+    prev_trip_query = "SELECT t.date, t.billed_amount FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.date>=? AND t.date<=?"
+    prev_params = [prev_from.isoformat(), prev_to.isoformat()]
+    if vehicle_f:
+        prev_trip_query += " AND v.vehicle_no=?"
+        prev_params.append(vehicle_f)
+    prev_trips = conn.execute(prev_trip_query, prev_params).fetchall()
+    prev_month_keys = _month_range(prev_from, prev_to)
+    prev_period_buckets = {k: 0 for k in prev_month_keys}
+    for t in prev_trips:
+        k = (t['date'] or '')[:7]
+        if k in prev_period_buckets:
+            prev_period_buckets[k] += t['billed_amount'] or 0
+    prev_vals = list(prev_period_buckets.values())
+
+    # Paired by relative position (month 1 of this period vs month 1 of last period), not by
+    # calendar month — the two periods rarely share actual months.
+    freight_trend = []
+    for i, k in enumerate(this_month_keys):
+        label = datetime.datetime.strptime(k, '%Y-%m').strftime('%b %Y')
+        prev_val = prev_vals[i] if i < len(prev_vals) else 0
+        freight_trend.append({'label': label, 'value': this_period_buckets[k], 'prev_value': prev_val})
+    trend_max = max([max(f['value'], f['prev_value']) for f in freight_trend], default=1) or 1
+
+    # Pixel coords for the two-line (this period vs last period) SVG — same 700x220 viewport /
+    # padding convention as _trend_chart_coords, extended to place two series on one shared scale.
+    _ft_w, _ft_h, _ft_pl, _ft_pr, _ft_pt, _ft_pb = 700, 220, 34, 12, 16, 30
+    _ft_plot_w, _ft_plot_h, _ft_n = _ft_w - _ft_pl - _ft_pr, _ft_h - _ft_pt - _ft_pb, len(freight_trend)
+    freight_chart_bottom = _ft_pt + _ft_plot_h
+    for i, f in enumerate(freight_trend):
+        f['x'] = round(_ft_pl + (i * _ft_plot_w / (_ft_n - 1) if _ft_n > 1 else 0), 1)
+        f['y'] = round(_ft_pt + _ft_plot_h - (f['value'] / trend_max * _ft_plot_h), 1)
+        f['py'] = round(_ft_pt + _ft_plot_h - (f['prev_value'] / trend_max * _ft_plot_h), 1)
+    freight_y_ticks = []
+    for k in range(4):
+        tick_val = round(trend_max * k / 3)
+        freight_y_ticks.append({'value': tick_val, 'y': round(_ft_pt + _ft_plot_h - (tick_val / trend_max * _ft_plot_h), 1)})
+
+    # 2. Trip Status — Completed / In-Transit / Upcoming, from the already-filtered `trips`.
+    completed_trips = [t for t in trips if t['end_date']]
+    in_transit_trips = [t for t in trips if not t['end_date'] and (t['date'] or '') <= today_str]
+    upcoming_trips = [t for t in trips if not t['end_date'] and (t['date'] or '') > today_str]
+    trip_status = {
+        'completed': len(completed_trips), 'in_transit': len(in_transit_trips), 'upcoming': len(upcoming_trips),
+        'completed_pct': round(len(completed_trips) / trip_count * 100, 1) if trip_count else 0,
+        'in_transit_pct': round(len(in_transit_trips) / trip_count * 100, 1) if trip_count else 0,
+        'upcoming_pct': round(len(upcoming_trips) / trip_count * 100, 1) if trip_count else 0,
+    }
+
+    # 3. Recent Activities — a real unified feed of meaningful business events, drawn from every
+    # table's own created_at/updated_at (the audit-columns work earlier this session), combined
+    # and sorted — not a filtered/period metric, this is "what just happened" regardless of the
+    # date range above, same as the reference design's always-live activity list.
+    activities = []
+    for r in conn.execute("SELECT invoice_number, created_at FROM invoice_batches WHERE created_at IS NOT NULL ORDER BY created_at DESC LIMIT 5").fetchall():
+        activities.append({'icon': 'invoice', 'text': f"Invoice {r['invoice_number']} generated", 'ts': r['created_at']})
+    for r in conn.execute("""SELECT p.payment_type, p.amount, p.created_at, pt.name as party_name, v.name as vendor_name
+                             FROM payments p LEFT JOIN parties pt ON p.party_id=pt.id LEFT JOIN vendors v ON p.vendor_id=v.id
+                             WHERE p.created_at IS NOT NULL ORDER BY p.created_at DESC LIMIT 5""").fetchall():
+        who = r['party_name'] or r['vendor_name'] or 'account'
+        verb = 'received from' if r['payment_type'] == 'received' else 'made to'
+        activities.append({'icon': 'payment', 'text': f"Payment ₹{r['amount'] or 0:,.0f} {verb} {who}", 'ts': r['created_at']})
+    for r in conn.execute("""SELECT t.lr_number, v.vehicle_no, t.updated_at FROM trips t
+                             LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                             WHERE t.end_date IS NOT NULL AND t.updated_at IS NOT NULL ORDER BY t.updated_at DESC LIMIT 5""").fetchall():
+        activities.append({'icon': 'trip', 'text': f"Vehicle {r['vehicle_no'] or ''} completed trip {r['lr_number'] or ''}".strip(), 'ts': r['updated_at']})
+    for r in conn.execute("SELECT lr_number, created_at FROM trips WHERE created_at IS NOT NULL ORDER BY created_at DESC LIMIT 5").fetchall():
+        activities.append({'icon': 'trip', 'text': f"New trip created — {r['lr_number'] or 'no LR'}", 'ts': r['created_at']})
+    for r in conn.execute("""SELECT m.category, v.vehicle_no, m.created_at FROM maintenance m
+                             LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                             WHERE m.created_at IS NOT NULL ORDER BY m.created_at DESC LIMIT 5""").fetchall():
+        activities.append({'icon': 'maintenance', 'text': f"Maintenance recorded — {r['category'] or 'Service'} ({r['vehicle_no'] or 'N/A'})", 'ts': r['created_at']})
+    for r in conn.execute("SELECT category, amount, created_at FROM overheads WHERE created_at IS NOT NULL ORDER BY created_at DESC LIMIT 3").fetchall():
+        activities.append({'icon': 'expense', 'text': f"Expense recorded — {r['category'] or 'Overhead'} (₹{r['amount'] or 0:,.0f})", 'ts': r['created_at']})
+    for r in conn.execute("""SELECT employee, updated_at FROM salaries WHERE payment_status='paid' AND updated_at IS NOT NULL
+                             ORDER BY updated_at DESC LIMIT 3""").fetchall():
+        activities.append({'icon': 'salary', 'text': f"Salary paid — {r['employee']}", 'ts': r['updated_at']})
+    for r in conn.execute("""SELECT v.vehicle_no, vc.compliance_type, vc.updated_at FROM vehicle_compliance vc
+                             LEFT JOIN vehicles v ON vc.vehicle_id=v.id
+                             WHERE vc.updated_at IS NOT NULL ORDER BY vc.updated_at DESC LIMIT 3""").fetchall():
+        activities.append({'icon': 'compliance', 'text': f"{r['vehicle_no'] or 'Vehicle'} — {(r['compliance_type'] or 'compliance').title()} updated", 'ts': r['updated_at']})
+    def _norm_ts(raw):
+        """Most created_at/updated_at values are '%Y-%m-%d %H:%M:%S'. A handful of older
+        invoice_batches rows were saved with the compact %Y%m%d%H%M%S format instead (a
+        pre-existing bug in invoice_center_generate, fixed alongside this dashboard — see the
+        created_at=audit_now change above). Comparing those two formats as plain strings sorts
+        wrong (the dash in the normal format always sorts "earlier" than any digit), so this
+        normalizes both to the same real datetime before anything sorts or displays them."""
+        if not raw:
+            return None
+        try:
+            return datetime.datetime.strptime(raw[:19], '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            pass
+        digits = ''.join(ch for ch in raw if ch.isdigit())
+        if len(digits) >= 14:
+            try:
+                return datetime.datetime.strptime(digits[:14], '%Y%m%d%H%M%S')
+            except ValueError:
+                pass
+        return None
+
+    for a in activities:
+        a['_dt'] = _norm_ts(a['ts'])
+    activities = [a for a in activities if a['_dt']]
+    activities.sort(key=lambda a: a['_dt'], reverse=True)
+    activities = activities[:6]
+    for a in activities:
+        a['time_label'] = a['_dt'].strftime('%d %b, %I:%M %p')
+
+    # 4. Payables & Receivables — overdue approximation: an account's own most recent trip
+    # activity older than 30 days while it still carries an outstanding balance. Not exact
+    # invoice-level AR/AP aging (no per-invoice due-date ledger exists yet), but a real,
+    # data-derived signal rather than a made-up number.
+    overdue_cutoff = (today - datetime.timedelta(days=30)).isoformat()
+    overdue_receivables = 0
+    for r in receivables:
+        last = conn.execute("SELECT MAX(date) as d FROM trips WHERE party_id=?", (r['id'],)).fetchone()['d']
+        if last and last < overdue_cutoff:
+            overdue_receivables += r['balance']
+    overdue_payables = 0
+    for r in payables:
+        last = conn.execute("""SELECT MAX(date) as d FROM trips
+                               WHERE owner_vendor_id=? OR fuel_vendor_id=? OR driver_adv_vendor_id=? OR misc_vendor_id=?""",
+                            (r['id'], r['id'], r['id'], r['id'])).fetchone()['d']
+        if last and last < overdue_cutoff:
+            overdue_payables += -r['balance']
+
+    # 5. Top Performing Vehicles — enrich the existing top_vehicles with avg freight/trip, a
+    # real utilization % (days that vehicle actually ran / days in the selected period), and
+    # its current status.
+    veh_status = {v['vehicle_no']: v['status'] for v in conn.execute("SELECT vehicle_no, status FROM vehicles").fetchall()}
+    for tv in top_vehicles:
+        v_trip_dates = set(t['date'] for t in trips if t['vehicle_no'] == tv['vehicle_no'] and t['date'])
+        tv['avg_freight'] = tv['revenue'] / tv['trips'] if tv['trips'] else 0
+        tv['utilization_pct'] = round(len(v_trip_dates) / period_days * 100, 1) if period_days else 0
+        tv['status'] = veh_status.get(tv['vehicle_no']) or 'Active'
+
     conn.close()
     return render_template('dashboard.html',
         total_revenue=total_revenue, adj_revenue=adj_revenue, total_charges_paid=total_charges_paid,
         total_expenses=total_expenses, total_profit=total_profit, trip_count=trip_count,
         running_count=running_count, idle_count=idle_count, own_vehicle_turnover=own_vehicle_turnover,
-        market_trip_count=market_trip_count, market_vehicle_profit=market_vehicle_profit, market_vehicle_chart=market_vehicle_chart,
+        hired_trip_count=hired_trip_count, hired_vehicle_profit=hired_vehicle_profit, hired_vehicle_chart=hired_vehicle_chart,
         own_idle_count=own_idle_count, own_vehicle_count=own_vehicle_count,
         fuel_total=fuel_total, driveradv_total=driveradv_total, toll_total=toll_total, other_exp_total=other_exp_total,
         maint_total=maint_total, salaries_total=salaries_total,
@@ -652,7 +876,10 @@ def dashboard():
         recent_trips=recent_trips, vehicles=vehicles_list,
         f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, f_fy=f_fy,
         maint_by_category=maint_by_category, exp_breakdown=exp_breakdown, vehicle_revenue=vehicle_revenue,
-        fleet_running_pct=fleet_running_pct, top_vehicles=top_vehicles, alerts=alerts, active='dashboard')
+        fleet_running_pct=fleet_running_pct, top_vehicles=top_vehicles, alerts=alerts,
+        freight_trend=freight_trend, trend_max=trend_max, freight_chart_bottom=freight_chart_bottom,
+        freight_y_ticks=freight_y_ticks, trip_status=trip_status, activities=activities,
+        overdue_receivables=overdue_receivables, overdue_payables=overdue_payables, active='dashboard')
 
 @app.route('/vehicles/compliance/sync-all', methods=['POST'])
 def vehicles_compliance_sync_all():
@@ -854,7 +1081,7 @@ def vehicle_detail(v_id):
     body_type_icon = _body_type_icon(body_type_short)
 
     comp_row = None
-    if v['type'] != 'Market':
+    if v['type'] == VEHICLE_TYPE_OWN:
         comp_row = cs.refresh_compliance(conn)
         comp_row = next((c for c in comp_row if c['vehicle_id'] == v_id), None)
 
@@ -936,8 +1163,8 @@ def vehicle_sync_now(v_id):
     job and 3-day challan job use (scheduler.py), so a manual sync leaves the data in an
     identical shape to a scheduled one, and updates every screen that reads it (RC modal,
     Insurance/Fitness/Permit/PUC tabs, eChallan tab, the vehicles list, nav warnings).
-    Only ever touches THIS vehicle — never loops over the fleet. Market vehicles don't carry
-    RC/challan data at all (see the "not equal to Market" rule elsewhere in this file), so
+    Only ever touches THIS vehicle — never loops over the fleet. Hired vehicles don't carry
+    RC/challan data at all (see the "vehicle type = own" rule elsewhere in this file), so
     the route no-ops for them even if called directly."""
     from scheduler import _backfill_from_rc
     from providers.echallan_client import fetch_challans
@@ -947,7 +1174,7 @@ def vehicle_sync_now(v_id):
         conn.close()
         return redirect(url_for('vehicles_list'))
     return_to = request.form.get('return_to') or url_for('vehicle_detail', v_id=v_id)
-    if v['type'] == 'Market':
+    if v['type'] == VEHICLE_TYPE_HIRED:
         conn.close()
         return redirect(return_to)
     key_row = conn.execute("SELECT value FROM settings WHERE key='rc_lookup_api_key'").fetchone()
@@ -1025,7 +1252,7 @@ def _vehicles_permit_fitness_tab(conn):
 
     veh_rows = conn.execute("""SELECT id, vehicle_no, type, fitness_expiry, permit_valid_upto,
                                rc_synced_data, rc_last_synced FROM vehicles
-                               WHERE type IS NOT NULL AND type != 'Market' ORDER BY vehicle_no""").fetchall()
+                               WHERE type IS NOT NULL AND type = 'own' ORDER BY vehicle_no""").fetchall()
     comp_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
 
     comp_colors = {'Valid': ('#e8f5ee', 'var(--green)'), 'Expiring Soon': ('#fff3e8', 'var(--accent)'),
@@ -1211,8 +1438,8 @@ def vehicles_list():
     all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
 
     # Compliance badges (Insurance/Fitness/PUC/Permit) — own fleet only, see compliance_service's
-    # module docstring for why Market vehicles are excluded. Keyed by vehicle_id for O(1) lookup
-    # in the template; a Market vehicle simply has no entry and renders "—" for every badge.
+    # module docstring for why Hired vehicles are excluded. Keyed by vehicle_id for O(1) lookup
+    # in the template; a Hired vehicle simply has no entry and renders "—" for every badge.
     compliance_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
 
     conn.close()
@@ -1974,27 +2201,20 @@ def add_trip():
                 vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
                 conn2 = get_db()
                 employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+                vehicle_type_map = _vehicle_type_map(conn2)
                 conn2.close()
                 error = (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
                          f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
                 return render_template('trip_form.html', mode='add', t=f, custom_items=[],
                                         vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                                        employees=employees, return_to=f.get('return_to', ''), active='trips', error=error)
+                                        employees=employees, vehicle_type_map=vehicle_type_map,
+                                        return_to=f.get('return_to', ''), active='trips', error=error)
 
-        def get_or_create_vehicle(vno):
-            if not vno or not vno.strip():
-                return None
-            vno = vno.strip()
-            row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-            if row:
-                return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-            return cur.lastrowid
         def n(key):
             return float(f.get(key) or 0)
 
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        vehicle_id = get_or_create_vehicle(conn, f.get('vehicle_no'), f.get('type'))
+        trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
         party_id = get_or_create_party(conn, f.get('party_name'))
         fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
         driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
@@ -2034,7 +2254,7 @@ def add_trip():
                 'agent_commission','builty_expense','fine','labour_charges','parking','puncture',
                 'toll','urea','loading_expense','unloading_expense','weighbridge_charges','other_expense','misc_vendor_id',
                 'lr_received','is_empty']
-        vals = [f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
+        vals = [f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
                 quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
                 n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
                 n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
@@ -2058,10 +2278,11 @@ def add_trip():
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
     conn2 = get_db()
     employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+    vehicle_type_map = _vehicle_type_map(conn2)
     conn2.close()
     return render_template('trip_form.html', mode='add', t={}, custom_items=[],
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                            employees=employees, return_to='', active='trips')
+                            employees=employees, vehicle_type_map=vehicle_type_map, return_to='', active='trips')
 
 def _save_trip_custom_items(conn, trip_id, form):
     """Replace a trip's custom "Others" line items (stored in invoice_items, the same table the
@@ -2098,6 +2319,34 @@ def _save_trip_custom_items(conn, trip_id, form):
                      (trip_id, desc, rate * (qty or 1), item_type, vendor_id, session.get('user_id'),
                       datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
+def _save_invoice_batch_items(conn, batch_id, form):
+    """Replace a generated invoice's Additional Line Items (invoice_batch_items) from the
+    submitted item_desc/item_type/item_amount/item_vendor rows — same wholesale-replace pattern
+    as _save_trip_custom_items above, so nothing about these items touches the database until
+    the whole Edit Invoice form is actually saved. Previously Add/Delete were each their own
+    immediate POST, so navigating away mid-edit could leave a stray saved item behind even
+    though "Save Changes" was never clicked."""
+    conn.execute("DELETE FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,))
+    descs = form.getlist('item_desc')
+    types = form.getlist('item_type')
+    amounts = form.getlist('item_amount')
+    vendor_names = form.getlist('item_vendor')
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for i, desc in enumerate(descs):
+        desc = (desc or '').strip()
+        if not desc:
+            continue
+        try:
+            amount = float(amounts[i]) if i < len(amounts) and amounts[i] else 0
+        except ValueError:
+            amount = 0
+        item_type = types[i] if i < len(types) and types[i] in ('charge', 'deduction') else 'charge'
+        vendor_name = (vendor_names[i].strip() if i < len(vendor_names) and vendor_names[i] else '')
+        vendor_id = get_or_create_vendor(conn, vendor_name) if vendor_name else None
+        conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, vendor_id, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?)""",
+                     (batch_id, desc, amount, item_type, vendor_id, session.get('user_id'), now))
+
 def _get_autocomplete_lists():
     conn = get_db()
     vehicles = conn.execute("""SELECT vehicle_no FROM vehicles
@@ -2114,6 +2363,15 @@ def _get_autocomplete_lists():
     combined_names = sorted(set([p['name'] for p in parties] + [v['name'] for v in unlinked_vendor_names]))
     conn.close()
     return vehicles, parties, vendors, combined_names
+
+def _vehicle_type_map(conn):
+    """vehicle_no -> own/hired type code, for the Trip form's JS: selecting a vehicle that
+    already exists auto-fills and locks the Type field from here instead of leaving it an
+    independent, editable choice. All vehicles regardless of Active/Inactive status (unlike
+    _get_autocomplete_lists' vehicle list) — editing an old trip against a now-inactive vehicle
+    should still show that vehicle's real type, not fall back to an empty/editable field."""
+    rows = conn.execute("SELECT vehicle_no, type FROM vehicles WHERE vehicle_no IS NOT NULL").fetchall()
+    return {r['vehicle_no']: r['type'] for r in rows if r['type']}
 
 MAINTENANCE_CHECKLIST = ['Engine Oil', 'Oil Filter', 'Air Filter', 'Diesel Filter', 'Greasing',
     'Brake Adjustment', 'Clutch Adjustment', 'Air Leak Fixed', 'Electrical Check', 'Suspension Check',
@@ -2181,12 +2439,12 @@ def _maintenance_overview_tab(conn):
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
-    own_vehicles = conn.execute("SELECT id, vehicle_no, registration_date FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
+    own_vehicles = conn.execute("SELECT id, vehicle_no, registration_date FROM vehicles WHERE type = 'own' ORDER BY vehicle_no").fetchall()
     total_fleet = len(own_vehicles)
 
     period_entries = conn.execute("""SELECT m.id, m.date, m.vehicle_id, m.category, m.service_type, m.amount, m.paid_amount, v.vehicle_no
                                      FROM maintenance m JOIN vehicles v ON m.vehicle_id=v.id
-                                     WHERE v.type != 'Market' AND m.date>=? AND m.date<=?
+                                     WHERE v.type = 'own' AND m.date>=? AND m.date<=?
                                      ORDER BY m.date DESC""", (date_from, date_to)).fetchall()
     total_cost = sum(e['amount'] or 0 for e in period_entries)
     total_paid = sum(e['paid_amount'] or 0 for e in period_entries)
@@ -2210,7 +2468,7 @@ def _maintenance_overview_tab(conn):
                         'count': cat_data[k]['count'], 'cost': cat_data[k]['cost']} for k in cat_labels]
 
     km_row = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) as km FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
-                             WHERE v.type != 'Market' AND t.date>=? AND t.date<=? AND t.actual_km IS NOT NULL""",
+                             WHERE v.type = 'own' AND t.date>=? AND t.date<=? AND t.actual_km IS NOT NULL""",
                            (date_from, date_to)).fetchone()
     total_km = km_row['km'] or 0
     avg_cost_km = round(total_cost / total_km, 2) if total_km > 0 else None
@@ -2299,7 +2557,7 @@ def _maintenance_overview_tab(conn):
             yy -= 1
         mf, mt = _month_bounds(yy, mm)
         cost = conn.execute("""SELECT COALESCE(SUM(m.amount),0) FROM maintenance m JOIN vehicles v ON m.vehicle_id=v.id
-                               WHERE v.type != 'Market' AND m.date>=? AND m.date<=?""", (mf, mt)).fetchone()[0]
+                               WHERE v.type = 'own' AND m.date>=? AND m.date<=?""", (mf, mt)).fetchone()[0]
         trend.append({'label': calendar.month_abbr[mm], 'cost': cost})
     trend_max = max([t['cost'] for t in trend], default=1) or 1
     chart_w, chart_h = 640, 150
@@ -2376,7 +2634,7 @@ def _maintenance_urea_tab(conn):
     # Consumption (L/100km) needs real distance driven — the own fleet's actual_km already
     # logged on trips this month, not an invented figure.
     month_km = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
-                               WHERE v.type != 'Market' AND t.date>=? AND t.actual_km IS NOT NULL""",
+                               WHERE v.type = 'own' AND t.date>=? AND t.actual_km IS NOT NULL""",
                             (month_start,)).fetchone()[0]
     avg_consumption = round(month_usage / month_km * 100, 2) if month_km else None
 
@@ -2489,11 +2747,11 @@ def _toll_tab_base_context(conn):
     date_to = request.args.get('date_to', '')
 
     # Toll Management is own-fleet only (Line/Local) — same scope as Compliance and Urea — a
-    # hired/Market vehicle's toll isn't this company's cost to track.
+    # hired vehicle's toll isn't this company's cost to track.
     query = """SELECT te.*, v.vehicle_no, t.lr_number
                FROM toll_entries te JOIN vehicles v ON te.vehicle_id=v.id
                LEFT JOIN trips t ON te.trip_id=t.id
-               WHERE v.type != 'Market'"""
+               WHERE v.type = 'own'"""
     params = []
     if vehicle_f:
         query += " AND v.vehicle_no=?"; params.append(vehicle_f)
@@ -2515,7 +2773,7 @@ def _toll_tab_base_context(conn):
     # shouldn't make the stat cards lie about the real totals.
     full_ledger = conn.execute("""SELECT te.*, v.vehicle_no FROM toll_entries te
                                   JOIN vehicles v ON te.vehicle_id=v.id
-                                  WHERE v.type != 'Market'""").fetchall()
+                                  WHERE v.type = 'own'""").fetchall()
     today = datetime.date.today().isoformat()
     month_start = datetime.date.today().replace(day=1).isoformat()
     today_rows = [r for r in full_ledger if r['date'] == today]
@@ -2577,7 +2835,7 @@ def _toll_tab_base_context(conn):
     base_params.pop('page', None); base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
+    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type = 'own' ORDER BY vehicle_no").fetchall()
     last_sync_row = conn.execute("SELECT value FROM settings WHERE key='toll_fastag_last_sync'").fetchone()
 
     return dict(
@@ -3096,7 +3354,7 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
     total_premium_year = sum(r['premium_amount'] or 0 for r in all_rows if (r['start_date'] or '').startswith(this_year))
     avg_premium = round(sum(r['premium_amount'] or 0 for r in all_rows) / total_policies) if total_policies else 0
 
-    own_fleet_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type != 'Market'").fetchone()[0]
+    own_fleet_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type = 'own'").fetchone()[0]
     active_vehicle_ids = set(r['vehicle_id'] for r in all_rows if r['status'] == 'Active' and r['vehicle_id'])
     coverage_pct = round(len(active_vehicle_ids) / own_fleet_count * 100) if own_fleet_count else 0
     total_idv = sum(r['idv'] or 0 for r in all_rows if r['status'] == 'Active')
@@ -3768,7 +4026,7 @@ def delete_urea(txn_id):
 def add_toll():
     conn = get_db()
     f = request.form
-    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type != 'Market'",
+    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type = 'own'",
                         ((f.get('vehicle_no') or '').strip(),)).fetchone()
     vehicle_id = row['id'] if row else None
     if not vehicle_id:
@@ -3847,7 +4105,7 @@ def sync_fastag_toll():
     (or just use the Excel import above, which already reads real BOSS exports) once one exists."""
     import random
     conn = get_db()
-    vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market' ORDER BY vehicle_no").fetchall()
+    vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type = 'own' ORDER BY vehicle_no").fetchall()
     if not vehicles:
         conn.close()
         return redirect(url_for('maintenance_list', tab='toll'))
@@ -3945,7 +4203,7 @@ def _parse_toll_excel(file_storage, conn):
     ws = wb.active
 
     own_vehicles = {v['vehicle_no'].upper(): v['id'] for v in
-                     conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type != 'Market'").fetchall()}
+                     conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type = 'own'").fetchall()}
     # Keyed (not just a set) so a re-import can tell whether a duplicate TransactionId's row
     # actually changed since it was saved — a re-upload with a corrected amount/date/etc. should
     # offer to override the existing record, not just get silently skipped as "already imported".
@@ -4575,7 +4833,12 @@ def _get_party_ledger_entries(party_id):
         entries.append({'date': party['opening_balance_date'] or party['since_date'] or '', 'detail': 'Opening Balance',
                          'debit': max(ob, 0), 'credit': max(-ob, 0), 'kind': 'Opening Balance', 'ref': '', 'vehicle_type': ''})
     for t in trips:
-        original_received = (t['payment_received'] or 0) - trip_alloc.get(t['id'], 0)
+        # Floored at 0 — same reasoning as the vendor-side owner_trips loop in
+        # _get_vendor_ledger_entries: a negative value here is just payment_received having
+        # fallen out of sync with (behind) what a real Payment allocation already recorded for
+        # this trip, not a real amount. Left un-floored it would double-subtract a payment
+        # that's already correctly shown via its own "Payment received" row below.
+        original_received = max((t['payment_received'] or 0) - trip_alloc.get(t['id'], 0), 0)
         # Short place names (same _clean_loc used on Route Analytics), not the full stored address
         # — a trip's from/to can be a 200+ character pasted address, which has no business being
         # spelled out in full on every ledger row.
@@ -4648,6 +4911,12 @@ def _get_vendor_ledger_entries(vendor_id):
                                   v.vehicle_no, t.type FROM invoice_items ii JOIN trips t ON ii.trip_id=t.id
                                   LEFT JOIN vehicles v ON t.vehicle_id=v.id
                                   WHERE ii.vendor_id=? ORDER BY t.date""", (vendor_id,)).fetchall()
+    # Same idea, but for a generated (batch/consolidated) invoice's own "Additional Line Items" —
+    # added from the Edit Invoice screen, e.g. "Detention charge" tagged to a specific vendor.
+    batch_other_items = conn.execute("""SELECT ibi.description, ibi.amount, ibi.item_type, ib.invoice_date, ib.invoice_number,
+                                        ib.id as batch_id FROM invoice_batch_items ibi
+                                        JOIN invoice_batches ib ON ibi.invoice_batch_id=ib.id
+                                        WHERE ibi.vendor_id=? ORDER BY ib.invoice_date""", (vendor_id,)).fetchall()
     # Ledger-allocated portion of each owner-hire trip's paid_to_owner (see party-side comment above).
     trip_alloc = {}
     for row in conn.execute("""SELECT pa.trip_id, SUM(pa.amount) as amt FROM payment_allocations pa
@@ -4697,7 +4966,15 @@ def _get_vendor_ledger_entries(vendor_id):
     for o in owner_trips:
         owed = o['owner_fixed_amount'] if (o['owner_rate_type'] or 'PER_MT')=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
-            original_paid = (o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0)
+            # Floored at 0 — a negative value here doesn't represent any real amount owed or
+            # paid, it's an artifact of paid_to_owner having fallen out of sync with (behind)
+            # what's actually recorded via real Payment allocations for this trip (e.g. someone
+            # re-saved the trip via Edit Trip after a Payment had already set paid_to_owner,
+            # silently resetting it — see edit_trip's floor-protection below, which stops this
+            # going forward). Left un-floored, this line double-subtracts the same payment that's
+            # already correctly credited via its own "Payment Out" row elsewhere in this same
+            # ledger, making the running balance look like more is still owed than really is.
+            original_paid = max((o['paid_to_owner'] or 0) - trip_alloc.get(o['id'], 0), 0)
             detail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — vehicle hire"
             entries.append({'date': o['date'], 'detail': detail,
                              'debit': original_paid, 'credit': owed,
@@ -4734,6 +5011,16 @@ def _get_vendor_ledger_entries(vendor_id):
                          'debit': 0, 'credit': amt,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(it['trip_id']) or it['lr_number'] or '',
                          'vehicle_type': it['type'] or '', 'link': url_for('trip_view', trip_id=it['trip_id'])})
+    for it in batch_other_items:
+        # Same "always a credit" reasoning as the trip-level Others items above — a vendor tagged
+        # on a generated invoice's Additional Line Item supplied something real for that invoice,
+        # so it's owed regardless of whether the item reads as a Charge or Deduction on the
+        # invoice's own total.
+        detail = f"Invoice: {it['invoice_number']} — {it['description']}"
+        entries.append({'date': it['invoice_date'], 'detail': detail,
+                         'debit': 0, 'credit': it['amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': it['invoice_number'] or '',
+                         'vehicle_type': '', 'link': url_for('invoice_batch_edit', batch_id=it['batch_id'])})
     for p in payments:
         base_detail = _payment_base_detail(p, 'Payment made')
         allocs = conn.execute("""SELECT t.lr_number, pa.amount FROM payment_allocations pa
@@ -5990,7 +6277,7 @@ def performance():
         COALESCE(SUM(t.fuel_amount),0) as total_fuel,
         COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
         MAX(t.date) as last_trip
-        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type != 'Market'"""
+        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type = 'own'"""
     vparams = []
     if date_from:
         vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
@@ -6026,7 +6313,7 @@ def performance():
         v['pct'] = round(v['trip_count'] / top5_vehicles_max * 100, 1)
 
     vmonth_q = """SELECT substr(t.date,1,7) as month, COUNT(*) as trips, COALESCE(SUM(t.billed_amount),0) as billed
-                  FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type != 'Market'"""
+                  FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type = 'own'"""
     if date_from:
         vmonth_q += " AND t.date >= ?"
     if date_to:
@@ -6100,7 +6387,7 @@ def export_performance():
         COALESCE(SUM(t.billed_amount),0) as total_billed, COALESCE(SUM(t.fuel_amount),0) as total_fuel,
         COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
         MAX(t.date) as last_trip
-        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type != 'Market'"""
+        FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type = 'own'"""
     vparams = []
     if date_from:
         vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
@@ -6219,7 +6506,7 @@ def invoice_center():
     parties = conn.execute("SELECT id, name, contact, gstin FROM parties WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     vendors = conn.execute("SELECT id, name, contact, linked_party_id, gstin FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
 
-    # Combined owner picker for Market Vehicle Invoices: every vendor, plus every party not already
+    # Combined owner picker for Hired Vehicle Invoices: every vendor, plus every party not already
     # linked to a vendor — so any organization can be picked as an owner regardless of which
     # table it currently lives in. A party-only pick has no vendor row yet, so resolve/create
     # one and redirect to a plain vendor_id before anything downstream touches it.
@@ -7005,7 +7292,7 @@ def invoice_center_generate():
                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                  (invoice_number, invoice_type, party_id, vendor_id, invoice_date, due_date, payment_terms,
                   place_of_supply, remarks, cgst_rate+sgst_rate, tds_rate, extra_loading, extra_other,
-                  status, payment_status, now, session.get('user_id')))
+                  status, payment_status, audit_now, session.get('user_id')))
     batch_id = cur.lastrowid
     for tid in trip_ids:
         conn.execute("INSERT INTO invoice_batch_trips (invoice_batch_id, trip_id, created_by, created_at) VALUES (?,?,?,?)",
@@ -7065,15 +7352,20 @@ def invoice_batch_edit(batch_id):
                       f.get('remarks'), f.get('payment_status'), float(f.get('gst_rate') or 0), float(f.get('tds_rate') or 0),
                       float(f.get('loading_charges') or 0), float(f.get('other_charges') or 0),
                       session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), batch_id))
+        _save_invoice_batch_items(conn, batch_id, f)
         conn.commit()
         conn.close()
         return redirect(url_for('invoice_batches_list'))
     batch = conn.execute("""SELECT ib.*, p.name as party_name, v.name as vendor_name FROM invoice_batches ib
                             LEFT JOIN parties p ON ib.party_id=p.id LEFT JOIN vendors v ON ib.vendor_id=v.id
                             WHERE ib.id=?""", (batch_id,)).fetchone()
-    batch_items = conn.execute("""SELECT ibi.*, ve.name as item_vendor_name FROM invoice_batch_items ibi
-                                  LEFT JOIN vendors ve ON ibi.vendor_id=ve.id
-                                  WHERE ibi.invoice_batch_id=? ORDER BY ibi.id""", (batch_id,)).fetchall()
+    batch_item_rows = conn.execute("""SELECT ibi.*, ve.name as item_vendor_name FROM invoice_batch_items ibi
+                                      LEFT JOIN vendors ve ON ibi.vendor_id=ve.id
+                                      WHERE ibi.invoice_batch_id=? ORDER BY ibi.id""", (batch_id,)).fetchall()
+    # Plain dicts, not sqlite3.Row — the template seeds the client-side editable items table from
+    # this via |tojson, and Jinja's tojson can't serialize a Row directly.
+    batch_items = [{'description': r['description'], 'item_type': r['item_type'], 'amount': r['amount'],
+                     'vendor_name': r['item_vendor_name'] or ''} for r in batch_item_rows]
     vendors = conn.execute("SELECT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     conn.close()
     return render_template('invoice_batch_edit.html', b=batch, batch_items=batch_items, vendors=vendors, active='invoices')
@@ -7450,7 +7742,7 @@ def inject_challan_alerts():
     """Powers the topbar notification bell + Vehicles nav badge on every page — real vehicles
     with a pending challan count, plus how many are expiring soon on Insurance/Fitness/PUC/
     Permit (same 30-day window as the Vehicles page's own KPI cards), not a fabricated example.
-    Cheap query (only non-Market vehicles), so it's fine to run on every request rather than
+    Cheap query (only own-fleet vehicles), so it's fine to run on every request rather than
     caching. fleet_warning_marker is the single source of truth both this bell/badge AND
     vehicles_list.html's warning strip compare against when deciding whether a dismissal (see
     dismissChallanAlert) still applies — so they never disagree about what counts as "the same
@@ -7461,11 +7753,11 @@ def inject_challan_alerts():
     try:
         conn = get_db()
         rows = conn.execute("""SELECT id, vehicle_no, challan_count, challan_amount FROM vehicles
-                               WHERE type IS NOT NULL AND type != 'Market' AND COALESCE(challan_count,0) > 0
+                               WHERE type IS NOT NULL AND type = 'own' AND COALESCE(challan_count,0) > 0
                                ORDER BY challan_amount DESC""").fetchall()
         challan_vehicles_count = len(rows)
         own_fleet = conn.execute("""SELECT insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto
-                                    FROM vehicles WHERE type IS NOT NULL AND type != 'Market'""").fetchall()
+                                    FROM vehicles WHERE type IS NOT NULL AND type = 'own'""").fetchall()
         ins_expiring = sum(1 for r in own_fleet if _expiry_bucket(r['insurance_expiry']) == 'expiring')
         fit_expiring = sum(1 for r in own_fleet if _expiry_bucket(r['fitness_expiry']) == 'expiring')
         puc_expiring = sum(1 for r in own_fleet if _expiry_bucket(r['puc_valid_upto']) == 'expiring')
@@ -7855,17 +8147,17 @@ def route_analytics():
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
         d['revenue'] += t['billed_amount'] or 0
-        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — including both here double-counts it (same rule as the
         # Dashboard/Ledger/Invoice Center fixes: it's not a real company cost unless a different,
         # explicitly-tagged vendor paid it, which this per-route rollup has no vendor context for).
-        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
         cost = (fuel_and_adv + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
                 (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                 (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
                 (t['other_expense'] or 0) + (t['permit_charges'] or 0))
-        if t['type'] == 'Market':
+        if t['type'] == VEHICLE_TYPE_HIRED:
             cost += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['cost'] += cost
 
@@ -7964,22 +8256,19 @@ def route_analytics():
     rr_avg_rate_overall = round(sum(all_rates_flat) / len(all_rates_flat), 0) if all_rates_flat else 0
     rr_total_routes = len(rr_groups)
 
-    # Line/Local/Market donut — used to only compute Line's share and dump the entire remainder
-    # into Local's slice, silently folding Market's (very different) rates into "Local" and never
-    # showing them anywhere. Every real type now gets its own share and average.
-    line_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Line' for r in rates]
-    local_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Local' for r in rates]
-    market_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == 'Market' for r in rates]
-    other_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt not in ('Line', 'Local', 'Market') for r in rates]
-    line_avg = round(sum(line_rates) / len(line_rates), 0) if line_rates else 0
-    local_avg = round(sum(local_rates) / len(local_rates), 0) if local_rates else 0
-    market_avg = round(sum(market_rates) / len(market_rates), 0) if market_rates else 0
-    line_pct = round(len(line_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
-    local_pct = round(len(local_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
-    market_pct = round(len(market_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
-    # Any stray/unexpected type gets folded into Market's slice visually (better than silently
-    # vanishing) but never into its average — other_rates existing at all would be a real data gap.
-    market_pct += round(len(other_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
+    # Own/Hired rate donut. Vehicle type is a strict 2-way own/hired split now, so unlike the old
+    # 3-way Line/Local/Market version this never needs to fold one bucket's remainder into another.
+    own_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == VEHICLE_TYPE_OWN for r in rates]
+    hired_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == VEHICLE_TYPE_HIRED for r in rates]
+    other_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt not in (VEHICLE_TYPE_OWN, VEHICLE_TYPE_HIRED) for r in rates]
+    own_avg = round(sum(own_rates) / len(own_rates), 0) if own_rates else 0
+    hired_avg = round(sum(hired_rates) / len(hired_rates), 0) if hired_rates else 0
+    own_pct = round(len(own_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
+    hired_pct = round(len(hired_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
+    # Any stray/unexpected type (pre-migration legacy data, say) gets folded into Hired's slice
+    # visually (better than silently vanishing) but never into its average — other_rates existing
+    # at all would be a real data gap worth investigating, not expected in normal operation.
+    hired_pct += round(len(other_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
 
     rt_query = """SELECT substr(date,1,7) as month, AVG(rate) as avg_rate FROM trips
                   WHERE rate_type='PER_MT' AND rate > 0 AND date>=? AND date<=?
@@ -8031,8 +8320,8 @@ def route_analytics():
         rr_rows=rr_rows_page, rr_total_count=rr_total_count, rr_page=rr_page, rr_per_page=rr_per_page,
         rr_total_pages=rr_total_pages, rr_page_tokens=rr_page_tokens, rr_base_qs=rr_base_qs,
         highest_entry=highest_entry, lowest_entry=lowest_entry, rr_avg_rate_overall=rr_avg_rate_overall,
-        rr_total_routes=rr_total_routes, line_avg=line_avg, local_avg=local_avg, market_avg=market_avg,
-        line_pct=line_pct, local_pct=local_pct, market_pct=market_pct,
+        rr_total_routes=rr_total_routes, own_avg=own_avg, hired_avg=hired_avg,
+        own_pct=own_pct, hired_pct=hired_pct,
         da_lowest=da_lowest, da_average=da_average, da_highest=da_highest,
         fuel_lowest=fuel_lowest, fuel_average=fuel_average, fuel_highest=fuel_highest,
         trend_points=trend_points, svg_points=svg_points, svg_labels=svg_labels,
@@ -8077,17 +8366,17 @@ def export_route_analytics():
         d = groups.setdefault((cf, ct), {'trips': 0, 'revenue': 0, 'cost': 0})
         d['trips'] += 1
         d['revenue'] += t['billed_amount'] or 0
-        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — including both here double-counts it (same rule as the
         # Dashboard/Ledger/Invoice Center fixes: it's not a real company cost unless a different,
         # explicitly-tagged vendor paid it, which this per-route rollup has no vendor context for).
-        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
         cost = (fuel_and_adv + _trip_toll(t, route_toll_map) + (t['parking'] or 0) +
                 (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                 (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                 (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
                 (t['other_expense'] or 0) + (t['permit_charges'] or 0))
-        if t['type'] == 'Market':
+        if t['type'] == VEHICLE_TYPE_HIRED:
             cost += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['cost'] += cost
         if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0:
@@ -8158,7 +8447,6 @@ def fleet_utilization():
     date_from = request.args.get('date_from', '2026-04-01')
     date_to = request.args.get('date_to', '2027-03-31')
     vehicle_f = request.args.get('vehicle', '')
-    type_f = request.args.get('type', '')
 
     # From Date must never be after To Date — swap rather than let the math go negative.
     if date_from > date_to:
@@ -8167,11 +8455,12 @@ def fleet_utilization():
     d2 = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
 
     # ---------- Idle tracker: active days = union of each trip's start..end_date span ----------
-    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type != 'Market'"
+    # This whole page is scoped to the own fleet only (a Hired vehicle isn't this company's asset
+    # to track utilization for) — there used to be a Line/Local sub-type filter here too, but with
+    # vehicle type collapsed to a strict own/hired split, every row on this page is now the same
+    # type by construction, so a same-value filter no longer means anything and was removed.
+    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type = 'own'"
     params = []
-    if type_f:
-        query += " AND type = ?"
-        params.append(type_f)
     if vehicle_f:
         query += " AND vehicle_no = ?"
         params.append(vehicle_f)
@@ -8258,7 +8547,7 @@ def fleet_utilization():
         tick_val = round(trend_max * k / 4)
         y_ticks.append({'value': tick_val, 'y': round(pad_t + plot_h - (tick_val / trend_max * plot_h if trend_max else 0), 1)})
 
-    all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type != 'Market' AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
+    all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type = 'own' AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
     conn.close()
     return render_template('fleet_utilization.html',
         rows=rows, most_idle=most_idle, empty_rows=empty_rows, trend=trend, trend_max=trend_max,
@@ -8268,7 +8557,7 @@ def fleet_utilization():
         total_active_days=total_active_days, total_idle_days=total_idle_days, active_days_pct=active_days_pct, idle_days_pct=idle_days_pct,
         avg_idle_days=avg_idle_days, avg_active_days=avg_active_days, empty_run_trips=empty_run_trips, empty_run_pct_overall=empty_run_pct_overall,
         total_fuel=total_fuel, total_toll=total_toll, total_empty_cost=total_empty_cost,
-        f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, f_type=type_f, vehicles=all_vehicles_list,
+        f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, vehicles=all_vehicles_list,
         active='fleet-utilization')
 
 @app.route('/fleet-utilization/export')
@@ -8281,14 +8570,11 @@ def export_fleet_utilization():
     date_from = request.args.get('date_from', '2026-04-01')
     date_to = request.args.get('date_to', '2027-03-31')
     vehicle_f = request.args.get('vehicle', '')
-    type_f = request.args.get('type', '')
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
-    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type != 'Market'"
+    query = "SELECT id, vehicle_no, type, registration_date FROM vehicles WHERE type = 'own'"
     params = []
-    if type_f:
-        query += " AND type = ?"; params.append(type_f)
     if vehicle_f:
         query += " AND vehicle_no = ?"; params.append(vehicle_f)
     own_vehicles = conn.execute(query, params).fetchall()
@@ -8344,27 +8630,20 @@ def edit_trip(trip_id):
                 vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
                 conn2 = get_db()
                 employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+                vehicle_type_map = _vehicle_type_map(conn2)
                 conn2.close()
                 error = (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
                          f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
                 return render_template('trip_form.html', mode='edit', t=f, custom_items=custom_items,
                                         vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                                        employees=employees, return_to=f.get('return_to', ''), active='trips', error=error)
+                                        employees=employees, vehicle_type_map=vehicle_type_map,
+                                        return_to=f.get('return_to', ''), active='trips', error=error)
 
         def n(key):
             return float(f.get(key) or 0)
-        def get_or_create_vehicle(vno):
-            if not vno or not vno.strip():
-                return None
-            vno = vno.strip()
-            row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-            if row:
-                return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-            return cur.lastrowid
 
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        vehicle_id = get_or_create_vehicle(conn, f.get('vehicle_no'), f.get('type'))
+        trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
         party_id = get_or_create_party(conn, f.get('party_name'))
         fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
         driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
@@ -8388,6 +8667,26 @@ def edit_trip(trip_id):
 
         owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
 
+        # Floor payment_received/paid_to_owner at whatever a real recorded Payment has already
+        # allocated to this trip — otherwise a plain re-save of this form (stale page, a field
+        # that was never refreshed after a Payment was added elsewhere) silently resets one of
+        # these back down, orphaning it from the payment_allocations row that's still sitting
+        # there. That desync is exactly what made a vendor/party ledger's "Trip Bill" line look
+        # like it was double-subtracting a payment that had actually already been made — see the
+        # floor added in _get_vendor_ledger_entries / _get_party_ledger_entries. This does not
+        # stop the field being *raised* (a genuine new advance typed in here still saves fine),
+        # only stops it being silently lowered below what a real Payment has already recorded.
+        received_floor = conn.execute("""SELECT COALESCE(SUM(pa.amount),0) as amt FROM payment_allocations pa
+                                         JOIN payments p ON pa.payment_id=p.id
+                                         WHERE pa.trip_id=? AND p.payment_type='received' AND p.party_id IS NOT NULL""",
+                                      (trip_id,)).fetchone()['amt']
+        paid_owner_floor = conn.execute("""SELECT COALESCE(SUM(pa.amount),0) as amt FROM payment_allocations pa
+                                           JOIN payments p ON pa.payment_id=p.id
+                                           WHERE pa.trip_id=? AND p.payment_type='paid' AND p.vendor_id IS NOT NULL""",
+                                        (trip_id,)).fetchone()['amt']
+        payment_received_val = max(n('payment_received'), received_floor)
+        paid_to_owner_val = max(n('paid_to_owner'), paid_owner_floor)
+
         # conductor_expense/wear_tear no longer have form fields — left out of the UPDATE entirely
         # (not just zeroed) so an existing trip's historical value is never touched, same pattern as
         # driver_payment above.
@@ -8403,14 +8702,14 @@ def edit_trip(trip_id):
             toll=?, urea=?, loading_expense=?, unloading_expense=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
             lr_received=?, is_empty=?, updated_by=?, updated_at=?
             WHERE id=?""",
-            (f.get('date'), f.get('lr_number'), vehicle_id, f.get('type'), party_id, f.get('from_loc'), f.get('to_loc'),
+            (f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
              quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
              n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
              n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
              n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
              n('shortage_qty'), n('tds'), n('other_deductions'),
-             n('fuel_amount'), f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), n('party_advance'), n('payment_received'), fuel_vendor_id, driveradv_vendor_id,
-             f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, n('paid_to_owner'), owner_vendor_id,
+             n('fuel_amount'), f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), n('party_advance'), payment_received_val, fuel_vendor_id, driveradv_vendor_id,
+             f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, paid_to_owner_val, owner_vendor_id,
              n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
              n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
              n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
@@ -8444,10 +8743,12 @@ def edit_trip(trip_id):
     vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
     conn2 = get_db()
     employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+    vehicle_type_map = _vehicle_type_map(conn2)
     conn2.close()
     return render_template('trip_form.html', mode='edit', t=dict(trip), custom_items=custom_items,
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                            employees=employees, return_to=request.args.get('return_to', ''), active='trips')
+                            employees=employees, vehicle_type_map=vehicle_type_map,
+                            return_to=request.args.get('return_to', ''), active='trips')
 
 @app.route('/trips/<int:trip_id>/view')
 def trip_view(trip_id):
@@ -8475,9 +8776,9 @@ def trip_view(trip_id):
                                        WHERE ii.trip_id=?""", (trip_id,)).fetchall()
     conn.close()
     t = dict(trip)
-    is_market = t.get('type') == 'Market'
+    is_hired = t.get('type') == VEHICLE_TYPE_HIRED
     owner_amount = 0
-    if is_market:
+    if is_hired:
         if (t.get('owner_rate_type') or 'PER_MT') == 'FIXED':
             owner_amount = t.get('owner_fixed_amount') or 0
         else:
@@ -8497,7 +8798,7 @@ def trip_view(trip_id):
         deductions_total += (it['amount'] or 0) if it['item_type'] == 'deduction' else 0
         additions_total += (it['amount'] or 0) if it['item_type'] == 'charge' else 0
     balance_due = (t.get('billed_amount') or 0) - (t.get('payment_received') or 0)
-    return render_template('trip_view.html', t=t, custom_items=custom_item_rows, is_market=is_market,
+    return render_template('trip_view.html', t=t, custom_items=custom_item_rows, is_hired=is_hired,
                             owner_amount=owner_amount, veh_rc=veh_rc, additions_total=additions_total,
                             deductions_total=deductions_total, balance_due=balance_due, active='accounts')
 
@@ -8586,11 +8887,11 @@ def business_performance():
         d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0, 'trips': 0})
         d['revenue'] += t['billed_amount'] or 0
         d['trips'] += 1
-        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — see the same fix in route_analytics().
-        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
         direct = fuel_and_adv + _trip_toll(t, curr_toll_map) + (t['parking'] or 0)
-        if t['type'] == 'Market':
+        if t['type'] == VEHICLE_TYPE_HIRED:
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
     top_customers = []
@@ -8687,15 +8988,15 @@ def business_performance():
         # Toll excluded here on purpose — the maintenance-by-date sum just below already carries
         # Toll Management's real toll cost (category='Toll' rows), dated per entry; adding a
         # per-trip toll figure too would double-count it, same reasoning as Dashboard's total.
-        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — see the same fix in route_analytics().
-        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
         direct = (fuel_and_adv + (t['parking'] or 0) +
                   (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                   (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                   (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
                   (t['other_expense'] or 0) + (t['permit_charges'] or 0))
-        if t['type'] == 'Market':
+        if t['type'] == VEHICLE_TYPE_HIRED:
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         day_expense[t['date']] = day_expense.get(t['date'], 0) + direct
     for r in conn.execute("SELECT date, SUM(amount) as amt FROM maintenance WHERE date>=? AND date<=? GROUP BY date", (date_from, date_to)).fetchall():
@@ -8707,8 +9008,8 @@ def business_performance():
     avg_daily_revenue = round(curr['revenue'] / days_in_period, 2) if days_in_period else 0
     avg_daily_profit = round(curr['net_profit'] / days_in_period, 2) if days_in_period else 0
 
-    own_vehicle_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type != 'Market'").fetchone()[0]
-    own_revenue = sum(t['billed_amount'] or 0 for t in curr['trips'] if t['type'] != 'Market')
+    own_vehicle_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type = 'own'").fetchone()[0]
+    own_revenue = sum(t['billed_amount'] or 0 for t in curr['trips'] if t['type'] == VEHICLE_TYPE_OWN)
     avg_revenue_per_vehicle = round(own_revenue / own_vehicle_count, 2) if own_vehicle_count else 0
     employee_count = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
     avg_revenue_per_employee = round(curr['revenue'] / employee_count, 2) if employee_count else 0
@@ -8859,11 +9160,11 @@ def export_business_performance():
             continue
         d = party_period.setdefault(t['party_id'], {'revenue': 0, 'direct_cost': 0})
         d['revenue'] += t['billed_amount'] or 0
-        # Fuel/driver-advance on a Market trip is the owner's own money, already covered by the
+        # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — see the same fix in route_analytics().
-        fuel_and_adv = 0 if t['type'] == 'Market' else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
         direct = fuel_and_adv + _trip_toll(t, export_toll_map) + (t['parking'] or 0)
-        if t['type'] == 'Market':
+        if t['type'] == VEHICLE_TYPE_HIRED:
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['direct_cost'] += direct
     top_customers = []

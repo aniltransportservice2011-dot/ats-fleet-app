@@ -7,10 +7,10 @@ current.
 Three jobs:
   - run_weekly_sync   — every Sunday 2 AM, fixed. Fitness/PUC/Permit for the whole own-fleet via
                          the mock/live ComplianceProvider system (unchanged from before).
-  - run_rc_sync       — one eChallan RC Lookup call per non-Market vehicle, caching the full
+  - run_rc_sync       — one eChallan RC Lookup call per own-fleet vehicle, caching the full
                          response into vehicles.rc_synced_data/rc_last_synced and backfilling
                          real gaps (registration date, an insurance policy).
-  - run_challan_sync  — one eChallan Challan Lookup call per non-Market vehicle, replacing that
+  - run_challan_sync  — one eChallan Challan Lookup call per own-fleet vehicle, replacing that
                          vehicle's vehicle_challans rows with the latest fetched set and updating
                          vehicles.challan_count/challan_amount/challan_last_synced.
 
@@ -82,9 +82,6 @@ def run_weekly_sync(get_db_fn):
         conn.close()
 
 
-_RC_AUTO_POLICY_MARKER = 'Auto-populated from eChallan RC sync'
-
-
 def _parse_rc_date(value):
     if not value:
         return None
@@ -94,32 +91,23 @@ def _parse_rc_date(value):
         return None
 
 
-def _get_or_create_vendor(conn, name, created_by=None):
-    """Local, minimal vendor lookup — deliberately not importing app.py's get_or_create_vendor
-    to avoid a circular import (app.py is the __main__ module when this runs); just enough to
-    resolve an insurer name from the RC response into a vendors.id.
-    created_by is None for the automated scheduler (no logged-in user), or the actual user id
-    when this is reached via the manual "Sync Latest Data" route (app.py)."""
-    if not name:
-        return None
-    row = conn.execute("SELECT id FROM vendors WHERE name=? COLLATE NOCASE", (name,)).fetchone()
-    if row:
-        return row['id']
-    cur = conn.execute("INSERT INTO vendors (name, created_by, created_at) VALUES (?,?,?)",
-                        (name, created_by, _now_str()))
-    return cur.lastrowid
-
-
 def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now, created_by=None):
     """Fills real gaps from the synced RC response — never overwrites data that's already on
-    file, since a manually-entered value is trusted over the cache. Two things:
-      - vehicles.registration_date (feeds the Age column) — filled only if currently blank.
-      - insurance_policies — a new row is created only if the vehicle has NO policy at all yet;
-        if one was already auto-created by an earlier RC sync (tagged via _RC_AUTO_POLICY_MARKER
-        in its notes), that same row is refreshed in place rather than duplicated. A vehicle
-        with a real, manually-entered policy is left alone entirely.
-    created_by is None when this runs from the automated scheduler (no logged-in user) or the
-    actual user id when triggered via the manual "Sync Latest Data" route (app.py).
+    file, since a manually-entered value is trusted over the cache.
+
+    Only ever touches vehicles.registration_date (feeds the Age column), filled in only if
+    currently blank.
+
+    Deliberately does NOT touch insurance at all — an earlier version of this function also
+    auto-created an insurance_policies row (and, to hold its insurer, a brand-new vendor record
+    for whatever name the RC API returned as the insurance company) the first time RC data was
+    synced for a vehicle with no policy on file. That's almost certainly what created a stray
+    vendor literally named "None" on production: the manual "Sync Latest Data" button (app.py's
+    vehicle_sync_now) reaches this same function and — unlike the scheduled sync job — writes
+    nothing to sync_log, so that path was invisible to the investigation that first found that
+    vendor. Insurance is a real, human-verified record (premium, IDV, agent, documents) — it
+    should only ever be created by someone actually adding it via Vehicles > Insurance, never
+    silently inferred from a lookup API's free-text company name field.
     """
     reg = conn.execute("SELECT registration_date FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     if reg and not (reg['registration_date'] or '').strip():
@@ -128,37 +116,13 @@ def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now, created_by=Non
             conn.execute("UPDATE vehicles SET registration_date=?, updated_by=?, updated_at=? WHERE id=?",
                          (regn_dt, created_by, now, vehicle_id))
 
-    insurer_name = rc_data.get('rc_insurance_comp')
-    policy_no = rc_data.get('rc_insurance_policy_no')
-    expiry = _parse_rc_date(rc_data.get('rc_insurance_upto'))
-    if not (insurer_name or policy_no or expiry):
-        return
-    existing = conn.execute("SELECT id, notes FROM insurance_policies WHERE vehicle_id=?", (vehicle_id,)).fetchall()
-    auto_row = next((r for r in existing if r['notes'] and _RC_AUTO_POLICY_MARKER in r['notes']), None)
-    if existing and not auto_row:
-        return  # a real, manually-entered policy already exists — never touch it
-    insurer_id = _get_or_create_vendor(conn, insurer_name, created_by=created_by)
-    note = f"{_RC_AUTO_POLICY_MARKER} on {now[:10]}."
-    if auto_row:
-        conn.execute("UPDATE insurance_policies SET insurer_id=?, policy_number=?, expiry_date=?, notes=?, updated_by=?, updated_at=? WHERE id=?",
-                     (insurer_id, policy_no, expiry, note, created_by, now, auto_row['id']))
-    else:
-        conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurer_id, policy_number, expiry_date, notes, created_by, created_at)
-                        VALUES (?,?,?,?,?,?,?)""", (vehicle_id, insurer_id, policy_no, expiry, note, created_by, now))
-    # Same sync the manual "Add/Edit Insurance" routes already do (app.py) — vehicles.insurance_expiry
-    # is what the All Vehicles table's Insurance badge and compliance_service.refresh_compliance()
-    # actually read, so without this the policy above would exist but never surface there.
-    if expiry:
-        conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
-                     (expiry, created_by, now, vehicle_id))
-
 
 def run_rc_sync(get_db_fn):
-    """One eChallan RC Lookup call per every non-Market vehicle (Market vehicles are hired, not
+    """One eChallan RC Lookup call per every own-fleet vehicle (hired vehicles are not
     owned, so their RC paperwork isn't this company's to track), caching the full response into
-    vehicles.rc_synced_data (JSON) + rc_last_synced, then backfilling real gaps (registration
-    date, an insurance policy record) via _backfill_from_rc. A failed vehicle just keeps its
-    last-known-good cache and gets retried next cycle — never blanks out existing data.
+    vehicles.rc_synced_data (JSON) + rc_last_synced, then backfilling registration_date if it's
+    still blank via _backfill_from_rc. A failed vehicle just keeps its last-known-good cache and
+    gets retried next cycle — never blanks out existing data.
     Logs one row to sync_log. Returns a summary dict {'synced': n, 'failed': n, 'skipped': n}."""
     conn = get_db_fn()
     log_id = _log_sync_start(conn, 'rc_sync')
@@ -169,7 +133,7 @@ def run_rc_sync(get_db_fn):
             logger.info("RC sync skipped — no rc_lookup_api_key configured in Settings > Vehicle RC Lookup.")
             _log_sync_finish(conn, log_id, 0, 0, 0, note='No API key configured.')
             return {'synced': 0, 'failed': 0, 'skipped': 0}
-        vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IS NOT NULL AND type != 'Market'").fetchall()
+        vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IS NOT NULL AND type = 'own'").fetchall()
         synced = failed = 0
         now = _now_str()
         for v in vehicles:
@@ -191,7 +155,7 @@ def run_rc_sync(get_db_fn):
 
 
 def run_challan_sync(get_db_fn):
-    """One eChallan Challan Lookup call per every non-Market vehicle. On success, that vehicle's
+    """One eChallan Challan Lookup call per every own-fleet vehicle. On success, that vehicle's
     vehicle_challans rows are fully replaced with the freshly-fetched set (the API returns the
     current state each time, not a delta, so replace-not-append is correct here) and
     vehicles.challan_count/challan_amount/challan_last_synced are updated from the response's
@@ -206,7 +170,7 @@ def run_challan_sync(get_db_fn):
             logger.info("Challan sync skipped — no rc_lookup_api_key configured in Settings > Vehicle RC Lookup.")
             _log_sync_finish(conn, log_id, 0, 0, 0, note='No API key configured.')
             return {'synced': 0, 'failed': 0, 'skipped': 0}
-        vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IS NOT NULL AND type != 'Market'").fetchall()
+        vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type IS NOT NULL AND type = 'own'").fetchall()
         synced = failed = 0
         now = _now_str()
         for v in vehicles:

@@ -2,12 +2,15 @@
 {% block title %}Dashboard{% endblock %}
 {% block extra_head %}
 <style>
-  .kpi-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin:20px 0; }
-  .kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:16px; display:flex; gap:12px; align-items:flex-start; }
-  .kpi-icon { width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.1rem; flex-shrink:0; }
-  .kpi .label { font-size:0.78rem; color:var(--steel); }
-  .kpi .value { font-size:1.35rem; font-weight:700; margin-top:2px; }
-  .kpi .sub { font-size:0.72rem; color:var(--steel); margin-top:3px; }
+  .kpi-row { display:grid; grid-template-columns:repeat(7,1fr); gap:12px; margin:20px 0; }
+  .kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:14px 12px; display:flex; gap:10px; align-items:flex-start; min-width:0; }
+  .kpi-icon { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0; }
+  .kpi .label { font-size:0.74rem; color:var(--steel); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .kpi .value { font-size:1.1rem; font-weight:700; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .kpi .sub { font-size:0.7rem; color:var(--steel); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  @media (max-width:1500px) { .kpi-row { grid-template-columns:repeat(4,1fr); } }
+  @media (max-width:900px) { .kpi-row { grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:520px) { .kpi-row { grid-template-columns:1fr; } }
   .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:16px; }
   .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
   .grid-4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:16px; margin-top:16px; }
@@ -93,14 +96,14 @@
       </div>
     </div>
     <div class="kpi">
-      <div class="kpi-icon" style="background:{% if market_vehicle_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if market_vehicle_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128176;</div>
-      <div><div class="label">Market Vehicle Profit</div>
-      {% if market_vehicle_profit >= 0 %}
-      <div class="value" style="color:var(--green);">₹{{ '{:,.0f}'.format(market_vehicle_profit) }}</div>
+      <div class="kpi-icon" style="background:{% if hired_vehicle_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if hired_vehicle_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128176;</div>
+      <div><div class="label">Hired Vehicle Profit</div>
+      {% if hired_vehicle_profit >= 0 %}
+      <div class="value" style="color:var(--green);">₹{{ '{:,.0f}'.format(hired_vehicle_profit) }}</div>
       {% else %}
-      <div class="value" style="color:var(--red);">-₹{{ '{:,.0f}'.format(market_vehicle_profit|abs) }}</div>
+      <div class="value" style="color:var(--red);">-₹{{ '{:,.0f}'.format(hired_vehicle_profit|abs) }}</div>
       {% endif %}
-      <div class="sub">{{ market_trip_count }} trips</div></div>
+      <div class="sub">{{ hired_trip_count }} trips</div></div>
     </div>
     <div class="kpi">
       <div class="kpi-icon" style="background:#fdecea;color:#e34948;">&#9981;</div>
@@ -110,23 +113,31 @@
       <div class="kpi-icon" style="background:#fff6e8;color:#eda100;">&#128295;</div>
       <div><div class="label">Maintenance Cost</div><div class="value">₹{{ '{:,.0f}'.format(maint_total) }}</div></div>
     </div>
-    <div class="kpi">
-      <div class="kpi-icon" style="background:#eaf1fb;color:#7a5ad6;">&#128203;</div>
-      <div><div class="label">Total Payable</div><div class="value">₹{{ '{:,.0f}'.format(total_payables) }}</div>
-      <div class="sub"><a href="/accounts" style="color:var(--accent);">View Ledger &rarr;</a></div></div>
-    </div>
   </div>
 
   <div class="grid-3">
     <div class="panel">
-      <h3>Vehicle-wise Revenue <span style="font-size:0.7rem;color:var(--steel);font-weight:400;">(own vehicles only)</span></h3>
-      {% for v in vehicle_revenue %}
-      <div class="cssbar-row">
-        <div class="cssbar-label">{{ v['vehicle_no'] }}</div>
-        <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ v['pct'] }}%;background:#2a78d6;"></div></div>
-        <div class="cssbar-value">₹{{ '{:,.0f}'.format(v['revenue']) }}</div>
+      <h3>Freight Revenue Trend <a href="/performance" style="float:right;font-size:0.78rem;color:var(--accent);">View Details &rarr;</a></h3>
+      <div style="display:flex;gap:16px;margin-bottom:6px;">
+        <div class="legend-item"><span style="display:inline-block;width:14px;height:3px;border-radius:2px;background:#2a78d6;"></span>This Period</div>
+        <div class="legend-item"><span style="display:inline-block;width:14px;height:3px;border-radius:2px;background:#b7c6e0;"></span>Last Period</div>
       </div>
-      {% endfor %}
+      <svg viewBox="0 0 700 220" width="100%" style="overflow:visible;max-height:220px;">
+        {% for tick in freight_y_ticks %}
+        <line x1="34" y1="{{ tick.y }}" x2="688" y2="{{ tick.y }}" stroke="#e2e6ed" stroke-width="1"/>
+        <text x="28" y="{{ tick.y + 4 }}" font-size="9" text-anchor="end" fill="#5A6B8C">₹{{ '{:,.0f}'.format(tick.value) }}</text>
+        {% endfor %}
+        {% if freight_trend %}
+        <polyline points="{% for f in freight_trend %}{{ f.x }},{{ f.py }} {% endfor %}" fill="none" stroke="#b7c6e0" stroke-width="2" stroke-dasharray="4,3"/>
+        <polyline points="{% for f in freight_trend %}{{ f.x }},{{ f.y }} {% endfor %}" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+        {% for f in freight_trend %}
+        <circle cx="{{ f.x }}" cy="{{ f.y }}" r="3.5" fill="#2a78d6"/>
+        <text x="{{ f.x }}" y="208" font-size="9.5" text-anchor="middle" fill="#5A6B8C">{{ f.label }}</text>
+        {% endfor %}
+        {% else %}
+        <text x="350" y="110" font-size="12" text-anchor="middle" fill="#5A6B8C">No trip data for this selection.</text>
+        {% endif %}
+      </svg>
     </div>
 
     <div class="panel">
@@ -141,76 +152,61 @@
     </div>
 
     <div class="panel">
-      <h3>Recent Alerts</h3>
-      {% for a in alerts %}
+      <h3>Recent Activities</h3>
+      {% for a in activities %}
       <div class="alert-item">
-        <div class="alert-dot"></div>
-        <div><div>{{ a['text'] }}</div><div style="color:var(--steel);font-size:0.75rem;">{{ a['sub'] }}</div></div>
+        <div class="alert-dot" style="background:{% if a.icon=='payment' or a.icon=='salary' %}#1a9c5b{% elif a.icon=='invoice' %}#7a5ad6{% elif a.icon=='trip' %}#2a78d6{% elif a.icon=='maintenance' or a.icon=='compliance' %}#eda100{% elif a.icon=='expense' %}#e34948{% else %}#5A6B8C{% endif %};"></div>
+        <div><div>{{ a.text }}</div><div style="color:var(--steel);font-size:0.75rem;">{{ a.time_label }}</div></div>
       </div>
       {% else %}
-      <div style="color:var(--steel);font-size:0.85rem;">No alerts right now.</div>
+      <div style="color:var(--steel);font-size:0.85rem;">No recent activity.</div>
       {% endfor %}
     </div>
   </div>
 
-  <div class="grid-4">
+  <div class="grid-3" style="grid-template-columns:0.82fr 0.82fr 1.36fr;">
     <div class="panel" style="text-align:center;">
-      <h3 style="text-align:left;">Fleet Status</h3>
-      <div class="donut" style="background:conic-gradient(#1a9c5b 0% {{ fleet_running_pct }}%, #e34948 {{ fleet_running_pct }}% 100%);">
-        <div class="donut-inner"><div class="num">{{ own_vehicle_count }}</div><div class="lbl">Total</div></div>
+      <h3 style="text-align:left;">Trip Status <a href="/trips" style="float:right;font-size:0.78rem;color:var(--accent);">View All &rarr;</a></h3>
+      {% set tp1 = trip_status.completed_pct %}
+      {% set tp2 = trip_status.completed_pct + trip_status.in_transit_pct %}
+      <div class="donut" style="width:112px;height:112px;background:conic-gradient(#1a9c5b 0% {{ tp1 }}%, #2a78d6 {{ tp1 }}% {{ tp2 }}%, #eda100 {{ tp2 }}% 100%);">
+        <div class="donut-inner" style="width:76px;height:76px;"><div class="num" style="font-size:1.05rem;">{{ trip_count }}</div><div class="lbl">Trips</div></div>
       </div>
       <div style="text-align:left;">
-        <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Running ({{ own_vehicle_count - own_idle_count }})</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#e34948;"></span>Idle ({{ own_idle_count }})</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#1a9c5b;"></span>Completed ({{ trip_status.completed }})</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#2a78d6;"></span>In Transit ({{ trip_status.in_transit }})</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Upcoming ({{ trip_status.upcoming }})</div>
       </div>
     </div>
 
-    <div class="panel" style="grid-column:span 2;">
-      <h3>Top Performing Vehicles</h3>
-      <table style="width:100%;font-size:0.82rem;">
-        <tr style="color:var(--steel);text-align:left;"><th style="padding:4px 0;">Vehicle</th><th>Trips</th><th style="text-align:right;">Revenue</th></tr>
-        {% for v in top_vehicles %}
-        <tr><td style="padding:6px 0;border-top:1px solid var(--line);">{{ v['vehicle_no'] }}</td>
-          <td style="border-top:1px solid var(--line);">{{ v['trips'] }}</td>
-          <td style="text-align:right;border-top:1px solid var(--line);">₹{{ '{:,.0f}'.format(v['revenue']) }}</td></tr>
-        {% endfor %}
-      </table>
+    <div class="panel">
+      <h3>Payables &amp; Receivables <a href="/accounts" style="float:right;font-size:0.78rem;color:var(--accent);">View Ledger &rarr;</a></h3>
+      <div class="bal-box recv">
+        <div class="label">Total Receivables</div>
+        <div class="amt">₹{{ '{:,.0f}'.format(total_receivables) }}</div>
+        {% if overdue_receivables %}<div style="font-size:0.72rem;color:var(--red);margin-top:2px;">₹{{ '{:,.0f}'.format(overdue_receivables) }} overdue (30+ days)</div>{% endif %}
+      </div>
+      <div class="bal-box pay">
+        <div class="label">Total Payables</div>
+        <div class="amt">₹{{ '{:,.0f}'.format(total_payables) }}</div>
+        {% if overdue_payables %}<div style="font-size:0.72rem;color:var(--red);margin-top:2px;">₹{{ '{:,.0f}'.format(overdue_payables) }} overdue (30+ days)</div>{% endif %}
+      </div>
     </div>
 
     <div class="panel">
-      <h3>Quick Actions</h3>
-      <a href="/trips/add" class="qa-link">+ Add New Trip</a>
-      <a href="/maintenance/add" class="qa-link">+ Add Maintenance</a>
-      <a href="/vehicles/add" class="qa-link">+ Add Vehicle</a>
-      <a href="/employees/add" class="qa-link">+ Add Employee</a>
-    </div>
-  </div>
-
-  <div class="grid-2" style="margin-top:16px;">
-    <div class="panel">
-      <h3>Recent Trips <a href="/trips" style="float:right;font-size:0.78rem;color:var(--accent);">View All</a></h3>
+      <h3>Top Performing Vehicles <a href="/performance" style="float:right;font-size:0.78rem;color:var(--accent);">View All &rarr;</a></h3>
       <table style="width:100%;font-size:0.8rem;">
-        <tr style="color:var(--steel);text-align:left;"><th style="padding:4px 0;">LR Number</th><th>Vehicle</th><th>From &rarr; To</th><th style="text-align:right;">Freight</th></tr>
-        {% for t in recent_trips %}
+        <tr style="color:var(--steel);text-align:left;"><th style="padding:4px 0;">Vehicle</th><th style="text-align:right;">Trips</th><th style="text-align:right;">Revenue</th><th style="text-align:right;">Avg/Trip</th><th style="text-align:right;">Util.</th></tr>
+        {% for v in top_vehicles %}
         <tr>
-          <td style="padding:6px 0;border-top:1px solid var(--line);">{{ t['lr_number'] }}</td>
-          <td style="border-top:1px solid var(--line);">{{ t['vehicle_no'] }}</td>
-          <td style="border-top:1px solid var(--line);">{{ t['from_loc'] }} &rarr; {{ t['to_loc'] }}</td>
-          <td style="text-align:right;border-top:1px solid var(--line);">₹{{ '{:,.0f}'.format(t['billed_amount'] or 0) }}</td>
+          <td style="padding:6px 0;border-top:1px solid var(--line);"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:{% if v['status']=='Active' %}#1a9c5b{% else %}#e34948{% endif %};margin-right:6px;"></span>{{ v['vehicle_no'] }}</td>
+          <td style="text-align:right;border-top:1px solid var(--line);">{{ v['trips'] }}</td>
+          <td style="text-align:right;border-top:1px solid var(--line);">₹{{ '{:,.0f}'.format(v['revenue']) }}</td>
+          <td style="text-align:right;border-top:1px solid var(--line);">₹{{ '{:,.0f}'.format(v['avg_freight']) }}</td>
+          <td style="text-align:right;border-top:1px solid var(--line);">{{ v['utilization_pct'] }}%</td>
         </tr>
         {% endfor %}
       </table>
-    </div>
-
-    <div class="panel">
-      <h3>Maintenance Breakdown by Category</h3>
-      {% for m in maint_by_category %}
-      <div class="cssbar-row">
-        <div class="cssbar-label">{{ m['category'] }}</div>
-        <div class="cssbar-track"><div class="cssbar-fill" style="width:{{ m['pct'] }}%;background:#e34948;"></div></div>
-        <div class="cssbar-value">₹{{ '{:,.0f}'.format(m['total']) }}</div>
-      </div>
-      {% endfor %}
     </div>
   </div>
 </div>

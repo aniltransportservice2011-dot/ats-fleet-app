@@ -37,7 +37,7 @@
         <div class="rd-card-sub">
           {%- if veh_rc and (veh_rc.rc_maker_desc or veh_rc.rc_maker_model) %}{{ veh_rc.rc_maker_desc or '' }} {{ veh_rc.rc_maker_model or '' }}{% if t.get('veh_body_type') %} &middot; {{ t['veh_body_type'] }}{% endif -%}
           {%- elif t.get('veh_body_type') %}{{ t['veh_body_type'] }}
-          {%- else %}{{ t.get('type') or '—' }} vehicle{% endif %}
+          {%- else %}{{ VEHICLE_TYPE_LABELS.get(t.get('type'), t.get('type')) or '—' }} vehicle{% endif %}
         </div>
         {% if t.get('veh_id') %}<a class="rd-card-link" href="/vehicles/{{ t['veh_id'] }}">View Vehicle &rarr;</a>{% endif %}
       </div>
@@ -54,7 +54,7 @@
   </div>
 
   <div class="rd-grid cols5" style="margin-bottom:16px;">
-    <div class="rd-fld"><div class="lbl">Trip Type</div><div class="val">{{ t.get('type') or '—' }}</div></div>
+    <div class="rd-fld"><div class="lbl">Trip Type</div><div class="val">{{ VEHICLE_TYPE_LABELS.get(t.get('type'), t.get('type')) or '—' }}</div></div>
     <div class="rd-fld"><div class="lbl">Party</div><div class="val">{{ t.get('party_name') or '—' }}</div></div>
     <div class="rd-fld"><div class="lbl">Material</div><div class="val">{{ t.get('material') or '—' }}</div></div>
     <div class="rd-fld"><div class="lbl">Driver</div><div class="val">{{ t.get('driver_name') or '—' }}</div></div>
@@ -102,9 +102,9 @@
         </div>
       </div>
     </div>
-    {% if is_market %}
+    {% if is_hired %}
     <div class="rd-section">
-      <div class="rd-section-ttl">Market Vehicle Owner</div>
+      <div class="rd-section-ttl">Hired Vehicle Owner</div>
       <div class="rd-grid">
         <div class="rd-fld"><div class="lbl">Owner Name</div><div class="val">{{ t.get('owner_name') or '—' }}</div></div>
         <div class="rd-fld"><div class="lbl">Owner Charge Type</div><div class="val">{{ 'Fixed' if t.get('owner_rate_type')=='FIXED' else 'Per MT' }}</div></div>

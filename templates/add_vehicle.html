@@ -9,15 +9,43 @@
 <div class="wrap">
   <a class="back" href="/vehicles">&larr; Back</a>
   <h1>Add Vehicle</h1>
+  <!-- add_vehicle() also handles UPDATE when the typed Vehicle No already exists, across all of
+       these same columns in one go — every field it writes needs to be here, or re-saving an
+       existing vehicle_no through this page would silently null out its other columns (this was
+       exactly that bug, fixed by matching the Vehicles-list Add modal's full field set). -->
   <form class="stack" method="POST">
     <div><label>Vehicle No</label><input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required></div>
     <div><label>Type</label>
       <select name="type">
-        <option value="Line">Line</option>
-        <option value="Local">Local</option>
-        <option value="Market">Market</option>
+        {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+        <option value="{{ code }}">{{ label }}</option>
+        {% endfor %}
       </select>
     </div>
+    <div><label>Body Type</label>
+      <select name="body_type">
+        <option value="">Unspecified</option>
+        {% for bt in ['Truck','Trailer','Tanker','Pickup','Other'] %}
+        <option value="{{ bt }}">{{ bt }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><label>Status</label>
+      <select name="status">
+        <option value="Active">Active</option>
+        <option value="In Maintenance">In Maintenance</option>
+        <option value="Inactive">Inactive</option>
+      </select>
+    </div>
+    <div><label>Registration Date</label><input type="date" name="registration_date"></div>
+    <div><label>Capacity (MT)</label><input type="number" step="0.01" name="capacity_mt"></div>
+    <div><label>Chassis Number</label><input type="text" name="chassis_number" placeholder="Full chassis / VIN number"></div>
+    <div><label>Engine Number</label><input type="text" name="engine_number" placeholder="Full engine number"></div>
+    <div><label>Insurance Expiry</label><input type="date" name="insurance_expiry"></div>
+    <div><label>Fitness Expiry</label><input type="date" name="fitness_expiry"></div>
+    <div><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto"></div>
+    <div><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto"></div>
+    <div><label>Notes</label><textarea name="notes" rows="3" placeholder="Any notes about this vehicle..."></textarea></div>
     <button type="submit" class="submit">Save Vehicle</button>
   </form>
 </div>

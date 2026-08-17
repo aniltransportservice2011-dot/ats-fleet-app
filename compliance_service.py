@@ -2,9 +2,9 @@
 Compliance sync + status engine for Fitness, PUC and Permit (Insurance is handled by the
 existing Insurance module — see providers/insurance_provider.py for why it's excluded here).
 
-Scope: only the company's own fleet (vehicles.type IN ('Line','Local')) — Market vehicles are
-hired, not owned, so their compliance paperwork isn't this company's responsibility to track,
-matching the same own-fleet filter Maintenance's Overview tab has always used.
+Scope: only the company's own fleet (vehicles.type = 'own') — Hired vehicles are not owned, so
+their compliance paperwork isn't this company's responsibility to track, matching the same
+own-fleet filter Maintenance's Overview tab has always used.
 
 Three entry points, matching the brief:
   - sync_vehicle(conn, vehicle_id)   — call every provider for one vehicle, upsert results.
@@ -83,7 +83,7 @@ def days_left_for_expiry(expiry_str):
 
 def own_fleet_vehicles(conn):
     """Line/Local vehicles only — see module docstring."""
-    return conn.execute("SELECT id, vehicle_no, type FROM vehicles WHERE type IN ('Line','Local') ORDER BY vehicle_no").fetchall()
+    return conn.execute("SELECT id, vehicle_no, type FROM vehicles WHERE type = 'own' ORDER BY vehicle_no").fetchall()
 
 
 def sync_vehicle(conn, vehicle_id, created_by=None):
@@ -202,7 +202,7 @@ def refresh_compliance(conn):
         comp_by_vehicle.setdefault(r['vehicle_id'], {})[r['compliance_type']] = dict(r)
 
     vfull = {v['id']: v for v in conn.execute(
-        "SELECT id, vehicle_no, type, insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto FROM vehicles WHERE type IN ('Line','Local')").fetchall()}
+        "SELECT id, vehicle_no, type, insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto FROM vehicles WHERE type = 'own'").fetchall()}
 
     out = []
     for v in vehicles:
