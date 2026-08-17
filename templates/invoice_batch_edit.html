@@ -35,7 +35,7 @@
 {% endblock %}
 {% block content %}
 <div class="wrap" style="max-width:none; width:100%;">
-  <a class="back" href="/invoices/generated">&larr; Back to Generated Invoices</a>
+  <a class="back" href="/invoices/generated" onclick="return ibeConfirmLeave();">&larr; Back to Generated Invoices</a>
   <div class="ibe-head">
     <h1>Edit Invoice — {{ b['invoice_number'] }}</h1>
     <div class="sub">
@@ -46,10 +46,10 @@
     </div>
   </div>
 
+  <form method="POST" id="ibeForm">
   <div class="ibe-layout">
   <div class="ibe-left">
   <div class="ibe-card">
-    <form method="POST">
       <div class="ibe-grid">
         <div class="ibe-fld"><label>Invoice Date</label><input type="date" name="invoice_date" value="{{ b['invoice_date'] }}"></div>
         <div class="ibe-fld"><label>Due Date</label><input type="date" name="due_date" value="{{ b['due_date'] or '' }}"></div>
@@ -81,52 +81,39 @@
       <input type="hidden" name="gst_rate" value="{{ b['gst_rate'] or 0 }}">
       <input type="hidden" name="tds_rate" value="{{ b['tds_rate'] or 0 }}">
       {% endif %}
-      <div class="ibe-actions">
-        <a href="/invoices/generated" class="btn-cancel" style="text-decoration:none;display:inline-flex;align-items:center;">Cancel</a>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">&#128190; Save Changes</button>
-      </div>
-    </form>
   </div>
 
   <div class="ibe-card">
     <h3>Additional Line Items</h3>
-    <div class="card-sub">Add extra charges or deductions to this invoice — folded into Other Charges the next time this PDF is viewed or regenerated.</div>
+    <div class="card-sub">Add extra charges or deductions to this invoice. Nothing here is saved until you click "Save Changes" below.</div>
 
-    {% if batch_items %}
-    <table class="ibe-items-table">
+    <table class="ibe-items-table" id="ibeItemsTable">
       <tr><th>Description</th><th>Vendor</th><th>Type</th><th class="num">Amount (₹)</th><th></th></tr>
-      {% for it in batch_items %}
-      <tr>
-        <td>{{ it['description'] }}</td>
-        <td>{{ it['item_vendor_name'] or '—' }}</td>
-        <td>{{ 'Charge' if it['item_type']=='charge' else 'Deduction' }}</td>
-        <td class="num" style="color:{% if it['item_type']=='deduction' %}var(--red){% else %}var(--ink){% endif %};">{% if it['item_type']=='deduction' %}&minus;{% endif %}₹{{ '{:,.2f}'.format(it['amount'] or 0) }}</td>
-        <td>
-          <form method="POST" action="/invoices/generated/items/{{ it['id'] }}/delete" onsubmit="return confirm('Remove this item?');">
-            <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;">&#128465;</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
+      <tbody id="ibeItemsBody"></tbody>
     </table>
-    {% endif %}
+    <div id="ibeItemsEmpty" style="color:var(--steel); font-size:0.83rem; padding:6px 0 14px;">No additional line items yet.</div>
 
-    <form method="POST" action="/invoices/generated/{{ b['id'] }}/items/add" class="ibe-add-item-row">
-      <div class="ibe-fld"><label>Description</label><input type="text" name="description" placeholder="e.g. Route deviation charge" required></div>
-      <div class="ibe-fld"><label>Vendor</label><input type="text" name="vendor_name" list="ibe-vendor-list" placeholder="Optional"></div>
-      <div class="ibe-fld"><label>Amount (₹)</label><input type="number" step="0.01" name="amount" value="0.00" required></div>
+    <div class="ibe-add-item-row">
+      <div class="ibe-fld"><label>Description</label><input type="text" id="ibeNewDesc" placeholder="e.g. Route deviation charge"></div>
+      <div class="ibe-fld"><label>Vendor</label><input type="text" id="ibeNewVendor" list="ibe-vendor-list" placeholder="Optional"></div>
+      <div class="ibe-fld"><label>Amount (₹)</label><input type="number" step="0.01" id="ibeNewAmount" value="0.00"></div>
       <div class="ibe-fld">
         <label>Type</label>
-        <select name="item_type">
+        <select id="ibeNewType">
           <option value="charge">Charge</option>
           <option value="deduction">Deduction</option>
         </select>
       </div>
-      <button type="submit" class="add-btn" style="white-space:nowrap;">+ Add Item</button>
-    </form>
+      <button type="button" class="add-btn" style="white-space:nowrap;" onclick="ibeAddItemFromForm()">+ Add Item</button>
+    </div>
     <datalist id="ibe-vendor-list">
       {% for v in vendors %}<option value="{{ v['name'] }}">{% endfor %}
     </datalist>
+  </div>
+
+  <div class="ibe-actions">
+    <a href="/invoices/generated" class="btn-cancel" style="text-decoration:none;display:inline-flex;align-items:center;" onclick="return ibeConfirmLeave();">Cancel</a>
+    <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">&#128190; Save Changes</button>
   </div>
   </div>
 
@@ -137,5 +124,82 @@
     </div>
   </div>
   </div>
+  </form>
 </div>
+
+<script>
+var ibeItemCount = 0;
+var ibeExistingItems = {{ batch_items|tojson }};
+var ibeDirty = false;
+var ibeSubmitting = false;
+
+function ibeRowHtml(idx, desc, vendor, amount, type) {
+  return '<tr data-idx="' + idx + '">' +
+    '<td><input type="text" name="item_desc" value="' + (desc||'').replace(/"/g,'&quot;') + '" placeholder="e.g. Route deviation charge"></td>' +
+    '<td><input type="text" name="item_vendor" value="' + (vendor||'').replace(/"/g,'&quot;') + '" list="ibe-vendor-list" placeholder="Optional"></td>' +
+    '<td><select name="item_type"><option value="charge"' + (type==='charge' ? ' selected' : '') + '>Charge</option><option value="deduction"' + (type==='deduction' ? ' selected' : '') + '>Deduction</option></select></td>' +
+    '<td><input type="number" step="0.01" name="item_amount" value="' + (amount||0) + '"></td>' +
+    '<td><button type="button" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:1rem;" onclick="ibeRemoveRow(this)">&#128465;</button></td>' +
+  '</tr>';
+}
+
+function ibeAddItemRow(desc, vendor, amount, type) {
+  var tbody = document.getElementById('ibeItemsBody');
+  var wrap = document.createElement('tbody');
+  wrap.innerHTML = ibeRowHtml(ibeItemCount, desc, vendor, amount, type);
+  tbody.appendChild(wrap.firstChild);
+  ibeItemCount++;
+  ibeToggleEmpty();
+}
+
+function ibeAddItemFromForm() {
+  var desc = document.getElementById('ibeNewDesc').value.trim();
+  if (!desc) { document.getElementById('ibeNewDesc').focus(); return; }
+  var vendor = document.getElementById('ibeNewVendor').value.trim();
+  var amount = document.getElementById('ibeNewAmount').value || 0;
+  var type = document.getElementById('ibeNewType').value;
+  ibeAddItemRow(desc, vendor, amount, type);
+  document.getElementById('ibeNewDesc').value = '';
+  document.getElementById('ibeNewVendor').value = '';
+  document.getElementById('ibeNewAmount').value = '0.00';
+  ibeMarkDirty();
+}
+
+function ibeRemoveRow(btn) {
+  btn.closest('tr').remove();
+  ibeToggleEmpty();
+  ibeMarkDirty();
+}
+
+function ibeToggleEmpty() {
+  var hasRows = document.getElementById('ibeItemsBody').children.length > 0;
+  document.getElementById('ibeItemsEmpty').style.display = hasRows ? 'none' : '';
+}
+
+function ibeMarkDirty() { ibeDirty = true; }
+
+function ibeConfirmLeave() {
+  if (!ibeDirty) return true;
+  return confirm('You have unsaved changes on this invoice. Leave without saving?');
+}
+
+window.addEventListener('beforeunload', function(e) {
+  if (ibeDirty && !ibeSubmitting) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+(function() {
+  var form = document.getElementById('ibeForm');
+  form.addEventListener('input', ibeMarkDirty);
+  form.addEventListener('change', ibeMarkDirty);
+  form.addEventListener('submit', function() { ibeSubmitting = true; });
+
+  ibeExistingItems.forEach(function(it) {
+    ibeAddItemRow(it.description, it.vendor_name, it.amount, it.item_type);
+  });
+  ibeToggleEmpty();
+})();
+</script>
 {% endblock %}

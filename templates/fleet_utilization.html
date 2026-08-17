@@ -70,13 +70,6 @@
         {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
       </select>
     </div>
-    <div class="field"><label>Group / Type</label>
-      <select name="type">
-        <option value="">All</option>
-        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
-        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
-      </select>
-    </div>
     <button type="submit">Apply</button>
     <a class="clear" href="/fleet-utilization">Clear</a>
   </form>
@@ -133,7 +126,7 @@
         <tr><th>Vehicle No</th><th>Type</th><th>Group</th><th class="num">Active Days<br>(This Period)</th><th class="num">Idle Days<br>(This Period)</th><th class="num">Total Days</th><th class="num">Empty Run Trips</th><th class="num">Idle %</th><th>Last Trip Date</th><th>Status</th><th>Action</th></tr>
         {% for r in rows %}
         <tr class="fu-row" data-name="{{ r['vehicle_no']|lower }}">
-          <td>{{ r['vehicle_no'] }}</td><td>{{ r['type'] }}</td><td>{{ r['group'] }}</td>
+          <td>{{ r['vehicle_no'] }}</td><td>{{ VEHICLE_TYPE_LABELS.get(r['type'], r['type']) }}</td><td>{{ VEHICLE_TYPE_LABELS.get(r['group'], r['group']) }}</td>
           <td class="num" style="color:var(--green);">{{ r['active_days'] }}</td>
           <td class="num" style="color:var(--red);">{{ r['idle_days'] }}</td>
           <td class="num">{{ r['total_days'] }}</td>
@@ -165,7 +158,7 @@
       <h3>Most Idle Vehicles</h3>
       {% for v in most_idle %}
       <div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:0.9rem;">
-        <span>{{ v['vehicle_no'] }} <span style="color:var(--steel);font-size:0.78rem;">({{ v['type'] }})</span></span>
+        <span>{{ v['vehicle_no'] }} <span style="color:var(--steel);font-size:0.78rem;">({{ VEHICLE_TYPE_LABELS.get(v['type'], v['type']) }})</span></span>
         <span style="color:var(--red);font-weight:600;">{{ v['idle_days'] }} days idle</span>
       </div>
       {% else %}
@@ -179,7 +172,7 @@
         <tr><th>Vehicle No</th><th>Type</th><th class="num">Active Days</th><th class="num">Idle Days</th><th class="num">Total Days</th><th>Last Trip Date</th><th>Status</th></tr>
         {% for r in rows %}
         <tr>
-          <td>{{ r['vehicle_no'] }}</td><td>{{ r['type'] }}</td>
+          <td>{{ r['vehicle_no'] }}</td><td>{{ VEHICLE_TYPE_LABELS.get(r['type'], r['type']) }}</td>
           <td class="num" style="color:var(--green);">{{ r['active_days'] }}</td>
           <td class="num" style="color:var(--red);font-weight:600;">{{ r['idle_days'] }}</td>
           <td class="num">{{ r['total_days'] }}</td>

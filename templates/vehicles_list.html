@@ -208,18 +208,18 @@
           {% endif %}
         </td>
         {% else %}
-        <td><span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span></td>
+        <td><span class="comp-badge" title="Hired vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span></td>
         {% endif %}
         {% endfor %}
         <td>
-          {% if r['type'] != 'Market' %}
+          {% if r['type'] == VEHICLE_TYPE_OWN %}
           <span class="comp-badge" style="background:{{ comp_colors[r.road_tax_status][0] }};color:{{ comp_colors[r.road_tax_status][1] }};">{% if r.road_tax_status=='Valid' %}&#10003;{% elif r.road_tax_status in ['Expiring Soon','Expired'] %}&#9888;{% endif %} {{ r.road_tax_status if r.road_tax_status != 'Unknown' else 'No Data' }}</span>
           {% if r.road_tax_upto %}
           <div class="veh-comp-date">{{ fmt_date(r.road_tax_upto) }}</div>
           <div class="veh-comp-days">{% if r.road_tax_days_left is not none %}{% if r.road_tax_days_left < 0 %}({{ -r.road_tax_days_left }} days overdue){% else %}({{ r.road_tax_days_left }} days left){% endif %}{% endif %}</div>
           {% endif %}
           {% else %}
-          <span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
+          <span class="comp-badge" title="Hired vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
           {% endif %}
         </td>
         <td onclick="event.stopPropagation();">
@@ -240,10 +240,10 @@
         </td>
         <td onclick="event.stopPropagation();">
           <div class="veh-actions">
-            {% if r['type'] != 'Market' %}
+            {% if r['type'] == VEHICLE_TYPE_OWN %}
             <button type="button" class="download-btn" style="padding:6px 10px;font-size:0.78rem;" title="View cached RC details" onclick="openRcModal('/vehicles/{{ r['id'] }}/rc-lookup')">View RC</button>
             {% else %}
-            <span class="comp-badge" title="Market vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
+            <span class="comp-badge" title="Hired vehicle — not tracked" style="background:var(--paper);color:var(--steel);">—</span>
             {% endif %}
             <div class="veh-more-wrap">
               <button type="button" class="veh-more-btn" onclick="vehToggleMenu(event, 'vehMenu{{ r['id'] }}')">&#9662;</button>
@@ -361,11 +361,11 @@ function dismissChallanAlert() {
     <form method="POST" action="/vehicles/edit/{{ r['id'] }}">
       <div class="mt-form-grid">
         <div class="mt-fld"><label>Vehicle No</label><input type="text" name="vehicle_no" value="{{ r['vehicle_no'] }}" required></div>
-        <div class="mt-fld"><label>Route Type</label>
+        <div class="mt-fld"><label>Type</label>
           <select name="type">
-            <option value="Line" {% if r['type']=='Line' %}selected{% endif %}>Line</option>
-            <option value="Local" {% if r['type']=='Local' %}selected{% endif %}>Local</option>
-            <option value="Market" {% if r['type']=='Market' %}selected{% endif %}>Market</option>
+            {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+            <option value="{{ code }}" {% if r['type']==code %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
           </select>
         </div>
         <div class="mt-fld"><label>Body Type</label>
@@ -457,11 +457,11 @@ function dismissChallanAlert() {
     <form method="POST" action="/vehicles/add">
       <div class="mt-form-grid">
         <div class="mt-fld"><label>Vehicle No</label><input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required></div>
-        <div class="mt-fld"><label>Route Type</label>
+        <div class="mt-fld"><label>Type</label>
           <select name="type">
-            <option value="Line">Line</option>
-            <option value="Local">Local</option>
-            <option value="Market">Market</option>
+            {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+            <option value="{{ code }}">{{ label }}</option>
+            {% endfor %}
           </select>
         </div>
         <div class="mt-fld"><label>Body Type</label>

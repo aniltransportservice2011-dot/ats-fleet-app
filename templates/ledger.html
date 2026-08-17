@@ -175,9 +175,9 @@
     <div><label>Vehicle Type</label>
       <select name="type">
         <option value="">All Types</option>
-        <option value="Line" {% if f_type=='Line' %}selected{% endif %}>Line</option>
-        <option value="Local" {% if f_type=='Local' %}selected{% endif %}>Local</option>
-        <option value="Market" {% if f_type=='Market' %}selected{% endif %}>Market</option>
+        {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+        <option value="{{ code }}" {% if f_type==code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
       </select>
     </div>
     <div><label>Transaction Type</label>

@@ -9,15 +9,44 @@
 <div class="wrap">
   <a class="back" href="/vehicles">&larr; Back</a>
   <h1>Edit Vehicle</h1>
+  <!-- Every column edit_vehicle() writes must have a field here — that route does one full
+       UPDATE across all of them every save, so any column missing from this form gets silently
+       overwritten with NULL instead of keeping its existing value. (This used to be a 2-field
+       form while the route updated 13 columns — exactly that bug, fixed by bringing this page
+       up to the same full field set the Vehicles-list Edit modal already uses.) -->
   <form class="stack" method="POST">
     <div><label>Vehicle No</label><input type="text" name="vehicle_no" value="{{ v['vehicle_no'] }}" required></div>
     <div><label>Type</label>
       <select name="type">
-        <option value="Line" {% if v['type']=='Line' %}selected{% endif %}>Line</option>
-        <option value="Local" {% if v['type']=='Local' %}selected{% endif %}>Local</option>
-        <option value="Market" {% if v['type']=='Market' %}selected{% endif %}>Market</option>
+        {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+        <option value="{{ code }}" {% if v['type']==code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
       </select>
     </div>
+    <div><label>Body Type</label>
+      <select name="body_type">
+        <option value="" {% if not v['body_type'] %}selected{% endif %}>Unspecified</option>
+        {% for bt in ['Truck','Trailer','Tanker','Pickup','Other'] %}
+        <option value="{{ bt }}" {% if v['body_type']==bt %}selected{% endif %}>{{ bt }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><label>Status</label>
+      <select name="status">
+        {% for st in ['Active','In Maintenance','Inactive'] %}
+        <option value="{{ st }}" {% if (v['status'] or 'Active')==st %}selected{% endif %}>{{ st }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><label>Registration Date</label><input type="date" name="registration_date" value="{{ v['registration_date'] or '' }}"></div>
+    <div><label>Capacity (MT)</label><input type="number" step="0.01" name="capacity_mt" value="{{ v['capacity_mt'] or '' }}"></div>
+    <div><label>Chassis Number</label><input type="text" name="chassis_number" value="{{ v['chassis_number'] or '' }}" placeholder="Full chassis / VIN number"></div>
+    <div><label>Engine Number</label><input type="text" name="engine_number" value="{{ v['engine_number'] or '' }}" placeholder="Full engine number"></div>
+    <div><label>Insurance Expiry</label><input type="date" name="insurance_expiry" value="{{ v['insurance_expiry'] or '' }}"></div>
+    <div><label>Fitness Expiry</label><input type="date" name="fitness_expiry" value="{{ v['fitness_expiry'] or '' }}"></div>
+    <div><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto" value="{{ v['puc_valid_upto'] or '' }}"></div>
+    <div><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto" value="{{ v['permit_valid_upto'] or '' }}"></div>
+    <div><label>Notes</label><textarea name="notes" rows="3">{{ v['notes'] or '' }}</textarea></div>
     <button type="submit" class="submit">Save Changes</button>
   </form>
 </div>

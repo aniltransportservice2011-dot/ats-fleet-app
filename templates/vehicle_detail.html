@@ -74,7 +74,7 @@
   <div class="mt-crumb"><a href="/vehicles">Vehicles</a> &nbsp;&rsaquo;&nbsp; {{ v['vehicle_no'] }} &nbsp;&rsaquo;&nbsp; {{ tab_titles[tab] }}</div>
   <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin:10px 0 16px;">
     <a href="/vehicles" class="back" style="display:inline-flex;">&#8592; Back to Vehicles</a>
-    {% if v['type'] != 'Market' %}
+    {% if v['type'] == VEHICLE_TYPE_OWN %}
     <div class="veh-sync-box">
       <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
         <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
@@ -502,7 +502,7 @@
       <div class="mt-panel">
         <div class="mt-panel-head"><div class="ttl">Quick Actions</div></div>
         <div class="veh-qa-list">
-          {% if v['type'] != 'Market' %}
+          {% if v['type'] == VEHICLE_TYPE_OWN %}
           <form method="POST" action="/vehicles/{{ v['id'] }}/sync-now">
             <input type="hidden" name="return_to" value="/vehicles/{{ v['id'] }}?tab={{ tab }}">
             <button type="submit">&#8635; Fetch Latest Data</button>
