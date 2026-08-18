@@ -59,7 +59,7 @@
   .tf-field label .req { color:var(--red); }
   .tf-field input, .tf-field select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:6px; font-size:0.88rem; font-family:inherit; box-sizing:border-box; background:var(--white); }
   .tf-field input:focus, .tf-field select:focus { outline:none; border-color:var(--accent); }
-  .tf-field input:disabled { background:var(--paper); color:var(--steel); cursor:not-allowed; }
+  .tf-field input:disabled, .tf-field select:disabled, .tf-field input[readonly] { background:var(--paper); color:var(--steel); cursor:not-allowed; opacity:1; -webkit-text-fill-color:var(--steel); }
   .tf-hint { grid-column:1/-1; font-size:0.76rem; color:var(--steel); margin-top:-6px; }
 
   .tf-others-table { width:100%; border-collapse:collapse; margin-bottom:2px; }
@@ -142,7 +142,10 @@
               </script>
               {% endif %}
             </div>
-            <div class="tf-field"><label>Vehicle No <span class="req">*</span></label><input type="text" name="vehicle_no" id="tfVehicleNo" value="{{ t.get('vehicle_no','') or '' }}" list="vehicle-list" required oninput="tfSyncVehicleType()"></div>
+            <div class="tf-field"><label>Vehicle No <span class="req">*</span></label>
+              <input type="text" name="vehicle_no" id="tfVehicleNo" value="{{ t.get('vehicle_no','') or '' }}" required
+                     {% if mode=='edit' %}readonly{% else %}list="vehicle-list" oninput="tfSyncVehicleType()"{% endif %}>
+            </div>
             <div class="tf-field"><label>Type <span class="req">*</span></label>
               <select id="tfTypeSelect" disabled>
                 {% for code, label in VEHICLE_TYPE_LABELS.items() %}

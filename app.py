@@ -2427,6 +2427,8 @@ def maintenance_list():
         return _maintenance_urea_tab(conn)
     if tab == 'toll':
         return _maintenance_toll_tab(conn)
+    if tab == 'compliance-expenses':
+        return _maintenance_compliance_tab(conn)
     if tab in MAINTENANCE_TAB_LABELS:
         return _maintenance_category_tab(conn, tab)
     return _maintenance_overview_tab(conn)
@@ -2706,6 +2708,14 @@ TOLL_STATUS_COLORS = {  # background, text — same style as the compliance badg
     'pending':  ('#fff3e8', 'var(--accent)'),
     'rejected': ('#fdecea', 'var(--red)'),
 }
+
+# Compliance Expenses tab — own-fleet only, same scope reasoning as Toll/Urea/compliance_service.py
+# (a hired vehicle's insurance, PUC, permit, fitness or loan EMI isn't this company's expense).
+COMPLIANCE_EXPENSE_TYPES = ['Insurance', 'PUC', 'Permit', 'Fitness', 'EMI & Loans', 'Other']
+COMPLIANCE_EXPENSE_COLORS = {
+    'Insurance': '#2a78d6', 'PUC': '#1a9c5b', 'Permit': '#eda100',
+    'Fitness': '#c05621', 'EMI & Loans': '#4a3aa7', 'Other': '#8a8f98',
+}
 # A handful of real Odisha/national-highway toll plazas this fleet's own trips actually pass —
 # used only by the mock FASTag sync below, never shown as if it came from a live feed.
 FASTAG_MOCK_PLAZAS = [
@@ -2858,6 +2868,120 @@ def _maintenance_toll_tab(conn):
     ctx = _toll_tab_base_context(conn)
     conn.close()
     return render_template('maintenance.html', tab='toll', active='maintenance', **ctx)
+
+def _compliance_expense_tab_context(conn):
+    """Everything the Compliance Expenses tab needs to render. Own-fleet only, same scope
+    reasoning as Toll. Queries compliance_expenses directly (not maintenance) — see
+    migrate_compliance_expenses.sql for why this is a dedicated table rather than a maintenance
+    category filter."""
+    vehicle_f = request.args.get('vehicle', '')
+    type_f = request.args.get('compliance_type', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+
+    query = """SELECT ce.*, v.vehicle_no, ve.name as vendor_name
+               FROM compliance_expenses ce JOIN vehicles v ON ce.vehicle_id=v.id
+               LEFT JOIN vendors ve ON ce.vendor_id=ve.id
+               WHERE v.type = 'own'"""
+    params = []
+    if vehicle_f:
+        query += " AND v.vehicle_no=?"; params.append(vehicle_f)
+    if type_f:
+        query += " AND ce.compliance_type=?"; params.append(type_f)
+    if date_from:
+        query += " AND ce.date>=?"; params.append(date_from)
+    if date_to:
+        query += " AND ce.date<=?"; params.append(date_to)
+    query += " ORDER BY ce.date DESC, ce.id DESC"
+    all_rows = conn.execute(query, params).fetchall()
+
+    # KPIs come from the *unfiltered* own-fleet ledger, same reasoning as Toll's KPIs — a table
+    # filter below shouldn't make the stat cards lie about the real totals.
+    full_ledger = conn.execute("""SELECT ce.* FROM compliance_expenses ce
+                                  JOIN vehicles v ON ce.vehicle_id=v.id
+                                  WHERE v.type = 'own'""").fetchall()
+    today = datetime.date.today()
+    month_start = today.replace(day=1).isoformat()
+    month_rows = [r for r in full_ledger if r['date'] >= month_start]
+    month_total = sum(r['amount'] or 0 for r in month_rows)
+    month_count = len(month_rows)
+
+    prev_month_end = today.replace(day=1) - datetime.timedelta(days=1)
+    prev_from, prev_to = _month_bounds(prev_month_end.year, prev_month_end.month)
+    prev_rows = [r for r in full_ledger if prev_from <= r['date'] <= prev_to]
+    prev_total = sum(r['amount'] or 0 for r in prev_rows)
+    prev_count = len(prev_rows)
+    total_change_pct = round((month_total - prev_total) / prev_total * 100, 2) if prev_total else None
+    count_change_pct = round((month_count - prev_count) / prev_count * 100, 2) if prev_count else None
+
+    days_elapsed = (today - today.replace(day=1)).days + 1
+    avg_per_day = round(month_total / days_elapsed, 2) if days_elapsed else 0
+    prev_days = (datetime.date.fromisoformat(prev_to) - datetime.date.fromisoformat(prev_from)).days + 1
+    prev_avg_per_day = round(prev_total / prev_days, 2) if prev_days else 0
+    avg_change_pct = round((avg_per_day - prev_avg_per_day) / prev_avg_per_day * 100, 2) if prev_avg_per_day else None
+
+    highest = max(month_rows, key=lambda r: r['amount'] or 0, default=None)
+    highest_vehicle_no = None
+    if highest:
+        hv = conn.execute("SELECT vehicle_no FROM vehicles WHERE id=?", (highest['vehicle_id'],)).fetchone()
+        highest_vehicle_no = hv['vehicle_no'] if hv else None
+
+    # Expenses by Compliance Type — full ledger, all-time (not scoped to this month), matching
+    # the reference design's donut total.
+    type_totals = {}
+    for r in full_ledger:
+        ct = r['compliance_type'] or 'Other'
+        type_totals[ct] = type_totals.get(ct, 0) + (r['amount'] or 0)
+    grand_total = sum(type_totals.values())
+    type_breakdown = sorted(
+        [{'type': k, 'amount': v, 'pct': round(v / grand_total * 100, 1) if grand_total else 0,
+          'color': COMPLIANCE_EXPENSE_COLORS.get(k, '#8a8f98')} for k, v in type_totals.items()],
+        key=lambda x: -x['amount'])
+
+    # Monthly trend, last 6 months — same month-bucket pattern as Toll's own trend chart.
+    trend = []
+    y_, m_ = today.year, today.month
+    for i in range(5, -1, -1):
+        mm = m_ - i; yy = y_
+        while mm <= 0:
+            mm += 12; yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        cost = sum(r['amount'] or 0 for r in full_ledger if mf <= r['date'] <= mt)
+        trend.append({'label': calendar.month_abbr[mm], 'amount': cost})
+    trend_max = max([t['amount'] for t in trend], default=1) or 1
+
+    total_count = len(all_rows)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    page_rows = all_rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+    from urllib.parse import urlencode
+    base_params = request.args.to_dict()
+    base_params.pop('page', None); base_params.pop('per_page', None)
+    base_qs = urlencode(base_params)
+
+    own_vehicles = conn.execute("SELECT id, vehicle_no FROM vehicles WHERE type = 'own' ORDER BY vehicle_no").fetchall()
+    vendor_names = [r['name'] for r in conn.execute("SELECT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()]
+
+    return dict(
+        rows=page_rows, total_count=total_count,
+        month_total=month_total, month_count=month_count, total_change_pct=total_change_pct, count_change_pct=count_change_pct,
+        avg_per_day=avg_per_day, avg_change_pct=avg_change_pct,
+        highest_amount=(highest['amount'] if highest else 0), highest_vehicle_no=highest_vehicle_no,
+        highest_type=(highest['compliance_type'] if highest else None),
+        type_breakdown=type_breakdown, grand_total=grand_total,
+        trend=trend, trend_max=trend_max,
+        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
+        vehicles=own_vehicles, vendor_names=vendor_names, compliance_types=COMPLIANCE_EXPENSE_TYPES,
+        f_vehicle=vehicle_f, f_compliance_type=type_f, f_date_from=date_from, f_date_to=date_to)
+
+def _maintenance_compliance_tab(conn):
+    """Compliance Expenses — own fleet only. Every entry also lands in the shared `maintenance`
+    table (category=compliance_type) so it flows into the Overview cost rollup automatically,
+    same as Toll already does — see migrate_compliance_expenses.sql for the full reasoning."""
+    ctx = _compliance_expense_tab_context(conn)
+    conn.close()
+    return render_template('maintenance.html', tab='compliance-expenses', active='maintenance', **ctx)
 
 def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', active='maintenance', base_path='/maintenance'):
     label = MAINTENANCE_TAB_LABELS[tab_slug]
@@ -4076,6 +4200,54 @@ def delete_toll(entry_id):
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
+
+@app.route('/maintenance/compliance/add', methods=['POST'])
+def add_compliance_expense():
+    conn = get_db()
+    f = request.form
+    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type = 'own'",
+                        ((f.get('vehicle_no') or '').strip(),)).fetchone()
+    vehicle_id = row['id'] if row else None
+    if not vehicle_id:
+        # Own-fleet only — same rule as Toll, never silently creates a new vehicle record from a
+        # typo'd or hired vehicle number.
+        conn.close()
+        return redirect(url_for('maintenance_list', tab='compliance-expenses'))
+
+    compliance_type = f.get('compliance_type') if f.get('compliance_type') in COMPLIANCE_EXPENSE_TYPES else 'Other'
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    date = f.get('date') or datetime.date.today().isoformat()
+    amount = float(f.get('amount') or 0)
+    payment_mode = f.get('payment_mode') or None
+    description = f.get('description') or None
+    notes = f.get('notes') or None
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Mirrored into the shared maintenance table (category=compliance_type) purely so this flows
+    # into the Maintenance Overview's own-fleet cost rollup automatically, same as Toll already
+    # does — see migrate_compliance_expenses.sql for the full reasoning.
+    cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, created_by, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?)""",
+                          (date, vehicle_id, compliance_type, amount, amount, vendor_id, description, session.get('user_id'), now))
+    conn.execute("""INSERT INTO compliance_expenses (date, vehicle_id, compliance_type, description, vendor_id,
+                    amount, payment_mode, maintenance_id, notes, created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                 (date, vehicle_id, compliance_type, description, vendor_id, amount, payment_mode,
+                  cur_m.lastrowid, notes, session.get('user_id'), now))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='compliance-expenses'))
+
+@app.route('/maintenance/compliance/<int:entry_id>/delete', methods=['POST'])
+def delete_compliance_expense(entry_id):
+    conn = get_db()
+    e = conn.execute("SELECT maintenance_id FROM compliance_expenses WHERE id=?", (entry_id,)).fetchone()
+    if e and e['maintenance_id']:
+        conn.execute("DELETE FROM maintenance WHERE id=?", (e['maintenance_id'],))
+    conn.execute("DELETE FROM compliance_expenses WHERE id=?", (entry_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('maintenance_list', tab='compliance-expenses'))
 
 @app.route('/maintenance/toll/<int:entry_id>/approve', methods=['POST'])
 def approve_toll(entry_id):
@@ -8642,7 +8814,13 @@ def edit_trip(trip_id):
         def n(key):
             return float(f.get(key) or 0)
 
-        vehicle_id = get_or_create_vehicle(conn, f.get('vehicle_no'), f.get('type'))
+        # A trip's vehicle is locked at creation — never changeable on a later edit. The Vehicle
+        # No field is read-only in the UI for this same reason (trip_form.html); this is the
+        # server-side backstop for that, same pattern as the Type field's own lock below it.
+        # Wanting a different vehicle on a trip means deleting it and creating a fresh one, not
+        # editing the existing row out from under whatever ledger/invoice entries already
+        # reference it by vehicle_id.
+        vehicle_id = conn.execute("SELECT vehicle_id FROM trips WHERE id=?", (trip_id,)).fetchone()['vehicle_id']
         trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
         party_id = get_or_create_party(conn, f.get('party_name'))
         fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))

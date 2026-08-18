@@ -564,6 +564,26 @@ CREATE TABLE toll_entries (
 CREATE INDEX idx_toll_date ON toll_entries(date);
 CREATE INDEX idx_toll_vehicle ON toll_entries(vehicle_id);
 
+CREATE TABLE compliance_expenses (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    date            TEXT NOT NULL,
+    vehicle_id      INTEGER REFERENCES vehicles(id),
+    compliance_type TEXT NOT NULL,
+    description     TEXT,
+    vendor_id       INTEGER REFERENCES vendors(id),
+    amount          REAL NOT NULL DEFAULT 0,
+    payment_mode    TEXT,
+    maintenance_id  INTEGER REFERENCES maintenance(id),
+    notes           TEXT,
+    created_at      TEXT,
+    created_by      INTEGER REFERENCES users(id),
+    updated_by      INTEGER REFERENCES users(id),
+    updated_at      TEXT,
+    company_id      INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX idx_compliance_expenses_date ON compliance_expenses(date);
+CREATE INDEX idx_compliance_expenses_vehicle ON compliance_expenses(vehicle_id);
+
 -- ============================================================================
 -- People — Employees, Salaries, Attendance, Advances
 -- ============================================================================

@@ -1,0 +1,152 @@
+<div class="mt-kpi-row">
+  <div class="mt-kpi">
+    <div>
+      <div class="lbl">Total Compliance Expenses</div>
+      <div class="val">₹{{ '{:,.0f}'.format(month_total) }}</div>
+      <div class="sub">This Month{% if total_change_pct is not none %} &middot; <span style="color:{% if total_change_pct >= 0 %}var(--red){% else %}var(--green){% endif %};">{{ '&#8593;' if total_change_pct >= 0 else '&#8595;' }} {{ total_change_pct|abs }}%</span>{% endif %}</div>
+    </div>
+    <div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128176;</div>
+  </div>
+  <div class="mt-kpi">
+    <div>
+      <div class="lbl">Total Transactions</div>
+      <div class="val">{{ month_count }}</div>
+      <div class="sub">This Month{% if count_change_pct is not none %} &middot; <span style="color:{% if count_change_pct >= 0 %}var(--red){% else %}var(--green){% endif %};">{{ '&#8593;' if count_change_pct >= 0 else '&#8595;' }} {{ count_change_pct|abs }}%</span>{% endif %}</div>
+    </div>
+    <div class="mt-kpi-icon" style="background:#e8f5ee;color:var(--green);">&#128203;</div>
+  </div>
+  <div class="mt-kpi">
+    <div>
+      <div class="lbl">Avg Expense / Day</div>
+      <div class="val">₹{{ '{:,.0f}'.format(avg_per_day) }}</div>
+      <div class="sub">This Month{% if avg_change_pct is not none %} &middot; <span style="color:{% if avg_change_pct >= 0 %}var(--red){% else %}var(--green){% endif %};">{{ '&#8593;' if avg_change_pct >= 0 else '&#8595;' }} {{ avg_change_pct|abs }}%</span>{% endif %}</div>
+    </div>
+    <div class="mt-kpi-icon" style="background:rgba(74,58,167,0.1);color:#4a3aa7;">&#128197;</div>
+  </div>
+  <div class="mt-kpi">
+    <div>
+      <div class="lbl">Highest Expense</div>
+      <div class="val">₹{{ '{:,.0f}'.format(highest_amount) }}</div>
+      <div class="sub">{% if highest_vehicle_no %}{{ highest_type }} — {{ highest_vehicle_no }} &middot; This Month{% else %}No expenses this month{% endif %}</div>
+    </div>
+    <div class="mt-kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128200;</div>
+  </div>
+</div>
+
+<form class="filter-bar" method="GET">
+  <input type="hidden" name="tab" value="compliance-expenses">
+  <div class="field"><label>Vehicle</label>
+    <select name="vehicle"><option value="">All Vehicles</option>
+      {% for v in vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle==v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>Compliance Type</label>
+    <select name="compliance_type"><option value="">All Compliance</option>
+      {% for ct in compliance_types %}<option value="{{ ct }}" {% if f_compliance_type==ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+  <div class="field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+  <button type="submit">Apply</button>
+  <a class="clear" href="/maintenance?tab=compliance-expenses">Reset</a>
+</form>
+
+<div class="mt-panel" style="margin-bottom:18px;">
+  <div class="mt-panel-head"><div class="ttl">Compliance Expense List ({{ total_count }})</div></div>
+  {% if rows %}
+  <div style="overflow-x:auto;">
+  <table>
+    <tr><th>Date</th><th>Vehicle No</th><th>Compliance Type</th><th>Description</th><th>Vendor</th><th class="num">Amount</th><th>Payment Mode</th><th></th></tr>
+    {% for r in rows %}
+    <tr class="clickable-row" onclick="document.getElementById('complianceDetail{{ loop.index }}').classList.add('open')">
+      <td>{{ r['date'] }}</td>
+      <td>{{ r['vehicle_no'] }}</td>
+      <td><span class="mt-type-badge" style="background:rgba(0,0,0,0.05);color:var(--ink);">{{ r['compliance_type'] }}</span></td>
+      <td>{{ r['description'] or '—' }}</td>
+      <td>{{ r['vendor_name'] or '—' }}</td>
+      <td class="num">₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</td>
+      <td>{{ r['payment_mode'] or '—' }}</td>
+      <td onclick="event.stopPropagation();">
+        <form method="POST" action="/maintenance/compliance/{{ r['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Delete this compliance expense permanently?');">
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:0.9rem;">&#128465;</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
+  {% else %}
+  <div style="text-align:center;color:var(--steel);padding:30px;">No compliance expenses recorded for this selection.</div>
+  {% endif %}
+</div>
+
+<!-- Charts sit below the table, computed from the full own-fleet ledger (not the filtered rows
+     above) so they never change just because the table above is filtered. -->
+<div class="mt-row-2">
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Compliance Expenses Trend (6 months)</div></div>
+    {% if trend %}
+    <svg viewBox="0 0 600 160" width="100%" style="overflow:visible;max-height:180px;">
+      <line x1="20" y1="145" x2="590" y2="145" stroke="var(--line)"/>
+      {% set step = 570 / ((trend|length - 1) if trend|length > 1 else 1) %}
+      <polyline points="{% for t in trend %}{{ 20 + loop.index0*step }},{{ 140 - (t.amount/trend_max*120) }} {% endfor %}" fill="none" stroke="var(--green)" stroke-width="2.2"/>
+      {% for t in trend %}
+      <circle cx="{{ 20 + loop.index0*step }}" cy="{{ 140 - (t.amount/trend_max*120) }}" r="2.6" fill="var(--green)"/>
+      <text x="{{ 20 + loop.index0*step }}" y="158" font-size="9" fill="var(--steel)" text-anchor="middle">{{ t.label }}</text>
+      {% endfor %}
+    </svg>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No compliance expense history yet.</div>
+    {% endif %}
+  </div>
+  <div class="mt-panel">
+    <div class="mt-panel-head"><div class="ttl">Expenses by Compliance Type</div></div>
+    {% if type_breakdown %}
+    <div style="display:flex;align-items:center;gap:16px;">
+      <svg viewBox="0 0 36 36" width="140" height="140" style="flex-shrink:0;">
+        {% set offset = 0 %}
+        {% for t in type_breakdown %}
+        <circle cx="18" cy="18" r="15.9" fill="none" stroke="{{ t.color }}" stroke-width="4" stroke-dasharray="{{ t.pct }} {{ 100 - t.pct }}" stroke-dashoffset="{{ 25 - offset }}"/>
+        {% set offset = offset + t.pct %}
+        {% endfor %}
+        <text x="18" y="16.5" text-anchor="middle" font-size="4.6" font-weight="700" fill="var(--ink)">₹{{ '{:,.0f}'.format(grand_total) }}</text>
+        <text x="18" y="21.5" text-anchor="middle" font-size="2.6" fill="var(--steel)">Total Expenses</text>
+      </svg>
+      <div style="flex:1;font-size:0.78rem;">
+        {% for t in type_breakdown %}
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 0;">
+          <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{{ t.color }};"></span>{{ t.type }}
+          <span style="margin-left:auto;font-weight:700;">₹{{ '{:,.0f}'.format(t.amount) }} ({{ t.pct }}%)</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div style="text-align:center;color:var(--steel);padding:24px;font-size:0.85rem;">No compliance expenses recorded yet.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% for r in rows %}
+<div class="modal-overlay" id="complianceDetail{{ loop.index }}">
+  <div class="modal-box mt-modal-box">
+    <button type="button" class="modal-close-x" onclick="document.getElementById('complianceDetail{{ loop.index }}').classList.remove('open')">&#10005;</button>
+    <h3>&#128737; Compliance Expense — {{ r['date'] }}</h3>
+    <div class="mt-detail-grid">
+      <div><div class="lbl">Vehicle</div>{{ r['vehicle_no'] }}</div>
+      <div><div class="lbl">Compliance Type</div>{{ r['compliance_type'] }}</div>
+      <div><div class="lbl">Amount</div>₹{{ '{:,.0f}'.format(r['amount'] or 0) }}</div>
+      <div><div class="lbl">Vendor</div>{{ r['vendor_name'] or '—' }}</div>
+      <div><div class="lbl">Payment Mode</div>{{ r['payment_mode'] or '—' }}</div>
+      {% if r['description'] %}<div><div class="lbl">Description</div>{{ r['description'] }}</div>{% endif %}
+    </div>
+    {% if r['notes'] %}<div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:4px;">Notes</div><div style="font-size:0.85rem;margin-bottom:14px;">{{ r['notes'] }}</div>{% endif %}
+    <div style="display:flex;justify-content:flex-end;gap:10px;">
+      <form method="POST" action="/maintenance/compliance/{{ r['id'] }}/delete" onsubmit="return confirm('Delete this compliance expense permanently?');">
+        <button type="submit" style="background:var(--red);color:#fff;border:none;padding:9px 16px;border-radius:3px;cursor:pointer;">&#128465; Delete</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
