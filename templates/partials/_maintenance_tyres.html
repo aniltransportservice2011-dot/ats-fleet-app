@@ -37,14 +37,14 @@
   <a class="clear" href="/maintenance?tab=tyres">Clear</a>
 </form>
 
-{% set pos_labels = {'FL':'Front Left','FR':'Front Right','RL1':'Rear Left 1','RR1':'Rear Right 1','RL2':'Rear Left 2','RR2':'Rear Right 2','Spare':'Spare'} %}
+{% set pos_labels = {'F':'Front','R':'Rear','FL':'Front Left','FR':'Front Right','RL1':'Rear Left 1','RR1':'Rear Right 1','RL2':'Rear Left 2','RR2':'Rear Right 2','RC1':'Rear Center','RC2':'Rear Center','RC3':'Rear Center','Spare':'Spare'} %}
 {% set default_pos = namespace(val=none) %}
-{% for p in tyre_positions %}{% if layout_positions[p] and not default_pos.val %}{% set default_pos.val = p %}{% endif %}{% endfor %}
-{% if not default_pos.val %}{% set default_pos.val = tyre_positions[0] %}{% endif %}
+{% for p in layout_tyre_positions %}{% if layout_positions[p] and not default_pos.val %}{% set default_pos.val = p %}{% endif %}{% endfor %}
+{% if not default_pos.val %}{% set default_pos.val = layout_tyre_positions[0] %}{% endif %}
 <div class="mt-tyre-layout">
   <div class="mt-panel">
     <div class="mt-panel-head"><div class="ttl">Vehicle Tyre Layout</div></div>
-    <div style="font-size:0.72rem;color:var(--steel);margin:-8px 0 12px;">Shows the latest logged entry per position for the selected vehicle — click a position to view its record.</div>
+    <div style="font-size:0.72rem;color:var(--steel);margin:-8px 0 12px;">Shows the latest logged entry per position for the selected vehicle ({{ lv_wheeler_count }}-wheeler layout) — click a position to view its record.</div>
     <form class="mt-tyre-veh-pick" method="GET">
       <input type="hidden" name="tab" value="tyres">
       <select name="lv" onchange="this.form.submit()">
@@ -63,7 +63,7 @@
           <text x="38" y="216" font-size="9" text-anchor="middle" fill="var(--steel)" font-weight="700">{{ lv }}</text>
         </svg>
       </div>
-      {% for p in tyre_positions %}
+      {% for p in layout_tyre_positions %}
       {% set entry = layout_positions[p] %}
       {% if entry %}
         {% set action_txt = (entry['tyre_action'] or entry['category'] or '') %}
@@ -74,7 +74,7 @@
       {% else %}
         {% set state = 'none' %}
       {% endif %}
-      <div class="mt-tyre-box state-{{ state }} {{ 'spare' if p=='Spare' }} {{ 'selected' if p==default_pos.val }}" id="tyreBox{{ p }}" onclick="tyShowPos('{{ p }}')">
+      <div class="mt-tyre-box state-{{ state }} {{ 'spare' if (p=='Spare' or p.startswith('RC')) }} {{ 'selected' if p==default_pos.val }}" id="tyreBox{{ p }}" onclick="tyShowPos('{{ p }}')">
         <div class="tyre-ic">{{ tyre_icon }}</div>
         <div class="pos">{{ pos_labels.get(p, p) }}</div>
         <div class="tid">{{ entry['tyre_id'] if entry and entry['tyre_id'] else (p if p != 'Spare' else '—') }}</div>
@@ -87,7 +87,7 @@
   <div class="mt-tyre-right-col">
   <div class="mt-panel">
     <div class="mt-panel-head"><div class="ttl">Tyre Details</div></div>
-    {% for p in tyre_positions %}
+    {% for p in layout_tyre_positions %}
     {% set entry = layout_positions[p] %}
     <div class="mt-tyre-detail-panel {{ 'active' if p==default_pos.val }}" id="tyreDetail{{ p }}">
       {% if entry %}

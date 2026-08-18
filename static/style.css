@@ -272,9 +272,13 @@ button.submit:active { transform: translateY(1px); box-shadow: none; }
   .mt-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
   .mt-tab:hover:not(.active) { color:var(--ink); }
 
-  .mt-kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
-  @media (max-width:1300px) { .mt-kpi-row { grid-template-columns:repeat(3,1fr); } }
-  @media (max-width:760px) { .mt-kpi-row { grid-template-columns:repeat(2,1fr); } }
+  /* Same auto-fit/minmax fix as the Dashboard's .kpi-row (templates/dashboard.html) — a fixed
+     6-column grid with hard breakpoints at 1300px/760px left dead zones (e.g. ~90% browser zoom)
+     where cards stranded onto an extra row despite having room; this scales continuously instead,
+     shared by every Maintenance tab (Overview/Tyres/Battery/Urea/Toll/Compliance) since they all
+     use this one class. */
+  .mt-kpi-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(155px, 1fr)); gap:12px; margin-bottom:18px; }
+  @media (max-width:480px) { .mt-kpi-row { grid-template-columns:1fr; } }
   .mt-kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:15px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
   .mt-kpi .lbl { font-size:0.76rem; color:var(--steel); margin-bottom:5px; }
   .mt-kpi .val { font-size:1.35rem; font-weight:800; line-height:1; }

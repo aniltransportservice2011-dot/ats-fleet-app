@@ -13,11 +13,14 @@
       </div>
       <div class="mt-form-grid">
         <div class="mt-fld"><label>Description</label><input type="text" name="description" placeholder="e.g. Policy Renewal"></div>
-        <div class="mt-fld"><label>Vendor</label><input type="text" name="vendor_name" list="compliance-vendor-list" placeholder="e.g. Bajaj Allianz"></div>
+        <div class="mt-fld"><label>Vendor</label><input type="text" name="vendor_name" id="compVendor" list="compliance-vendor-list" placeholder="e.g. Bajaj Allianz" oninput="mtSyncPaid('compVendor','compAmount','compPaid','compPaidReq')" onblur="mtSyncPaid('compVendor','compAmount','compPaid','compPaidReq')"></div>
       </div>
       <div class="mt-form-grid">
-        <div class="mt-fld"><label>Amount (&#8377;) *</label><input type="number" step="0.01" min="0" name="amount" required></div>
+        <div class="mt-fld"><label>Amount (&#8377;) *</label><input type="number" step="0.01" min="0" name="amount" id="compAmount" required oninput="mtSyncPaid('compVendor','compAmount','compPaid','compPaidReq')"></div>
+        <div class="mt-fld"><label>Paid Amount (&#8377;) <span id="compPaidReq" style="color:var(--red);"></span></label><input type="number" step="0.01" min="0" name="paid_amount" id="compPaid" placeholder="0 if unpaid so far"></div>
         <div class="mt-fld"><label>Date *</label><input type="date" name="date" required></div>
+      </div>
+      <div class="mt-form-grid">
         <div class="mt-fld"><label>Payment Mode</label>
           <select name="payment_mode">
             <option value="">-- Select --</option>
@@ -39,3 +42,46 @@
 
 <datalist id="compliance-vehicle-list">{% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}</datalist>
 <datalist id="compliance-vendor-list">{% for n in vendor_names %}<option value="{{ n }}">{% endfor %}</datalist>
+
+<script>
+// See _maintenance_insurance_modals.html for the full explanation -- Paid Amount is only
+// mandatory once a vendor is actually on the entry; with no vendor there's nobody to owe money
+// to, so it auto-syncs to the full amount and stops being editable/required.
+function mtSyncPaid(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  var amt = document.getElementById(amtId);
+  var paid = document.getElementById(paidId);
+  if (!vendor || !amt || !paid) return;
+  var hasVendor = vendor.value.trim().length > 0;
+  var req = reqId ? document.getElementById(reqId) : null;
+  paid.required = hasVendor;
+  if (req) req.textContent = hasVendor ? '*' : '';
+  if (hasVendor) {
+    paid.readOnly = false;
+    paid.style.background = '';
+  } else {
+    paid.value = amt.value || 0;
+    paid.readOnly = true;
+    paid.style.background = 'var(--paper)';
+  }
+}
+// Fallback for browser extensions (autofill/form-fill helpers) that set a field's .value
+// directly via JS -- that never fires input/change/even blur in some cases, so oninput/onblur
+// alone can silently miss a real vendor selection. This just polls the actual value on a timer,
+// completely independent of whatever events do or don't fire, so it catches it regardless.
+function mtWatchVendor(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  if (!vendor) return;
+  var last = vendor.value;
+  setInterval(function() {
+    if (vendor.value !== last) {
+      last = vendor.value;
+      mtSyncPaid(vendorId, amtId, paidId, reqId);
+    }
+  }, 400);
+}
+// Set the correct initial locked/unlocked state on page load, not just once the user starts
+// typing -- otherwise Paid Amount looks editable even with no vendor selected yet.
+mtSyncPaid('compVendor', 'compAmount', 'compPaid', 'compPaidReq');
+mtWatchVendor('compVendor', 'compAmount', 'compPaid', 'compPaidReq');
+</script>

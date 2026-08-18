@@ -19,7 +19,7 @@
     {% elif tab == 'battery' %}
     <button type="button" class="add-btn" onclick="document.getElementById('addBatteryModal').classList.add('open')">+ Add New Battery</button>
     {% elif tab == 'urea' %}
-    <button type="button" class="add-btn" onclick="document.getElementById('addUreaModal').classList.add('open'); ureaSetMode('direct');">+ Add Urea</button>
+    <button type="button" class="add-btn" onclick="document.getElementById('addUreaModal').classList.add('open'); ureaSetMode('direct'); var b=document.getElementById('ureaStockErrorBanner'); if(b) b.remove();">+ Add Urea</button>
     {% elif tab == 'toll' %}
     <div style="display:flex;gap:10px;">
       <form method="POST" action="/maintenance/toll/sync-fastag" style="display:inline;">

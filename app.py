@@ -246,10 +246,13 @@ def _clean_loc(raw):
 # specific match if one's ever added later.
 _BODY_TYPE_KEYWORDS = ['ARTICULATED TRAILER', 'TRAILER', 'TANKER', 'CONTAINER', 'TIPPER',
                        'FLATBED', 'PICKUP', 'TRUCK', 'VAN', 'BUS', 'CAR',
+                       'THREE WHEELER', '3 WHEELER', 'AUTO RICKSHAW', 'TEMPO', 'E-RICKSHAW',
                        'TWO WHEELER', '2 WHEELER', 'MOTORCYCLE', 'SCOOTER', 'BIKE']
 # Keywords that don't map cleanly onto their own title-cased text collapse to one canonical label.
 _BODY_TYPE_ALIASES = {'ARTICULATED TRAILER': 'Trailer', 'TWO WHEELER': '2 Wheeler', '2 WHEELER': '2 Wheeler',
-                       'MOTORCYCLE': '2 Wheeler', 'SCOOTER': '2 Wheeler', 'BIKE': '2 Wheeler'}
+                       'MOTORCYCLE': '2 Wheeler', 'SCOOTER': '2 Wheeler', 'BIKE': '2 Wheeler',
+                       'THREE WHEELER': '3 Wheeler', '3 WHEELER': '3 Wheeler', 'AUTO RICKSHAW': '3 Wheeler',
+                       'TEMPO': '3 Wheeler', 'E-RICKSHAW': '3 Wheeler'}
 def _short_body_type(raw):
     if not raw:
         return ''
@@ -267,7 +270,7 @@ def _short_body_type(raw):
 _BODY_TYPE_COLORS = {
     'Trailer': '#2a78d6', 'Truck': '#1a9c5b', 'Tanker': '#eda100', 'Container': '#4a3aa7',
     'Tipper': '#e34948', 'Flatbed': '#7a5ad6', 'Pickup': '#eb6834', 'Van': '#0891b2', 'Bus': '#c026d3',
-    'Car': '#16a34a', '2 Wheeler': '#f59e0b',
+    'Car': '#16a34a', '2 Wheeler': '#f59e0b', '3 Wheeler': '#d97706',
 }
 def _body_type_color(short):
     return _BODY_TYPE_COLORS.get(short, '#64748b')
@@ -278,10 +281,53 @@ def _body_type_color(short):
 _BODY_TYPE_ICONS = {
     'Trailer': '\U0001F69B', 'Truck': '\U0001F69A', 'Tanker': '\U0001F69B', 'Container': '\U0001F69B',
     'Tipper': '\U0001F69B', 'Flatbed': '\U0001F69A', 'Pickup': '\U0001F6FB', 'Van': '\U0001F690',
-    'Bus': '\U0001F68C', 'Car': '\U0001F697', '2 Wheeler': '\U0001F3CD️',
+    'Bus': '\U0001F68C', 'Car': '\U0001F697', '2 Wheeler': '\U0001F3CD️', '3 Wheeler': '\U0001F6FA',
 }
 def _body_type_icon(short):
     return _BODY_TYPE_ICONS.get(short, '\U0001F69A')
+
+# Body type -> wheeler count, for the Maintenance > Tyres "Vehicle Tyre Layout" diagram, so it
+# shows the right number of tyre positions instead of always the same fixed 6-wheeler layout.
+# This is a best-effort default keyed off body_type (RC-synced or manually set on the vehicle) --
+# not a precise per-vehicle wheel count (a real "Truck" could be a 6/10/12/14-wheeler in
+# reality), but body_type is the only signal already on the vehicle record, and most of this
+# fleet's body_type is unset anyway, in which case DEFAULT_WHEELER_COUNT (6) applies, matching
+# the layout every vehicle showed before this existed.
+_BODY_TYPE_WHEELER_COUNT = {
+    '2 Wheeler': 2, '3 Wheeler': 3, 'Car': 4, 'Pickup': 4, 'Van': 4,
+    'Truck': 6, 'Tanker': 6, 'Container': 6, 'Tipper': 6, 'Flatbed': 6, 'Trailer': 6, 'Bus': 6,
+}
+DEFAULT_WHEELER_COUNT = 6
+
+def _vehicle_wheeler_count(body_type_raw):
+    return _BODY_TYPE_WHEELER_COUNT.get(_short_body_type(body_type_raw), DEFAULT_WHEELER_COUNT)
+
+def _tyre_positions_for_wheeler_count(n):
+    """Front axle is a single wheel (no left/right) below 4 wheels -- a 2-wheeler is F/R, a
+    3-wheeler is F + a rear pair. From 4 wheels up the front axle is a pair (FL/FR) and the
+    remaining wheels fill rear axle pairs (RL1/RR1, RL2/RR2, ...); an odd leftover becomes a
+    lone rear-center position (RCn) rather than a fabricated left/right split. n=6 reproduces
+    today's exact fixed layout, so every vehicle without a distinguishing body_type (the
+    majority right now) looks exactly like it did before this existed."""
+    if not n or n < 2:
+        n = DEFAULT_WHEELER_COUNT
+    if n == 2:
+        return ['F', 'R', 'Spare']
+    if n == 3:
+        return ['F', 'RL1', 'RR1', 'Spare']
+    positions = ['FL', 'FR']
+    remaining = n - 2
+    row = 1
+    while remaining > 0:
+        if remaining >= 2:
+            positions += [f'RL{row}', f'RR{row}']
+            remaining -= 2
+        else:
+            positions.append(f'RC{row}')
+            remaining -= 1
+        row += 1
+    positions.append('Spare')
+    return positions
 
 def get_or_create_party(conn, name):
     if not name or not name.strip():
@@ -1085,8 +1131,13 @@ def vehicle_detail(v_id):
         comp_row = cs.refresh_compliance(conn)
         comp_row = next((c for c in comp_row if c['vehicle_id'] == v_id), None)
 
-    insurance_rows = conn.execute("""SELECT ip.*, ve.name as insurer_name FROM insurance_policies ip
+    # paid_amount lives on the linked maintenance row, not insurance_policies itself -- joined in
+    # here so the Insurance form on this page can prefill/show it (see the same reasoning on the
+    # equivalent join in _maintenance_insurance_tab above).
+    insurance_rows = conn.execute("""SELECT ip.*, ve.name as insurer_name, m2.paid_amount as paid_amount
+                                     FROM insurance_policies ip
                                      LEFT JOIN vendors ve ON ip.insurer_id=ve.id
+                                     LEFT JOIN maintenance m2 ON ip.maintenance_id=m2.id
                                      WHERE ip.vehicle_id=? ORDER BY COALESCE(ip.expiry_date,'') DESC, ip.id DESC""", (v_id,)).fetchall()
     # "Active" = the one whose expiry is furthest out / most current — insurance_rows is already
     # sorted that way, so the first row (if any) is the one to show as the current policy.
@@ -2177,7 +2228,9 @@ def trips_list():
                             vehicles=vehicles, parties=parties,
                             f_vehicle=vehicle_f, f_party=party_f, f_date_from=date_from, f_date_to=date_to,
                             f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f,
-                            f_sort=sort_f, f_dir=dir_f, active='trips')
+                            f_sort=sort_f, f_dir=dir_f,
+                            delete_error=request.args.get('error', ''), delete_error_amount=request.args.get('amount', ''),
+                            delete_error_lr=request.args.get('lr', ''), active='trips')
 
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
@@ -2406,7 +2459,17 @@ def _maintenance_classify(category, service_type=None):
     return 'Other'
 
 TYRE_ACTIONS = ['New Tyre Fitted', 'Tyre Replacement', 'Tyre Resole', 'Puncture Repair']
-TYRE_POSITIONS = ['FL', 'FR', 'RL1', 'RR1', 'RL2', 'RR2', 'Spare']
+# Superset of every position code any 2-7 wheeler layout can produce, for the Position filter
+# dropdown and the Add/Edit Tyre modal (both list positions across all vehicles, not just one) --
+# the per-vehicle Vehicle Tyre Layout diagram uses _tyre_positions_for_wheeler_count() instead,
+# scoped to just the selected vehicle's actual wheel count.
+TYRE_POSITIONS = []
+for _n in range(2, 8):
+    for _p in _tyre_positions_for_wheeler_count(_n):
+        if _p != 'Spare' and _p not in TYRE_POSITIONS:
+            TYRE_POSITIONS.append(_p)
+TYRE_POSITIONS.append('Spare')
+del _n, _p
 
 @app.route('/maintenance')
 def maintenance_list():
@@ -2592,10 +2655,16 @@ def _maintenance_urea_tab(conn):
     search_f = request.args.get('search', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    stock_error = request.args.get('error', '')
+    stock_error_available = request.args.get('available', '')
 
-    query = """SELECT u.*, ve.name as supplier_name, v.vehicle_no
+    # paid_amount only ever lives on the linked maintenance row (a stock_out row has none --
+    # consuming already-paid-for stock is never a new cost) -- joined in here so the list can
+    # show a real pending Balance per entry instead of just the total.
+    query = """SELECT u.*, ve.name as supplier_name, v.vehicle_no, m2.paid_amount as paid_amount
                FROM urea_transactions u LEFT JOIN vendors ve ON u.supplier_id=ve.id
-               LEFT JOIN vehicles v ON u.vehicle_id=v.id WHERE 1=1"""
+               LEFT JOIN vehicles v ON u.vehicle_id=v.id
+               LEFT JOIN maintenance m2 ON u.maintenance_id=m2.id WHERE 1=1"""
     params = []
     if location_f:
         query += " AND u.location=?"; params.append(location_f)
@@ -2675,7 +2744,12 @@ def _maintenance_urea_tab(conn):
             usage_by_vehicle.setdefault(t['vehicle_id'], [None, 0.0])
             usage_by_vehicle[t['vehicle_id']][1] += t['quantity_l']
     vname_lookup = {r['vehicle_id']: r['vehicle_no'] for r in all_rows if r['vehicle_id']}
-    top_vehicles = sorted([{'vehicle_no': vname_lookup.get(vid, '—'), 'qty': q[1]}
+    # Using stock is never a new cost event (see add_urea's stock_out branch), so there's no real
+    # per-use price to sum. This estimates what each vehicle's usage was worth at the current
+    # weighted-average stock cost (avg_unit_cost, computed above) — informational only, never
+    # written back as a transaction amount anywhere.
+    top_vehicles = sorted([{'vehicle_no': vname_lookup.get(vid, '—'), 'qty': q[1],
+                             'est_value': round(q[1] * avg_unit_cost, 2)}
                             for vid, q in usage_by_vehicle.items()], key=lambda x: -x['qty'])[:5]
 
     total_count = len(all_rows)
@@ -2700,7 +2774,8 @@ def _maintenance_urea_tab(conn):
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         vehicles=vehicles, suppliers=suppliers, combined_names=combined_names,
         f_location=location_f, f_supplier=supplier_f, f_type=type_f, f_search=search_f,
-        f_date_from=date_from, f_date_to=date_to, active='maintenance')
+        f_date_from=date_from, f_date_to=date_to, stock_error=stock_error,
+        stock_error_available=stock_error_available, active='maintenance')
 
 TOLL_STATUS_COLORS = {  # background, text — same style as the compliance badges on Vehicles
     'synced':   ('#e8f5ee', 'var(--green)'),
@@ -3137,11 +3212,17 @@ def _maintenance_tyres_tab(conn):
                                    LEFT JOIN tyre_stock ts ON ts.maintenance_id=m.id
                                    WHERE v.vehicle_no=? ORDER BY m.date, m.id""", (lv,)).fetchall() if lv else []
     layout_tyre_rows = [r for r in layout_rows if _maintenance_classify(r['category'], r['service_type']) == 'Tyres']
+    # Layout is scoped to the selected vehicle's own wheel count (2/3/4/5/6/7-wheeler etc, off
+    # its body_type) so a 3-wheeler tempo shows 3 tyre positions, not the same fixed 6-position
+    # truck layout every vehicle showed before.
+    lv_vehicle_row = conn.execute("SELECT body_type FROM vehicles WHERE vehicle_no=?", (lv,)).fetchone() if lv else None
+    lv_wheeler_count = _vehicle_wheeler_count(lv_vehicle_row['body_type'] if lv_vehicle_row else None)
+    layout_tyre_positions = _tyre_positions_for_wheeler_count(lv_wheeler_count)
     layout_positions = {}
-    for pos in TYRE_POSITIONS:
+    for pos in layout_tyre_positions:
         matches = [r for r in layout_tyre_rows if (r['tyre_position'] or '') == pos]
         layout_positions[pos] = matches[-1] if matches else None
-    positions_recorded = sum(1 for pos in TYRE_POSITIONS if layout_positions[pos])
+    positions_recorded = sum(1 for pos in layout_tyre_positions if layout_positions[pos])
     vehicle_tyre_spend = sum(r['amount'] or 0 for r in layout_tyre_rows)
     vehicle_last_updated = max((r['date'] for r in layout_tyre_rows if r['date']), default=None)
 
@@ -3164,7 +3245,8 @@ def _maintenance_tyres_tab(conn):
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         vehicles=vehicles, tyre_vendors=tyre_vendors, combined_names=combined_names,
         tyre_actions=TYRE_ACTIONS, tyre_positions=TYRE_POSITIONS, tyre_brands=tyre_brands,
-        lv=lv, layout_positions=layout_positions, positions_recorded=positions_recorded,
+        lv=lv, layout_positions=layout_positions, layout_tyre_positions=layout_tyre_positions,
+        lv_wheeler_count=lv_wheeler_count, positions_recorded=positions_recorded,
         vehicle_tyre_spend=vehicle_tyre_spend, vehicle_last_updated=vehicle_last_updated,
         stock_rows=stock_rows, stock_in_count=stock_in_count, stock_new_count=stock_new_count,
         stock_resole_count=stock_resole_count, stock_value=stock_value,
@@ -3417,9 +3499,14 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
 
+    # paid_amount lives on the linked maintenance row, not insurance_policies itself — joined in
+    # here so Edit Policy can prefill it (and so this list can eventually show a real payable,
+    # same reasoning as Urea's paid_amount join above).
     raw_rows = conn.execute("""SELECT ip.*, v.vehicle_no, ve.name as insurer_name,
-                               v.rc_synced_data, v.rc_last_synced FROM insurance_policies ip
+                               v.rc_synced_data, v.rc_last_synced, m2.paid_amount as paid_amount
+                               FROM insurance_policies ip
                                LEFT JOIN vehicles v ON ip.vehicle_id=v.id LEFT JOIN vendors ve ON ip.insurer_id=ve.id
+                               LEFT JOIN maintenance m2 ON ip.maintenance_id=m2.id
                                ORDER BY ip.id DESC""").fetchall()
     all_rows = [_insurance_enrich(r) for r in raw_rows]
     # eChallan reference (read-only cross-check) — never the authoritative value, insurance_policies
@@ -3428,6 +3515,7 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
         r['rc_insurance_upto'] = _rc_cache_ref(raw, 'rc_insurance_upto')
         r['rc_insurance_comp'] = _rc_cache_ref(raw, 'rc_insurance_comp')
         r['rc_last_synced'] = raw['rc_last_synced']
+        r['paid_amount'] = raw['paid_amount']
 
     # Insurance entries logged the old free-text way (before this tab existed) live only in
     # `maintenance`, with no policy_number/expiry/etc — surface them too so this list's totals
@@ -3450,7 +3538,7 @@ def _maintenance_insurance_tab(conn, template='maintenance.html', active='mainte
             'agent_name': None, 'agent_contact': None, 'agent_email': None, 'reminder_days': None,
             'notes': m['notes'], 'status_override': None, 'policy_doc_path': None, 'invoice_doc_path': None,
             'rc_doc_path': None, 'maintenance_id': m['id'], 'is_legacy': True,
-            'status': 'Not Tracked', 'days_to_expiry': None,
+            'status': 'Not Tracked', 'days_to_expiry': None, 'paid_amount': m['paid_amount'],
         })
 
     rows = all_rows
@@ -4068,8 +4156,13 @@ def add_urea():
     location = f.get('location') or None
     notes = f.get('notes') or None
     qty = float(f.get('quantity_l') or 0)
+    # Quantity and Price are independent, deliberately not multiplied together — the form's
+    # "Price" field (still the unit_price column/param for schema compatibility) is the real
+    # total amount paid, typed directly off the invoice. Multiplying by Quantity used to mean a
+    # slightly-off or missing Quantity silently corrupted the real total (even zeroed it out if
+    # Quantity was left blank), when the actual paid amount was never in question.
     unit_price = float(f.get('unit_price') or 0)
-    total_value = round(qty * unit_price, 2)
+    total_value = round(unit_price, 2)
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     if mode == 'stock_in':
@@ -4085,11 +4178,26 @@ def add_urea():
                      (date, f.get('batch_no'), supplier_id, f.get('invoice_no'), qty, unit_price,
                       total_value, location, notes, cur_m.lastrowid, now, session.get('user_id')))
     elif mode == 'stock_out':
+        # Using stock that's already been paid for is never a new cost — no Price field on this
+        # mode's form, no maintenance row created here (matching stock_in/direct, which do both).
+        # Stock can never go negative: block the entry outright if it would draw more than what's
+        # actually on hand, same running-balance formula the Current Stock KPI itself uses.
+        full_ledger_check = conn.execute("SELECT txn_type, source, quantity_l FROM urea_transactions").fetchall()
+        current_stock = 0.0
+        for t in full_ledger_check:
+            if t['txn_type'] == 'stock_in':
+                current_stock += t['quantity_l']
+            elif t['source'] == 'stock':
+                current_stock -= t['quantity_l']
+        if qty > current_stock:
+            conn.close()
+            return redirect(url_for('maintenance_list', tab='urea', error='insufficient_stock',
+                                     available=round(current_stock, 2)))
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
                         quantity_l, unit_price, total_value, location, odometer_km, notes, created_at, created_by)
-                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (date, f.get('batch_no'), vehicle_id, qty, unit_price, total_value, location,
+                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)""",
+                     (date, f.get('batch_no'), vehicle_id, qty, location,
                       float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now, session.get('user_id')))
     elif mode == 'direct':
         vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
@@ -4115,8 +4223,10 @@ def edit_urea(txn_id):
     if request.method == 'POST':
         f = request.form
         qty = float(f.get('quantity_l') or 0)
+        # Same independent Quantity/Price as add_urea above — total_value is the Price field
+        # entered directly, not Quantity x Price.
         unit_price = float(f.get('unit_price') or 0)
-        total_value = round(qty * unit_price, 2)
+        total_value = round(unit_price, 2)
         _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         conn.execute("""UPDATE urea_transactions SET date=?, batch_no=?, quantity_l=?, unit_price=?,
                         total_value=?, location=?, odometer_km=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
@@ -4218,6 +4328,11 @@ def add_compliance_expense():
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
     date = f.get('date') or datetime.date.today().isoformat()
     amount = float(f.get('amount') or 0)
+    # Paid Amount is separate from Amount, same as Tyre/Battery — blank/0 means still payable to
+    # the vendor, not automatically fully paid. Previously this was hardcoded to `amount`, which
+    # silently marked every compliance expense as paid in full and made the vendor ledger net to
+    # zero (debit == credit) no matter what was actually paid.
+    paid_amount = float(f.get('paid_amount') or 0)
     payment_mode = f.get('payment_mode') or None
     description = f.get('description') or None
     notes = f.get('notes') or None
@@ -4228,7 +4343,7 @@ def add_compliance_expense():
     # does — see migrate_compliance_expenses.sql for the full reasoning.
     cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, created_by, created_at)
                             VALUES (?,?,?,?,?,?,?,?,?)""",
-                          (date, vehicle_id, compliance_type, amount, amount, vendor_id, description, session.get('user_id'), now))
+                          (date, vehicle_id, compliance_type, amount, paid_amount, vendor_id, description, session.get('user_id'), now))
     conn.execute("""INSERT INTO compliance_expenses (date, vehicle_id, compliance_type, description, vendor_id,
                     amount, payment_mode, maintenance_id, notes, created_by, created_at)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
@@ -4647,10 +4762,15 @@ def add_insurance():
     # table means the premium lands straight in that insurer's ledger, same as every other cost.
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
+    # Paid Amount is separate from Premium, same as Tyre/Battery/Compliance — blank/0 means still
+    # payable to the insurer, not automatically fully paid. Previously hardcoded to `premium`,
+    # which silently marked every policy as paid in full regardless of reality (premiums are
+    # commonly paid via EMI/installments) and made the insurer's ledger balance always read 0.
+    paid_amount = float(f.get('paid_amount') or 0)
 
     cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, status, created_by, created_at)
                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
-        (f.get('start_date'), vehicle_id, 'Insurance', premium, premium, insurer_id, f.get('notes') or None, 'Completed',
+        (f.get('start_date'), vehicle_id, 'Insurance', premium, paid_amount, insurer_id, f.get('notes') or None, 'Completed',
          session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     maintenance_id = cur.lastrowid
 
@@ -4703,6 +4823,7 @@ def edit_insurance(policy_id):
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
 
     _cid = session.get('company_id', 1)
     policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid) or policy['policy_doc_path']
@@ -4723,7 +4844,7 @@ def edit_insurance(policy_id):
 
     if policy['maintenance_id']:
         conn.execute("UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=?, updated_by=?, updated_at=? WHERE id=?",
-            (f.get('start_date'), vehicle_id, premium, premium, insurer_id, f.get('notes') or None,
+            (f.get('start_date'), vehicle_id, premium, paid_amount, insurer_id, f.get('notes') or None,
              session.get('user_id'), _now, policy['maintenance_id']))
     if vehicle_id and f.get('expiry_date'):
         conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
@@ -4775,6 +4896,11 @@ def convert_legacy_insurance(maintenance_id):
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) or m['vehicle_id']
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
+    # Preserve whatever paid_amount the legacy maintenance row already had unless the form
+    # explicitly supplies one — this flow is "fill in the missing details" on an entry that may
+    # already have a real paid_amount recorded against it the old way; only overwrite if the form
+    # actually sends a value.
+    paid_amount = float(f.get('paid_amount')) if f.get('paid_amount') not in (None, '') else (m['paid_amount'] or 0)
     status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
 
     _cid = session.get('company_id', 1)
@@ -4795,7 +4921,7 @@ def convert_legacy_insurance(maintenance_id):
          policy_doc, invoice_doc, rc_doc, maintenance_id, session.get('user_id'), _now))
 
     conn.execute("UPDATE maintenance SET vehicle_id=?, date=?, vendor_id=?, amount=?, paid_amount=?, updated_by=?, updated_at=? WHERE id=?",
-        (vehicle_id, f.get('start_date') or m['date'], insurer_id, premium, premium, session.get('user_id'), _now, maintenance_id))
+        (vehicle_id, f.get('start_date') or m['date'], insurer_id, premium, paid_amount, session.get('user_id'), _now, maintenance_id))
     if vehicle_id and f.get('expiry_date'):
         conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
                      (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
@@ -5508,6 +5634,20 @@ def edit_overhead(o_id):
 @app.route('/trips/delete/<int:trip_id>', methods=['POST'])
 def delete_trip(trip_id):
     conn = get_db()
+    # A trip with a real Payment already allocated to it (from either side — a party's payment
+    # against billed_amount, or a vendor/owner's payment against paid_to_owner) must not be
+    # deleted: payment_allocations.trip_id has no cleanup path, so the row would become orphaned
+    # and the ledger (which joins allocations back to trips) would silently lose track of that
+    # money ever being received/paid — the party or vendor's balance would look wrong with no
+    # error and no trace of why. Blocking here forces the payment to be reversed/reallocated
+    # first, a deliberate choice instead of silent data loss.
+    alloc = conn.execute("""SELECT COUNT(*) as c, COALESCE(SUM(pa.amount),0) as amt
+                            FROM payment_allocations pa WHERE pa.trip_id=?""", (trip_id,)).fetchone()
+    if alloc['c']:
+        trip = conn.execute("SELECT lr_number FROM trips WHERE id=?", (trip_id,)).fetchone()
+        conn.close()
+        return redirect(url_for('trips_list', error='has_payment', amount=round(alloc['amt'], 2),
+                                 lr=(trip['lr_number'] if trip else '') or f'#{trip_id}'))
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
     conn.close()

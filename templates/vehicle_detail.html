@@ -241,7 +241,7 @@
                   {% endfor %}
                 </div>
                 <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;margin-top:10px;">
-                  <div class="mt-fld"><label>Insurance Company *</label><input type="text" name="insurer_name" value="{{ active_insurance.insurer_name if active_insurance else '' }}" required></div>
+                  <div class="mt-fld"><label>Insurance Company *</label><input type="text" name="insurer_name" id="insDetailInsurer" value="{{ active_insurance.insurer_name if active_insurance else '' }}" required oninput="mtSyncPaid('insDetailInsurer','insDetailPremium','insDetailPaid','insDetailPaidReq')" onblur="mtSyncPaid('insDetailInsurer','insDetailPremium','insDetailPaid','insDetailPaidReq')"></div>
                   <div class="mt-fld"><label>Policy Number *</label><input type="text" name="policy_number" value="{{ active_insurance.policy_number if active_insurance else '' }}" required placeholder="e.g. PL-2026-458214"></div>
                 </div>
                 <div class="mt-fld" style="max-width:200px;margin-top:10px;"><label>Policy Status *</label>
@@ -259,7 +259,8 @@
 
                 <div class="ins-section-num"><span class="n">3</span> Premium Details</div>
                 <div class="mt-form-grid" style="grid-template-columns:1fr 1fr;">
-                  <div class="mt-fld"><label>Premium Amount (₹) *</label><input type="number" step="0.01" name="premium_amount" value="{{ active_insurance.premium_amount if active_insurance else '' }}" required></div>
+                  <div class="mt-fld"><label>Premium Amount (₹) *</label><input type="number" step="0.01" name="premium_amount" id="insDetailPremium" value="{{ active_insurance.premium_amount if active_insurance else '' }}" required oninput="mtSyncPaid('insDetailInsurer','insDetailPremium','insDetailPaid','insDetailPaidReq')"></div>
+                  <div class="mt-fld"><label>Paid Amount (₹) <span id="insDetailPaidReq" style="color:var(--red);"></span></label><input type="number" step="0.01" name="paid_amount" id="insDetailPaid" value="{{ active_insurance.paid_amount if active_insurance else '' }}" placeholder="0 if unpaid so far"></div>
                   <div class="mt-fld"><label>Insured Declared Value (₹)</label><input type="number" step="0.01" name="idv" value="{{ active_insurance.idv if active_insurance else '' }}"></div>
                   <div class="mt-fld"><label>NCB (%)</label><input type="number" step="0.1" name="ncb_pct" value="{{ active_insurance.ncb_pct if active_insurance else '' }}"></div>
                   <div class="mt-fld"><label>GST Included</label>
@@ -515,4 +516,46 @@
     </div>
   </div>
 </div>
+<script>
+// Paid Amount is only mandatory once a vendor/insurer is actually on the entry -- with no
+// vendor there's nobody to owe money to, so it auto-syncs to the full amount and stops being
+// editable/required. See partials/_maintenance_insurance_modals.html for the full explanation
+// (Insurance Company is required here too, so this always stays in "vendor present" mode, but
+// wired the same way as every other maintenance form for consistency).
+function mtSyncPaid(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  var amt = document.getElementById(amtId);
+  var paid = document.getElementById(paidId);
+  if (!vendor || !amt || !paid) return;
+  var hasVendor = vendor.value.trim().length > 0;
+  var req = reqId ? document.getElementById(reqId) : null;
+  paid.required = hasVendor;
+  if (req) req.textContent = hasVendor ? '*' : '';
+  if (hasVendor) {
+    paid.readOnly = false;
+    paid.style.background = '';
+  } else {
+    paid.value = amt.value || 0;
+    paid.readOnly = true;
+    paid.style.background = 'var(--paper)';
+  }
+}
+// Fallback for browser extensions (autofill/form-fill helpers) that set a field's .value
+// directly via JS -- that never fires input/change/even blur in some cases, so oninput/onblur
+// alone can silently miss a real vendor selection. This just polls the actual value on a timer,
+// completely independent of whatever events do or don't fire, so it catches it regardless.
+function mtWatchVendor(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  if (!vendor) return;
+  var last = vendor.value;
+  setInterval(function() {
+    if (vendor.value !== last) {
+      last = vendor.value;
+      mtSyncPaid(vendorId, amtId, paidId, reqId);
+    }
+  }, 400);
+}
+mtSyncPaid('insDetailInsurer','insDetailPremium','insDetailPaid','insDetailPaidReq');
+mtWatchVendor('insDetailInsurer','insDetailPremium','insDetailPaid','insDetailPaidReq');
+</script>
 {% endblock %}

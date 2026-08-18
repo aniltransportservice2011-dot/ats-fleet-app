@@ -291,16 +291,21 @@ CREATE TABLE payments (
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
+-- trip_id/maintenance_id: exactly one is set, never both, never neither (CHECK below) -- a
+-- payment allocation is always against either a trip (party billing / owner-hire) or a
+-- maintenance entry (Tyre/Battery/Insurance/etc), never ambiguous about which.
 CREATE TABLE payment_allocations (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    payment_id INTEGER NOT NULL REFERENCES payments(id),
-    trip_id    INTEGER NOT NULL REFERENCES trips(id),
-    amount     REAL NOT NULL,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id     INTEGER NOT NULL REFERENCES payments(id),
+    trip_id        INTEGER REFERENCES trips(id),
+    maintenance_id INTEGER REFERENCES maintenance(id),
+    amount         REAL NOT NULL,
     created_by INTEGER REFERENCES users(id),
     created_at TEXT,
     updated_by INTEGER REFERENCES users(id),
     updated_at TEXT,
-    company_id            INTEGER NOT NULL DEFAULT 1
+    company_id            INTEGER NOT NULL DEFAULT 1,
+    CHECK ((trip_id IS NOT NULL AND maintenance_id IS NULL) OR (trip_id IS NULL AND maintenance_id IS NOT NULL))
 );
 
 -- ============================================================================
