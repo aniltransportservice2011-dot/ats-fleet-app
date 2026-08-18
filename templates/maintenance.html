@@ -4,7 +4,7 @@
 {% block extra_head %}
 {% endblock %}
 {% block content %}
-{% set tab_titles = {'overview':'Overview','service':'Service','tyres':'Tyres','battery':'Battery','urea':'Urea','toll':'Toll'} %}
+{% set tab_titles = {'overview':'Overview','service':'Service','tyres':'Tyres','battery':'Battery','urea':'Urea','toll':'Toll','compliance-expenses':'Compliance Expenses'} %}
 <div class="wrap" style="max-width:none; width:100%;">
   <div class="mt-crumb"><a href="/maintenance">Maintenance</a> &nbsp;&rsaquo;&nbsp; {{ tab_titles.get(tab, 'Overview') }}</div>
   <div class="mt-head">
@@ -30,6 +30,8 @@
       </form>
       <button type="button" class="add-btn" onclick="document.getElementById('addTollModal').classList.add('open'); tollSetTab('manual');">+ Add Toll Entry</button>
     </div>
+    {% elif tab == 'compliance-expenses' %}
+    <button type="button" class="add-btn" onclick="document.getElementById('addComplianceModal').classList.add('open')">+ Add Expense</button>
     {% endif %}
   </div>
 
@@ -40,6 +42,7 @@
     <a class="mt-tab {{ 'active' if tab=='battery' }}" href="/maintenance?tab=battery">&#128267; Battery</a>
     <a class="mt-tab {{ 'active' if tab=='urea' }}" href="/maintenance?tab=urea">&#128167; Urea</a>
     <a class="mt-tab {{ 'active' if tab=='toll' }}" href="/maintenance?tab=toll"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" style="vertical-align:-2px;" xmlns="http://www.w3.org/2000/svg"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="9" cy="12" r="1.4" fill="currentColor"/></svg> Toll</a>
+    <a class="mt-tab {{ 'active' if tab=='compliance-expenses' }}" href="/maintenance?tab=compliance-expenses"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" style="vertical-align:-2px;" xmlns="http://www.w3.org/2000/svg"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg> Compliance Expenses</a>
   </div>
 
   {% if tab == 'overview' %}
@@ -54,6 +57,8 @@
     {% include 'partials/_maintenance_urea.html' %}
   {% elif tab == 'toll' %}
     {% include 'partials/_maintenance_toll.html' %}
+  {% elif tab == 'compliance-expenses' %}
+    {% include 'partials/_maintenance_compliance.html' %}
   {% else %}
     {% include 'partials/_maintenance_category.html' %}
   {% endif %}
@@ -63,4 +68,5 @@
 {% if tab == 'battery' %}{% include 'partials/_maintenance_battery_modals.html' %}{% endif %}
 {% if tab == 'urea' %}{% include 'partials/_maintenance_urea_modals.html' %}{% endif %}
 {% if tab == 'toll' %}{% include 'partials/_maintenance_toll_modals.html' %}{% endif %}
+{% if tab == 'compliance-expenses' %}{% include 'partials/_maintenance_compliance_modals.html' %}{% endif %}
 {% endblock %}
