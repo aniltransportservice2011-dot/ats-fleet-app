@@ -42,6 +42,12 @@
 {% endblock %}
 {% block content %}
 <div class="wrap">
+  {% if delete_error == 'has_payment' %}
+  <div style="background:#fdecea;color:var(--red);border:1px solid rgba(211,47,47,0.3);border-radius:4px;padding:10px 14px;margin-bottom:14px;font-size:0.85rem;font-weight:600;">
+    &#9888;&#65039; Can't delete trip {{ delete_error_lr }} — it has a ₹{{ '{:,.0f}'.format(delete_error_amount|float) }} payment already recorded against it.
+    Reverse or reallocate that payment first, then delete the trip.
+  </div>
+  {% endif %}
   <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
     <div>
       <h1>Trips</h1>

@@ -2,15 +2,22 @@
 {% block title %}Dashboard{% endblock %}
 {% block extra_head %}
 <style>
-  .kpi-row { display:grid; grid-template-columns:repeat(7,1fr); gap:12px; margin:20px 0; }
+  /* auto-fit + minmax instead of a fixed 7-column grid with hard pixel breakpoints — the old
+     version jumped straight from 7 columns to 4 at exactly 1500px, so any width/zoom landing
+     just below that (e.g. ~90% browser zoom) stranded 3 cards on a second row even though there
+     was clearly room for 5 or 6. This recalculates the column count continuously instead, so it
+     holds together at every resolution and zoom level, not just the two widths either side of
+     the old breakpoint. */
+  .kpi-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(155px, 1fr)); gap:12px; margin:20px 0; }
   .kpi { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:14px 12px; display:flex; gap:10px; align-items:flex-start; min-width:0; }
   .kpi-icon { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0; }
   .kpi .label { font-size:0.74rem; color:var(--steel); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .kpi .value { font-size:1.1rem; font-weight:700; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .kpi .sub { font-size:0.7rem; color:var(--steel); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  @media (max-width:1500px) { .kpi-row { grid-template-columns:repeat(4,1fr); } }
-  @media (max-width:900px) { .kpi-row { grid-template-columns:repeat(2,1fr); } }
-  @media (max-width:520px) { .kpi-row { grid-template-columns:1fr; } }
+  /* auto-fit already scales the column count smoothly at every width above this — only very
+     narrow phone screens still need an explicit override, purely for card readability (a KPI
+     card would otherwise legitimately fit 2-up down to ~320px, just too cramped to read). */
+  @media (max-width:480px) { .kpi-row { grid-template-columns:1fr; } }
   .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:16px; }
   .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px; }
   .grid-4 { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:16px; margin-top:16px; }

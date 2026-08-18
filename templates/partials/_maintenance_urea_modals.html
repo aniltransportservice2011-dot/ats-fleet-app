@@ -1,7 +1,13 @@
-<div class="modal-overlay" id="addUreaModal">
+<div class="modal-overlay{% if stock_error == 'insufficient_stock' %} open{% endif %}" id="addUreaModal">
   <div class="modal-box mt-modal-box">
-    <button type="button" class="modal-close-x" onclick="document.getElementById('addUreaModal').classList.remove('open')">&#10005;</button>
+    <button type="button" class="modal-close-x" onclick="document.getElementById('addUreaModal').classList.remove('open'); var b=document.getElementById('ureaStockErrorBanner'); if(b) b.remove();">&#10005;</button>
     <h3 id="ureaModalTitle">&#128167; Add Urea</h3>
+
+    {% if stock_error == 'insufficient_stock' %}
+    <div id="ureaStockErrorBanner" style="background:#fdecea;color:var(--red);border:1px solid rgba(211,47,47,0.3);border-radius:4px;padding:9px 12px;margin-bottom:12px;font-size:0.82rem;font-weight:600;">
+      &#9888;&#65039; Not enough urea in stock — only {{ stock_error_available }} L currently on hand. That entry wasn't saved.
+    </div>
+    {% endif %}
 
     <div class="bat-mode-tabs">
       <div class="bat-mode-tab" id="ureaTabDirect" onclick="ureaSetMode('direct')">
@@ -29,41 +35,40 @@
       <!-- DIRECT (Add New) fields -->
       <div id="ureaDirectFields">
         <div class="mt-form-grid">
-          <div class="mt-fld"><label>Vehicle No *</label><input type="text" id="ureaDVehicle" name="vehicle_no" list="vehicle-list"></div>
-          <div class="mt-fld"><label>Quantity (L) *</label><input type="number" step="0.01" id="ureaDQty" name="quantity_l"></div>
-          <div class="mt-fld"><label>Unit Price (₹) *</label><input type="number" step="0.01" id="ureaDPrice" name="unit_price"></div>
+          <div class="mt-fld"><label>Vehicle No *</label><input type="text" id="ureaDVehicle" name="vehicle_no" list="vehicle-list" required></div>
+          <div class="mt-fld"><label>Quantity (L) *</label><input type="number" step="0.01" id="ureaDQty" name="quantity_l" required></div>
+          <div class="mt-fld"><label>Price (₹) *</label><input type="number" step="0.01" id="ureaDPrice" name="unit_price" required oninput="mtSyncPaid('ureaDSupplier','ureaDPrice','ureaDPaid','ureaDPaidReq')"></div>
           <div class="mt-fld"><label>Odometer (km)</label><input type="number" step="1" id="ureaDOdo" name="odometer_km"></div>
         </div>
         <div class="mt-form-grid">
-          <div class="mt-fld"><label>Supplier</label><input type="text" id="ureaDSupplier" name="supplier_name" list="combined-list" placeholder="Where it was bought"></div>
+          <div class="mt-fld"><label>Supplier</label><input type="text" id="ureaDSupplier" name="supplier_name" list="combined-list" placeholder="Where it was bought" oninput="mtSyncPaid('ureaDSupplier','ureaDPrice','ureaDPaid','ureaDPaidReq')" onblur="mtSyncPaid('ureaDSupplier','ureaDPrice','ureaDPaid','ureaDPaidReq')"></div>
           <div class="mt-fld"><label>Invoice No.</label><input type="text" id="ureaDInvoice" name="invoice_no"></div>
-          <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" id="ureaDPaid" name="paid_amount"></div>
+          <div class="mt-fld"><label>Paid Amount (₹) <span id="ureaDPaidReq" style="color:var(--red);"></span></label><input type="number" step="0.01" id="ureaDPaid" name="paid_amount"></div>
         </div>
       </div>
 
       <!-- STOCK IN (Add to Stock) fields -->
       <div id="ureaStockInFields" style="display:none;">
         <div class="mt-form-grid">
-          <div class="mt-fld"><label>Supplier *</label><input type="text" id="ureaSISupplier" name="supplier_name" list="combined-list"></div>
+          <div class="mt-fld"><label>Supplier *</label><input type="text" id="ureaSISupplier" name="supplier_name" list="combined-list" oninput="mtSyncPaid('ureaSISupplier','ureaSIPrice','ureaSIPaid','ureaSIPaidReq')" onblur="mtSyncPaid('ureaSISupplier','ureaSIPrice','ureaSIPaid','ureaSIPaidReq')"></div>
           <div class="mt-fld"><label>Invoice No. / Reference *</label><input type="text" id="ureaSIInvoice" name="invoice_no"></div>
           <div class="mt-fld"><label>Batch No. *</label><input type="text" id="ureaSIBatch" name="batch_no" placeholder="e.g. UREA-050825-01"></div>
-          <div class="mt-fld"><label>Quantity (L) *</label><input type="number" step="0.01" id="ureaSIQty" name="quantity_l"></div>
+          <div class="mt-fld"><label>Quantity (L) *</label><input type="number" step="0.01" id="ureaSIQty" name="quantity_l" required></div>
         </div>
         <div class="mt-form-grid">
-          <div class="mt-fld"><label>Unit Price (₹) *</label><input type="number" step="0.01" id="ureaSIPrice" name="unit_price"></div>
-          <div class="mt-fld"><label>Paid Amount (₹)</label><input type="number" step="0.01" id="ureaSIPaid" name="paid_amount"></div>
+          <div class="mt-fld"><label>Price (₹) *</label><input type="number" step="0.01" id="ureaSIPrice" name="unit_price" required oninput="mtSyncPaid('ureaSISupplier','ureaSIPrice','ureaSIPaid','ureaSIPaidReq')"></div>
+          <div class="mt-fld"><label>Paid Amount (₹) <span id="ureaSIPaidReq" style="color:var(--red);"></span></label><input type="number" step="0.01" id="ureaSIPaid" name="paid_amount"></div>
         </div>
       </div>
 
-      <!-- STOCK OUT (Used from Stock) fields -->
+      <!-- STOCK OUT (Used from Stock) fields — no Price here: this consumes already-paid-for
+           stock, so there's no new cost to record (add_urea creates no maintenance row for
+           stock_out, matching that). -->
       <div id="ureaStockOutFields" style="display:none;">
         <div class="mt-form-grid">
-          <div class="mt-fld"><label>Vehicle No *</label><input type="text" id="ureaSOVehicle" name="vehicle_no" list="vehicle-list"></div>
+          <div class="mt-fld"><label>Vehicle No *</label><input type="text" id="ureaSOVehicle" name="vehicle_no" list="vehicle-list" required></div>
           <div class="mt-fld"><label>Batch No.</label><input type="text" id="ureaSOBatch" name="batch_no"></div>
-          <div class="mt-fld"><label>Quantity (L) *</label><input type="number" step="0.01" id="ureaSOQty" name="quantity_l"></div>
-          <div class="mt-fld"><label>Unit Price (₹)</label><input type="number" step="0.01" id="ureaSOPrice" name="unit_price"></div>
-        </div>
-        <div class="mt-form-grid">
+          <div class="mt-fld"><label>Quantity (L) *</label><input type="number" step="0.01" id="ureaSOQty" name="quantity_l" required></div>
           <div class="mt-fld"><label>Odometer (km)</label><input type="number" step="1" id="ureaSOOdo" name="odometer_km"></div>
         </div>
       </div>
@@ -71,7 +76,7 @@
       <div class="mt-fld"><label>Notes (Optional)</label><textarea id="ureaNotes" name="notes" rows="2"></textarea></div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;">
-        <button type="button" onclick="document.getElementById('addUreaModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+        <button type="button" onclick="document.getElementById('addUreaModal').classList.remove('open'); var b=document.getElementById('ureaStockErrorBanner'); if(b) b.remove();" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" id="ureaSubmitBtn" style="background:var(--accent);border:none;cursor:pointer;">Save Entry</button>
       </div>
     </form>
@@ -79,8 +84,44 @@
 </div>
 
 <datalist id="urea-location-list">{% for loc in locations %}<option value="{{ loc }}">{% endfor %}</datalist>
+<datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v['vehicle_no'] }}">{% endfor %}</datalist>
+<datalist id="combined-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
 
 <script>
+// See _maintenance_insurance_modals.html for the full explanation.
+function mtSyncPaid(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  var amt = document.getElementById(amtId);
+  var paid = document.getElementById(paidId);
+  if (!vendor || !amt || !paid) return;
+  var hasVendor = vendor.value.trim().length > 0;
+  var req = reqId ? document.getElementById(reqId) : null;
+  paid.required = hasVendor;
+  if (req) req.textContent = hasVendor ? '*' : '';
+  if (hasVendor) {
+    paid.readOnly = false;
+    paid.style.background = '';
+  } else {
+    paid.value = amt.value || 0;
+    paid.readOnly = true;
+    paid.style.background = 'var(--paper)';
+  }
+}
+// Fallback for browser extensions (autofill/form-fill helpers) that set a field's .value
+// directly via JS -- that never fires input/change/even blur in some cases, so oninput/onblur
+// alone can silently miss a real vendor selection. This just polls the actual value on a timer,
+// completely independent of whatever events do or don't fire, so it catches it regardless.
+function mtWatchVendor(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  if (!vendor) return;
+  var last = vendor.value;
+  setInterval(function() {
+    if (vendor.value !== last) {
+      last = vendor.value;
+      mtSyncPaid(vendorId, amtId, paidId, reqId);
+    }
+  }, 400);
+}
 function ureaSetMode(mode) {
   document.getElementById('ureaModeField').value = mode;
   ['ureaTabDirect','ureaTabStockIn','ureaTabStockOut'].forEach(function(id){ document.getElementById(id).classList.remove('active'); });
@@ -102,5 +143,14 @@ function ureaSetMode(mode) {
   var tabIds = {direct: 'ureaTabDirect', stock_in: 'ureaTabStockIn', stock_out: 'ureaTabStockOut'};
   document.getElementById(tabIds[mode]).classList.add('active');
 }
-document.addEventListener('DOMContentLoaded', function(){ ureaSetMode('direct'); });
+document.addEventListener('DOMContentLoaded', function(){
+  ureaSetMode('{{ 'stock_out' if stock_error == 'insufficient_stock' else 'direct' }}');
+  // Set the correct initial locked/unlocked state on page load, not just on typing -- both
+  // field sets exist in the DOM even while their mode is hidden, so this is safe to run
+  // regardless of which mode is active at open.
+  mtSyncPaid('ureaDSupplier', 'ureaDPrice', 'ureaDPaid', 'ureaDPaidReq');
+  mtSyncPaid('ureaSISupplier', 'ureaSIPrice', 'ureaSIPaid', 'ureaSIPaidReq');
+  mtWatchVendor('ureaDSupplier', 'ureaDPrice', 'ureaDPaid', 'ureaDPaidReq');
+  mtWatchVendor('ureaSISupplier', 'ureaSIPrice', 'ureaSIPaid', 'ureaSIPaidReq');
+});
 </script>

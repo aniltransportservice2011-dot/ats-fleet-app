@@ -37,20 +37,26 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Date</th><th>Type</th><th>Batch No.</th><th>Vehicle / Source</th><th class="num">Qty (L)</th><th class="num">Unit Price</th><th class="num">Total Value</th><th>Location</th><th></th></tr>
+    <tr><th>Date</th><th>Type</th><th>Vehicle / Source</th><th class="num">Qty (L)</th><th class="num">Total Value</th><th class="num">Balance</th><th>Location</th><th></th></tr>
     {% for r in rows %}
+    {% set balance = (r['total_value'] or 0) - (r['paid_amount'] or 0) if r['maintenance_id'] else 0 %}
     <tr class="clickable-row" onclick="document.getElementById('ureaDetail{{ loop.index }}').classList.add('open')">
       <td>{{ r['date'] }}</td>
       <td><span class="mt-type-badge" style="background:{% if r['txn_type']=='stock_in' %}#e8f5ee;color:var(--green){% else %}#eaf1fb;color:#2a78d6{% endif %};">{{ 'Added to Stock' if r['txn_type']=='stock_in' else ('Direct (Off-Stock)' if r['source']=='direct' else 'Used from Stock') }}</span></td>
-      <td>{{ r['batch_no'] or '—' }}</td>
       <td>{{ r['vehicle_no'] or r['supplier_name'] or '—' }}</td>
       <td class="num">{{ '{:,.0f}'.format(r['quantity_l']) }}</td>
-      <td class="num">₹{{ '{:,.2f}'.format(r['unit_price'] or 0) }}</td>
+      {% if r['maintenance_id'] %}
       <td class="num">₹{{ '{:,.0f}'.format(r['total_value'] or 0) }}</td>
+      {% else %}
+      {# Used-from-stock rows record no real cost (see add_urea) — shown as an estimate off the
+         current weighted-average stock cost, not a stored transaction amount. #}
+      <td class="num" style="color:var(--steel);font-style:italic;" title="Estimated at current average stock cost — not a recorded transaction">&#8776;₹{{ '{:,.0f}'.format(r['quantity_l'] * avg_unit_cost) }}</td>
+      {% endif %}
+      <td class="num" style="{% if r['maintenance_id'] %}font-weight:700;color:{% if balance > 0 %}var(--red){% else %}var(--green){% endif %}{% endif %};">{% if r['maintenance_id'] %}₹{{ '{:,.0f}'.format(balance) }}{% else %}—{% endif %}</td>
       <td>{{ r['location'] or '—' }}</td>
       <td onclick="event.stopPropagation();">
         <form method="POST" action="/maintenance/urea/{{ r['id'] }}/delete" style="display:inline;" onsubmit="return confirm('Delete this urea entry permanently?');">
-          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:2px;font-size:0.9rem;">&#128465;</button>
+          <button type="submit" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;padding:5px;font-size:0.75rem;">&#128465;</button>
         </form>
       </td>
     </tr>
@@ -85,9 +91,9 @@
     <div class="mt-panel-head"><div class="ttl">Top Vehicles by Urea Usage (30d)</div></div>
     {% if top_vehicles %}
     <table>
-      <tr><th>Vehicle</th><th class="num">Usage (L)</th></tr>
+      <tr><th>Vehicle</th><th class="num">Usage (L)</th><th class="num">Est. Value</th></tr>
       {% for tv in top_vehicles %}
-      <tr><td>{{ tv.vehicle_no }}</td><td class="num">{{ '{:,.0f}'.format(tv.qty) }}</td></tr>
+      <tr><td>{{ tv.vehicle_no }}</td><td class="num">{{ '{:,.0f}'.format(tv.qty) }}</td><td class="num" style="color:var(--steel);">₹{{ '{:,.0f}'.format(tv.est_value) }}</td></tr>
       {% endfor %}
     </table>
     {% else %}
@@ -101,6 +107,7 @@
   <div class="modal-box mt-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('ureaDetail{{ loop.index }}').classList.remove('open')">&#10005;</button>
     <h3>&#128167; Urea Entry — {{ r['date'] }}</h3>
+    {% set balance = (r['total_value'] or 0) - (r['paid_amount'] or 0) if r['maintenance_id'] else 0 %}
     <div class="mt-detail-grid">
       <div><div class="lbl">Type</div>{{ 'Added to Stock' if r['txn_type']=='stock_in' else ('Direct (Off-Stock)' if r['source']=='direct' else 'Used from Stock') }}</div>
       <div><div class="lbl">Batch No.</div>{{ r['batch_no'] or '—' }}</div>
@@ -109,8 +116,12 @@
       <div><div class="lbl">Invoice No.</div>{{ r['invoice_no'] or '—' }}</div>
       <div><div class="lbl">Location</div>{{ r['location'] or '—' }}</div>
       <div><div class="lbl">Quantity</div>{{ '{:,.0f}'.format(r['quantity_l']) }} L</div>
-      <div><div class="lbl">Unit Price</div>₹{{ '{:,.2f}'.format(r['unit_price'] or 0) }}</div>
+      {% if r['maintenance_id'] %}
       <div><div class="lbl">Total Value</div>₹{{ '{:,.0f}'.format(r['total_value'] or 0) }}</div>
+      {% else %}
+      <div><div class="lbl">Est. Value</div><span style="font-style:italic;color:var(--steel);" title="Estimated at current average stock cost — not a recorded transaction">&#8776;₹{{ '{:,.0f}'.format(r['quantity_l'] * avg_unit_cost) }}</span></div>
+      {% endif %}
+      <div><div class="lbl">Balance</div><span style="{% if r['maintenance_id'] %}font-weight:700;color:{% if balance > 0 %}var(--red){% else %}var(--green){% endif %}{% endif %};">{% if r['maintenance_id'] %}₹{{ '{:,.0f}'.format(balance) }}{% else %}—{% endif %}</span></div>
       {% if r['odometer_km'] %}<div><div class="lbl">Odometer</div>{{ '{:,.0f}'.format(r['odometer_km']) }} km</div>{% endif %}
     </div>
     {% if r['notes'] %}<div style="font-size:0.7rem;color:var(--steel);text-transform:uppercase;letter-spacing:0.02em;margin-bottom:4px;">Notes</div><div style="font-size:0.85rem;margin-bottom:14px;">{{ r['notes'] }}</div>{% endif %}

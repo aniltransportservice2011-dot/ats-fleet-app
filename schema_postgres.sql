@@ -323,16 +323,21 @@ CREATE TABLE payments (
 CREATE INDEX idx_payments_company ON payments(company_id);
 
 -- trip_id -> ALTER TABLE constraint near the end (trips is defined later in this file).
+-- trip_id/maintenance_id: exactly one is set, never both, never neither (CHECK below) -- a
+-- payment allocation is always against either a trip (party billing / owner-hire) or a
+-- maintenance entry (Tyre/Battery/Insurance/etc), never ambiguous about which.
 CREATE TABLE payment_allocations (
-    id         SERIAL PRIMARY KEY,
-    payment_id INTEGER NOT NULL REFERENCES payments(id),
-    trip_id    INTEGER NOT NULL,
-    amount     REAL NOT NULL,
+    id             SERIAL PRIMARY KEY,
+    payment_id     INTEGER NOT NULL REFERENCES payments(id),
+    trip_id        INTEGER,
+    maintenance_id INTEGER,
+    amount         REAL NOT NULL,
     created_by INTEGER,
     created_at TEXT,
     updated_by INTEGER,
     updated_at TEXT,
-    company_id INTEGER NOT NULL REFERENCES companies(id)
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    CHECK ((trip_id IS NOT NULL AND maintenance_id IS NULL) OR (trip_id IS NULL AND maintenance_id IS NOT NULL))
 );
 CREATE INDEX idx_payment_allocations_company ON payment_allocations(company_id);
 
@@ -844,6 +849,7 @@ ALTER TABLE batteries ADD CONSTRAINT fk_batteries_maintenance FOREIGN KEY (maint
 ALTER TABLE tyre_stock ADD CONSTRAINT fk_tyre_stock_maintenance FOREIGN KEY (maintenance_id) REFERENCES maintenance(id);
 ALTER TABLE tyre_stock ADD CONSTRAINT fk_tyre_stock_vendor FOREIGN KEY (vendor_id) REFERENCES vendors(id);
 ALTER TABLE payment_allocations ADD CONSTRAINT fk_payment_allocations_trip FOREIGN KEY (trip_id) REFERENCES trips(id);
+ALTER TABLE payment_allocations ADD CONSTRAINT fk_payment_allocations_maintenance FOREIGN KEY (maintenance_id) REFERENCES maintenance(id);
 
 -- created_by / updated_by -> users(id), deferred for the same reason: users is defined near
 -- the end of this file (after most tenant tables), and users' own created_by/updated_by are
