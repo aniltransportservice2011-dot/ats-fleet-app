@@ -66,6 +66,22 @@
   .ic-help-box { background:rgba(217,164,6,0.1); border:1px solid rgba(217,164,6,0.35); border-radius:10px; padding:16px; }
   .ic-help-box h3 { margin:0 0 6px; font-size:0.86rem; }
   .ic-help-box p { font-size:0.78rem; color:var(--steel); margin:0 0 10px; }
+
+  .ic-lr-btn { background:none; border:none; padding:0; color:var(--accent); font-weight:700; font-size:0.86rem; cursor:pointer; display:inline-flex; align-items:center; gap:6px; text-decoration:underline; }
+  .ic-lr-btn:hover { opacity:0.8; }
+  .ic-charge-badge { background:var(--accent); color:#fff; border-radius:999px; font-size:0.66rem; font-weight:700; padding:1px 7px; text-decoration:none; display:inline-block; }
+  .ic-summary-row .lbl a { color:var(--accent); font-size:0.7rem; text-decoration:none; font-weight:600; }
+  .ic-summary-row .lbl a:hover { text-decoration:underline; }
+
+  .ic-charge-row { display:flex; align-items:center; gap:12px; padding:10px 4px; border-bottom:1px solid var(--line); }
+  .ic-charge-row:last-child { border-bottom:none; }
+  .ic-charge-row .ic-charge-icon { width:32px; height:32px; border-radius:8px; background:var(--paper); display:flex; align-items:center; justify-content:center; font-size:0.95rem; flex-shrink:0; }
+  .ic-charge-row .ic-charge-info { flex:1; }
+  .ic-charge-row .ic-charge-label { font-weight:700; font-size:0.86rem; }
+  .ic-charge-row .ic-charge-sub { font-size:0.72rem; color:var(--steel); }
+  .ic-charge-row .ic-charge-amt { font-weight:700; font-size:0.9rem; min-width:80px; text-align:right; }
+  .ic-charge-row .ic-charge-amt.deduction { color:var(--red); }
+  .ic-charge-row input[type="checkbox"] { width:18px; height:18px; flex-shrink:0; cursor:pointer; }
 </style>
 {% endblock %}
 {% block content %}
@@ -165,30 +181,23 @@
               <th>LR Number</th><th>Vehicle</th><th>From &rarr; To</th><th>Date</th><th class="num">Freight (₹)</th><th>Status</th></tr>
             {% for row in trip_rows %}
             {% set t = row.t %}
-            <tr class="ic-trip-row {{ 'invoiced' if row.is_invoiced }}" onclick="if(event.target.tagName!=='INPUT'){var c=this.querySelector('.trip-cb'); c.checked=!c.checked; icRecalc();}">
+            <tr class="ic-trip-row {{ 'invoiced' if row.is_invoiced }}" onclick="if(event.target.tagName!=='INPUT' &amp;&amp; !event.target.closest('.ic-lr-btn')){var c=this.querySelector('.trip-cb'); c.checked=!c.checked; icRecalc();}">
               <td><input type="checkbox" class="trip-cb" name="trip_ids" value="{{ t['id'] }}" data-freight="{{ t['billed_amount'] or 0 }}" checked onclick="icRecalc()"></td>
-              <td>{{ t['lr_number'] or '—' }}</td><td>{{ t['vehicle_no'] or '—' }}</td>
+              <td>
+                <button type="button" class="ic-lr-btn" onclick="icOpenCharges({{ t['id'] }});" title="Click to view/manage this trip's charges">
+                  {{ t['lr_number'] or '—' }}
+                  {% if row.charges %}<span class="ic-charge-badge">{{ row.charges|length }}</span>{% endif %}
+                </button>
+              </td>
+              <td>{{ t['vehicle_no'] or '—' }}</td>
               <td>{{ t['from_loc'] }} &rarr; {{ t['to_loc'] }}</td><td>{{ t['date'] }}</td>
               <td class="num">₹{{ '{:,.0f}'.format(t['billed_amount'] or 0) }}</td>
               <td><span class="ic-status-pill" style="background:{% if row.is_invoiced %}var(--paper);color:var(--steel){% else %}#e8f5ee;color:var(--green){% endif %};">{{ 'Invoiced' if row.is_invoiced else 'Not Invoiced' }}</span></td>
             </tr>
-            {% if row.trip_items %}
-            <tr class="ic-items-row" data-trip="{{ t['id'] }}">
-              <td colspan="7">
-                <div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.02em;color:var(--steel);font-weight:700;margin-bottom:3px;">Other items logged on this trip</div>
-                {% for it in row.trip_items %}
-                <div class="item-line">
-                  <input type="checkbox" class="item-cb" data-trip="{{ t['id'] }}" name="included_item_ids" value="{{ it.id }}" data-type="{{ it.item_type }}" data-amount="{{ it.amount or 0 }}" checked onclick="icRecalc()">
-                  <span class="desc">{{ it.description }} {% if it.item_type=='deduction' %}<span style="color:var(--red);">(deduction)</span>{% endif %}</span>
-                  <span class="amt" style="color:{% if it.item_type=='deduction' %}var(--red){% else %}var(--ink){% endif %};">{% if it.item_type=='deduction' %}&minus;{% endif %}₹{{ '{:,.0f}'.format(it.amount or 0) }}</span>
-                </div>
-                {% endfor %}
-              </td>
-            </tr>
-            {% endif %}
             {% endfor %}
           </table>
           </div>
+          <div style="font-size:0.74rem;color:var(--steel);margin-top:10px;">&#8505;&#65039; Click a Trip ID above to view and manage that trip's charges &amp; costs — only fields with a real amount on that trip are shown, and any you uncheck are left off this invoice.</div>
           {% else %}
           <div style="color:var(--steel);padding:24px;text-align:center;">No trips found for this selection.</div>
           {% endif %}
@@ -228,8 +237,12 @@
           <h3>5. Invoice Summary</h3>
           <div class="ic-summary-row"><span class="lbl">Total Trips Selected</span><span class="val" id="sTrips">0</span></div>
           <div class="ic-summary-row"><span class="lbl">Total Freight</span><span class="val" id="sFreight">₹0</span></div>
-          <div class="ic-summary-row"><span class="lbl">Loading / Unloading</span><input type="number" step="0.01" name="loading_charges" id="icLoading" value="0" oninput="icRecalc()"></div>
-          <div class="ic-summary-row"><span class="lbl">Other Charges</span><input type="number" step="0.01" name="other_charges" id="icOther" value="0" oninput="icRecalc()"></div>
+          <div class="ic-summary-row">
+            <span class="lbl">Selected Charges <a href="#" onclick="icOpenFirstTripCharges();return false;" style="margin-left:4px;">(View / Edit Charges)</a></span>
+            <span class="val" id="sCharges">₹0</span>
+          </div>
+          <div class="ic-summary-row"><span class="lbl">Loading / Unloading (Extra)</span><input type="number" step="0.01" name="loading_charges" id="icLoading" value="0" oninput="icRecalc()"></div>
+          <div class="ic-summary-row"><span class="lbl">Other Charges (Extra)</span><input type="number" step="0.01" name="other_charges" id="icOther" value="0" oninput="icRecalc()"></div>
           <div class="ic-subtotal-row"><span>Sub Total</span><span id="sSubtotal">₹0</span></div>
           {% if invoice_type == 'tax' %}
           <div class="ic-summary-row"><span class="lbl">GST Rate (%)</span><input type="number" step="0.01" name="gst_rate" id="icGst" value="{{ ((invoice_settings.cgst_rate or 0)|float + (invoice_settings.sgst_rate or 0)|float) or 18 }}" oninput="icRecalc()"></div>
@@ -258,6 +271,32 @@
       </div>
     </div>
   </form>
+
+  <script>
+  var TRIP_CHARGES = {{ (trip_charges_map|default({}))|tojson }};
+  var TRIP_META = {};
+  {% for row in trip_rows|default([]) %}
+  TRIP_META[{{ row.t['id'] }}] = {lr: {{ (row.t['lr_number'] or '—')|tojson }}, date: {{ (row.t['date'] or '')|tojson }},
+    vehicle: {{ (row.t['vehicle_no'] or '—')|tojson }}, freight: {{ row.t['billed_amount'] or 0 }}};
+  {% endfor %}
+  </script>
+
+  <div class="modal-overlay" id="icChargesModal">
+    <div class="modal-box" style="width:640px;max-height:82vh;overflow-y:auto;">
+      <button type="button" class="modal-close-x" onclick="icCloseCharges()">&#10005;</button>
+      <h3 style="margin-bottom:2px;">Trip Charges &amp; Costs</h3>
+      <div id="icModalTripMeta" style="font-size:0.8rem;color:var(--steel);margin-bottom:14px;"></div>
+      <div id="icModalRows"></div>
+      <div id="icModalEmpty" style="display:none;color:var(--steel);padding:18px 0;text-align:center;font-size:0.85rem;">This trip has no charges or costs to review — its full freight amount will be billed as-is.</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1.5px solid var(--line);margin-top:14px;padding-top:12px;font-weight:700;">
+        <span>Selected Charges Total</span><span id="icModalTotal" style="color:var(--green);">₹0</span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+        <button type="button" class="btn-cancel" onclick="icCloseCharges()">Cancel</button>
+        <button type="button" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" onclick="icCloseCharges()">&#128190; Save &amp; Close</button>
+      </div>
+    </div>
+  </div>
   {% endif %}
 </div>
 
@@ -306,33 +345,121 @@ function icAddExtraRow() {
   wrap.appendChild(row);
 }
 
-function icRecalc() {
-  var trips = 0, freight = 0, itemsNet = 0;
-  document.querySelectorAll('.trip-cb').forEach(function(cb) {
-    var itemsRow = document.querySelector('.ic-items-row[data-trip="' + cb.value + '"]');
-    if (cb.checked) {
-      trips++;
-      freight += parseFloat(cb.dataset.freight) || 0;
-      if (itemsRow) itemsRow.style.display = '';
-    } else if (itemsRow) {
-      itemsRow.style.display = 'none';
-    }
+// ---------------------------------------------------------------------
+// Trip Charges & Costs popup. Two independent sets because charges have two independent
+// defaults: icExcluded holds "<tripId>:<key>" for fields that were ALREADY on every invoice
+// (the 8 core charges, Others items, Fuel/Driver Advance) and got deliberately unchecked —
+// opt-OUT, default checked. icIncluded holds the same for fields that have NEVER been on any
+// invoice before (Detention/Police/SIM Tracking/Union + all 7 deduction fields, c.default==='out'
+// from the server) and got deliberately checked ON — opt-IN, default unchecked. Both empty by
+// default, so every invoice behaves exactly as before unless someone actively toggles something.
+// ---------------------------------------------------------------------
+var icExcluded = new Set();
+var icIncluded = new Set();
+var icCurrentTripId = null;
+
+function icIsChecked(c, fullKey) {
+  return c.default === 'out' ? icIncluded.has(fullKey) : !icExcluded.has(fullKey);
+}
+function icSetChecked(c, fullKey, isChecked) {
+  if (c.default === 'out') {
+    if (isChecked) { icIncluded.add(fullKey); } else { icIncluded.delete(fullKey); }
+  } else {
+    if (isChecked) { icExcluded.delete(fullKey); } else { icExcluded.add(fullKey); }
+  }
+}
+
+function icChargeIcon(kind) {
+  return kind === 'owner_deduction' ? '&#128181;' : (kind === 'deduction' ? '&#8722;' : '&#128179;');
+}
+
+function icRenderModal(tripId) {
+  var meta = TRIP_META[tripId] || {};
+  var charges = TRIP_CHARGES[tripId] || [];
+  document.getElementById('icModalTripMeta').innerHTML =
+    '<b>' + meta.lr + '</b> &nbsp;|&nbsp; ' + (meta.date || '') + ' &nbsp;|&nbsp; ' + (meta.vehicle || '') +
+    ' &nbsp;&mdash;&nbsp; Freight: ₹' + (meta.freight || 0).toLocaleString('en-IN', {maximumFractionDigits:0});
+  var wrap = document.getElementById('icModalRows');
+  wrap.innerHTML = '';
+  document.getElementById('icModalEmpty').style.display = charges.length ? 'none' : '';
+  charges.forEach(function(c) {
+    var fullKey = tripId + ':' + c.key;
+    var checked = icIsChecked(c, fullKey);
+    var isDeduction = c.kind === 'deduction' || c.kind === 'owner_deduction';
+    var sub = c.kind === 'owner_deduction' ? 'Deduct from payment to owner' :
+              (c.kind === 'deduction' ? 'Deduction' : 'Chargeable to invoice');
+    if (c.default === 'out') { sub += ' — not on any invoice unless you tick this'; }
+    var row = document.createElement('div');
+    row.className = 'ic-charge-row';
+    // Built via data-* attributes + addEventListener rather than an inline onchange string --
+    // c.key can contain a colon (e.g. "item:15"), and JSON.stringify-ing it straight into a
+    // double-quoted HTML attribute breaks the attribute at the embedded double quotes.
+    row.innerHTML =
+      '<input type="checkbox" ' + (checked ? 'checked' : '') + '>' +
+      '<div class="ic-charge-icon">' + icChargeIcon(c.kind) + '</div>' +
+      '<div class="ic-charge-info"><div class="ic-charge-label">' + c.label + '</div><div class="ic-charge-sub">' + sub + '</div></div>' +
+      '<div class="ic-charge-amt' + (isDeduction ? ' deduction' : '') + '">' + (isDeduction ? '&minus;' : '') + '₹' + (c.amount || 0).toLocaleString('en-IN', {maximumFractionDigits:0}) + '</div>';
+    var cb = row.querySelector('input[type="checkbox"]');
+    cb.addEventListener('change', function() { icToggleCharge(tripId, c, cb.checked); });
+    wrap.appendChild(row);
   });
-  document.querySelectorAll('.item-cb').forEach(function(cb) {
-    var parentTrip = document.querySelector('.trip-cb[value="' + cb.dataset.trip + '"]');
-    if (parentTrip && parentTrip.checked && cb.checked) {
-      var amt = parseFloat(cb.dataset.amount) || 0;
-      itemsNet += cb.dataset.type === 'deduction' ? -amt : amt;
-    }
+  icUpdateModalTotal(tripId);
+}
+
+function icUpdateModalTotal(tripId) {
+  var charges = TRIP_CHARGES[tripId] || [];
+  var total = 0;
+  charges.forEach(function(c) {
+    if (c.kind === 'owner_deduction') return; // never part of the billed subtotal, only net-to-owner
+    if (!icIsChecked(c, tripId + ':' + c.key)) return;
+    total += c.kind === 'deduction' ? -(c.amount || 0) : (c.amount || 0);
+  });
+  var el = document.getElementById('icModalTotal');
+  if (el) el.textContent = (total < 0 ? '-₹' : '₹') + Math.abs(total).toLocaleString('en-IN', {maximumFractionDigits:0});
+}
+
+function icToggleCharge(tripId, c, isChecked) {
+  icSetChecked(c, tripId + ':' + c.key, isChecked);
+  icUpdateModalTotal(tripId);
+  icRecalc();
+}
+
+function icOpenCharges(tripId) {
+  icCurrentTripId = tripId;
+  icRenderModal(tripId);
+  document.getElementById('icChargesModal').classList.add('open');
+}
+function icCloseCharges() {
+  document.getElementById('icChargesModal').classList.remove('open');
+  icCurrentTripId = null;
+}
+function icOpenFirstTripCharges() {
+  var firstCb = document.querySelector('.trip-cb:checked') || document.querySelector('.trip-cb');
+  if (firstCb) icOpenCharges(parseInt(firstCb.value, 10));
+}
+
+function icRecalc() {
+  if (!document.getElementById('icLoading')) return; // form not rendered yet (no party/owner selected)
+  var trips = 0, freight = 0, chargesTotal = 0;
+  document.querySelectorAll('.trip-cb').forEach(function(cb) {
+    if (!cb.checked) return;
+    trips++;
+    var tripId = parseInt(cb.value, 10);
+    freight += parseFloat(cb.dataset.freight) || 0;
+    (TRIP_CHARGES[tripId] || []).forEach(function(c) {
+      if (c.kind === 'owner_deduction') return; // affects net-to-owner only, never the billed subtotal
+      if (!icIsChecked(c, tripId + ':' + c.key)) return;
+      chargesTotal += c.kind === 'deduction' ? -(c.amount || 0) : (c.amount || 0);
+    });
   });
   document.querySelectorAll('#icExtraRows .item-line').forEach(function(row) {
     var amt = parseFloat(row.querySelector('[name="extra_item_amount"]').value) || 0;
     var type = row.querySelector('[name="extra_item_type"]').value;
-    itemsNet += type === 'deduction' ? -amt : amt;
+    chargesTotal += type === 'deduction' ? -amt : amt;
   });
   var loading = parseFloat(document.getElementById('icLoading').value) || 0;
   var other = parseFloat(document.getElementById('icOther').value) || 0;
-  var subTotal = freight + loading + other + itemsNet;
+  var subTotal = freight + loading + other + chargesTotal;
   var gstEl = document.getElementById('icGst');
   var gstRate = gstEl ? (parseFloat(gstEl.value) || 0) : 0;
   var tdsRate = parseFloat(document.getElementById('icTds').value) || 0;
@@ -342,10 +469,33 @@ function icRecalc() {
 
   document.getElementById('sTrips').textContent = trips;
   document.getElementById('sFreight').textContent = '₹' + freight.toLocaleString('en-IN', {maximumFractionDigits:0});
+  document.getElementById('sCharges').textContent = (chargesTotal < 0 ? '-₹' : '₹') + Math.abs(chargesTotal).toLocaleString('en-IN', {maximumFractionDigits:0});
   document.getElementById('sSubtotal').textContent = '₹' + subTotal.toLocaleString('en-IN', {maximumFractionDigits:0});
   document.getElementById('sGrand').textContent = '₹' + grand.toLocaleString('en-IN');
   document.getElementById('sWords').textContent = icNumToWords(grand) + ' Rupees Only';
 }
+
+// Before the form actually submits (Preview/Generate/Draft), serialize icExcluded/icIncluded
+// into hidden inputs so the server sees exactly what was toggled in the popup.
+// Guarded — icForm only exists once a party/vehicle owner has been selected.
+var icFormEl = document.getElementById('icForm');
+if (icFormEl) {
+  icFormEl.addEventListener('submit', function() {
+    var form = this;
+    form.querySelectorAll('input[name="excluded_charge_keys"], input[name="included_charge_keys"]').forEach(function(el) { el.remove(); });
+    icExcluded.forEach(function(key) {
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'excluded_charge_keys'; inp.value = key;
+      form.appendChild(inp);
+    });
+    icIncluded.forEach(function(key) {
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'included_charge_keys'; inp.value = key;
+      form.appendChild(inp);
+    });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', icRecalc);
 icRecalc();
 </script>
