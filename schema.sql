@@ -470,6 +470,22 @@ CREATE TABLE invoice_batch_items (
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
+-- Which auto-charge fields / deduction toggles / "Others" items were excluded from a specific
+-- generated invoice's per-trip charge selection, so View/Regenerate PDF later reproduces the
+-- exact same invoice instead of reverting to "everything included". See
+-- migrate_invoice_charge_exclusions.sql for the full reasoning.
+CREATE TABLE invoice_batch_charge_exclusions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_batch_id  INTEGER NOT NULL REFERENCES invoice_batches(id),
+    trip_id           INTEGER NOT NULL REFERENCES trips(id),
+    charge_key        TEXT NOT NULL,
+    company_id        INTEGER NOT NULL DEFAULT 1,
+    created_by        INTEGER REFERENCES users(id),
+    created_at        TEXT,
+    UNIQUE(invoice_batch_id, trip_id, charge_key)
+);
+CREATE INDEX idx_invoice_batch_charge_exclusions_batch ON invoice_batch_charge_exclusions(invoice_batch_id);
+
 -- ============================================================================
 -- Maintenance
 -- ============================================================================

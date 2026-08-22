@@ -9,7 +9,10 @@ Three jobs:
                          the mock/live ComplianceProvider system (unchanged from before).
   - run_rc_sync       — one eChallan RC Lookup call per own-fleet vehicle, caching the full
                          response into vehicles.rc_synced_data/rc_last_synced and backfilling
-                         real gaps (registration date, an insurance policy).
+                         real gaps (registration date, chassis/engine number, fitness/PUC/permit
+                         expiry, body type, capacity) — see _backfill_from_rc's own docstring for
+                         exactly what it does and does NOT touch (insurance is deliberately
+                         excluded).
   - run_challan_sync  — one eChallan Challan Lookup call per own-fleet vehicle, replacing that
                          vehicle's vehicle_challans rows with the latest fetched set and updating
                          vehicles.challan_count/challan_amount/challan_last_synced.
@@ -95,8 +98,20 @@ def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now, created_by=Non
     """Fills real gaps from the synced RC response — never overwrites data that's already on
     file, since a manually-entered value is trusted over the cache.
 
-    Only ever touches vehicles.registration_date (feeds the Age column), filled in only if
-    currently blank.
+    Touches vehicles.registration_date, chassis_number, engine_number, fitness_expiry,
+    puc_valid_upto, permit_valid_upto, body_type, capacity_mt — each filled in ONLY if currently
+    blank on that row, one column at a time (a vehicle with a manually-entered chassis_number but
+    a blank fitness_expiry gets fitness_expiry filled without touching chassis_number). Every one
+    of these is a plain scalar column directly on `vehicles` — no side-effect record ever gets
+    created here.
+
+    body_type reuses the exact same _short_body_type() mapping the vehicles list page already
+    uses to DISPLAY a body type live from rc_body_type_desc — this just also persists that same
+    result into the real column, so it shows correctly in the Edit popup too instead of only on
+    the list page. capacity_mt is derived from the RC record's own Gross Vehicle Weight minus
+    Unladen (kerb) Weight — the standard way a truck's payload/loading capacity is worked out —
+    converted from kg to MT; only filled when both figures are present and GVW genuinely exceeds
+    the unladen weight (guards against a malformed/partial RC record producing a nonsense value).
 
     Deliberately does NOT touch insurance at all — an earlier version of this function also
     auto-created an insurance_policies row (and, to hold its insurer, a brand-new vendor record
@@ -107,14 +122,57 @@ def _backfill_from_rc(conn, vehicle_id, vehicle_no, rc_data, now, created_by=Non
     nothing to sync_log, so that path was invisible to the investigation that first found that
     vendor. Insurance is a real, human-verified record (premium, IDV, agent, documents) — it
     should only ever be created by someone actually adding it via Vehicles > Insurance, never
-    silently inferred from a lookup API's free-text company name field.
+    silently inferred from a lookup API's free-text company name field. The five plain fields
+    below carry none of that risk, so they're safe to backfill the same way registration_date
+    already was.
     """
-    reg = conn.execute("SELECT registration_date FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
-    if reg and not (reg['registration_date'] or '').strip():
+    row = conn.execute("""SELECT registration_date, chassis_number, engine_number,
+                          fitness_expiry, puc_valid_upto, permit_valid_upto, body_type, capacity_mt
+                          FROM vehicles WHERE id=?""", (vehicle_id,)).fetchone()
+    if not row:
+        return
+    updates = {}
+    if not (row['registration_date'] or '').strip():
         regn_dt = _parse_rc_date(rc_data.get('rc_regn_dt'))
         if regn_dt:
-            conn.execute("UPDATE vehicles SET registration_date=?, updated_by=?, updated_at=? WHERE id=?",
-                         (regn_dt, created_by, now, vehicle_id))
+            updates['registration_date'] = regn_dt
+    if not (row['chassis_number'] or '').strip():
+        chasi = (rc_data.get('rc_chasi_no') or '').strip()
+        if chasi:
+            updates['chassis_number'] = chasi
+    if not (row['engine_number'] or '').strip():
+        eng = (rc_data.get('rc_eng_no') or '').strip()
+        if eng:
+            updates['engine_number'] = eng
+    if not (row['fitness_expiry'] or '').strip():
+        fit = _parse_rc_date(rc_data.get('rc_fit_upto'))
+        if fit:
+            updates['fitness_expiry'] = fit
+    if not (row['puc_valid_upto'] or '').strip():
+        pucc = _parse_rc_date(rc_data.get('rc_pucc_upto'))
+        if pucc:
+            updates['puc_valid_upto'] = pucc
+    if not (row['permit_valid_upto'] or '').strip():
+        permit = _parse_rc_date(rc_data.get('rc_permit_valid_upto'))
+        if permit:
+            updates['permit_valid_upto'] = permit
+    if not (row['body_type'] or '').strip():
+        from app import _short_body_type
+        bt = _short_body_type(rc_data.get('rc_body_type_desc'))
+        if bt:
+            updates['body_type'] = bt
+    if not row['capacity_mt']:
+        try:
+            gvw = float(rc_data.get('rc_gvw') or 0)
+            unladen = float(rc_data.get('rc_unld_wt') or 0)
+        except (TypeError, ValueError):
+            gvw = unladen = 0
+        if gvw > 0 and unladen > 0 and gvw > unladen:
+            updates['capacity_mt'] = round((gvw - unladen) / 1000, 2)
+    if updates:
+        set_clause = ', '.join(f"{col}=?" for col in updates)
+        conn.execute(f"UPDATE vehicles SET {set_clause}, updated_by=?, updated_at=? WHERE id=?",
+                     (*updates.values(), created_by, now, vehicle_id))
 
 
 def run_rc_sync(get_db_fn):

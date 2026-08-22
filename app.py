@@ -1132,8 +1132,8 @@ def vehicle_detail(v_id):
         comp_row = next((c for c in comp_row if c['vehicle_id'] == v_id), None)
 
     # paid_amount lives on the linked maintenance row, not insurance_policies itself -- joined in
-    # here so the Insurance form on this page can prefill/show it (see the same reasoning on the
-    # equivalent join in _maintenance_insurance_tab above).
+    # here so the Insurance form on this page can prefill/show it, same reasoning as Urea's
+    # paid_amount join elsewhere.
     insurance_rows = conn.execute("""SELECT ip.*, ve.name as insurer_name, m2.paid_amount as paid_amount
                                      FROM insurance_policies ip
                                      LEFT JOIN vendors ve ON ip.insurer_id=ve.id
@@ -1359,6 +1359,16 @@ def vehicles_list():
     # The old Insurance / Permit & Fitness sub-tabs on this list page are gone — that detail
     # now lives on the per-vehicle detail page (see vehicle_detail() below). Any bookmarked
     # link to the old tabs just falls through to the plain list.
+    #
+    # The sidebar's "Vehicles" link is a plain /vehicles with no query string at all — sort and
+    # every filter live only in the URL, so switching to another tab and clicking back in used to
+    # silently reset everything to defaults. A completely bare hit (no query string whatsoever)
+    # now restores whatever sort/filter was last used on this page instead. Any real query string
+    # — even just the "Clear" link's own ?tab=all — is respected exactly as given and never
+    # overridden, so Clear (and every sort/filter link, which always carries the others forward)
+    # keeps working exactly as before.
+    if not request.query_string and session.get('vehicles_last_query'):
+        return redirect(f"/vehicles?{session['vehicles_last_query']}")
     conn = get_db()
     type_f = request.args.get('type', '')
     status_f = request.args.get('status', '')
@@ -1494,6 +1504,10 @@ def vehicles_list():
     compliance_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
 
     conn.close()
+    # Remember this exact URL for next time — a later bare /vehicles hit (see the redirect at the
+    # top of this route) restores it instead of resetting to defaults.
+    if request.query_string:
+        session['vehicles_last_query'] = request.query_string.decode('utf-8')
     return render_template('vehicles_list.html', tab='all', rows=page_rows, f_type=type_f, f_status=status_f,
                             f_vehicle=vehicle_f, f_age=age_f, f_sort=sort_f, f_dir=dir_f, all_vehicle_nos=all_vehicle_nos, active='vehicles',
                             total_vehicles=total_vehicles, active_count=active_count, maint_count=maint_count,
@@ -2230,7 +2244,8 @@ def trips_list():
                             f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f,
                             f_sort=sort_f, f_dir=dir_f,
                             delete_error=request.args.get('error', ''), delete_error_amount=request.args.get('amount', ''),
-                            delete_error_lr=request.args.get('lr', ''), active='trips')
+                            delete_error_lr=request.args.get('lr', ''), delete_error_toll_count=request.args.get('toll_count', ''),
+                            active='trips')
 
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
@@ -3490,111 +3505,6 @@ def _save_insurance_doc(file_storage, prefix, company_id=1):
     os.makedirs(company_dir, exist_ok=True)
     file_storage.save(os.path.join(company_dir, unique))
     return f"uploads/insurance/{company_id}/{unique}"
-
-def _maintenance_insurance_tab(conn, template='maintenance.html', active='maintenance', base_path='/maintenance'):
-    vehicle_f = request.args.get('vehicle', '')
-    status_f = request.args.get('status', '')
-    type_f = request.args.get('type', '')
-    insurer_f = request.args.get('insurer', '')
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-
-    # paid_amount lives on the linked maintenance row, not insurance_policies itself — joined in
-    # here so Edit Policy can prefill it (and so this list can eventually show a real payable,
-    # same reasoning as Urea's paid_amount join above).
-    raw_rows = conn.execute("""SELECT ip.*, v.vehicle_no, ve.name as insurer_name,
-                               v.rc_synced_data, v.rc_last_synced, m2.paid_amount as paid_amount
-                               FROM insurance_policies ip
-                               LEFT JOIN vehicles v ON ip.vehicle_id=v.id LEFT JOIN vendors ve ON ip.insurer_id=ve.id
-                               LEFT JOIN maintenance m2 ON ip.maintenance_id=m2.id
-                               ORDER BY ip.id DESC""").fetchall()
-    all_rows = [_insurance_enrich(r) for r in raw_rows]
-    # eChallan reference (read-only cross-check) — never the authoritative value, insurance_policies
-    # stays the real source of truth. See _rc_cache_ref's docstring.
-    for r, raw in zip(all_rows, raw_rows):
-        r['rc_insurance_upto'] = _rc_cache_ref(raw, 'rc_insurance_upto')
-        r['rc_insurance_comp'] = _rc_cache_ref(raw, 'rc_insurance_comp')
-        r['rc_last_synced'] = raw['rc_last_synced']
-        r['paid_amount'] = raw['paid_amount']
-
-    # Insurance entries logged the old free-text way (before this tab existed) live only in
-    # `maintenance`, with no policy_number/expiry/etc — surface them too so this list's totals
-    # never disagree with Overview's, which reads `maintenance` directly. They're shown honestly
-    # as "Not Tracked" (no expiry date exists to derive a real status from) and are read-only here.
-    legacy_maint = conn.execute("""SELECT m.id, m.date, m.category, m.service_type, m.amount, m.paid_amount, m.notes,
-                                   m.vendor_id, v.vehicle_no, v.id as veh_id, ve.name as insurer_name
-                                   FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
-                                   LEFT JOIN vendors ve ON m.vendor_id=ve.id
-                                   WHERE m.id NOT IN (SELECT maintenance_id FROM insurance_policies WHERE maintenance_id IS NOT NULL)
-                                   """).fetchall()
-    for m in legacy_maint:
-        if _maintenance_classify(m['category'], m['service_type']) != 'Insurance':
-            continue
-        all_rows.append({
-            'id': None, 'vehicle_id': m['veh_id'], 'vehicle_no': m['vehicle_no'],
-            'insurance_type': None, 'insurer_id': m['vendor_id'], 'insurer_name': m['insurer_name'],
-            'policy_number': None, 'start_date': m['date'], 'expiry_date': None,
-            'premium_amount': m['amount'], 'idv': None, 'ncb_pct': None, 'gst_included': None,
-            'agent_name': None, 'agent_contact': None, 'agent_email': None, 'reminder_days': None,
-            'notes': m['notes'], 'status_override': None, 'policy_doc_path': None, 'invoice_doc_path': None,
-            'rc_doc_path': None, 'maintenance_id': m['id'], 'is_legacy': True,
-            'status': 'Not Tracked', 'days_to_expiry': None, 'paid_amount': m['paid_amount'],
-        })
-
-    rows = all_rows
-    if vehicle_f:
-        rows = [r for r in rows if r['vehicle_no'] == vehicle_f]
-    if status_f:
-        rows = [r for r in rows if r['status'] == status_f]
-    if type_f:
-        rows = [r for r in rows if (r['insurance_type'] or '') == type_f]
-    if insurer_f:
-        rows = [r for r in rows if (r['insurer_name'] or '') == insurer_f]
-    if date_from:
-        rows = [r for r in rows if (r['start_date'] or '') >= date_from]
-    if date_to:
-        rows = [r for r in rows if (r['start_date'] or '') <= date_to]
-
-    total_policies = len(all_rows)
-    active_count = sum(1 for r in all_rows if r['status'] == 'Active')
-    expiring_count = sum(1 for r in all_rows if r['status'] == 'Expiring Soon')
-    expired_count = sum(1 for r in all_rows if r['status'] == 'Expired')
-    active_pct = round(active_count / total_policies * 100, 1) if total_policies else 0
-
-    today = datetime.date.today()
-    this_year = str(today.year)
-    total_premium_year = sum(r['premium_amount'] or 0 for r in all_rows if (r['start_date'] or '').startswith(this_year))
-    avg_premium = round(sum(r['premium_amount'] or 0 for r in all_rows) / total_policies) if total_policies else 0
-
-    own_fleet_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type = 'own'").fetchone()[0]
-    active_vehicle_ids = set(r['vehicle_id'] for r in all_rows if r['status'] == 'Active' and r['vehicle_id'])
-    coverage_pct = round(len(active_vehicle_ids) / own_fleet_count * 100) if own_fleet_count else 0
-    total_idv = sum(r['idv'] or 0 for r in all_rows if r['status'] == 'Active')
-
-    total_count = len(rows)
-    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
-                                             per_page_options=(10, 25, 50, 100), default_per_page=8)
-    page_rows = rows[(page - 1) * per_page: page * per_page]
-    page_tokens = _page_tokens(page, total_pages)
-    from urllib.parse import urlencode
-    base_params = request.args.to_dict()
-    base_params.pop('page', None)
-    base_params.pop('per_page', None)
-    base_qs = urlencode(base_params)
-
-    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    insurers = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
-    conn.close()
-
-    return render_template(template, tab='insurance',
-        rows=page_rows, total_count=total_count, total_policies=total_policies,
-        active_count=active_count, expiring_count=expiring_count, expired_count=expired_count, active_pct=active_pct,
-        total_premium_year=total_premium_year, avg_premium=avg_premium, coverage_pct=coverage_pct,
-        active_vehicle_count=len(active_vehicle_ids), own_fleet_count=own_fleet_count, total_idv=total_idv,
-        page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
-        vehicles=vehicles, insurers=insurers, combined_names=combined_names, insurance_types=INSURANCE_TYPES,
-        f_vehicle=vehicle_f, f_status=status_f, f_type=type_f, f_insurer=insurer_f,
-        f_date_from=date_from, f_date_to=date_to, base_path=base_path, active=active)
 
 def _maintenance_service_tab(conn):
     vehicle_f = request.args.get('vehicle', '')
@@ -4865,69 +4775,6 @@ def delete_insurance(policy_id):
     conn.close()
     return redirect(url_for('vehicles_list', tab='insurance'))
 
-@app.route('/maintenance/insurance/legacy/<int:maintenance_id>/convert', methods=['POST'])
-def convert_legacy_insurance(maintenance_id):
-    """Fills in the missing policy number/dates/etc. on an old free-text Insurance entry —
-    reuses that same maintenance/ledger row (so the cost isn't billed twice) and just attaches
-    the new structured insurance_policies record to it, same as every other 'add' flow here."""
-    conn = get_db()
-    f = request.form
-    existing = conn.execute("SELECT id FROM insurance_policies WHERE maintenance_id=?", (maintenance_id,)).fetchone()
-    if existing:
-        conn.close()
-        return redirect(url_for('vehicles_list', tab='insurance'))
-
-    m = conn.execute("SELECT * FROM maintenance WHERE id=?", (maintenance_id,)).fetchone()
-    if not m:
-        conn.close()
-        return redirect(url_for('vehicles_list', tab='insurance'))
-
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) or m['vehicle_id']
-    insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
-    premium = float(f.get('premium_amount') or 0)
-    # Preserve whatever paid_amount the legacy maintenance row already had unless the form
-    # explicitly supplies one — this flow is "fill in the missing details" on an entry that may
-    # already have a real paid_amount recorded against it the old way; only overwrite if the form
-    # actually sends a value.
-    paid_amount = float(f.get('paid_amount')) if f.get('paid_amount') not in (None, '') else (m['paid_amount'] or 0)
-    status_override = 'Cancelled' if f.get('policy_status') == 'Cancelled' else None
-
-    _cid = session.get('company_id', 1)
-    policy_doc = _save_insurance_doc(request.files.get('policy_doc'), 'policy', _cid)
-    invoice_doc = _save_insurance_doc(request.files.get('invoice_doc'), 'invoice', _cid)
-    rc_doc = _save_insurance_doc(request.files.get('rc_doc'), 'rc', _cid)
-
-    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    conn.execute("""INSERT INTO insurance_policies (vehicle_id, insurance_type, insurer_id, policy_number, start_date,
-                    expiry_date, premium_amount, idv, ncb_pct, gst_included, agent_name, agent_contact, agent_email,
-                    reminder_days, notes, status_override, policy_doc_path, invoice_doc_path, rc_doc_path, maintenance_id,
-                    created_by, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (vehicle_id, f.get('insurance_type'), insurer_id, f.get('policy_number') or None, f.get('start_date') or m['date'],
-         f.get('expiry_date'), premium, float(f.get('idv') or 0) or None, float(f.get('ncb_pct') or 0) or None,
-         f.get('gst_included') or None, f.get('agent_name') or None, f.get('agent_contact') or None,
-         f.get('agent_email') or None, int(f.get('reminder_days') or 30), f.get('notes') or m['notes'], status_override,
-         policy_doc, invoice_doc, rc_doc, maintenance_id, session.get('user_id'), _now))
-
-    conn.execute("UPDATE maintenance SET vehicle_id=?, date=?, vendor_id=?, amount=?, paid_amount=?, updated_by=?, updated_at=? WHERE id=?",
-        (vehicle_id, f.get('start_date') or m['date'], insurer_id, premium, paid_amount, session.get('user_id'), _now, maintenance_id))
-    if vehicle_id and f.get('expiry_date'):
-        conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
-                     (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('vehicles_list', tab='insurance'))
 
 def _filter_entries_by_date(entries, date_from, date_to):
     if date_from:
@@ -5565,32 +5412,6 @@ def payment_view(payment_id):
     return render_template('payment_view.html', p=p, entity_name=entity_name, entity_type=entity_type,
                             entity_id=entity_id, allocations=allocations, leftover=max(leftover, 0), active='accounts')
 
-@app.route('/salaries/add', methods=['GET', 'POST'])
-def add_salary():
-    import datetime
-    conn = get_db()
-    if request.method == 'POST':
-        f = request.form
-        tx_date = f.get('date')
-        month_label = datetime.datetime.strptime(tx_date, '%Y-%m-%d').strftime('%b %Y') if tx_date else ''
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        emp_name = f.get('employee')
-        emp_type = f.get('employee_type')
-        existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (emp_name,)).fetchone()
-        if existing:
-            conn.execute("UPDATE employees SET type=?, updated_by=?, updated_at=? WHERE id=?",
-                         (emp_type, session.get('user_id'), now, existing[0]))
-        else:
-            conn.execute("INSERT INTO employees (name, type, created_by, created_at) VALUES (?,?,?,?)",
-                         (emp_name, emp_type, session.get('user_id'), now))
-        conn.execute("INSERT INTO salaries (employee, month, amount, date, created_at, created_by) VALUES (?,?,?,?,?,?)",
-                     (emp_name, month_label, float(f.get('amount') or 0), tx_date, now, session.get('user_id')))
-        conn.commit()
-        conn.close()
-        return redirect(url_for('salaries_list'))
-    employees = conn.execute("SELECT name, type FROM employees ORDER BY name").fetchall()
-    conn.close()
-    return render_template('add_salary.html', employees=employees, active='salaries')
 
 @app.route('/overheads/add', methods=['GET', 'POST'])
 def add_overhead():
@@ -5647,6 +5468,20 @@ def delete_trip(trip_id):
         trip = conn.execute("SELECT lr_number FROM trips WHERE id=?", (trip_id,)).fetchone()
         conn.close()
         return redirect(url_for('trips_list', error='has_payment', amount=round(alloc['amt'], 2),
+                                 lr=(trip['lr_number'] if trip else '') or f'#{trip_id}'))
+    # Same reasoning as the payment_allocations guard above, for a different foreign key on this
+    # same trips table: a real Toll Management entry linked to this trip (toll_entries.trip_id)
+    # has no cleanup path either — deleting the trip would leave that toll entry pointing at a
+    # trip that no longer exists. The toll's own cost isn't lost (its mirrored maintenance row is
+    # untouched), but the "which trip incurred this toll" link would be destroyed silently, and
+    # any future per-trip report (Route Analytics, Business Performance, an invoice) that looks
+    # this toll up by trip_id would simply never find it again. Blocking here forces the toll
+    # entry to be unlinked or deleted first, instead of silently orphaning it.
+    toll_ct = conn.execute("SELECT COUNT(*) as c FROM toll_entries WHERE trip_id=?", (trip_id,)).fetchone()
+    if toll_ct['c']:
+        trip = conn.execute("SELECT lr_number FROM trips WHERE id=?", (trip_id,)).fetchone()
+        conn.close()
+        return redirect(url_for('trips_list', error='has_toll', toll_count=toll_ct['c'],
                                  lr=(trip['lr_number'] if trip else '') or f'#{trip_id}'))
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
@@ -5786,93 +5621,6 @@ def deactivate_employee(employee_id):
     conn.close()
     return redirect(url_for('salaries_list'))
 
-@app.route('/salaries/process-payroll', methods=['POST'])
-def process_payroll():
-    """Bulk-generates this month's salary record for every active employee who doesn't already
-    have one — starting from their on-file basic_salary, no allowances/deductions yet (those get
-    added via Edit Salary afterward). Never overwrites a month that's already been generated.
-    Employees with no basic_salary on file are skipped rather than given a Rs.0 record that would
-    just look broken — Edit Employee is where that gets set, and the redirect flags exactly who
-    was skipped so it's obvious why they didn't get a payslip this run."""
-    conn = get_db()
-    month_key = request.form.get('month') or _current_month_key()
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    employees = conn.execute("SELECT id, name, basic_salary FROM employees WHERE status='Active' OR status IS NULL").fetchall()
-    created = 0
-    skipped_no_salary = []
-    for e in employees:
-        existing = conn.execute("SELECT id FROM salaries WHERE employee_id=? AND month_key=?", (e['id'], month_key)).fetchone()
-        if existing:
-            continue
-        basic = e['basic_salary'] or 0
-        if basic <= 0:
-            skipped_no_salary.append(e['name'])
-            continue
-        conn.execute("""INSERT INTO salaries (employee, month, amount, date, created_at, employee_id, month_key,
-                        basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'pending', ?)""",
-                     (e['name'], month_key, basic, None, now, e['id'], month_key, basic, basic, basic, session.get('user_id')))
-        created += 1
-    conn.commit()
-    conn.close()
-    return redirect(url_for('salaries_list', tab='salary', month=month_key, processed=created,
-                             skipped=','.join(skipped_no_salary) if skipped_no_salary else None))
-
-@app.route('/employees/<int:employee_id>/salary/<month_key>/save', methods=['POST'])
-def save_employee_salary(employee_id, month_key):
-    """Upsert this employee's salary for this month — replaces its allowance/deduction line items
-    wholesale with what was submitted (simplest correct way to handle add/remove rows in one form)
-    and recomputes gross/net from them, rather than trusting a client-side total."""
-    conn = get_db()
-    f = request.form
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    basic = float(f.get('basic_salary') or 0)
-
-    descs = f.getlist('item_desc')
-    amounts = f.getlist('item_amount')
-    types = f.getlist('item_type')
-    items = []
-    for i, desc in enumerate(descs):
-        desc = (desc or '').strip()
-        if not desc:
-            continue
-        try:
-            amt = float(amounts[i]) if i < len(amounts) and amounts[i] else 0
-        except ValueError:
-            amt = 0
-        item_type = types[i] if i < len(types) and types[i] in ('allowance', 'deduction') else 'allowance'
-        items.append((desc, amt, item_type))
-
-    allowances_total = sum(a for _, a, t in items if t == 'allowance')
-    deductions_total = sum(a for _, a, t in items if t == 'deduction')
-    advance_recovery = float(f.get('advance_recovery') or 0)
-    gross = basic + allowances_total
-    net = gross - deductions_total - advance_recovery
-
-    existing = conn.execute("SELECT id, payment_status FROM salaries WHERE employee_id=? AND month_key=?",
-                            (employee_id, month_key)).fetchone()
-    if existing:
-        salary_id = existing['id']
-        conn.execute("""UPDATE salaries SET basic_salary=?, gross_salary=?, total_deductions=?, advance_recovery=?,
-                        net_salary=?, amount=?, month=?, remarks=?, updated_by=?, updated_at=? WHERE id=?""",
-                     (basic, gross, deductions_total, advance_recovery, net, net, month_key, f.get('remarks') or None,
-                      session.get('user_id'), now, salary_id))
-        conn.execute("DELETE FROM salary_items WHERE salary_id=?", (salary_id,))
-    else:
-        emp_name = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()['name']
-        cur = conn.execute("""INSERT INTO salaries (employee, month, amount, date, created_at, employee_id, month_key,
-                              basic_salary, gross_salary, total_deductions, advance_recovery, net_salary, payment_status, remarks,
-                              created_by)
-                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending', ?, ?)""",
-                     (emp_name, month_key, net, None, now, employee_id, month_key, basic, gross,
-                      deductions_total, advance_recovery, net, f.get('remarks') or None, session.get('user_id')))
-        salary_id = cur.lastrowid
-    for desc, amt, item_type in items:
-        conn.execute("INSERT INTO salary_items (salary_id, item_type, description, amount, created_by, created_at) VALUES (?,?,?,?,?,?)",
-                     (salary_id, item_type, desc, amt, session.get('user_id'), now))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('salaries_list', tab='salary', month=month_key))
 
 @app.route('/employees/<int:employee_id>/advance/add', methods=['POST'])
 def add_employee_advance(employee_id):
@@ -5891,32 +5639,6 @@ def add_employee_advance(employee_id):
     conn.close()
     return redirect(url_for('salaries_list', tab=f.get('return_tab') or 'overview'))
 
-@app.route('/salaries/<int:salary_id>/mark-paid', methods=['POST'])
-def mark_salary_paid(salary_id):
-    conn = get_db()
-    now = datetime.datetime.now()
-    conn.execute("""UPDATE salaries SET payment_status='paid', payment_date=?, payment_mode=?, transaction_id=?, paid_by=?,
-                    updated_by=?, updated_at=?
-                    WHERE id=?""",
-                 (request.form.get('payment_date') or now.strftime('%Y-%m-%d'), request.form.get('payment_mode') or None,
-                  request.form.get('transaction_id') or None, request.form.get('paid_by') or 'Admin',
-                  session.get('user_id'), now.strftime('%Y-%m-%d %H:%M:%S'), salary_id))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('salaries_list', tab='salary'))
-
-@app.route('/salaries/bulk-mark-paid', methods=['POST'])
-def bulk_mark_salary_paid():
-    conn = get_db()
-    ids = request.form.getlist('salary_ids')
-    now = datetime.datetime.now().strftime('%Y-%m-%d')
-    now_ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    for sid in ids:
-        conn.execute("UPDATE salaries SET payment_status='paid', payment_date=?, updated_by=?, updated_at=? WHERE id=?",
-                     (now, session.get('user_id'), now_ts, sid))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('salaries_list', tab='salary'))
 
 @app.route('/attendance/mark', methods=['POST'])
 def mark_attendance():
@@ -6404,10 +6126,18 @@ def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
     one employee (by name, matching how `salaries`/`advances` are still keyed) — the same proven
     formula the standalone Employee Ledger page has always used, now reusable from the Employees
     module's drawers too instead of only living on that separate page."""
-    sal_query = "SELECT date, amount, created_at FROM salaries WHERE employee=? COLLATE NOCASE"
+    # COALESCE(date, payment_date, substr(created_at,1,10)) rather than a bare `date` column --
+    # a salary row can have a NULL `date` (e.g. one left over from the old bulk-generate flow
+    # that's since been removed) while still genuinely being paid on a real payment_date. A plain
+    # `date >= ? AND date <= ?` filter never matches SQL NULL, so a real paid salary with a NULL
+    # `date` would silently vanish from any date-range-filtered view of this ledger -- this
+    # coalesce is the fix, applied to both the WHERE filter and the value returned as 'date' below
+    # so filtering and display always agree on which real date a row is treated as falling on.
+    sal_query = ("SELECT COALESCE(date, payment_date, substr(created_at,1,10)) as date, amount, created_at "
+                 "FROM salaries WHERE employee=? COLLATE NOCASE")
     sal_params = [employee_name]
-    if date_from: sal_query += " AND date >= ?"; sal_params.append(date_from)
-    if date_to: sal_query += " AND date <= ?"; sal_params.append(date_to)
+    if date_from: sal_query += " AND COALESCE(date, payment_date, substr(created_at,1,10)) >= ?"; sal_params.append(date_from)
+    if date_to: sal_query += " AND COALESCE(date, payment_date, substr(created_at,1,10)) <= ?"; sal_params.append(date_to)
     salaries = conn.execute(sal_query, sal_params).fetchall()
 
     adv_query = "SELECT date, amount, type, notes, created_at FROM advances WHERE employee=? COLLATE NOCASE"
@@ -6531,30 +6261,52 @@ def performance():
     date_to = request.args.get('date_to', '2027-03-31')
 
     # ---------- Driver Performance (same calculation as the original Driver Performance page) ----------
-    # Toll excluded from driver-level cost — Toll Management (FASTag/BOSS) tracks cost per
-    # vehicle/wallet, not per driver, so there's no real figure to attribute here (a shared
-    # vehicle's toll can't be split by who happened to be driving that trip).
-    driver_query = """SELECT driver_name,
-        COUNT(*) as trip_count,
-        SUM(billed_amount) as total_billed,
-        SUM(fuel_amount) as total_fuel,
-        SUM(COALESCE(driver_payment,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
-        MAX(date) as last_trip
+    # Full real cost basis, matching Route Analytics/Business Performance/Dashboard exactly — this
+    # used to only subtract driver_payment+detention_charges+other_expense, silently missing toll
+    # and 11 other real trip-level expense fields, and unconditionally subtracted fuel_amount even
+    # on a Hired trip (where fuel is the owner's own money, not this company's cost, unless a
+    # different vendor is explicitly tagged — same rule as everywhere else). total_fuel below stays
+    # a purely informational "how much fuel these trips involved" figure (all trips, unconditional)
+    # and is intentionally NOT part of the profit formula — profit uses trip_cost instead, which
+    # applies the Hired exclusion correctly. Toll uses the exact same _trip_toll()/_toll_by_trip()
+    # every other screen uses: the real linked Toll Management amount if one exists, else the
+    # trip's own manual estimate — never both, so it can never be double-counted here either.
+    driver_trip_query = """SELECT id, driver_name, type, billed_amount, fuel_amount, driver_adv_amount,
+        driver_payment, detention_charges, other_expense, parking, agent_commission, builty_expense,
+        fine, labour_charges, puncture, urea, loading_expense, unloading_expense, weighbridge_charges,
+        permit_charges, toll, date
         FROM trips WHERE driver_name IS NOT NULL AND driver_name != ''"""
     dparams = []
     if date_from:
-        driver_query += " AND date >= ?"; dparams.append(date_from)
+        driver_trip_query += " AND date >= ?"; dparams.append(date_from)
     if date_to:
-        driver_query += " AND date <= ?"; dparams.append(date_to)
-    driver_query += " GROUP BY driver_name ORDER BY total_billed DESC"
-    draw = conn.execute(driver_query, dparams).fetchall()
+        driver_trip_query += " AND date <= ?"; dparams.append(date_to)
+    driver_trips_raw = conn.execute(driver_trip_query, dparams).fetchall()
+    driver_toll_map = _toll_by_trip(conn, [t['id'] for t in driver_trips_raw])
+
+    driver_groups = {}
+    for t in driver_trips_raw:
+        g = driver_groups.setdefault(t['driver_name'], {'trip_count': 0, 'total_billed': 0, 'total_fuel': 0,
+                                                          'trip_cost': 0, 'last_trip': None})
+        g['trip_count'] += 1
+        g['total_billed'] += t['billed_amount'] or 0
+        g['total_fuel'] += t['fuel_amount'] or 0
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        g['trip_cost'] += (fuel_and_adv + _trip_toll(t, driver_toll_map) + (t['driver_payment'] or 0) +
+                            (t['detention_charges'] or 0) + (t['other_expense'] or 0) + (t['parking'] or 0) +
+                            (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['fine'] or 0) +
+                            (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
+                            (t['loading_expense'] or 0) + (t['unloading_expense'] or 0) +
+                            (t['weighbridge_charges'] or 0) + (t['permit_charges'] or 0))
+        if not g['last_trip'] or (t['date'] or '') > g['last_trip']:
+            g['last_trip'] = t['date']
 
     driver_rows = []
-    for r in draw:
-        profit = (r['total_billed'] or 0) - (r['total_fuel'] or 0) - (r['total_other_costs'] or 0)
-        driver_rows.append({'name': r['driver_name'], 'trip_count': r['trip_count'],
-                             'total_billed': r['total_billed'] or 0, 'total_fuel': r['total_fuel'] or 0,
-                             'profit': profit, 'last_trip': r['last_trip']})
+    for name, g in driver_groups.items():
+        profit = g['total_billed'] - g['trip_cost']
+        driver_rows.append({'name': name, 'trip_count': g['trip_count'], 'total_billed': g['total_billed'],
+                             'total_fuel': g['total_fuel'], 'profit': profit, 'last_trip': g['last_trip']})
+    driver_rows.sort(key=lambda r: r['total_billed'], reverse=True)
 
     total_drivers = len(driver_rows)
     driver_total_trips = sum(r['trip_count'] for r in driver_rows)
@@ -6580,37 +6332,63 @@ def performance():
     driver_trend_max = max([m['trips'] for m in driver_monthly], default=1) or 1
 
     # ---------- Vehicle Performance (new, mirrors the driver calculation style) ----------
-    # Toll excluded here too — the per-vehicle maint_cost query below already pulls every
-    # maintenance row for this vehicle (no category filter), which now includes Toll Management's
-    # real cost; adding trips.toll on top of that would double-count the same rupee.
-    vehicle_query = """SELECT v.id, v.vehicle_no, v.type,
-        COUNT(t.id) as trip_count,
-        COALESCE(SUM(t.billed_amount),0) as total_billed,
-        COALESCE(SUM(t.fuel_amount),0) as total_fuel,
-        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
-        MAX(t.date) as last_trip
+    # Full real cost basis, matching Route Analytics/Business Performance/Dashboard exactly — this
+    # used to only subtract driver_payment+detention_charges+other_expense+maint_cost, silently
+    # missing toll (whenever it was only a manual estimate, never linked via Toll Management — the
+    # old comment's "maint_cost already includes Toll Management's real cost" is only true for a
+    # LINKED toll; an unlinked trips.toll estimate never creates a maintenance row at all, so it was
+    # never counted anywhere here) and 11 other real trip-level expense fields. Toll is now handled
+    # per-trip via the same _trip_toll()/_toll_by_trip() every other screen uses (real linked amount
+    # if one exists, else the manual estimate, never both) — and maint_q below now excludes the
+    # Toll category specifically, so a LINKED toll's mirrored maintenance row is never ALSO summed
+    # in maint_cost on top of being counted via _trip_toll() (the same maint/toll split
+    # _period_financials already uses, so this stays consistent with Dashboard/Business Performance).
+    vehicle_trip_query = """SELECT t.id, t.type, t.billed_amount, t.fuel_amount, t.driver_adv_amount,
+        t.driver_payment, t.detention_charges, t.other_expense, t.parking, t.agent_commission,
+        t.builty_expense, t.fine, t.labour_charges, t.puncture, t.urea, t.loading_expense,
+        t.unloading_expense, t.weighbridge_charges, t.permit_charges, t.toll, t.date,
+        v.id as vid, v.vehicle_no, v.type as vtype
         FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type = 'own'"""
     vparams = []
     if date_from:
-        vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
+        vehicle_trip_query += " AND t.date >= ?"; vparams.append(date_from)
     if date_to:
-        vehicle_query += " AND t.date <= ?"; vparams.append(date_to)
-    vehicle_query += " GROUP BY v.id ORDER BY total_billed DESC"
-    vraw = conn.execute(vehicle_query, vparams).fetchall()
+        vehicle_trip_query += " AND t.date <= ?"; vparams.append(date_to)
+    vehicle_trips_raw = conn.execute(vehicle_trip_query, vparams).fetchall()
+    vehicle_toll_map = _toll_by_trip(conn, [t['id'] for t in vehicle_trips_raw])
+
+    vehicle_groups = {}
+    for t in vehicle_trips_raw:
+        g = vehicle_groups.setdefault(t['vid'], {'vehicle_no': t['vehicle_no'], 'type': t['vtype'],
+                                                   'trip_count': 0, 'total_billed': 0, 'total_fuel': 0,
+                                                   'trip_cost': 0, 'last_trip': None})
+        g['trip_count'] += 1
+        g['total_billed'] += t['billed_amount'] or 0
+        g['total_fuel'] += t['fuel_amount'] or 0
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        g['trip_cost'] += (fuel_and_adv + _trip_toll(t, vehicle_toll_map) + (t['driver_payment'] or 0) +
+                            (t['detention_charges'] or 0) + (t['other_expense'] or 0) + (t['parking'] or 0) +
+                            (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['fine'] or 0) +
+                            (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
+                            (t['loading_expense'] or 0) + (t['unloading_expense'] or 0) +
+                            (t['weighbridge_charges'] or 0) + (t['permit_charges'] or 0))
+        if not g['last_trip'] or (t['date'] or '') > g['last_trip']:
+            g['last_trip'] = t['date']
 
     vehicle_rows = []
-    for r in vraw:
-        maint_q = "SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE vehicle_id=?"
-        maint_params = [r['id']]
+    for vid, g in vehicle_groups.items():
+        maint_q = "SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE vehicle_id=? AND COALESCE(category,'')!='Toll'"
+        maint_params = [vid]
         if date_from:
             maint_q += " AND date >= ?"; maint_params.append(date_from)
         if date_to:
             maint_q += " AND date <= ?"; maint_params.append(date_to)
         maint_cost = conn.execute(maint_q, maint_params).fetchone()[0]
-        profit = (r['total_billed'] or 0) - (r['total_fuel'] or 0) - (r['total_other_costs'] or 0) - maint_cost
-        vehicle_rows.append({'name': r['vehicle_no'], 'type': r['type'], 'trip_count': r['trip_count'],
-                              'total_billed': r['total_billed'], 'total_fuel': r['total_fuel'],
-                              'maint_cost': maint_cost, 'profit': profit, 'last_trip': r['last_trip']})
+        profit = g['total_billed'] - g['trip_cost'] - maint_cost
+        vehicle_rows.append({'name': g['vehicle_no'], 'type': g['type'], 'trip_count': g['trip_count'],
+                              'total_billed': g['total_billed'], 'total_fuel': g['total_fuel'],
+                              'maint_cost': maint_cost, 'profit': profit, 'last_trip': g['last_trip']})
+    vehicle_rows.sort(key=lambda r: r['total_billed'], reverse=True)
 
     total_vehicles = len(vehicle_rows)
     vehicle_total_trips = sum(r['trip_count'] for r in vehicle_rows)
@@ -6843,9 +6621,16 @@ def invoice_center():
     # invoice_batch_trips, used for the Invoice Status filter/badge (not a stored flag on trips).
     invoiced_trip_ids = {r['trip_id'] for r in conn.execute("SELECT DISTINCT trip_id FROM invoice_batch_trips").fetchall()}
 
+    _CHARGE_COLS = """t.loading_charge, t.unloading_charge, t.permit_charges, t.weight_charges,
+                   t.driver_payment, t.gps_cost, t.other_charges, t.fuel_amount, t.driver_adv_amount, t.toll,
+                   t.detention_charges, t.police_charges, t.sim_tracking, t.union_charges,
+                   t.brokerage, t.builty_commission, t.late_fees, t.material_damage, t.shortage_amount,
+                   t.tds, t.other_deductions,"""
     if invoice_type in ('party', 'tax', 'bill') and party_id:
         selected_party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
-        query = """SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date, t.billed_amount
+        query = f"""SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date, t.billed_amount,
+                   {_CHARGE_COLS}
+                   t.party_id
                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                    WHERE t.party_id=?"""
         params = [party_id]
@@ -6861,8 +6646,10 @@ def invoice_center():
         trips = conn.execute(query, params).fetchall()
     elif invoice_type == 'vehicle_owner' and vendor_id:
         selected_vendor = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
-        query = """SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date,
-                   CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE t.owner_rate*t.quantity END as billed_amount
+        query = f"""SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date,
+                   CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE t.owner_rate*t.quantity END as billed_amount,
+                   {_CHARGE_COLS}
+                   t.owner_vendor_id
                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                    WHERE t.owner_vendor_id=?"""
         params = [vendor_id]
@@ -6877,8 +6664,33 @@ def invoice_center():
         query += " ORDER BY t.date DESC LIMIT 200"
         trips = conn.execute(query, params).fetchall()
 
-    # Attach each trip's own real "Others" line items (charges/deductions logged on the trip
-    # itself) so they can be shown — and individually excluded — while building this invoice.
+    # Every field/item eligible for the "Trip Charges & Costs" popup, per trip — only fields this
+    # trip actually has a non-zero value in are included, so a field the trip never used never
+    # shows up as an empty toggle. Toll uses the real linked Toll Management total (same source
+    # _build_invoice_pdf itself uses) rather than any raw trip column, so the popup can never show
+    # a different toll figure than what actually ends up on the PDF. Fuel/Driver Advance only ever
+    # appear on a vehicle_owner invoice (they net off what's still owed to the owner — meaningless
+    # on a party invoice, which never bills these to the party at all).
+    toll_map = _toll_by_trip(conn, [t['id'] for t in trips]) if trips else {}
+    # 'default':'in' fields (or omitted, same thing) already flow into every invoice today —
+    # checked by default, so nothing changes unless deliberately unchecked. 'default':'out' fields
+    # have NEVER appeared on any Invoice Center invoice before (they only ever fed into
+    # trips.billed_amount at trip-creation time, a figure the actual generated PDF never reads) —
+    # unchecked by default, so no existing or future invoice total shifts unless deliberately opted in.
+    _CHARGE_FIELD_LABELS = [
+        ('loading', 'Loading Charges', 'loading_charge', 'in'), ('unloading', 'Unloading Charges', 'unloading_charge', 'in'),
+        ('permit', 'Route Permit Charges', 'permit_charges', 'in'), ('weighment', 'Weighment Charges', 'weight_charges', 'in'),
+        ('driver_bata', 'Driver Bata', 'driver_payment', 'in'), ('gps', 'GPS Cost', 'gps_cost', 'in'),
+        ('other', 'Other Expenses', 'other_charges', 'in'),
+        ('detention', 'Detention Charges', 'detention_charges', 'out'), ('police', 'Police Charges', 'police_charges', 'out'),
+        ('sim_tracking', 'SIM Tracking', 'sim_tracking', 'out'), ('union', 'Union Charges', 'union_charges', 'out'),
+    ]
+    _DEDUCTION_FIELD_LABELS = [
+        ('brokerage', 'Brokerage', 'brokerage'), ('builty_commission', 'Builty Commission', 'builty_commission'),
+        ('late_fees', 'Late Fees', 'late_fees'), ('material_damage', 'Material Damage', 'material_damage'),
+        ('shortage_amount', 'Shortage Amount', 'shortage_amount'), ('trip_tds', 'TDS (Trip)', 'tds'),
+        ('other_deductions', 'Other Deductions', 'other_deductions'),
+    ]
     trip_rows = []
     for t in trips:
         is_invoiced = t['id'] in invoiced_trip_ids
@@ -6886,8 +6698,34 @@ def invoice_center():
             continue
         if status_f == 'not_invoiced' and is_invoiced:
             continue
+        charges = []
+        for key, label, col, default in _CHARGE_FIELD_LABELS:
+            amt = t[col] or 0
+            if amt:
+                charges.append({'key': key, 'label': label, 'amount': amt, 'kind': 'charge', 'default': default})
+        toll_amt = _trip_toll(t, toll_map)
+        if toll_amt:
+            charges.append({'key': 'toll', 'label': 'Toll Charges', 'amount': toll_amt, 'kind': 'charge', 'default': 'in'})
+        # All 7 deduction fields have never fed into any Invoice Center total before (see comment
+        # above) — always 'out' by default, same reasoning as Detention/Police/SIM/Union.
+        for key, label, col in _DEDUCTION_FIELD_LABELS:
+            amt = t[col] or 0
+            if amt:
+                charges.append({'key': key, 'label': label, 'amount': amt, 'kind': 'deduction', 'default': 'out'})
+        if invoice_type == 'vehicle_owner':
+            if t['fuel_amount']:
+                charges.append({'key': 'fuel_deduction', 'label': 'Fuel Advance', 'amount': t['fuel_amount'], 'kind': 'owner_deduction', 'default': 'in'})
+            if t['driver_adv_amount']:
+                charges.append({'key': 'driver_adv_deduction', 'label': 'Driver Advance', 'amount': t['driver_adv_amount'], 'kind': 'owner_deduction', 'default': 'in'})
         items = conn.execute("SELECT id, description, amount, item_type FROM invoice_items WHERE trip_id=?", (t['id'],)).fetchall()
-        trip_rows.append({'t': t, 'is_invoiced': is_invoiced, 'trip_items': [dict(i) for i in items]})
+        for it in items:
+            charges.append({'key': f"item:{it['id']}", 'label': it['description'] or 'Other', 'amount': it['amount'] or 0, 'kind': it['item_type'], 'default': 'in'})
+        trip_rows.append({'t': t, 'is_invoiced': is_invoiced, 'charges': charges})
+
+    # Plain {trip_id: [charges]} map for the Trip Charges & Costs popup's JS — built here rather
+    # than reached for via Jinja attribute access, since sqlite3.Row doesn't support dotted
+    # attribute lookup the way a plain dict/object would.
+    trip_charges_map = {row['t']['id']: row['charges'] for row in trip_rows}
 
     entity_gstin = (selected_vendor['gstin'] if selected_vendor else (selected_party['gstin'] if selected_party else '')) or ''
     entity_state = _gstin_state(entity_gstin)
@@ -6900,6 +6738,7 @@ def invoice_center():
     return render_template('invoice_center.html', invoice_type=invoice_type, parties=parties, vendors=vendors,
                             owner_options=owner_options,
                             selected_party=selected_party, selected_vendor=selected_vendor, trip_rows=trip_rows,
+                            trip_charges_map=trip_charges_map,
                             vehicles=vehicles, entity_gstin=entity_gstin, entity_state=entity_state,
                             invoice_settings=invoice_settings, today=today_str,
                             f_party_id=party_id, f_vendor_id=vendor_id, f_vehicle=vehicle_f, f_lr=lr_f,
@@ -7025,8 +6864,18 @@ def upload_company_logo():
     conn.close()
     return redirect(url_for('settings_page', tab='company'))
 
+
+# Fields that have NEVER fed into any Invoice Center total before this popup existed — they only
+# ever affected trips.billed_amount at trip-creation time, a figure the generated PDF never reads.
+# Opt-IN only (see _incl below): including one changes a real invoice total, so it takes a
+# deliberate tick in the popup rather than defaulting on, unlike every field that was already live.
+_OPT_IN_CHARGE_KEYS = {'detention', 'police', 'sim_tracking', 'union',
+                       'brokerage', 'builty_commission', 'late_fees', 'material_damage',
+                       'shortage_amount', 'trip_tds', 'other_deductions'}
+
 def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
-                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0, extra_items=None, toll_map=None):
+                        cgst_rate=0, sgst_rate=0, extra_loading=0, extra_other=0, tds_rate=0, extra_items=None, toll_map=None,
+                        excluded_charge_keys=None, included_charge_keys=None):
     from reportlab.lib.pagesizes import letter
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -7035,6 +6884,23 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     from reportlab.lib.utils import ImageReader
     import io, os
 
+    # Per-trip, per-field toggle from Invoice Center's "Trip Charges & Costs" popup — a trip's own
+    # charge/deduction fields are zeroed out (or zeroed unless opted in) here rather than filtered
+    # further up, so every downstream total (freight_and_charges, additional_charges,
+    # total_already_given) is automatically correct with no separate bookkeeping. Two distinct
+    # sets because two distinct defaults: excluded_charge_keys holds fields that were already on
+    # every invoice and got deliberately unchecked (opt-OUT); included_charge_keys holds fields
+    # that were never on any invoice before and got deliberately checked ON (opt-IN, see
+    # _OPT_IN_CHARGE_KEYS). Both empty/None changes nothing, matching every invoice ever generated
+    # before this feature existed.
+    excluded_charge_keys = excluded_charge_keys or set()
+    included_charge_keys = included_charge_keys or set()
+    def _incl(trip_id, key, val):
+        full = f"{trip_id}:{key}"
+        if key in _OPT_IN_CHARGE_KEYS:
+            return val if full in included_charge_keys else 0
+        return 0 if full in excluded_charge_keys else val
+
     # Per-trip freight and charge breakdown
     line_items = []
     for t in trips:
@@ -7042,15 +6908,38 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             freight = t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT')=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         else:
             freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
+        tid = t['id']
         line_items.append({
             'trip': t, 'freight': freight,
-            'loading': t['loading_charge'] or 0, 'unloading': t['unloading_charge'] or 0,
+            'loading': _incl(tid, 'loading', t['loading_charge'] or 0),
+            'unloading': _incl(tid, 'unloading', t['unloading_charge'] or 0),
             # Real Toll Management amount for this trip if it has one linked, else the trip's own
             # manual estimate — never both, so the same real toll isn't billed twice.
-            'permit': t['permit_charges'] or 0, 'toll': _trip_toll(t, toll_map or {}),
-            'weighment': t['weight_charges'] or 0, 'driver_bata': t['driver_payment'] or 0,
-            'gps': t['gps_cost'] or 0, 'other': t['other_charges'] or 0,
-            'fuel_given': t['fuel_amount'] or 0, 'driver_adv_given': t['driver_adv_amount'] or 0,
+            'permit': _incl(tid, 'permit', t['permit_charges'] or 0),
+            'toll': _incl(tid, 'toll', _trip_toll(t, toll_map or {})),
+            'weighment': _incl(tid, 'weighment', t['weight_charges'] or 0),
+            'driver_bata': _incl(tid, 'driver_bata', t['driver_payment'] or 0),
+            'gps': _incl(tid, 'gps', t['gps_cost'] or 0),
+            'other': _incl(tid, 'other', t['other_charges'] or 0),
+            # Opt-in only — see _OPT_IN_CHARGE_KEYS above.
+            'detention': _incl(tid, 'detention', t['detention_charges'] or 0),
+            'police': _incl(tid, 'police', t['police_charges'] or 0),
+            'sim_tracking': _incl(tid, 'sim_tracking', t['sim_tracking'] or 0),
+            'union': _incl(tid, 'union', t['union_charges'] or 0),
+            'brokerage': _incl(tid, 'brokerage', t['brokerage'] or 0),
+            'builty_commission': _incl(tid, 'builty_commission', t['builty_commission'] or 0),
+            'late_fees': _incl(tid, 'late_fees', t['late_fees'] or 0),
+            'material_damage': _incl(tid, 'material_damage', t['material_damage'] or 0),
+            'shortage_amount': _incl(tid, 'shortage_amount', t['shortage_amount'] or 0),
+            'trip_tds': _incl(tid, 'trip_tds', t['tds'] or 0),
+            'other_deductions': _incl(tid, 'other_deductions', t['other_deductions'] or 0),
+            # fuel_deduction/driver_adv_deduction only ever matter on a vehicle_owner invoice
+            # (they net off what's still owed to the owner) — excluding one there means "pay the
+            # owner in full for this trip, don't net this advance off". They're never part of
+            # freight_and_charges/additional_charges on ANY invoice type, so leaving them at their
+            # real value on a party invoice changes nothing a party ever sees.
+            'fuel_given': _incl(tid, 'fuel_deduction', t['fuel_amount'] or 0),
+            'driver_adv_given': _incl(tid, 'driver_adv_deduction', t['driver_adv_amount'] or 0),
             'paid_to_owner': t['paid_to_owner'] or 0,
         })
 
@@ -7063,6 +6952,17 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     total_driver_bata = sum(li['driver_bata'] for li in line_items)
     total_gps = sum(li['gps'] for li in line_items)
     total_other = sum(li['other'] for li in line_items) + extra_other
+    total_detention = sum(li['detention'] for li in line_items)
+    total_police = sum(li['police'] for li in line_items)
+    total_sim = sum(li['sim_tracking'] for li in line_items)
+    total_union = sum(li['union'] for li in line_items)
+    total_brokerage = sum(li['brokerage'] for li in line_items)
+    total_builty_commission = sum(li['builty_commission'] for li in line_items)
+    total_late_fees = sum(li['late_fees'] for li in line_items)
+    total_material_damage = sum(li['material_damage'] for li in line_items)
+    total_shortage = sum(li['shortage_amount'] for li in line_items)
+    total_trip_tds = sum(li['trip_tds'] for li in line_items)
+    total_other_deductions = sum(li['other_deductions'] for li in line_items)
 
     # Named ad-hoc charges/deductions (per-trip "Others" items + Invoice Center extra rows), kept
     # separate from the anonymous Other Charges total above so each one can be printed on the
@@ -7071,7 +6971,12 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     named_extra_total = sum((it['amount'] or 0) if it['item_type'] == 'charge' else -(it['amount'] or 0) for it in extra_items)
 
     freight_and_charges = total_freight + total_loading + total_unloading + total_permit + total_toll
-    additional_charges = total_weighment + total_driver_bata + total_gps + total_other + named_extra_total
+    # Charges add, deductions subtract — same signed-sum convention named_extra_total already
+    # uses, so "TOTAL ADDITIONAL CHARGES" on the PDF always matches exactly what's listed beneath it.
+    additional_charges = (total_weighment + total_driver_bata + total_gps + total_other + named_extra_total +
+                           total_detention + total_police + total_sim + total_union -
+                           total_brokerage - total_builty_commission - total_late_fees - total_material_damage -
+                           total_shortage - total_trip_tds - total_other_deductions)
     sub_total = freight_and_charges + additional_charges
 
     cgst_amount = round(sub_total * cgst_rate / 100, 2)
@@ -7307,9 +7212,18 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         addl_rows = [['#', 'DESCRIPTION', 'BASIS', 'AMOUNT (Rs.)']]
         n = 1
         for label, val in [('Weighment Charges', li['weighment']), ('Driver Bata', li['driver_bata']),
-                            ('GPS Charges', li['gps']), ('Other Charges', li['other'])]:
+                            ('GPS Charges', li['gps']), ('Other Charges', li['other']),
+                            ('Detention Charges', li['detention']), ('Police Charges', li['police']),
+                            ('SIM Tracking', li['sim_tracking']), ('Union Charges', li['union'])]:
             if val:
                 addl_rows.append([str(n), label, 'Per Trip', f"{val:,.2f}"])
+                n += 1
+        for label, val in [('Brokerage', li['brokerage']), ('Builty Commission', li['builty_commission']),
+                            ('Late Fees', li['late_fees']), ('Material Damage', li['material_damage']),
+                            ('Shortage Amount', li['shortage_amount']), ('TDS (Trip)', li['trip_tds']),
+                            ('Other Deductions', li['other_deductions'])]:
+            if val:
+                addl_rows.append([str(n), label, 'Deduction', f"- {val:,.2f}"])
                 n += 1
         for it in extra_items:
             addl_rows.append([str(n), cell(it['desc']), 'Deduction' if it['item_type'] == 'deduction' else 'Charge',
@@ -7395,9 +7309,17 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         for label, val in [('Loading Charges', total_loading), ('Unloading Charges', total_unloading),
                             ('Permit Charges', total_permit), ('Toll Charges (Actual)', total_toll),
                             ('Weighment Charges', total_weighment), ('Driver Bata', total_driver_bata),
-                            ('GPS Charges', total_gps), ('Other Charges', total_other)]:
+                            ('GPS Charges', total_gps), ('Other Charges', total_other),
+                            ('Detention Charges', total_detention), ('Police Charges', total_police),
+                            ('SIM Tracking', total_sim), ('Union Charges', total_union)]:
             if val:
                 addl_rows.append([label, 'Per Trip', f"{val:,.2f}"])
+        for label, val in [('Brokerage', total_brokerage), ('Builty Commission', total_builty_commission),
+                            ('Late Fees', total_late_fees), ('Material Damage', total_material_damage),
+                            ('Shortage Amount', total_shortage), ('TDS (Trip)', total_trip_tds),
+                            ('Other Deductions', total_other_deductions)]:
+            if val:
+                addl_rows.append([label, 'Deduction', f"- {val:,.2f}"])
         for it in extra_items:
             addl_rows.append([cell(it['desc']), 'Deduction' if it['item_type'] == 'deduction' else 'Charge',
                                f"- {it['amount']:,.2f}" if it['item_type'] == 'deduction' else f"{it['amount']:,.2f}"])
@@ -7510,6 +7432,48 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     buf.seek(0)
     return buf
 
+def _filter_trip_items(rows, excluded_charge_keys):
+    """Each selected trip's own "Others" line items, minus whichever ones were unchecked in
+    Invoice Center's Trip Charges & Costs popup — rows need id+trip_id+description+amount+item_type
+    (as returned by a SELECT against invoice_items). Kept as named entries (not folded into one
+    number) so each one still prints on the invoice by its own description."""
+    out = []
+    for it in rows:
+        if f"{it['trip_id']}:item:{it['id']}" in excluded_charge_keys:
+            continue
+        out.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+    return out
+
+def _save_invoice_charge_exclusions(conn, batch_id, excluded_charge_keys, included_charge_keys, user_id, now):
+    """Persist Invoice Center's per-trip charge toggle choices against a just-created invoice
+    batch, so View/Regenerate PDF later reproduces the same invoice instead of reverting to
+    defaults. Both params hold raw "<trip_id>:<charge_key>" strings — opt-in keys (see
+    _OPT_IN_CHARGE_KEYS) are stored with a '+' prefix on charge_key so _load_invoice_charge_exclusions
+    can tell the two apart again without a second table."""
+    def _save(keys, prefix):
+        for key in keys:
+            trip_id_str, _, charge_key = key.partition(':')
+            if not trip_id_str.isdigit() or not charge_key:
+                continue
+            conn.execute("""INSERT OR IGNORE INTO invoice_batch_charge_exclusions
+                            (invoice_batch_id, trip_id, charge_key, company_id, created_by, created_at)
+                            VALUES (?,?,?,?,?,?)""",
+                         (batch_id, int(trip_id_str), prefix + charge_key, 1, user_id, now))
+    _save(excluded_charge_keys, '')
+    _save(included_charge_keys, '+')
+
+def _load_invoice_charge_exclusions(conn, batch_id):
+    """The saved counterpart of _save_invoice_charge_exclusions — returns (excluded, included) as
+    two "<trip_id>:<charge_key>" string sets, reloaded for View/Regenerate PDF."""
+    excluded, included = set(), set()
+    for r in conn.execute("SELECT trip_id, charge_key FROM invoice_batch_charge_exclusions WHERE invoice_batch_id=?",
+                          (batch_id,)).fetchall():
+        if r['charge_key'].startswith('+'):
+            included.add(f"{r['trip_id']}:{r['charge_key'][1:]}")
+        else:
+            excluded.add(f"{r['trip_id']}:{r['charge_key']}")
+    return excluded, included
+
 @app.route('/invoice-center/generate', methods=['POST'])
 def invoice_center_generate():
     from flask import send_file
@@ -7537,18 +7501,19 @@ def invoice_center_generate():
     trips = conn.execute(f"""SELECT t.*, v.vehicle_no FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                              WHERE t.id IN ({placeholders})""", trip_ids).fetchall() if trip_ids else []
 
-    # Each selected trip's own "Others" line items (real per-trip charges/deductions, e.g.
-    # Detention, an advance already given) — every item checkbox is checked (included) by default
-    # in the UI, so a plain form submit with JS disabled still includes everything; unchecking one
-    # removes it from included_item_ids. Kept as named entries (not folded into a number) so each
-    # one is printed on the invoice by its own description instead of disappearing into one total.
+    # Fields that were already on every invoice (the 8 core charges, Others items, Fuel/Driver
+    # Advance deduction toggles) are checked by default — excluded_charge_keys only ever holds what
+    # was deliberately unchecked. Fields that have never been on any invoice before (Detention,
+    # Police, SIM Tracking, Union, and all 7 deduction fields) are unchecked by default —
+    # included_charge_keys only ever holds what was deliberately opted in. Both empty means a plain
+    # form submit still behaves exactly as every invoice generated before this feature existed.
+    excluded_charge_keys = set(f.getlist('excluded_charge_keys'))
+    included_charge_keys = set(f.getlist('included_charge_keys'))
     extra_items = []
-    included_item_ids = {int(x) for x in f.getlist('included_item_ids') if x}
     if trip_ids:
-        for it in conn.execute(f"""SELECT id, description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})""", trip_ids).fetchall():
-            if it['id'] not in included_item_ids:
-                continue
-            extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+        item_rows = conn.execute(f"""SELECT id, trip_id, description, amount, item_type
+                                     FROM invoice_items WHERE trip_id IN ({placeholders})""", trip_ids).fetchall()
+        extra_items = _filter_trip_items(item_rows, excluded_charge_keys)
 
     # Ad-hoc charges/deductions typed directly into Invoice Center at generation time — kept as
     # named entries too (once the batch exists, saved as real invoice_batch_items so they're still
@@ -7591,7 +7556,8 @@ def invoice_center_generate():
         # Preview never touches the DB or the invoice-number counter — it's just a look at the PDF.
         buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
                                   cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
-                                  tds_rate=tds_rate, extra_items=extra_items, toll_map=toll_map)
+                                  tds_rate=tds_rate, extra_items=extra_items, toll_map=toll_map,
+                                  excluded_charge_keys=excluded_charge_keys, included_charge_keys=included_charge_keys)
         conn.close()
         return send_file(buf, download_name=f'preview-{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
@@ -7613,6 +7579,9 @@ def invoice_center_generate():
         conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, created_by, created_at)
                         VALUES (?,?,?,?,?,?)""",
                      (batch_id, desc, amt, item_type, session.get('user_id'), audit_now))
+    # Persist exactly what was unchecked/opted-in in the popup against this batch, so
+    # View/Regenerate PDF reproduces the same invoice later instead of reverting to defaults.
+    _save_invoice_charge_exclusions(conn, batch_id, excluded_charge_keys, included_charge_keys, session.get('user_id'), audit_now)
     conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
                     VALUES ('next_invoice_number', ?, ?, ?, ?, ?, ?)""",
                  (str(next_num + 1), session.get('company_id', 1), session.get('user_id'), audit_now,
@@ -7625,7 +7594,8 @@ def invoice_center_generate():
 
     buf = _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_date, due_date, payment_status, remarks,
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate, extra_loading=extra_loading, extra_other=extra_other,
-                              tds_rate=tds_rate, extra_items=extra_items, toll_map=toll_map)
+                              tds_rate=tds_rate, extra_items=extra_items, toll_map=toll_map,
+                              excluded_charge_keys=excluded_charge_keys, included_charge_keys=included_charge_keys)
     return send_file(buf, as_attachment=True, download_name=f'{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices/generated')
@@ -7735,12 +7705,15 @@ def invoice_batch_pdf(batch_id):
     # Batch-level custom items (added from the Edit screen) plus each trip's own "Others" items —
     # kept as named entries, same as at generate time, so a regenerated PDF still prints each one
     # by its own description (e.g. "Detention") instead of folding them into one anonymous total.
+    # Reload the same per-trip charge exclusions saved when this invoice was first generated, so
+    # a regenerated PDF is byte-for-byte the same choice, not "everything included" again.
+    excluded_charge_keys, included_charge_keys = _load_invoice_charge_exclusions(conn, batch_id)
     extra_items = []
     for it in conn.execute("SELECT description, amount, item_type FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,)).fetchall():
         extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
     if trip_ids:
-        for it in conn.execute(f"SELECT description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall():
-            extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+        item_rows = conn.execute(f"SELECT id, trip_id, description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall()
+        extra_items += _filter_trip_items(item_rows, excluded_charge_keys)
     toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
     conn.close()
 
@@ -7749,7 +7722,8 @@ def invoice_batch_pdf(batch_id):
                               batch['due_date'], batch['payment_status'], batch['remarks'],
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate,
                               extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0,
-                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map)
+                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map,
+                              excluded_charge_keys=excluded_charge_keys, included_charge_keys=included_charge_keys)
     return send_file(buf, as_attachment=True, download_name=f'{batch["invoice_number"].replace("/","-")}.pdf', mimetype='application/pdf')
 
 @app.route('/invoices/generated/<int:batch_id>/pdf/preview')
@@ -7774,12 +7748,15 @@ def invoice_batch_pdf_preview(batch_id):
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (batch['party_id'],)).fetchone()
     s = _get_invoice_settings(conn, session.get('company_id', 1))
 
+    # Reload the same per-trip charge exclusions saved when this invoice was first generated, so
+    # a regenerated PDF is byte-for-byte the same choice, not "everything included" again.
+    excluded_charge_keys, included_charge_keys = _load_invoice_charge_exclusions(conn, batch_id)
     extra_items = []
     for it in conn.execute("SELECT description, amount, item_type FROM invoice_batch_items WHERE invoice_batch_id=?", (batch_id,)).fetchall():
         extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
     if trip_ids:
-        for it in conn.execute(f"SELECT description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall():
-            extra_items.append({'desc': it['description'] or 'Other', 'amount': it['amount'] or 0, 'item_type': it['item_type']})
+        item_rows = conn.execute(f"SELECT id, trip_id, description, amount, item_type FROM invoice_items WHERE trip_id IN ({placeholders})", trip_ids).fetchall()
+        extra_items += _filter_trip_items(item_rows, excluded_charge_keys)
     toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
     conn.close()
 
@@ -7788,7 +7765,8 @@ def invoice_batch_pdf_preview(batch_id):
                               batch['due_date'], batch['payment_status'], batch['remarks'],
                               cgst_rate=cgst_rate, sgst_rate=sgst_rate,
                               extra_loading=batch['loading_charges'] or 0, extra_other=batch['other_charges'] or 0,
-                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map)
+                              tds_rate=batch['tds_rate'] or 0, extra_items=extra_items, toll_map=toll_map,
+                              excluded_charge_keys=excluded_charge_keys, included_charge_keys=included_charge_keys)
     return send_file(buf, mimetype='application/pdf')
 
 @app.route('/invoices')
@@ -8105,6 +8083,23 @@ def require_login():
             session.clear()
             return redirect(url_for('login'))
     session['last_activity'] = now.isoformat()
+
+@app.after_request
+def _no_bfcache_for_dynamic_pages(response):
+    """Every page here is server-rendered fresh from the live database on each request — with no
+    Cache-Control header at all (the previous state), the browser's back/forward cache is free to
+    restore a page from memory instead of asking the server again. That's exactly what made
+    editing or deleting a trip and then hitting Back look like the Dashboard "didn't update" —
+    the numbers were correct on the server the whole time, the browser just showed an old
+    snapshot instead of re-fetching. no-store forces a real request on every back/forward
+    navigation too, so any page always reflects whatever the database actually holds right now.
+    Left untouched for /static/ (real static assets — fine to let the browser cache those for
+    performance, they don't change based on what any user just did) and for anything already
+    carrying its own Cache-Control (a PDF/Excel download already sets its own headers via
+    send_file — this must never override those)."""
+    if not request.path.startswith('/static/') and 'Cache-Control' not in response.headers:
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -9246,6 +9241,14 @@ def business_performance():
             continue
         party_pending_trips.setdefault(t['party_id'], []).append(t)
 
+    # "Overdue" is a real-world, right-now fact about the receivable — how many days old it
+    # actually is TODAY — never relative to whichever date_to happens to be selected on the page.
+    # Ageing this off end_d (the filter's own end date) instead of today's real date meant looking
+    # at an old month showed genuinely-overdue money as "Overdue: ₹0", purely because the filter's
+    # end date was earlier than the trip itself — nothing about which trips are pending changes
+    # with the filter (party_pending_trips has no date filter at all), only whether they LOOK
+    # overdue did, which made the number silently wrong for any period other than the current one.
+    today_d = datetime.date.today()
     overdue_total = 0
     oldest_outstanding = None
     for pid, bal in party_balance.items():
@@ -9256,7 +9259,7 @@ def business_performance():
             continue
         oldest_trip = min(trips_for_party, key=lambda t: t['date'])
         t_date = datetime.datetime.strptime(oldest_trip['date'], '%Y-%m-%d').date()
-        age = (end_d - t_date).days
+        age = (today_d - t_date).days
         if age > 30:
             overdue_total += bal
         if oldest_outstanding is None or t_date < oldest_outstanding['date']:
@@ -9301,15 +9304,21 @@ def business_performance():
             day_collect[t['date']] = day_collect.get(t['date'], 0) + t['party_advance']
     highest_collection_day = max(day_collect.items(), key=lambda kv: kv[1]) if day_collect else None
 
+    # Toll now goes through the same _trip_toll()/_toll_by_trip() every other screen uses (real
+    # linked Toll Management amount if one exists, else the trip's own manual estimate, never
+    # both) — the old comment's "maintenance-by-date sum already carries Toll Management's real
+    # cost" was only true for a LINKED toll; an unlinked trips.toll estimate never creates a
+    # maintenance row at all, so it was silently invisible to this KPI. The maintenance-by-date
+    # query below now excludes the Toll category specifically, so a LINKED toll's mirrored
+    # maintenance row is never ALSO summed on top of being counted via _trip_toll() (same
+    # maint/toll split _period_financials already uses).
+    day_expense_toll_map = _toll_by_trip(conn, [t['id'] for t in curr['trips']])
     day_expense = {}
     for t in curr['trips']:
-        # Toll excluded here on purpose — the maintenance-by-date sum just below already carries
-        # Toll Management's real toll cost (category='Toll' rows), dated per entry; adding a
-        # per-trip toll figure too would double-count it, same reasoning as Dashboard's total.
         # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — see the same fix in route_analytics().
         fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
-        direct = (fuel_and_adv + (t['parking'] or 0) +
+        direct = (fuel_and_adv + _trip_toll(t, day_expense_toll_map) + (t['parking'] or 0) +
                   (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                   (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                   (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -9317,7 +9326,7 @@ def business_performance():
         if t['type'] == VEHICLE_TYPE_HIRED:
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         day_expense[t['date']] = day_expense.get(t['date'], 0) + direct
-    for r in conn.execute("SELECT date, SUM(amount) as amt FROM maintenance WHERE date>=? AND date<=? GROUP BY date", (date_from, date_to)).fetchall():
+    for r in conn.execute("SELECT date, SUM(amount) as amt FROM maintenance WHERE date>=? AND date<=? AND COALESCE(category,'')!='Toll' GROUP BY date", (date_from, date_to)).fetchall():
         day_expense[r['date']] = day_expense.get(r['date'], 0) + (r['amt'] or 0)
     for r in conn.execute("SELECT date, SUM(amount) as amt FROM overheads WHERE date>=? AND date<=? GROUP BY date", (date_from, date_to)).fetchall():
         day_expense[r['date']] = day_expense.get(r['date'], 0) + (r['amt'] or 0)
@@ -9326,10 +9335,21 @@ def business_performance():
     avg_daily_revenue = round(curr['revenue'] / days_in_period, 2) if days_in_period else 0
     avg_daily_profit = round(curr['net_profit'] / days_in_period, 2) if days_in_period else 0
 
-    own_vehicle_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type = 'own'").fetchone()[0]
+    # Scoped to vehicles/employees that actually existed by the end of the selected period —
+    # previously a plain unfiltered COUNT(*), so adding a vehicle or hiring someone TODAY silently
+    # diluted this KPI for every past period you looked back at, even one from years earlier.
+    # registration_date/joining_date (the real-world date each one came on) wins when set; falls
+    # back to created_at (when the record entered this app) for older rows that predate either
+    # field being collected, and finally to a date far enough in the past that a genuinely
+    # undated legacy row is still counted rather than silently dropped.
+    own_vehicle_count = conn.execute("""SELECT COUNT(*) FROM vehicles WHERE type = 'own'
+                                        AND COALESCE(registration_date, substr(created_at,1,10), '0001-01-01') <= ?""",
+                                     (date_to,)).fetchone()[0]
     own_revenue = sum(t['billed_amount'] or 0 for t in curr['trips'] if t['type'] == VEHICLE_TYPE_OWN)
     avg_revenue_per_vehicle = round(own_revenue / own_vehicle_count, 2) if own_vehicle_count else 0
-    employee_count = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
+    employee_count = conn.execute("""SELECT COUNT(*) FROM employees
+                                     WHERE COALESCE(joining_date, substr(created_at,1,10), '0001-01-01') <= ?""",
+                                  (date_to,)).fetchone()[0]
     avg_revenue_per_employee = round(curr['revenue'] / employee_count, 2) if employee_count else 0
 
     invoice_count_curr = conn.execute("SELECT COUNT(*) FROM invoice_batches WHERE invoice_date>=? AND invoice_date<=?",
