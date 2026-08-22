@@ -1359,6 +1359,16 @@ def vehicles_list():
     # The old Insurance / Permit & Fitness sub-tabs on this list page are gone — that detail
     # now lives on the per-vehicle detail page (see vehicle_detail() below). Any bookmarked
     # link to the old tabs just falls through to the plain list.
+    #
+    # The sidebar's "Vehicles" link is a plain /vehicles with no query string at all — sort and
+    # every filter live only in the URL, so switching to another tab and clicking back in used to
+    # silently reset everything to defaults. A completely bare hit (no query string whatsoever)
+    # now restores whatever sort/filter was last used on this page instead. Any real query string
+    # — even just the "Clear" link's own ?tab=all — is respected exactly as given and never
+    # overridden, so Clear (and every sort/filter link, which always carries the others forward)
+    # keeps working exactly as before.
+    if not request.query_string and session.get('vehicles_last_query'):
+        return redirect(f"/vehicles?{session['vehicles_last_query']}")
     conn = get_db()
     type_f = request.args.get('type', '')
     status_f = request.args.get('status', '')
@@ -1494,6 +1504,10 @@ def vehicles_list():
     compliance_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
 
     conn.close()
+    # Remember this exact URL for next time — a later bare /vehicles hit (see the redirect at the
+    # top of this route) restores it instead of resetting to defaults.
+    if request.query_string:
+        session['vehicles_last_query'] = request.query_string.decode('utf-8')
     return render_template('vehicles_list.html', tab='all', rows=page_rows, f_type=type_f, f_status=status_f,
                             f_vehicle=vehicle_f, f_age=age_f, f_sort=sort_f, f_dir=dir_f, all_vehicle_nos=all_vehicle_nos, active='vehicles',
                             total_vehicles=total_vehicles, active_count=active_count, maint_count=maint_count,
@@ -2230,7 +2244,8 @@ def trips_list():
                             f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f,
                             f_sort=sort_f, f_dir=dir_f,
                             delete_error=request.args.get('error', ''), delete_error_amount=request.args.get('amount', ''),
-                            delete_error_lr=request.args.get('lr', ''), active='trips')
+                            delete_error_lr=request.args.get('lr', ''), delete_error_toll_count=request.args.get('toll_count', ''),
+                            active='trips')
 
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
@@ -5454,6 +5469,20 @@ def delete_trip(trip_id):
         conn.close()
         return redirect(url_for('trips_list', error='has_payment', amount=round(alloc['amt'], 2),
                                  lr=(trip['lr_number'] if trip else '') or f'#{trip_id}'))
+    # Same reasoning as the payment_allocations guard above, for a different foreign key on this
+    # same trips table: a real Toll Management entry linked to this trip (toll_entries.trip_id)
+    # has no cleanup path either — deleting the trip would leave that toll entry pointing at a
+    # trip that no longer exists. The toll's own cost isn't lost (its mirrored maintenance row is
+    # untouched), but the "which trip incurred this toll" link would be destroyed silently, and
+    # any future per-trip report (Route Analytics, Business Performance, an invoice) that looks
+    # this toll up by trip_id would simply never find it again. Blocking here forces the toll
+    # entry to be unlinked or deleted first, instead of silently orphaning it.
+    toll_ct = conn.execute("SELECT COUNT(*) as c FROM toll_entries WHERE trip_id=?", (trip_id,)).fetchone()
+    if toll_ct['c']:
+        trip = conn.execute("SELECT lr_number FROM trips WHERE id=?", (trip_id,)).fetchone()
+        conn.close()
+        return redirect(url_for('trips_list', error='has_toll', toll_count=toll_ct['c'],
+                                 lr=(trip['lr_number'] if trip else '') or f'#{trip_id}'))
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
     conn.close()
@@ -6232,30 +6261,52 @@ def performance():
     date_to = request.args.get('date_to', '2027-03-31')
 
     # ---------- Driver Performance (same calculation as the original Driver Performance page) ----------
-    # Toll excluded from driver-level cost — Toll Management (FASTag/BOSS) tracks cost per
-    # vehicle/wallet, not per driver, so there's no real figure to attribute here (a shared
-    # vehicle's toll can't be split by who happened to be driving that trip).
-    driver_query = """SELECT driver_name,
-        COUNT(*) as trip_count,
-        SUM(billed_amount) as total_billed,
-        SUM(fuel_amount) as total_fuel,
-        SUM(COALESCE(driver_payment,0)+COALESCE(detention_charges,0)+COALESCE(other_expense,0)) as total_other_costs,
-        MAX(date) as last_trip
+    # Full real cost basis, matching Route Analytics/Business Performance/Dashboard exactly — this
+    # used to only subtract driver_payment+detention_charges+other_expense, silently missing toll
+    # and 11 other real trip-level expense fields, and unconditionally subtracted fuel_amount even
+    # on a Hired trip (where fuel is the owner's own money, not this company's cost, unless a
+    # different vendor is explicitly tagged — same rule as everywhere else). total_fuel below stays
+    # a purely informational "how much fuel these trips involved" figure (all trips, unconditional)
+    # and is intentionally NOT part of the profit formula — profit uses trip_cost instead, which
+    # applies the Hired exclusion correctly. Toll uses the exact same _trip_toll()/_toll_by_trip()
+    # every other screen uses: the real linked Toll Management amount if one exists, else the
+    # trip's own manual estimate — never both, so it can never be double-counted here either.
+    driver_trip_query = """SELECT id, driver_name, type, billed_amount, fuel_amount, driver_adv_amount,
+        driver_payment, detention_charges, other_expense, parking, agent_commission, builty_expense,
+        fine, labour_charges, puncture, urea, loading_expense, unloading_expense, weighbridge_charges,
+        permit_charges, toll, date
         FROM trips WHERE driver_name IS NOT NULL AND driver_name != ''"""
     dparams = []
     if date_from:
-        driver_query += " AND date >= ?"; dparams.append(date_from)
+        driver_trip_query += " AND date >= ?"; dparams.append(date_from)
     if date_to:
-        driver_query += " AND date <= ?"; dparams.append(date_to)
-    driver_query += " GROUP BY driver_name ORDER BY total_billed DESC"
-    draw = conn.execute(driver_query, dparams).fetchall()
+        driver_trip_query += " AND date <= ?"; dparams.append(date_to)
+    driver_trips_raw = conn.execute(driver_trip_query, dparams).fetchall()
+    driver_toll_map = _toll_by_trip(conn, [t['id'] for t in driver_trips_raw])
+
+    driver_groups = {}
+    for t in driver_trips_raw:
+        g = driver_groups.setdefault(t['driver_name'], {'trip_count': 0, 'total_billed': 0, 'total_fuel': 0,
+                                                          'trip_cost': 0, 'last_trip': None})
+        g['trip_count'] += 1
+        g['total_billed'] += t['billed_amount'] or 0
+        g['total_fuel'] += t['fuel_amount'] or 0
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        g['trip_cost'] += (fuel_and_adv + _trip_toll(t, driver_toll_map) + (t['driver_payment'] or 0) +
+                            (t['detention_charges'] or 0) + (t['other_expense'] or 0) + (t['parking'] or 0) +
+                            (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['fine'] or 0) +
+                            (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
+                            (t['loading_expense'] or 0) + (t['unloading_expense'] or 0) +
+                            (t['weighbridge_charges'] or 0) + (t['permit_charges'] or 0))
+        if not g['last_trip'] or (t['date'] or '') > g['last_trip']:
+            g['last_trip'] = t['date']
 
     driver_rows = []
-    for r in draw:
-        profit = (r['total_billed'] or 0) - (r['total_fuel'] or 0) - (r['total_other_costs'] or 0)
-        driver_rows.append({'name': r['driver_name'], 'trip_count': r['trip_count'],
-                             'total_billed': r['total_billed'] or 0, 'total_fuel': r['total_fuel'] or 0,
-                             'profit': profit, 'last_trip': r['last_trip']})
+    for name, g in driver_groups.items():
+        profit = g['total_billed'] - g['trip_cost']
+        driver_rows.append({'name': name, 'trip_count': g['trip_count'], 'total_billed': g['total_billed'],
+                             'total_fuel': g['total_fuel'], 'profit': profit, 'last_trip': g['last_trip']})
+    driver_rows.sort(key=lambda r: r['total_billed'], reverse=True)
 
     total_drivers = len(driver_rows)
     driver_total_trips = sum(r['trip_count'] for r in driver_rows)
@@ -6281,37 +6332,63 @@ def performance():
     driver_trend_max = max([m['trips'] for m in driver_monthly], default=1) or 1
 
     # ---------- Vehicle Performance (new, mirrors the driver calculation style) ----------
-    # Toll excluded here too — the per-vehicle maint_cost query below already pulls every
-    # maintenance row for this vehicle (no category filter), which now includes Toll Management's
-    # real cost; adding trips.toll on top of that would double-count the same rupee.
-    vehicle_query = """SELECT v.id, v.vehicle_no, v.type,
-        COUNT(t.id) as trip_count,
-        COALESCE(SUM(t.billed_amount),0) as total_billed,
-        COALESCE(SUM(t.fuel_amount),0) as total_fuel,
-        COALESCE(SUM(COALESCE(t.driver_payment,0)+COALESCE(t.detention_charges,0)+COALESCE(t.other_expense,0)),0) as total_other_costs,
-        MAX(t.date) as last_trip
+    # Full real cost basis, matching Route Analytics/Business Performance/Dashboard exactly — this
+    # used to only subtract driver_payment+detention_charges+other_expense+maint_cost, silently
+    # missing toll (whenever it was only a manual estimate, never linked via Toll Management — the
+    # old comment's "maint_cost already includes Toll Management's real cost" is only true for a
+    # LINKED toll; an unlinked trips.toll estimate never creates a maintenance row at all, so it was
+    # never counted anywhere here) and 11 other real trip-level expense fields. Toll is now handled
+    # per-trip via the same _trip_toll()/_toll_by_trip() every other screen uses (real linked amount
+    # if one exists, else the manual estimate, never both) — and maint_q below now excludes the
+    # Toll category specifically, so a LINKED toll's mirrored maintenance row is never ALSO summed
+    # in maint_cost on top of being counted via _trip_toll() (the same maint/toll split
+    # _period_financials already uses, so this stays consistent with Dashboard/Business Performance).
+    vehicle_trip_query = """SELECT t.id, t.type, t.billed_amount, t.fuel_amount, t.driver_adv_amount,
+        t.driver_payment, t.detention_charges, t.other_expense, t.parking, t.agent_commission,
+        t.builty_expense, t.fine, t.labour_charges, t.puncture, t.urea, t.loading_expense,
+        t.unloading_expense, t.weighbridge_charges, t.permit_charges, t.toll, t.date,
+        v.id as vid, v.vehicle_no, v.type as vtype
         FROM trips t JOIN vehicles v ON t.vehicle_id=v.id WHERE v.type = 'own'"""
     vparams = []
     if date_from:
-        vehicle_query += " AND t.date >= ?"; vparams.append(date_from)
+        vehicle_trip_query += " AND t.date >= ?"; vparams.append(date_from)
     if date_to:
-        vehicle_query += " AND t.date <= ?"; vparams.append(date_to)
-    vehicle_query += " GROUP BY v.id ORDER BY total_billed DESC"
-    vraw = conn.execute(vehicle_query, vparams).fetchall()
+        vehicle_trip_query += " AND t.date <= ?"; vparams.append(date_to)
+    vehicle_trips_raw = conn.execute(vehicle_trip_query, vparams).fetchall()
+    vehicle_toll_map = _toll_by_trip(conn, [t['id'] for t in vehicle_trips_raw])
+
+    vehicle_groups = {}
+    for t in vehicle_trips_raw:
+        g = vehicle_groups.setdefault(t['vid'], {'vehicle_no': t['vehicle_no'], 'type': t['vtype'],
+                                                   'trip_count': 0, 'total_billed': 0, 'total_fuel': 0,
+                                                   'trip_cost': 0, 'last_trip': None})
+        g['trip_count'] += 1
+        g['total_billed'] += t['billed_amount'] or 0
+        g['total_fuel'] += t['fuel_amount'] or 0
+        fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
+        g['trip_cost'] += (fuel_and_adv + _trip_toll(t, vehicle_toll_map) + (t['driver_payment'] or 0) +
+                            (t['detention_charges'] or 0) + (t['other_expense'] or 0) + (t['parking'] or 0) +
+                            (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['fine'] or 0) +
+                            (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
+                            (t['loading_expense'] or 0) + (t['unloading_expense'] or 0) +
+                            (t['weighbridge_charges'] or 0) + (t['permit_charges'] or 0))
+        if not g['last_trip'] or (t['date'] or '') > g['last_trip']:
+            g['last_trip'] = t['date']
 
     vehicle_rows = []
-    for r in vraw:
-        maint_q = "SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE vehicle_id=?"
-        maint_params = [r['id']]
+    for vid, g in vehicle_groups.items():
+        maint_q = "SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE vehicle_id=? AND COALESCE(category,'')!='Toll'"
+        maint_params = [vid]
         if date_from:
             maint_q += " AND date >= ?"; maint_params.append(date_from)
         if date_to:
             maint_q += " AND date <= ?"; maint_params.append(date_to)
         maint_cost = conn.execute(maint_q, maint_params).fetchone()[0]
-        profit = (r['total_billed'] or 0) - (r['total_fuel'] or 0) - (r['total_other_costs'] or 0) - maint_cost
-        vehicle_rows.append({'name': r['vehicle_no'], 'type': r['type'], 'trip_count': r['trip_count'],
-                              'total_billed': r['total_billed'], 'total_fuel': r['total_fuel'],
-                              'maint_cost': maint_cost, 'profit': profit, 'last_trip': r['last_trip']})
+        profit = g['total_billed'] - g['trip_cost'] - maint_cost
+        vehicle_rows.append({'name': g['vehicle_no'], 'type': g['type'], 'trip_count': g['trip_count'],
+                              'total_billed': g['total_billed'], 'total_fuel': g['total_fuel'],
+                              'maint_cost': maint_cost, 'profit': profit, 'last_trip': g['last_trip']})
+    vehicle_rows.sort(key=lambda r: r['total_billed'], reverse=True)
 
     total_vehicles = len(vehicle_rows)
     vehicle_total_trips = sum(r['trip_count'] for r in vehicle_rows)
@@ -8007,6 +8084,23 @@ def require_login():
             return redirect(url_for('login'))
     session['last_activity'] = now.isoformat()
 
+@app.after_request
+def _no_bfcache_for_dynamic_pages(response):
+    """Every page here is server-rendered fresh from the live database on each request — with no
+    Cache-Control header at all (the previous state), the browser's back/forward cache is free to
+    restore a page from memory instead of asking the server again. That's exactly what made
+    editing or deleting a trip and then hitting Back look like the Dashboard "didn't update" —
+    the numbers were correct on the server the whole time, the browser just showed an old
+    snapshot instead of re-fetching. no-store forces a real request on every back/forward
+    navigation too, so any page always reflects whatever the database actually holds right now.
+    Left untouched for /static/ (real static assets — fine to let the browser cache those for
+    performance, they don't change based on what any user just did) and for anything already
+    carrying its own Cache-Control (a PDF/Excel download already sets its own headers via
+    send_file — this must never override those)."""
+    if not request.path.startswith('/static/') and 'Cache-Control' not in response.headers:
+        response.headers['Cache-Control'] = 'no-store'
+    return response
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     from werkzeug.security import check_password_hash
@@ -9147,6 +9241,14 @@ def business_performance():
             continue
         party_pending_trips.setdefault(t['party_id'], []).append(t)
 
+    # "Overdue" is a real-world, right-now fact about the receivable — how many days old it
+    # actually is TODAY — never relative to whichever date_to happens to be selected on the page.
+    # Ageing this off end_d (the filter's own end date) instead of today's real date meant looking
+    # at an old month showed genuinely-overdue money as "Overdue: ₹0", purely because the filter's
+    # end date was earlier than the trip itself — nothing about which trips are pending changes
+    # with the filter (party_pending_trips has no date filter at all), only whether they LOOK
+    # overdue did, which made the number silently wrong for any period other than the current one.
+    today_d = datetime.date.today()
     overdue_total = 0
     oldest_outstanding = None
     for pid, bal in party_balance.items():
@@ -9157,7 +9259,7 @@ def business_performance():
             continue
         oldest_trip = min(trips_for_party, key=lambda t: t['date'])
         t_date = datetime.datetime.strptime(oldest_trip['date'], '%Y-%m-%d').date()
-        age = (end_d - t_date).days
+        age = (today_d - t_date).days
         if age > 30:
             overdue_total += bal
         if oldest_outstanding is None or t_date < oldest_outstanding['date']:
@@ -9202,15 +9304,21 @@ def business_performance():
             day_collect[t['date']] = day_collect.get(t['date'], 0) + t['party_advance']
     highest_collection_day = max(day_collect.items(), key=lambda kv: kv[1]) if day_collect else None
 
+    # Toll now goes through the same _trip_toll()/_toll_by_trip() every other screen uses (real
+    # linked Toll Management amount if one exists, else the trip's own manual estimate, never
+    # both) — the old comment's "maintenance-by-date sum already carries Toll Management's real
+    # cost" was only true for a LINKED toll; an unlinked trips.toll estimate never creates a
+    # maintenance row at all, so it was silently invisible to this KPI. The maintenance-by-date
+    # query below now excludes the Toll category specifically, so a LINKED toll's mirrored
+    # maintenance row is never ALSO summed on top of being counted via _trip_toll() (same
+    # maint/toll split _period_financials already uses).
+    day_expense_toll_map = _toll_by_trip(conn, [t['id'] for t in curr['trips']])
     day_expense = {}
     for t in curr['trips']:
-        # Toll excluded here on purpose — the maintenance-by-date sum just below already carries
-        # Toll Management's real toll cost (category='Toll' rows), dated per entry; adding a
-        # per-trip toll figure too would double-count it, same reasoning as Dashboard's total.
         # Fuel/driver-advance on a Hired trip is the owner's own money, already covered by the
         # contracted freight added below — see the same fix in route_analytics().
         fuel_and_adv = 0 if t['type'] == VEHICLE_TYPE_HIRED else (t['fuel_amount'] or 0) + (t['driver_adv_amount'] or 0)
-        direct = (fuel_and_adv + (t['parking'] or 0) +
+        direct = (fuel_and_adv + _trip_toll(t, day_expense_toll_map) + (t['parking'] or 0) +
                   (t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) + (t['fine'] or 0) +
                   (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) + (t['loading_expense'] or 0) +
                   (t['unloading_expense'] or 0) + (t['wear_tear'] or 0) + (t['weighbridge_charges'] or 0) +
@@ -9218,7 +9326,7 @@ def business_performance():
         if t['type'] == VEHICLE_TYPE_HIRED:
             direct += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         day_expense[t['date']] = day_expense.get(t['date'], 0) + direct
-    for r in conn.execute("SELECT date, SUM(amount) as amt FROM maintenance WHERE date>=? AND date<=? GROUP BY date", (date_from, date_to)).fetchall():
+    for r in conn.execute("SELECT date, SUM(amount) as amt FROM maintenance WHERE date>=? AND date<=? AND COALESCE(category,'')!='Toll' GROUP BY date", (date_from, date_to)).fetchall():
         day_expense[r['date']] = day_expense.get(r['date'], 0) + (r['amt'] or 0)
     for r in conn.execute("SELECT date, SUM(amount) as amt FROM overheads WHERE date>=? AND date<=? GROUP BY date", (date_from, date_to)).fetchall():
         day_expense[r['date']] = day_expense.get(r['date'], 0) + (r['amt'] or 0)
@@ -9227,10 +9335,21 @@ def business_performance():
     avg_daily_revenue = round(curr['revenue'] / days_in_period, 2) if days_in_period else 0
     avg_daily_profit = round(curr['net_profit'] / days_in_period, 2) if days_in_period else 0
 
-    own_vehicle_count = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type = 'own'").fetchone()[0]
+    # Scoped to vehicles/employees that actually existed by the end of the selected period —
+    # previously a plain unfiltered COUNT(*), so adding a vehicle or hiring someone TODAY silently
+    # diluted this KPI for every past period you looked back at, even one from years earlier.
+    # registration_date/joining_date (the real-world date each one came on) wins when set; falls
+    # back to created_at (when the record entered this app) for older rows that predate either
+    # field being collected, and finally to a date far enough in the past that a genuinely
+    # undated legacy row is still counted rather than silently dropped.
+    own_vehicle_count = conn.execute("""SELECT COUNT(*) FROM vehicles WHERE type = 'own'
+                                        AND COALESCE(registration_date, substr(created_at,1,10), '0001-01-01') <= ?""",
+                                     (date_to,)).fetchone()[0]
     own_revenue = sum(t['billed_amount'] or 0 for t in curr['trips'] if t['type'] == VEHICLE_TYPE_OWN)
     avg_revenue_per_vehicle = round(own_revenue / own_vehicle_count, 2) if own_vehicle_count else 0
-    employee_count = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
+    employee_count = conn.execute("""SELECT COUNT(*) FROM employees
+                                     WHERE COALESCE(joining_date, substr(created_at,1,10), '0001-01-01') <= ?""",
+                                  (date_to,)).fetchone()[0]
     avg_revenue_per_employee = round(curr['revenue'] / employee_count, 2) if employee_count else 0
 
     invoice_count_curr = conn.execute("SELECT COUNT(*) FROM invoice_batches WHERE invoice_date>=? AND invoice_date<=?",
