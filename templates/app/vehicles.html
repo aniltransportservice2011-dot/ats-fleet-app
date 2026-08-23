@@ -50,16 +50,56 @@
 {% endif %}
 
 <div class="vh-tabstrip">
-  <a class="vh-tab {{ 'active' if not f_status }}" href="{{ url_for('app_vehicles', search=f_search) }}">All</a>
-  <a class="vh-tab {{ 'active' if f_status=='Active' }}" href="{{ url_for('app_vehicles', status='Active', search=f_search) }}">Active</a>
-  <a class="vh-tab {{ 'active' if f_status=='In Maintenance' }}" href="{{ url_for('app_vehicles', status='In Maintenance', search=f_search) }}">In Maintenance</a>
+  <a class="vh-tab {{ 'active' if not f_status }}" href="{{ url_for('app_vehicles', search=f_search, type=f_type, age=f_age) }}">All</a>
+  <a class="vh-tab {{ 'active' if f_status=='Active' }}" href="{{ url_for('app_vehicles', status='Active', search=f_search, type=f_type, age=f_age) }}">Active</a>
+  <a class="vh-tab {{ 'active' if f_status=='In Maintenance' }}" href="{{ url_for('app_vehicles', status='In Maintenance', search=f_search, type=f_type, age=f_age) }}">In Maintenance</a>
 </div>
 
-<form method="get" class="vh-search">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-  <input type="text" name="search" value="{{ f_search }}" placeholder="Search by Vehicle No…" onchange="this.form.submit()">
-  {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
-</form>
+<div class="a-search-row">
+  <form method="get" class="a-search-box" id="vhSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Search by Vehicle No…" onchange="this.form.submit()">
+    {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+    {% if f_type %}<input type="hidden" name="type" value="{{ f_type }}">{% endif %}
+    {% if f_age %}<input type="hidden" name="age" value="{{ f_age }}">{% endif %}
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_type or f_age }}" onclick="openVhFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<!-- Filter sheet — real filters (Type, Age), same as the website's own vehicles_list()
+     (type_f/age_f). Status is already handled by the tab strip above, so it's not duplicated
+     here. -->
+<div class="vam-backdrop" id="vhFilterBackdrop" onclick="closeVhFilterSheet()"></div>
+<div class="vam-modal" id="vhFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeVhFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_vehicles') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+    <div class="vam-field vam-field-full">
+      <label>Type</label>
+      <select name="type"><option value="">All Types</option>
+        {% for code, label in VEHICLE_TYPE_LABELS.items() %}<option value="{{ code }}" {% if f_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Vehicle Age</label>
+      <select name="age"><option value="">All Ages</option>
+        <option value="under3" {% if f_age == 'under3' %}selected{% endif %}>Under 3 years</option>
+        <option value="3to6" {% if f_age == '3to6' %}selected{% endif %}>3–6 years</option>
+        <option value="over6" {% if f_age == 'over6' %}selected{% endif %}>Over 6 years</option>
+      </select>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_vehicles', search=f_search, status=f_status) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
 
 <div id="vh-list">
 {% for v in vehicles %}
@@ -108,7 +148,7 @@
 
 <div id="vh-load-area">
 {% if has_more %}
-<a class="vh-loadmore" data-loadmore href="{{ url_for('app_vehicles', status=f_status, search=f_search, show=show+15) }}">
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_vehicles', status=f_status, search=f_search, type=f_type, age=f_age, show=show+15) }}">
   Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
 </a>
 {% elif vehicles %}
@@ -244,6 +284,18 @@ document.addEventListener('click', function (e) {
       btn.style.pointerEvents = '';
     });
 });
+
+// Filter sheet — real filters (Type, Age), same open/close pattern as the Add Vehicle modal.
+function openVhFilterSheet() {
+  lockPageScroll();
+  document.getElementById('vhFilterBackdrop').classList.add('open');
+  document.getElementById('vhFilterSheet').classList.add('open');
+}
+function closeVhFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('vhFilterBackdrop').classList.remove('open');
+  document.getElementById('vhFilterSheet').classList.remove('open');
+}
 
 // Add Vehicle modal — same lock/backdrop pattern as the FAB/account/More overlays in
 // base_app.html (see lockPageScroll() there), just page-local since only vehicles.html uses it.

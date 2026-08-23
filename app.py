@@ -2258,19 +2258,25 @@ def trips_list():
                             delete_error_lr=request.args.get('lr', ''), delete_error_toll_count=request.args.get('toll_count', ''),
                             active='trips')
 
-def _duplicate_lr_trip(conn, lr_number):
+def _duplicate_lr_trip(conn, lr_number, exclude_trip_id=None):
     """Real-world LR numbers are serially-unique documents (Lorry Receipt) — two trips sharing
     one is a data-integrity problem (duplicate billing, reconciliation confusion), not a
     legitimate case like two parties sharing a name. Returns the conflicting trip row
     (id, date, vehicle_no) if lr_number is already used by another trip, else None. Shared by
-    add_trip() (website) and app_add_trip() (mobile app) so both reject a duplicate identically."""
+    add_trip()/app_add_trip() (exclude_trip_id=None) and edit_trip()/app_edit_trip()
+    (exclude_trip_id=that trip's own id, so re-saving a trip without changing its LR Number
+    doesn't trip over itself) — same check, same exclusion rule, everywhere."""
     lr_number = (lr_number or '').strip()
     if not lr_number:
         return None
-    return conn.execute("""SELECT t.id, t.date, v.vehicle_no FROM trips t
-                           LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                           WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != ''""",
-                        (lr_number,)).fetchone()
+    query = """SELECT t.id, t.date, v.vehicle_no FROM trips t
+              LEFT JOIN vehicles v ON t.vehicle_id=v.id
+              WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != ''"""
+    params = [lr_number]
+    if exclude_trip_id is not None:
+        query += " AND t.id != ?"
+        params.append(exclude_trip_id)
+    return conn.execute(query, params).fetchone()
 
 def _insert_trip_from_form(conn, f):
     """Builds and inserts one trips row from a submitted form — same field list, same computed
@@ -2342,6 +2348,89 @@ def _insert_trip_from_form(conn, f):
     cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
     _save_trip_custom_items(conn, cur.lastrowid, f)
     return cur.lastrowid
+
+def _update_trip_from_form(conn, trip_id, f):
+    """Builds and runs one trips UPDATE from a submitted form — the exact same real logic
+    edit_trip() (website) has always used, extracted here so app_edit_trip() (mobile) can share
+    it rather than risk drifting apart. Same field set as _insert_trip_from_form() above (every
+    field trip_add.html's wizard actually collects, including the 12 "Other Expenses" fields —
+    agent_commission through other_expense — which the wizard already has, unlike the truly-
+    dropped driver_payment/conductor_expense/wear_tear, which stay untouched here exactly like
+    edit_trip() already leaves them). Caller must run _duplicate_lr_trip(conn, lr, trip_id) first
+    — this function always updates, unconditionally. The vehicle on a trip is locked at creation
+    and never changed here, same rule edit_trip() enforces. Returns (ok, error_message_or_None);
+    does not commit or close conn."""
+    existing = conn.execute("SELECT vehicle_id FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if not existing:
+        return False, 'Trip not found.'
+
+    def n(key):
+        return float(f.get(key) or 0)
+
+    vehicle_id = existing['vehicle_id']
+    trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
+    party_id = get_or_create_party(conn, f.get('party_name'))
+    fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
+    driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
+    misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
+    owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
+
+    quantity = n('quantity')
+    rate = n('rate')
+    rate_type = f.get('rate_type')
+    fixed_rate_amount = n('fixed_rate_amount')
+    owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
+    owner_fixed_amount = n('owner_fixed_amount')
+    freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
+    total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
+                      n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
+                      n('weight_charges')+n('other_charges'))
+    total_deductions = (n('brokerage')+n('builty_commission')+n('late_fees')+n('material_damage')+
+                         n('shortage_amount')+n('tds')+n('other_deductions'))
+    billed_amount = freight + total_charges - total_deductions
+
+    # Same floor as edit_trip() — never let a plain re-save silently lower payment_received/
+    # paid_to_owner below what a real Payment has already allocated to this trip (see the long
+    # comment on edit_trip() itself for why: that desync is exactly what made a ledger's "Trip
+    # Bill" line look like it was double-subtracting an already-made payment).
+    received_floor = conn.execute("""SELECT COALESCE(SUM(pa.amount),0) as amt FROM payment_allocations pa
+                                     JOIN payments p ON pa.payment_id=p.id
+                                     WHERE pa.trip_id=? AND p.payment_type='received' AND p.party_id IS NOT NULL""",
+                                  (trip_id,)).fetchone()['amt']
+    paid_owner_floor = conn.execute("""SELECT COALESCE(SUM(pa.amount),0) as amt FROM payment_allocations pa
+                                       JOIN payments p ON pa.payment_id=p.id
+                                       WHERE pa.trip_id=? AND p.payment_type='paid' AND p.vendor_id IS NOT NULL""",
+                                    (trip_id,)).fetchone()['amt']
+    payment_received_val = max(n('payment_received'), received_floor)
+    paid_to_owner_val = max(n('paid_to_owner'), paid_owner_floor)
+
+    conn.execute("""UPDATE trips SET
+        date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, rate=?,
+        driver_name=?, material=?, rate_type=?, billed_amount=?,
+        detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
+        police_charges=?, sim_tracking=?, union_charges=?, weight_charges=?, other_charges=?,
+        brokerage=?, builty_commission=?, late_fees=?, material_damage=?, shortage_amount=?, shortage_qty=?, tds=?, other_deductions=?,
+        fuel_amount=?, fuel_liters=?, fuel_price=?, driver_adv_amount=?, party_advance=?, payment_received=?, fuel_vendor_id=?, driver_adv_vendor_id=?,
+        owner_name=?, fixed_rate_amount=?, owner_rate=?, owner_rate_type=?, owner_fixed_amount=?, paid_to_owner=?, owner_vendor_id=?,
+        agent_commission=?, builty_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
+        toll=?, urea=?, loading_expense=?, unloading_expense=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
+        lr_received=?, is_empty=?, updated_by=?, updated_at=?
+        WHERE id=?""",
+        (f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
+         quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
+         n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
+         n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
+         n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
+         n('shortage_qty'), n('tds'), n('other_deductions'),
+         n('fuel_amount'), f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), n('party_advance'), payment_received_val, fuel_vendor_id, driveradv_vendor_id,
+         f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, paid_to_owner_val, owner_vendor_id,
+         n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
+         n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
+         n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
+         f.get('lr_received') or None, 1 if f.get('is_empty') else 0,
+         session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), trip_id))
+    _save_trip_custom_items(conn, trip_id, f)
+    return True, None
 
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
@@ -3158,7 +3247,13 @@ def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', activ
                             f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, vehicles=all_vehicles,
                             base_path=base_path, active=active)
 
-def _maintenance_tyres_tab(conn):
+def _tyre_management_data(conn):
+    """Real filters (from request.args) + real filtered entry rows + real stat totals + real Tyre
+    Stock rows for the Tyres tab — shared by _maintenance_tyres_tab() (website, full page with
+    charts/vehicle-layout diagram) and app_tyres() (mobile, KPIs + stock + entries list only).
+    Same filter semantics as _maintenance_service_rows(): a vehicle/vendor pins the SQL WHERE,
+    action/position/search apply after (they depend on _maintenance_classify() / free-text
+    matching, not a plain indexed column). Returns a dict; does not close conn."""
     vehicle_f = request.args.get('vehicle', '')
     action_f = request.args.get('action', '')
     position_f = request.args.get('position', '')
@@ -3199,6 +3294,40 @@ def _maintenance_tyres_tab(conn):
     vehicles_covered = len(set(r['vehicle_no'] for r in rows if r['vehicle_no']))
     puncture_count = sum(1 for r in rows if any(k in (r['tyre_action'] or r['category'] or '').lower() for k in ('punt', 'punc')))
     avg_cost = round(total_cost / total_count, 0) if total_count else 0
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    tyre_vendors = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+    tyre_brands = sorted(set(r['tyre_brand'] for r in all_rows if r['tyre_brand']))
+
+    # Tyre Stock: tyres bought ahead of use. Installing one links its existing purchase
+    # record to a vehicle/position instead of billing the vendor a second time.
+    stock_rows = conn.execute("""SELECT ts.*, ve.name as vendor_name, iv.vehicle_no as installed_vehicle_no
+                                  FROM tyre_stock ts LEFT JOIN vendors ve ON ts.vendor_id=ve.id
+                                  LEFT JOIN vehicles iv ON ts.installed_vehicle_id=iv.id
+                                  ORDER BY (ts.status='In Stock') DESC, ts.purchase_date DESC, ts.id DESC""").fetchall()
+    stock_in_count = sum(1 for s in stock_rows if s['status'] == 'In Stock')
+    stock_new_count = sum(1 for s in stock_rows if s['status'] == 'In Stock' and (s['tyre_type'] or '') == 'New')
+    stock_resole_count = sum(1 for s in stock_rows if s['status'] == 'In Stock' and (s['tyre_type'] or '') == 'Resole')
+    stock_value = sum(s['purchase_cost'] or 0 for s in stock_rows if s['status'] == 'In Stock')
+
+    return {'all_rows': all_rows, 'rows': rows, 'total_count': total_count, 'total_cost': total_cost,
+            'unpaid_total': unpaid_total, 'vehicles_covered': vehicles_covered, 'puncture_count': puncture_count,
+            'avg_cost': avg_cost, 'vehicles': vehicles, 'tyre_vendors': tyre_vendors, 'combined_names': combined_names,
+            'tyre_brands': tyre_brands, 'stock_rows': stock_rows, 'stock_in_count': stock_in_count,
+            'stock_new_count': stock_new_count, 'stock_resole_count': stock_resole_count, 'stock_value': stock_value,
+            'f_vehicle': vehicle_f, 'f_action': action_f, 'f_position': position_f, 'f_vendor': vendor_f,
+            'f_date_from': date_from, 'f_date_to': date_to, 'f_search': search_f}
+
+def _maintenance_tyres_tab(conn):
+    d = _tyre_management_data(conn)
+    all_rows, rows = d['all_rows'], d['rows']
+    total_count, total_cost, unpaid_total = d['total_count'], d['total_cost'], d['unpaid_total']
+    vehicles_covered, puncture_count, avg_cost = d['vehicles_covered'], d['puncture_count'], d['avg_cost']
+    vehicles, tyre_vendors, combined_names, tyre_brands = d['vehicles'], d['tyre_vendors'], d['combined_names'], d['tyre_brands']
+    stock_rows, stock_in_count, stock_new_count, stock_resole_count, stock_value = (
+        d['stock_rows'], d['stock_in_count'], d['stock_new_count'], d['stock_resole_count'], d['stock_value'])
+    vehicle_f, action_f, position_f, vendor_f = d['f_vehicle'], d['f_action'], d['f_position'], d['f_vendor']
+    date_from, date_to, search_f = d['f_date_from'], d['f_date_to'], d['f_search']
 
     action_totals = {}
     for r in rows:
@@ -3243,10 +3372,6 @@ def _maintenance_tyres_tab(conn):
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    tyre_vendors = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
-    tyre_brands = sorted(set(r['tyre_brand'] for r in all_rows if r['tyre_brand']))
-
     # Vehicle Tyre Layout: for the picked vehicle, the latest real entry logged against each
     # position — no fabricated fitment/stock data, just "what does the record actually say".
     global_rows = conn.execute("""SELECT m.category, m.service_type, m.date, m.id, v.vehicle_no
@@ -3281,16 +3406,6 @@ def _maintenance_tyres_tab(conn):
     vehicle_tyre_spend = sum(r['amount'] or 0 for r in layout_tyre_rows)
     vehicle_last_updated = max((r['date'] for r in layout_tyre_rows if r['date']), default=None)
 
-    # Tyre Stock: tyres bought ahead of use. Installing one links its existing purchase
-    # record to a vehicle/position instead of billing the vendor a second time.
-    stock_rows = conn.execute("""SELECT ts.*, ve.name as vendor_name, iv.vehicle_no as installed_vehicle_no
-                                  FROM tyre_stock ts LEFT JOIN vendors ve ON ts.vendor_id=ve.id
-                                  LEFT JOIN vehicles iv ON ts.installed_vehicle_id=iv.id
-                                  ORDER BY (ts.status='In Stock') DESC, ts.purchase_date DESC, ts.id DESC""").fetchall()
-    stock_in_count = sum(1 for s in stock_rows if s['status'] == 'In Stock')
-    stock_new_count = sum(1 for s in stock_rows if s['status'] == 'In Stock' and (s['tyre_type'] or '') == 'New')
-    stock_resole_count = sum(1 for s in stock_rows if s['status'] == 'In Stock' and (s['tyre_type'] or '') == 'Resole')
-    stock_value = sum(s['purchase_cost'] or 0 for s in stock_rows if s['status'] == 'In Stock')
     conn.close()
 
     return render_template('maintenance.html', tab='tyres',
@@ -3364,7 +3479,14 @@ def _next_battery_no(conn):
             n = 0
     return f"BAT-{n + 1:05d}"
 
-def _maintenance_battery_tab(conn):
+def _battery_management_data(conn):
+    """Real filters (from request.args) + real filtered rows + real KPI stats + real Tyre-Stock-
+    style "batteries currently in stock" list for the Battery tab — shared by
+    _maintenance_battery_tab() (website, full page with charts/warranty/low-health panels) and
+    app_battery() (mobile, KPIs + list only). Same filter semantics as
+    _tyre_management_data()/_maintenance_service_rows(): every field here is a plain column or a
+    value _battery_enrich() derives, so unlike Tyres/Service nothing needs classify()-style
+    post-filtering. Returns a dict; does not close conn."""
     vehicle_f = request.args.get('vehicle', '')
     brand_f = request.args.get('brand', '')
     status_f = request.args.get('status', '')
@@ -3402,19 +3524,45 @@ def _maintenance_battery_tab(conn):
     weak_soon = sum(1 for r in all_rows if r['vehicle_id'] and r['status'] in ('Weak', 'Replace Soon'))
     dead_count = sum(1 for r in all_rows if r['status'] in ('Dead', 'Scrapped'))
 
+    healths = [r['health_pct'] for r in all_rows if r['health_pct'] is not None]
+    avg_health_pct = round(sum(healths) / len(healths)) if healths else None
+
+    total_count = len(rows)
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    battery_vendors = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+    battery_brands = sorted(set(r['brand'] for r in all_rows if r['brand']))
+    stock_batteries = [r for r in all_rows if not r['vehicle_id'] and r['status'] == 'In Stock']
+
+    return {'all_rows': all_rows, 'rows': rows, 'total_count': total_count,
+            'total_batteries': total_batteries, 'in_use': in_use, 'in_stock': in_stock,
+            'weak_soon': weak_soon, 'dead_count': dead_count, 'avg_health_pct': avg_health_pct,
+            'vehicles': vehicles, 'battery_vendors': battery_vendors, 'combined_names': combined_names,
+            'battery_brands': battery_brands, 'stock_batteries': stock_batteries,
+            'f_vehicle': vehicle_f, 'f_brand': brand_f, 'f_status': status_f, 'f_battery_type': type_f,
+            'f_date_from': date_from, 'f_date_to': date_to, 'f_search': search_f}
+
+def _maintenance_battery_tab(conn):
+    d = _battery_management_data(conn)
+    all_rows, rows = d['all_rows'], d['rows']
+    total_count = d['total_count']
+    total_batteries, in_use, in_stock, weak_soon, dead_count = (
+        d['total_batteries'], d['in_use'], d['in_stock'], d['weak_soon'], d['dead_count'])
+    avg_health_pct = d['avg_health_pct']
+    vehicles, battery_vendors, combined_names, battery_brands, stock_batteries = (
+        d['vehicles'], d['battery_vendors'], d['combined_names'], d['battery_brands'], d['stock_batteries'])
+    vehicle_f, brand_f, status_f, type_f = d['f_vehicle'], d['f_brand'], d['f_status'], d['f_battery_type']
+    date_from, date_to, search_f = d['f_date_from'], d['f_date_to'], d['f_search']
+
     today = datetime.date.today()
     ages = []
     for r in all_rows:
         if r['install_date']:
             try:
-                d = datetime.datetime.strptime(r['install_date'], '%Y-%m-%d').date()
-                ages.append((today - d).days / 30.44)
+                dd = datetime.datetime.strptime(r['install_date'], '%Y-%m-%d').date()
+                ages.append((today - dd).days / 30.44)
             except ValueError:
                 pass
     avg_life_months = round(sum(ages) / len(ages)) if ages else None
-
-    healths = [r['health_pct'] for r in all_rows if r['health_pct'] is not None]
-    avg_health_pct = round(sum(healths) / len(healths)) if healths else None
 
     status_counts = {'Good': 0, 'Weak': 0, 'Replace Soon': 0, 'Dead': 0, 'In Stock': 0}
     for r in all_rows:
@@ -3433,7 +3581,6 @@ def _maintenance_battery_tab(conn):
     replaced_year = sum(1 for r in all_rows if r['status'] == 'Dead' and (r['last_checked_date'] or r['install_date'] or '').startswith(this_year))
     cost_per_battery = round(total_cost_year / total_batteries) if total_batteries else 0
 
-    total_count = len(rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
     page_rows = rows[(page - 1) * per_page: page * per_page]
@@ -3443,11 +3590,6 @@ def _maintenance_battery_tab(conn):
     base_params.pop('page', None)
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
-
-    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    battery_vendors = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
-    battery_brands = sorted(set(r['brand'] for r in all_rows if r['brand']))
-    stock_batteries = [r for r in all_rows if not r['vehicle_id'] and r['status'] == 'In Stock']
 
     checks_by_battery = {}
     if page_rows:
@@ -3546,7 +3688,13 @@ def _save_insurance_doc(file_storage, prefix, company_id=1):
     file_storage.save(os.path.join(company_dir, unique))
     return f"uploads/insurance/{company_id}/{unique}"
 
-def _maintenance_service_tab(conn):
+def _maintenance_service_rows(conn):
+    """Real filters (from request.args) + real filtered rows + real stat totals for the Service
+    tab — shared by _maintenance_service_tab() (website, full page with charts/pagination) and
+    app_maintenance()'s Service tab (mobile, stats + list only). Same filter semantics
+    everywhere: a vehicle/workshop pins the SQL WHERE, service type/status/search apply after
+    (since they depend on _maintenance_classify(), not a plain column). Returns a dict; does not
+    close conn."""
     vehicle_f = request.args.get('vehicle', '')
     workshop_f = request.args.get('workshop', '')
     stype_f = request.args.get('service_type', '')
@@ -3597,6 +3745,22 @@ def _maintenance_service_tab(conn):
                     due_soon += 1
             except ValueError:
                 pass
+
+    return {'all_rows': all_rows, 'rows': rows, 'total_count': total_count, 'total_cost': total_cost,
+            'open_jobs': open_jobs, 'completed_jobs': completed_jobs, 'breakdown_count': breakdown_count,
+            'due_soon': due_soon, 'avg_cost': avg_cost,
+            'f_vehicle': vehicle_f, 'f_workshop': workshop_f, 'f_service_type': stype_f, 'f_status': status_f,
+            'f_date_from': date_from, 'f_date_to': date_to, 'f_search': search_f}
+
+def _maintenance_service_tab(conn):
+    d = _maintenance_service_rows(conn)
+    all_rows, rows = d['all_rows'], d['rows']
+    total_count, total_cost = d['total_count'], d['total_cost']
+    open_jobs, completed_jobs, breakdown_count, due_soon, avg_cost = (
+        d['open_jobs'], d['completed_jobs'], d['breakdown_count'], d['due_soon'], d['avg_cost'])
+    vehicle_f, workshop_f, stype_f, status_f, date_from, date_to, search_f = (
+        d['f_vehicle'], d['f_workshop'], d['f_service_type'], d['f_status'], d['f_date_from'], d['f_date_to'], d['f_search'])
+    today = datetime.date.today()
 
     ids = [r['id'] for r in rows]
     items_by_id = {}
@@ -3712,10 +3876,12 @@ def _save_service_items(conn, service_id, form):
                      (service_id, name, cat, qty, unit, rate, qty * rate, session.get('user_id'),
                       datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
-@app.route('/maintenance/service/add', methods=['POST'])
-def add_service():
-    conn = get_db()
-    f = request.form
+def _insert_service_from_form(conn, f):
+    """Builds and inserts one Service maintenance row from a submitted form — same fields, same
+    checklist join, same get_or_create_vendor() workshop resolution used by both add_service()
+    (website) and app_add_service() (mobile), extracted here so the two can never quietly accept
+    a different set of fields. Returns (ok, error_message_or_new_service_id) — does not commit or
+    close conn."""
     def get_or_create_vehicle(vno):
         if not vno or not vno.strip():
             return None
@@ -3727,13 +3893,24 @@ def add_service():
                             (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
+    if not (f.get('vehicle_no') or '').strip():
+        return False, 'Vehicle is required.'
+    if not (f.get('service_type') or '').strip():
+        return False, 'Service Type is required.'
+    if not f.get('date'):
+        return False, 'Service Date is required.'
+    if not (f.get('vendor_name') or '').strip():
+        return False, 'Vendor / Workshop is required.'
+    if not f.get('amount'):
+        return False, 'Total Amount is required.'
+
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
     # Workshop/Vendor uses the exact same combined party+vendor lookup as every other vendor field
     # in the app, so a workshop typed here links up with that same organization's ledger elsewhere.
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
     amount = float(f.get('amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
-    checklist = ','.join(request.form.getlist('checklist'))
+    checklist = ','.join(f.getlist('checklist'))
     cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, service_type, amount, paid_amount, vendor_id, notes,
                           km_reading, next_due_km, next_service_date, invoice_no, invoice_date, status, checklist_done, created_by, created_at)
                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -3743,7 +3920,13 @@ def add_service():
          f.get('status') or 'Completed', checklist or None, session.get('user_id'),
          datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     service_id = cur.lastrowid
-    _save_service_items(conn, service_id, request.form)
+    _save_service_items(conn, service_id, f)
+    return True, service_id
+
+@app.route('/maintenance/service/add', methods=['POST'])
+def add_service():
+    conn = get_db()
+    _insert_service_from_form(conn, request.form)
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='service'))
@@ -3782,6 +3965,56 @@ def edit_service(m_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='service'))
 
+def _insert_tyre_from_form(conn, f):
+    """Builds and inserts one direct (not from-stock) Tyre entry from a submitted form — same
+    fields, same required-field set (Vehicle/Action/Date/Vendor/Cost, matching the website's own
+    #addTyreModal "New Tyre" mode — see templates/partials/_maintenance_tyre_modals.html) and same
+    get_or_create_vendor() supplier resolution used by both add_tyre() (website) and app_add_tyre()
+    (mobile), extracted here so the two can never quietly accept a different set of fields. Does
+    not cover the "install an existing stock tyre" shortcut (stock_id) — that stays a website-only
+    path (add_tyre() checks it before ever calling this); the mobile Add Tyre modal offers all 3
+    real modes (New Tyre / Add to Stock / Install from Stock) but each posts to its own dedicated
+    route — see app_add_tyre() / app_add_tyre_stock() / app_install_tyre_stock(). Returns
+    (ok, error_message_or_new_entry_id) — does not commit or close conn."""
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        return cur.lastrowid
+
+    if not (f.get('vehicle_no') or '').strip():
+        return False, 'Vehicle is required.'
+    if not (f.get('tyre_action') or '').strip():
+        return False, 'Action is required.'
+    if not f.get('date'):
+        return False, 'Date is required.'
+    if not (f.get('vendor_name') or '').strip():
+        return False, 'Supplier / Vendor is required.'
+    if not f.get('amount'):
+        return False, 'Amount is required.'
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    # Same combined party+vendor lookup used everywhere else — a tyre supplier typed here
+    # links up with that same organization's ledger, so the cost flows straight into it.
+    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
+    amount = float(f.get('amount') or 0)
+    paid_amount = float(f.get('paid_amount') or 0)
+    cur = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes,
+                    km_reading, invoice_no, invoice_date, tyre_action, tyre_id, tyre_brand, tyre_position, status,
+                    created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (f.get('date'), vehicle_id, 'Tyres', amount, paid_amount, vendor_id, f.get('notes') or None,
+         float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
+         f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
+         f.get('tyre_position') or None, 'Completed', session.get('user_id'),
+         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    return True, cur.lastrowid
+
 @app.route('/maintenance/tyre/add', methods=['POST'])
 def add_tyre():
     conn = get_db()
@@ -3819,20 +4052,7 @@ def add_tyre():
             conn.close()
             return redirect(url_for('maintenance_list', tab='tyres'))
 
-    # Same combined party+vendor lookup used everywhere else — a tyre supplier typed here
-    # links up with that same organization's ledger, so the cost flows straight into it.
-    vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
-    amount = float(f.get('amount') or 0)
-    paid_amount = float(f.get('paid_amount') or 0)
-    conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes,
-                    km_reading, invoice_no, invoice_date, tyre_action, tyre_id, tyre_brand, tyre_position, status,
-                    created_by, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (f.get('date'), vehicle_id, 'Tyres', amount, paid_amount, vendor_id, f.get('notes') or None,
-         float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
-         f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
-         f.get('tyre_position') or None, 'Completed', session.get('user_id'),
-         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    _insert_tyre_from_form(conn, f)
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -3869,10 +4089,17 @@ def edit_tyre(m_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
 
-@app.route('/maintenance/tyre/stock/add', methods=['POST'])
-def add_tyre_stock():
-    conn = get_db()
-    f = request.form
+def _insert_tyre_stock_from_form(conn, f):
+    """Builds and inserts one "bought ahead of use" Tyre Stock row (+ its ledger entry) from a
+    submitted form — same fields used by both add_tyre_stock() (website) and app_add_tyre_stock()
+    (mobile). Returns (ok, error_message_or_new_stock_id) — does not commit or close conn."""
+    if not f.get('purchase_date'):
+        return False, 'Purchase Date is required.'
+    if not (f.get('vendor_name') or '').strip():
+        return False, 'Supplier / Vendor is required.'
+    if not f.get('purchase_cost'):
+        return False, 'Purchase Cost is required.'
+
     # A stock purchase is its own maintenance/ledger entry (no vehicle yet) — installing it later
     # updates this same row instead of billing the supplier a second time for the same tyre.
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
@@ -3886,19 +4113,25 @@ def add_tyre_stock():
          f.get('invoice_no') or None, 'Stock Purchase', f.get('tyre_id') or None, f.get('brand') or None, 'Completed',
          session.get('user_id'), _now))
     maintenance_id = cur.lastrowid
-    conn.execute("""INSERT INTO tyre_stock (maintenance_id, tyre_id, brand, tyre_type, purchase_date, purchase_cost,
+    cur2 = conn.execute("""INSERT INTO tyre_stock (maintenance_id, tyre_id, brand, tyre_type, purchase_date, purchase_cost,
                     vendor_id, invoice_no, status, notes, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (maintenance_id, f.get('tyre_id') or None, f.get('brand') or None, f.get('tyre_type') or 'New',
          f.get('purchase_date'), cost, vendor_id, f.get('invoice_no') or None, 'In Stock', f.get('notes') or None,
          session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    return True, cur2.lastrowid
+
+@app.route('/maintenance/tyre/stock/add', methods=['POST'])
+def add_tyre_stock():
+    conn = get_db()
+    _insert_tyre_stock_from_form(conn, request.form)
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
 
-@app.route('/maintenance/tyre/stock/<int:stock_id>/install', methods=['POST'])
-def install_tyre_stock(stock_id):
-    conn = get_db()
-    f = request.form
+def _install_tyre_stock_from_form(conn, stock_id, f):
+    """Links an existing In Stock tyre to a vehicle/position — same fields/logic used by both
+    install_tyre_stock() (website) and app_install_tyre_stock() (mobile). Returns
+    (ok, error_message_or_None) — does not commit or close conn."""
     def get_or_create_vehicle(vno):
         if not vno or not vno.strip():
             return None
@@ -3910,19 +4143,33 @@ def install_tyre_stock(stock_id):
                             (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
+    if not (f.get('vehicle_no') or '').strip():
+        return False, 'Vehicle is required.'
+    if not (f.get('position') or '').strip():
+        return False, 'Position is required.'
     stock = conn.execute("SELECT * FROM tyre_stock WHERE id=?", (stock_id,)).fetchone()
-    if stock and stock['status'] == 'In Stock':
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
-        install_date = f.get('install_date') or stock['purchase_date']
-        km_reading = float(f.get('km_reading') or 0) or None
-        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=?, updated_by=?, updated_at=? WHERE id=?",
-            (vehicle_id, f.get('position'), 'New Tyre Fitted', km_reading, session.get('user_id'), _now, stock['maintenance_id']))
-        conn.execute("""UPDATE tyre_stock SET status='Installed', installed_vehicle_id=?, installed_position=?,
-                        installed_date=?, updated_by=?, updated_at=? WHERE id=?""",
-            (vehicle_id, f.get('position'), install_date,
-             session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock_id))
-        conn.commit()
+    if not stock:
+        return False, 'Stock tyre not found.'
+    if stock['status'] != 'In Stock':
+        return False, 'This tyre is no longer in stock.'
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    install_date = f.get('install_date') or stock['purchase_date']
+    km_reading = float(f.get('km_reading') or 0) or None
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("UPDATE maintenance SET vehicle_id=?, tyre_position=?, tyre_action=?, km_reading=?, updated_by=?, updated_at=? WHERE id=?",
+        (vehicle_id, f.get('position'), 'New Tyre Fitted', km_reading, session.get('user_id'), _now, stock['maintenance_id']))
+    conn.execute("""UPDATE tyre_stock SET status='Installed', installed_vehicle_id=?, installed_position=?,
+                    installed_date=?, updated_by=?, updated_at=? WHERE id=?""",
+        (vehicle_id, f.get('position'), install_date,
+         session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stock_id))
+    return True, None
+
+@app.route('/maintenance/tyre/stock/<int:stock_id>/install', methods=['POST'])
+def install_tyre_stock(stock_id):
+    conn = get_db()
+    _install_tyre_stock_from_form(conn, stock_id, request.form)
+    conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
 
@@ -3946,10 +4193,14 @@ def delete_tyre_stock(stock_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
 
-@app.route('/maintenance/battery/add', methods=['POST'])
-def add_battery():
-    conn = get_db()
-    f = request.form
+def _insert_battery_from_form(conn, f):
+    """Builds and inserts one battery — "Install to Vehicle" or "Add to Stock" mode (mode='install'
+    default, matching the website's own hidden #batModeField) — from a submitted form. Same
+    fields, same required set as the website's own #addBatteryModal core wrap (Brand/Capacity/
+    Battery Type always required; Vehicle/Install Date only required in 'install' mode; Purchase
+    Date/Warranty/Price/Vendor always required), used by both add_battery() (website) and
+    app_add_battery() (mobile). Returns (ok, error_message_or_new_battery_id) — does not commit or
+    close conn."""
     def get_or_create_vehicle(vno):
         if not vno or not vno.strip():
             return None
@@ -3962,6 +4213,26 @@ def add_battery():
         return cur.lastrowid
 
     mode = f.get('mode', 'install')
+    if not (f.get('brand') or '').strip():
+        return False, 'Brand is required.'
+    if not f.get('capacity_ah'):
+        return False, 'Capacity (AH) is required.'
+    if not (f.get('battery_type') or '').strip():
+        return False, 'Battery Type is required.'
+    if mode == 'install':
+        if not (f.get('vehicle_no') or '').strip():
+            return False, 'Vehicle is required.'
+        if not f.get('install_date'):
+            return False, 'Installation Date is required.'
+    if not f.get('purchase_date'):
+        return False, 'Purchase Date is required.'
+    if not f.get('warranty_months'):
+        return False, 'Warranty (Months) is required.'
+    if not f.get('purchase_price'):
+        return False, 'Purchase Price is required.'
+    if not (f.get('vendor_name') or '').strip():
+        return False, 'Vendor / Dealer is required.'
+
     vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) if mode == 'install' else None
     # Same purchase-record-becomes-ledger-entry pattern as Tyres: the cost posts once, here,
     # whether the battery goes straight onto a vehicle or sits in stock first.
@@ -4000,14 +4271,20 @@ def add_battery():
                         VALUES (?,?,?,?,?,?,?,?)""",
                      (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", health, voltage, temp_c,
                       session.get('user_id'), now))
+    return True, battery_id
+
+@app.route('/maintenance/battery/add', methods=['POST'])
+def add_battery():
+    conn = get_db()
+    _insert_battery_from_form(conn, request.form)
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
 
-@app.route('/maintenance/battery/<int:battery_id>/install', methods=['POST'])
-def install_battery(battery_id):
-    conn = get_db()
-    f = request.form
+def _install_battery_from_form(conn, battery_id, f):
+    """Links an existing In Stock battery to a vehicle — same fields/logic used by both
+    install_battery() (website) and app_install_battery() (mobile). Returns
+    (ok, error_message_or_None) — does not commit or close conn."""
     def get_or_create_vehicle(vno):
         if not vno or not vno.strip():
             return None
@@ -4019,21 +4296,35 @@ def install_battery(battery_id):
                             (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         return cur.lastrowid
 
+    if not (f.get('vehicle_no') or '').strip():
+        return False, 'Vehicle is required.'
+    if not f.get('install_date'):
+        return False, 'Install Date is required.'
     battery = conn.execute("SELECT * FROM batteries WHERE id=?", (battery_id,)).fetchone()
-    if battery and not battery['vehicle_id']:
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
-        install_date = f.get('install_date')
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute("""UPDATE batteries SET vehicle_id=?, installed_location=?, install_date=?, last_checked_date=?,
-                        updated_by=?, updated_at=? WHERE id=?""",
-                     (vehicle_id, f.get('installed_location') or None, install_date, install_date,
-                      session.get('user_id'), now, battery_id))
-        if battery['maintenance_id']:
-            conn.execute("UPDATE maintenance SET vehicle_id=?, updated_by=?, updated_at=? WHERE id=?",
-                         (vehicle_id, session.get('user_id'), now, battery['maintenance_id']))
-        conn.execute("INSERT INTO battery_checks (battery_id, date, event, created_by, created_at) VALUES (?,?,?,?,?)",
-                     (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", session.get('user_id'), now))
-        conn.commit()
+    if not battery:
+        return False, 'Battery not found.'
+    if battery['vehicle_id']:
+        return False, 'This battery is already installed.'
+
+    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    install_date = f.get('install_date')
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("""UPDATE batteries SET vehicle_id=?, installed_location=?, install_date=?, last_checked_date=?,
+                    updated_by=?, updated_at=? WHERE id=?""",
+                 (vehicle_id, f.get('installed_location') or None, install_date, install_date,
+                  session.get('user_id'), now, battery_id))
+    if battery['maintenance_id']:
+        conn.execute("UPDATE maintenance SET vehicle_id=?, updated_by=?, updated_at=? WHERE id=?",
+                     (vehicle_id, session.get('user_id'), now, battery['maintenance_id']))
+    conn.execute("INSERT INTO battery_checks (battery_id, date, event, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (battery_id, install_date, f"Installed in {f.get('vehicle_no')}", session.get('user_id'), now))
+    return True, None
+
+@app.route('/maintenance/battery/<int:battery_id>/install', methods=['POST'])
+def install_battery(battery_id):
+    conn = get_db()
+    _install_battery_from_form(conn, battery_id, request.form)
+    conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
 
@@ -5528,16 +5819,19 @@ def delete_trip(trip_id):
     conn.close()
     return redirect(url_for('trips_list'))
 
-@app.route('/trips/<int:trip_id>/end', methods=['POST'])
-def end_trip(trip_id):
-    conn = get_db()
+def _end_trip_from_form(conn, trip_id, f):
+    """Shared by end_trip() (website, per-row modal on trips_list.html) and app_end_trip()
+    (mobile modal) — the exact same "mark this trip complete" write, unchanged. Returns
+    (ok, error_message_or_None). No-ops (ok=False) on a missing trip or one already ended —
+    once ended, no further edits are allowed, same rule the website has always enforced."""
     trip = conn.execute("SELECT id, end_date FROM trips WHERE id=?", (trip_id,)).fetchone()
-    if not trip or trip['end_date']:
-        # Already ended (or missing) — no further edits allowed, silently ignore.
-        conn.close()
-        return redirect(url_for('trips_list', **request.args.to_dict()))
+    if not trip:
+        return False, 'Trip not found.'
+    if trip['end_date']:
+        return False, 'This trip has already been ended — no further edits allowed.'
+    if not f.get('end_date'):
+        return False, 'End Date is required.'
 
-    f = request.form
     def n(key):
         return float(f.get(key) or 0)
 
@@ -5557,6 +5851,12 @@ def end_trip(trip_id):
                   f.get('remarks') or None, new_billed_amount, session.get('user_id'),
                   datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), trip_id))
     conn.commit()
+    return True, None
+
+@app.route('/trips/<int:trip_id>/end', methods=['POST'])
+def end_trip(trip_id):
+    conn = get_db()
+    _end_trip_from_form(conn, trip_id, request.form)
     conn.close()
     return redirect(url_for('trips_list', **request.args.to_dict()))
 
@@ -9143,13 +9443,10 @@ def edit_trip(trip_id):
                             employees=employees, vehicle_type_map=vehicle_type_map,
                             return_to=request.args.get('return_to', ''), active='trips')
 
-@app.route('/trips/<int:trip_id>/view')
-def trip_view(trip_id):
-    """Read-only trip detail — opened from a Ledger row's Trip Bill entry in a centered popup
-    (see openRecordModal in base.html), instead of routing to the editable Trip form. Same
-    fields as trip_form.html/edit_trip, just displayed rather than edited — purely look-don't-
-    touch, no edit/download action on this view."""
-    conn = get_db()
+def _trip_detail_data(conn, trip_id):
+    """Shared by trip_view() (website, Ledger popup) and app_trip_detail() (mobile) — every real
+    field either page needs about one trip, computed once. Returns None if the trip doesn't
+    exist."""
     trip = conn.execute("""SELECT t.*, v.id as veh_id, v.vehicle_no, v.status as veh_status,
                            v.body_type as veh_body_type, v.capacity_mt as veh_capacity_mt,
                            v.rc_synced_data as veh_rc_data, p.name as party_name,
@@ -9162,12 +9459,10 @@ def trip_view(trip_id):
                            LEFT JOIN vendors mv ON t.misc_vendor_id=mv.id
                            WHERE t.id=?""", (trip_id,)).fetchone()
     if not trip:
-        conn.close()
-        return redirect(url_for('trips_list'))
+        return None
     custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
                                        FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
                                        WHERE ii.trip_id=?""", (trip_id,)).fetchall()
-    conn.close()
     t = dict(trip)
     is_hired = t.get('type') == VEHICLE_TYPE_HIRED
     owner_amount = 0
@@ -9191,9 +9486,23 @@ def trip_view(trip_id):
         deductions_total += (it['amount'] or 0) if it['item_type'] == 'deduction' else 0
         additions_total += (it['amount'] or 0) if it['item_type'] == 'charge' else 0
     balance_due = (t.get('billed_amount') or 0) - (t.get('payment_received') or 0)
-    return render_template('trip_view.html', t=t, custom_items=custom_item_rows, is_hired=is_hired,
-                            owner_amount=owner_amount, veh_rc=veh_rc, additions_total=additions_total,
-                            deductions_total=deductions_total, balance_due=balance_due, active='accounts')
+    return {'t': t, 'custom_items': custom_item_rows, 'is_hired': is_hired,
+            'owner_amount': owner_amount, 'veh_rc': veh_rc, 'additions_total': additions_total,
+            'deductions_total': deductions_total, 'balance_due': balance_due}
+
+@app.route('/trips/<int:trip_id>/view')
+def trip_view(trip_id):
+    """Read-only trip detail — opened from a Ledger row's Trip Bill entry in a centered popup
+    (see openRecordModal in base.html), instead of routing to the editable Trip form. Same
+    fields as trip_form.html/edit_trip, just displayed rather than edited — purely look-don't-
+    touch, no edit/download action on this view. See _trip_detail_data() above for what's
+    computed."""
+    conn = get_db()
+    data = _trip_detail_data(conn, trip_id)
+    conn.close()
+    if data is None:
+        return redirect(url_for('trips_list'))
+    return render_template('trip_view.html', active='accounts', **data)
 
 @app.route('/business-performance')
 def business_performance():
@@ -9954,7 +10263,8 @@ def app_add_trip():
                      f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
             return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles],
                                     combined_names=combined_names, employees=[e['name'] for e in employees],
-                                    vehicle_type_map=vehicle_type_map, error=error, company_name=company_name)
+                                    vehicle_type_map=vehicle_type_map, error=error, company_name=company_name,
+                                    mode='add', custom_items=[])
         _insert_trip_from_form(conn, f)
         conn.commit()
         conn.close()
@@ -9967,27 +10277,97 @@ def app_add_trip():
     conn2.close()
     return render_template('app/trip_add.html', t={}, vehicles=[v['vehicle_no'] for v in vehicles],
                             combined_names=combined_names, employees=[e['name'] for e in employees],
-                            vehicle_type_map=vehicle_type_map, error=None, company_name=company_name)
+                            vehicle_type_map=vehicle_type_map, error=None, company_name=company_name,
+                            mode='add', custom_items=[])
+
+@app.route('/app/trips/<int:trip_id>/edit', methods=['GET', 'POST'])
+def app_edit_trip(trip_id):
+    """Mobile Update Trip — the exact same 4-step wizard as Add Trip (app_add_trip() above),
+    pre-filled with this trip's real values, over the exact same real update logic the website's
+    own Edit Trip page uses (templates/trip_form.html, edit_trip() above): both call
+    _duplicate_lr_trip(..., exclude_trip_id=trip_id) and _update_trip_from_form(), so the two can
+    never quietly disagree. Vehicle is locked (read-only in the wizard) — a trip's vehicle_id is
+    never changeable after creation, same rule edit_trip() enforces server-side too. Existing
+    custom "Other Items" are pre-loaded into Step 3 (see tw_existing_items in trip_add.html) —
+    without that, saving would silently wipe them, since _save_trip_custom_items() always
+    replaces a trip's items from whatever the submitted form actually contains."""
+    conn = get_db()
+    company_name = get_company_name(session.get('company_id', 1))
+
+    def _load_form_context():
+        vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+        conn2 = get_db()
+        employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+        vehicle_type_map = _vehicle_type_map(conn2)
+        conn2.close()
+        return ([v['vehicle_no'] for v in vehicles], combined_names, [e['name'] for e in employees], vehicle_type_map)
+
+    if request.method == 'POST':
+        f = request.form
+        dup = _duplicate_lr_trip(conn, f.get('lr_number'), exclude_trip_id=trip_id)
+        if dup:
+            custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
+                                               FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
+                                               WHERE ii.trip_id=?""", (trip_id,)).fetchall()
+            custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
+                              'vendor_name': r['vendor_name'] or ''} for r in custom_item_rows]
+            conn.close()
+            vehicles, combined_names, employees, vehicle_type_map = _load_form_context()
+            error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
+                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+            return render_template('app/trip_add.html', t=f, vehicles=vehicles, combined_names=combined_names,
+                                    employees=employees, vehicle_type_map=vehicle_type_map, error=error,
+                                    company_name=company_name, mode='edit', trip_id=trip_id, custom_items=custom_items)
+        ok, error = _update_trip_from_form(conn, trip_id, f)
+        if not ok:
+            conn.close()
+            return redirect(url_for('app_trips'))
+        conn.commit()
+        conn.close()
+        return redirect(url_for('app_trip_detail', trip_id=trip_id, updated='1'))
+
+    trip = conn.execute("""SELECT t.*, v.vehicle_no, p.name as party_name,
+                           fv.name as fuel_vendor_name, dv.name as driveradv_vendor_name, mv.name as misc_vendor_name
+                           FROM trips t
+                           LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                           LEFT JOIN parties p ON t.party_id=p.id
+                           LEFT JOIN vendors fv ON t.fuel_vendor_id=fv.id
+                           LEFT JOIN vendors dv ON t.driver_adv_vendor_id=dv.id
+                           LEFT JOIN vendors mv ON t.misc_vendor_id=mv.id
+                           WHERE t.id=?""", (trip_id,)).fetchone()
+    if not trip:
+        conn.close()
+        return redirect(url_for('app_trips'))
+    custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
+                                       FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
+                                       WHERE ii.trip_id=?""", (trip_id,)).fetchall()
+    custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
+                      'vendor_name': r['vendor_name'] or ''} for r in custom_item_rows]
+    conn.close()
+    vehicles, combined_names, employees, vehicle_type_map = _load_form_context()
+    return render_template('app/trip_add.html', t=dict(trip), vehicles=vehicles, combined_names=combined_names,
+                            employees=employees, vehicle_type_map=vehicle_type_map, error=None,
+                            company_name=company_name, mode='edit', trip_id=trip_id, custom_items=custom_items)
 
 @app.route('/app/maintenance')
 def app_maintenance():
-    """Mobile Maintenance — Overview tab only, real numbers straight from
-    _maintenance_overview_data() (the exact same computation the website's own Maintenance
-    Overview tab uses — see the refactor above it). Trimmed to the data points that matter most
-    on a small screen (per this app's design direction: no Avg Cost/KM or Fleet Availability
-    tiles; trend simplified to a 6-month bar strip instead of a plotted SVG line) — nothing here
-    is fabricated, it's a subset of the same real dict the website renders in full. The 5-band
-    health legend (Excellent/Good/Average/Poor/Critical) is kept complete, same as the website,
-    including bands currently at 0.
-    No "+ Add Maintenance" button on this tab, by design — Service/Tyres/Battery/Urea (reached
-    from the tab strip) each carry their own real add flow already on the website; this Overview
-    is read-only, matching the instruction that Add belongs on those tabs, not here.
+    """Mobile Maintenance — Overview and Service tabs are native; Tyres/Battery/Urea/Toll/
+    Compliance still bridge to the real website (see the tab strip in app/maintenance.html).
+    Overview: real numbers straight from _maintenance_overview_data() (the exact same
+    computation the website's own Maintenance Overview tab uses). Trimmed to the data points
+    that matter most on a small screen (no Avg Cost/KM or Fleet Availability tiles; trend
+    simplified to a 6-month bar strip instead of a plotted SVG line) — nothing here is
+    fabricated, it's a subset of the same real dict the website renders in full.
+    Service: real numbers/rows straight from _maintenance_service_rows() (shared with the
+    website's own Service tab). Charts (Service by Type / Monthly Trend / Top Costly Vehicles)
+    are left off this pass — the reference design for this tab didn't include them either.
+    "Load More" (growing show count) instead of the website's numbered pager, same convention
+    every other list in this app already uses.
     """
     conn = get_db()
-    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
-    date_from, date_to = _month_bounds(last_month_end.year, last_month_end.month)
-    d = _maintenance_overview_data(conn, date_from, date_to)
-
+    tab = request.args.get('tab', 'overview')
+    if tab not in ('overview', 'service'):
+        tab = 'overview'
     company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
     if session.get('user_id'):
@@ -9997,15 +10377,211 @@ def app_maintenance():
     name_parts = [p for p in (display_name or '').split() if p]
     user_initials = ((name_parts[0][0] if name_parts else '') +
                       (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+
+    if tab == 'service':
+        d = _maintenance_service_rows(conn)
+        total_count = d['total_count']
+        try:
+            show = int(request.args.get('show', 15))
+        except (TypeError, ValueError):
+            show = 15
+        show = max(15, show)
+        has_more = total_count > show
+        page_rows = d['rows'][:show]
+        vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+        workshops = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+        service_types = sorted(set((r['service_type'] or r['category'] or '') for r in d['all_rows']
+                                    if _maintenance_classify(r['category'], r['service_type']) == 'Service' and (r['service_type'] or r['category'])))
+        conn.close()
+        return render_template('app/maintenance.html', company_name=company_name, user_initials=user_initials,
+            active='maintenance', notif_count=0, tab='service',
+            rows=page_rows, total_count=total_count, show=show, has_more=has_more,
+            total_cost=d['total_cost'], open_jobs=d['open_jobs'], completed_jobs=d['completed_jobs'],
+            breakdown_count=d['breakdown_count'], due_soon=d['due_soon'], avg_cost=d['avg_cost'],
+            vehicles=[v['vehicle_no'] for v in vehicles], workshops=[w['name'] for w in workshops],
+            service_types=service_types, combined_names=combined_names, checklist_items=MAINTENANCE_CHECKLIST,
+            f_vehicle=d['f_vehicle'], f_workshop=d['f_workshop'], f_service_type=d['f_service_type'],
+            f_status=d['f_status'], f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_search=d['f_search'])
+
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    date_from, date_to = _month_bounds(last_month_end.year, last_month_end.month)
+    d = _maintenance_overview_data(conn, date_from, date_to)
     conn.close()
 
     return render_template('app/maintenance.html', company_name=company_name, user_initials=user_initials,
-        notif_count=d['pending_count'] + len(d['actions']), active='maintenance',
+        notif_count=d['pending_count'] + len(d['actions']), active='maintenance', tab='overview',
         period_label=datetime.datetime.strptime(date_from, '%Y-%m-%d').strftime('%b %Y'),
         total_fleet=d['total_fleet'], vehicles_serviced=d['vehicles_serviced'], pending_count=d['pending_count'],
         total_cost=d['total_cost'], total_unpaid=d['total_unpaid'],
         health_bands=d['health_bands'],
         actions=d['actions'], trend=d['trend'], trend_max=d['trend_max'])
+
+@app.route('/app/maintenance/service/add', methods=['POST'])
+def app_add_service():
+    """In-app "Add Service" modal (maintenance.html's Service tab) posts here via fetch instead
+    of the website's own modal — same _insert_service_from_form() the website itself uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_service_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_maintenance', tab='service')})
+
+@app.route('/app/tyres')
+def app_tyres():
+    """Mobile Tyre Management — its own page (not a Maintenance sub-tab) reached from the bottom
+    nav's More sheet, matching the reference design. Real numbers straight from
+    _tyre_management_data() (shared with the website's own Maintenance > Tyres tab) — KPIs (Total
+    Tyres/In Stock/Puncture Repair/Total Spent), the real Tyre Stock list, and the real Tyre
+    Entries list. Vehicle Tyre Layout diagram and the cost trend/breakdown charts are left off
+    this pass — the reference design for this page didn't include them either, same call already
+    made for Maintenance > Service. "Load More" (growing show count) on Tyre Entries instead of
+    the website's numbered pager, same convention every other list in this app already uses; Tyre
+    Stock is shown in full (unpaginated) since it's normally a short list."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    d = _tyre_management_data(conn)
+    total_count = d['total_count']
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_rows = d['rows'][:show]
+    conn.close()
+    return render_template('app/tyres.html', company_name=company_name, user_initials=user_initials,
+        active='maintenance', notif_count=0,
+        rows=page_rows, total_count=total_count, show=show, has_more=has_more,
+        total_cost=d['total_cost'], unpaid_total=d['unpaid_total'], vehicles_covered=d['vehicles_covered'],
+        puncture_count=d['puncture_count'], avg_cost=d['avg_cost'],
+        stock_rows=d['stock_rows'], stock_in_count=d['stock_in_count'], stock_new_count=d['stock_new_count'],
+        stock_resole_count=d['stock_resole_count'], stock_value=d['stock_value'],
+        vehicles=[v['vehicle_no'] for v in d['vehicles']], tyre_vendors=[v['name'] for v in d['tyre_vendors']],
+        combined_names=d['combined_names'], tyre_brands=d['tyre_brands'],
+        tyre_actions=TYRE_ACTIONS, tyre_positions=TYRE_POSITIONS,
+        f_vehicle=d['f_vehicle'], f_action=d['f_action'], f_position=d['f_position'], f_vendor=d['f_vendor'],
+        f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_search=d['f_search'])
+
+@app.route('/app/tyres/add', methods=['POST'])
+def app_add_tyre():
+    """"New Tyre" mode of the in-app Add Tyre modal (tyres.html) — posts here via fetch instead of
+    the website's own #addTyreModal, same _insert_tyre_from_form() the website itself uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_tyre_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_tyres')})
+
+@app.route('/app/tyres/stock/add', methods=['POST'])
+def app_add_tyre_stock():
+    """"Add to Stock" mode of the in-app Add Tyre modal — same _insert_tyre_stock_from_form() the
+    website's own #addTyreModal (Add to Stock mode) uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_tyre_stock_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_tyres')})
+
+@app.route('/app/tyres/stock/<int:stock_id>/install', methods=['POST'])
+def app_install_tyre_stock(stock_id):
+    """"Install from Stock" mode of the in-app Add Tyre modal — same _install_tyre_stock_from_form()
+    the website's own #addTyreModal (Install from Stock mode) uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _install_tyre_stock_from_form(conn, stock_id, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_tyres')})
+
+@app.route('/app/battery')
+def app_battery():
+    """Mobile Battery Management — its own top-level page (not a Maintenance sub-tab), reached
+    from the bottom nav's More sheet and from the Maintenance tab strip, same pattern as Tyres.
+    Real numbers straight from _battery_management_data() (shared with the website's own
+    Maintenance > Battery tab) — KPIs (Total Batteries/Good Condition/Needs Attention/Dead/Avg.
+    Health), and the real filtered battery list. Warranty/Low-Health panels and the cost trend
+    chart are left off this pass, same call already made for Tyres/Service. "Load More" (growing
+    show count) instead of the website's numbered pager, same convention every list in this app
+    already uses."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    d = _battery_management_data(conn)
+    total_count = d['total_count']
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_rows = d['rows'][:show]
+    conn.close()
+    return render_template('app/battery.html', company_name=company_name, user_initials=user_initials,
+        active='maintenance', notif_count=0,
+        rows=page_rows, total_count=total_count, show=show, has_more=has_more,
+        total_batteries=d['total_batteries'], in_use=d['in_use'], in_stock=d['in_stock'],
+        weak_soon=d['weak_soon'], dead_count=d['dead_count'], avg_health_pct=d['avg_health_pct'],
+        vehicles=[v['vehicle_no'] for v in d['vehicles']], battery_vendors=[v['name'] for v in d['battery_vendors']],
+        combined_names=d['combined_names'], battery_brands=d['battery_brands'], battery_types=BATTERY_TYPES,
+        stock_batteries=d['stock_batteries'],
+        f_vehicle=d['f_vehicle'], f_brand=d['f_brand'], f_status=d['f_status'], f_battery_type=d['f_battery_type'],
+        f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_search=d['f_search'])
+
+@app.route('/app/battery/add', methods=['POST'])
+def app_add_battery():
+    """"Install to Vehicle" / "Add to Stock" modes of the in-app Add Battery modal (battery.html)
+    — posts here via fetch instead of the website's own #addBatteryModal, same
+    _insert_battery_from_form() the website itself uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_battery_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_battery')})
+
+@app.route('/app/battery/<int:battery_id>/install', methods=['POST'])
+def app_install_battery(battery_id):
+    """"Install from Stock" mode of the in-app Add Battery modal — same
+    _install_battery_from_form() the website's own #addBatteryModal (Install from Stock mode) and
+    per-row Install button both use."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _install_battery_from_form(conn, battery_id, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_battery')})
 
 @app.route('/app/trips')
 def app_trips():
@@ -10019,6 +10595,12 @@ def app_trips():
     conn = get_db()
     status_f = request.args.get('status', '')  # '', 'active', 'completed' — same convention trips_list() already uses
     search_f = (request.args.get('search') or '').strip()
+    # Real filters beyond status/search — same fields trips_list() itself supports, added behind
+    # the filter icon (see .a-filter-btn) rather than as extra inline dropdowns.
+    type_f = request.args.get('type', '')
+    lr_received_f = request.args.get('lr_received', '')
+    date_from_f = request.args.get('date_from', '')
+    date_to_f = request.args.get('date_to', '')
 
     where = " WHERE 1=1"
     params = []
@@ -10026,6 +10608,19 @@ def app_trips():
         where += " AND t.end_date IS NULL"
     elif status_f == 'completed':
         where += " AND t.end_date IS NOT NULL"
+    if type_f:
+        where += " AND t.type = ?"
+        params.append(type_f)
+    if lr_received_f == 'received':
+        where += " AND t.lr_received = 'Yes'"
+    elif lr_received_f == 'not_received':
+        where += " AND (t.lr_received IS NULL OR t.lr_received != 'Yes')"
+    if date_from_f:
+        where += " AND t.date >= ?"
+        params.append(date_from_f)
+    if date_to_f:
+        where += " AND t.date <= ?"
+        params.append(date_to_f)
     if search_f:
         where += """ AND (t.lr_number LIKE ? OR v.vehicle_no LIKE ? OR p.name LIKE ? OR t.driver_name LIKE ?)"""
         like = f"%{search_f}%"
@@ -10079,9 +10674,51 @@ def app_trips():
 
     return render_template('app/trips.html', company_name=company_name, user_initials=user_initials,
         active='trips', notif_count=ongoing_count,
-        trips=trips, f_status=status_f, f_search=search_f, show=show, has_more=has_more, total_count=total_count,
+        trips=trips, f_status=status_f, f_search=search_f, f_type=type_f, f_lr_received=lr_received_f,
+        f_date_from=date_from_f, f_date_to=date_to_f, show=show, has_more=has_more, total_count=total_count,
         total_trips_month=total_trips_month, ongoing_count=ongoing_count,
         completed_month=completed_month, total_freight_month=_fmt_freight(total_freight_month))
+
+@app.route('/app/trips/<int:trip_id>')
+def app_trip_detail(trip_id):
+    """Mobile Trip detail — same real data as trip_view() (see _trip_detail_data() above: trip
+    fields, vehicle/party/vendor joins, custom invoice items, owner amount, additions/deductions
+    totals, balance due). Real tabs grouping the same fields the website's own trip_form.html
+    edit wizard uses (Trip Info / Costs & Payments / Deductions / Completion) — nothing
+    fabricated, just a mobile-friendly regrouping of real columns. Only one real action button:
+    "End Trip" (native modal, posts to the same real /trips/<id>/end endpoint the website's own
+    per-row modal uses) — shown only while the trip is still open (end_date IS NULL), same
+    condition the website enforces; "Update Trip" bridges (↗) to the real full edit wizard
+    (edit_trip()/trip_form.html) rather than being rebuilt here — that form has ~30 fields across
+    cargo/cost/deduction/owner sections, out of scope for a native rebuild in this pass."""
+    conn = get_db()
+    data = _trip_detail_data(conn, trip_id)
+    if data is None:
+        conn.close()
+        return redirect(url_for('app_trips'))
+    company_name, user_initials = _app_user_display(conn)
+    conn.close()
+
+    tab = request.args.get('tab', 'info')
+    if tab not in ('info', 'costs', 'deductions', 'completion'):
+        tab = 'info'
+    return render_template('app/trip_detail.html', company_name=company_name, user_initials=user_initials,
+        active='trips', notif_count=0, tab=tab, **data)
+
+@app.route('/app/trips/<int:trip_id>/end', methods=['POST'])
+def app_end_trip(trip_id):
+    """In-app "End Trip" modal (trip_detail.html) posts here via fetch instead of the website's
+    inline per-row modal — same _end_trip_from_form() the website itself uses, just returning
+    JSON so the modal can close in place and reload the real (now-completed) trip."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, error = _end_trip_from_form(conn, trip_id, request.form)
+    conn.close()
+    if not ok:
+        return jsonify({'ok': False, 'error': error}), 400
+    return jsonify({'ok': True, 'redirect': url_for('app_trip_detail', trip_id=trip_id, tab='completion')})
 
 @app.route('/app/vehicles')
 def app_vehicles():
@@ -10106,6 +10743,10 @@ def app_vehicles():
     conn = get_db()
     status_f = request.args.get('status', '')
     search_f = (request.args.get('search') or '').strip()
+    # Type and Age — real filters on the website's own vehicles_list() (type_f/age_f), added
+    # behind the filter icon (see .a-filter-btn) rather than as extra inline dropdowns.
+    type_f = request.args.get('type', '')
+    age_f = request.args.get('age', '')
 
     query = """SELECT id, vehicle_no, type, registration_date, status, body_type,
                       insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
@@ -10115,6 +10756,9 @@ def app_vehicles():
     if status_f:
         query += " AND COALESCE(status,'Active') = ?"
         params.append(status_f)
+    if type_f:
+        query += " AND type = ?"
+        params.append(type_f)
     if search_f:
         query += " AND vehicle_no LIKE ?"
         params.append(f"%{search_f}%")
@@ -10140,6 +10784,14 @@ def app_vehicles():
             'puc': _exp_field(r['puc_valid_upto']), 'permit': _exp_field(r['permit_valid_upto']),
             'challan_count': r['challan_count'] or 0, 'challan_amount': r['challan_amount'] or 0,
         })
+    # Age-bucket filter — same post-query logic as vehicles_list() (age is computed, never a real
+    # SQL column, so it can't be filtered in the WHERE above).
+    if age_f == 'under3':
+        all_vehicles = [v for v in all_vehicles if v['age_years'] is not None and v['age_years'] < 3]
+    elif age_f == '3to6':
+        all_vehicles = [v for v in all_vehicles if v['age_years'] is not None and 3 <= v['age_years'] < 6]
+    elif age_f == 'over6':
+        all_vehicles = [v for v in all_vehicles if v['age_years'] is not None and v['age_years'] >= 6]
     # Oldest first; unknown age (no registration_date on file) always sorts last regardless —
     # "unknown" isn't meaningfully old or young, same rule vehicles_list() uses for sort=age.
     known = [v for v in all_vehicles if v['age_years'] is not None]
@@ -10186,7 +10838,7 @@ def app_vehicles():
 
     return render_template('app/vehicles.html', company_name=company_name, user_initials=user_initials,
         active='vehicles', notif_count=ins_expiring + challan_vehicle_count,
-        vehicles=vehicles, f_status=status_f, f_search=search_f,
+        vehicles=vehicles, f_status=status_f, f_search=search_f, f_type=type_f, f_age=age_f,
         show=show, has_more=has_more, total_count=total_count,
         total_vehicles=total_vehicles, active_count=active_count,
         active_pct=round(active_count / total_vehicles * 100, 1) if total_vehicles else 0,
@@ -10320,8 +10972,9 @@ def app_ledger():
     Search here is deliberately narrower than the website's own (name + contact + email): name
     only, matching real party/vendor names, not phone/email — a mobile-specific simplification,
     not a website behavior being reproduced.
-    Trimmed for a small screen: Group and Status filters dropped (Type — All/Parties/Vendors —
-    covers the common case as a tab strip, same as Trips/Vehicles already do here); no numbered
+    Type (All/Parties/Vendors) is still the tab strip. Group and Status are real filters too
+    (accounts()'s own group_f/status_f) — added behind the filter icon (.a-filter-btn) rather
+    than extra inline dropdowns, same pattern as Vehicles/Trips/Maintenance-Service. No numbered
     pagination, "Load More" instead (see app_vehicles()/app_trips() for the same pattern); no
     "Sort by" control since _accounts_rows() already returns everything sorted by name and the
     website itself has no other real sort option to mirror. No download/export button for now
@@ -10331,6 +10984,8 @@ def app_ledger():
     conn = get_db()
     search_f = (request.args.get('search') or '').strip()
     role_f = request.args.get('role', '')  # '', 'Party', 'Vendor' — same convention accounts() uses
+    group_f = request.args.get('group', '')
+    status_f = request.args.get('status', '')
 
     all_rows = _accounts_rows(conn)
     total_parties = sum(1 for r in all_rows if r['role'] == 'Party')
@@ -10342,6 +10997,7 @@ def app_ledger():
     total_payable = sum(-r['balance'] for r in all_rows if r['balance'] < 0)
     payable_to = sum(1 for r in all_rows if r['balance'] < 0)
     net_balance = sum(r['balance'] for r in all_rows)
+    groups = sorted(set(r['group'] for r in all_rows if r['group']))
 
     # Name-only search here, not the website's name+contact+email — narrower on purpose per this
     # app's design direction, still matching real party/vendor names, just not phone/email too.
@@ -10351,6 +11007,10 @@ def app_ledger():
         filtered_rows = [r for r in filtered_rows if s in r['name'].lower()]
     if role_f:
         filtered_rows = [r for r in filtered_rows if r['role'] == role_f]
+    if group_f:
+        filtered_rows = [r for r in filtered_rows if r['group'] == group_f]
+    if status_f:
+        filtered_rows = [r for r in filtered_rows if r['status'].lower() == status_f.lower()]
     total_count = len(filtered_rows)
     try:
         show = int(request.args.get('show', 15))
@@ -10378,7 +11038,8 @@ def app_ledger():
     conn.close()
 
     return render_template('app/ledger.html', company_name=company_name, user_initials=user_initials,
-        active='ledger', notif_count=0, f_search=search_f, f_role=role_f, show=show, has_more=has_more,
+        active='ledger', notif_count=0, f_search=search_f, f_role=role_f, f_group=group_f, f_status=status_f,
+        groups=groups, show=show, has_more=has_more,
         total_count=total_count, rows=rows,
         total_parties=total_parties, active_parties=active_parties,
         total_vendors=total_vendors, active_vendors=active_vendors,

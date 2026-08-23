@@ -8,22 +8,66 @@
 </div>
 
 <div class="tr-tabstrip">
-  <a class="tr-tab {{ 'active' if not f_status }}" href="{{ url_for('app_trips', search=f_search) }}">
+  <a class="tr-tab {{ 'active' if not f_status }}" href="{{ url_for('app_trips', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to) }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg>
     All Trips</a>
-  <a class="tr-tab {{ 'active' if f_status=='active' }}" href="{{ url_for('app_trips', status='active', search=f_search) }}">
+  <a class="tr-tab {{ 'active' if f_status=='active' }}" href="{{ url_for('app_trips', status='active', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to) }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
     Ongoing</a>
-  <a class="tr-tab {{ 'active' if f_status=='completed' }}" href="{{ url_for('app_trips', status='completed', search=f_search) }}">
+  <a class="tr-tab {{ 'active' if f_status=='completed' }}" href="{{ url_for('app_trips', status='completed', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to) }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>
     Completed</a>
 </div>
 
-<form method="get" class="tr-search">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-  <input type="text" name="search" value="{{ f_search }}" placeholder="Search by LR No., Vehicle, Party, Driver…" onchange="this.form.submit()">
-  {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
-</form>
+<div class="a-search-row">
+  <form method="get" class="a-search-box" id="trSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Search by LR No., Vehicle, Party, Driver…" onchange="this.form.submit()">
+    {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+    {% if f_type %}<input type="hidden" name="type" value="{{ f_type }}">{% endif %}
+    {% if f_lr_received %}<input type="hidden" name="lr_received" value="{{ f_lr_received }}">{% endif %}
+    {% if f_date_from %}<input type="hidden" name="date_from" value="{{ f_date_from }}">{% endif %}
+    {% if f_date_to %}<input type="hidden" name="date_to" value="{{ f_date_to }}">{% endif %}
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_type or f_lr_received or f_date_from or f_date_to }}" onclick="openTrFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<!-- Filter sheet — real filters (Type, LR Received, Date range), same fields the website's own
+     trips_list() supports. Status is already handled by the tab strip above. -->
+<div class="vam-backdrop" id="trFilterBackdrop" onclick="closeTrFilterSheet()"></div>
+<div class="vam-modal" id="trFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeTrFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_trips') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+    <div class="vam-field vam-field-full">
+      <label>Type</label>
+      <select name="type"><option value="">All Types</option>
+        {% for code, label in VEHICLE_TYPE_LABELS.items() %}<option value="{{ code }}" {% if f_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>LR Received</label>
+      <select name="lr_received"><option value="">All</option>
+        <option value="received" {% if f_lr_received == 'received' %}selected{% endif %}>Received</option>
+        <option value="not_received" {% if f_lr_received == 'not_received' %}selected{% endif %}>Not Received</option>
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_trips', search=f_search, status=f_status) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
 
 <div class="tr-kpi-grid">
   <div class="tr-kpi-card">
@@ -51,7 +95,7 @@
 
 <div id="tr-list">
 {% for t in trips %}
-<a href="{{ url_for('trip_view', trip_id=t.id) }}" class="tr-card">
+<a href="{{ url_for('app_trip_detail', trip_id=t.id) }}" class="tr-card">
   <div class="tr-card-bar {{ 'ongoing' if t.ongoing else 'completed' }}"></div>
   <div class="tr-card-body">
     <div class="tr-card-status {{ 'ongoing' if t.ongoing else 'completed' }}">
@@ -77,7 +121,7 @@
 
 <div id="tr-load-area">
 {% if has_more %}
-<a class="vh-loadmore" data-loadmore href="{{ url_for('app_trips', status=f_status, search=f_search, show=show+15) }}">
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_trips', status=f_status, search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to, show=show+15) }}">
   Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
 </a>
 {% elif trips %}
@@ -118,5 +162,18 @@ document.addEventListener('click', function (e) {
       btn.style.pointerEvents = '';
     });
 });
+
+// Filter sheet — real filters (Type, LR Received, Date range), same open/close pattern as the
+// Add Vehicle / Add Service modals.
+function openTrFilterSheet() {
+  lockPageScroll();
+  document.getElementById('trFilterBackdrop').classList.add('open');
+  document.getElementById('trFilterSheet').classList.add('open');
+}
+function closeTrFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('trFilterBackdrop').classList.remove('open');
+  document.getElementById('trFilterSheet').classList.remove('open');
+}
 </script>
 {% endblock %}

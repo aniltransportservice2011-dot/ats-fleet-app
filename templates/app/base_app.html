@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- maximum-scale=1 + user-scalable=no stop pinch/double-tap zoom on the page itself — the same
+     viewport lock every native-feeling app/PWA uses, matching how the rest of this app (fixed
+     header, fixed bottom nav) already assumes a non-zoomable layout. This only affects gestures
+     on this page's own content; it doesn't touch the OS-level accessibility zoom a user may have
+     turned on system-wide. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>{% block title %}Anil Transport{% endblock %}</title>
 
 <!-- Installable app manifest — scoped to /app/ only. The website's own pages (base.html) never
@@ -98,10 +103,10 @@
         <span class="fab-option-ic" style="background:#fdecea;color:var(--a-red);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg></span>
         <span class="fab-option-label">Add Trip</span>
       </a>
-      <a href="/maintenance/add" class="fab-option" data-pos="2">
+      <button type="button" class="fab-option" data-pos="2" onclick="showMaintFan()">
         <span class="fab-option-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
         <span class="fab-option-label">Add Maintenance</span>
-      </a>
+      </button>
       <a href="/overheads/add" class="fab-option" data-pos="3">
         <span class="fab-option-ic" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg></span>
         <span class="fab-option-label">Add Expense</span>
@@ -111,8 +116,49 @@
         <span class="fab-option-label">Add Vehicle</span>
       </a>
     </div>
+
+    <!-- "Add Maintenance" drills into a SECOND arc from the same FAB anchor point, replacing the
+         4-option arc above rather than opening a separate sheet — same fan mechanism (position +
+         opacity + scale transition off .open), just 5 stops instead of 4 and compact icon+label
+         items sized to stay on-screen on a narrow phone without overlapping their neighbors. Real
+         5 add-types Maintenance actually has (see MAINTENANCE_TAB_LABELS / maintenance_list() in
+         app.py) minus the old free-text "Other" category (dropped per instruction, not offered
+         for now) — Service/Tyres/Battery are native, so each jumps straight to that page and
+         auto-opens its own real Add modal via the same ?add=1 convention /app/vehicles?add=1
+         already uses; Urea/Toll aren't native yet, so those 2 land on the website's own page for
+         it (marked ↗, same convention as the More speed-dial). Label placement follows each
+         item's own spot on the arc rather than one fixed layout for all 5: the 2 side stops on
+         each side (pos1/2 left, pos4/5 right) get the label beside the icon, pointing outward
+         away from the FAB (.fab-sub-side-l/-r); the single top-most stop (pos3, straight up) gets
+         the label above the icon instead (.fab-sub-top) — a side label there would just point
+         sideways into empty space instead of reading naturally. closeFabMenu() always resets back
+         to this being hidden and the level-1 .fab-menu showing again, so the FAB starts fresh at
+         level 1 every time it's reopened. -->
+    <div class="fab-menu maint-fan" id="maintFanMenu">
+      <a href="/app/maintenance?tab=service&add=1" class="fab-sub-option fab-sub-side-l" data-pos="1">
+        <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+        <span class="fab-sub-label">Service</span>
+      </a>
+      <a href="/app/tyres?add=1" class="fab-sub-option fab-sub-side-l" data-pos="2">
+        <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg></span>
+        <span class="fab-sub-label">Tyres</span>
+      </a>
+      <a href="/app/battery?add=1" class="fab-sub-option fab-sub-top" data-pos="3">
+        <span class="fab-sub-ic" style="background:#fff6e8;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg></span>
+        <span class="fab-sub-label">Battery</span>
+      </a>
+      <a href="/maintenance?tab=urea" class="fab-sub-option fab-sub-side-r" data-pos="4">
+        <span class="fab-sub-ic" style="background:#e6f6f4;color:var(--a-teal);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
+        <span class="fab-sub-label">Urea ↗</span>
+      </a>
+      <a href="/maintenance?tab=toll" class="fab-sub-option fab-sub-side-r" data-pos="5">
+        <span class="fab-sub-ic" style="background:#fdf3e0;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+        <span class="fab-sub-label">Toll ↗</span>
+      </a>
+    </div>
   </div>
   <div class="fab-backdrop" id="fabBackdrop" onclick="closeFabMenu()"></div>
+
   <a href="/app/ledger" class="a-bn-item {% if active=='ledger' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
     Ledger
@@ -217,6 +263,8 @@
   function closeFabMenu() {
     unlockPageScroll();
     document.getElementById('fabMenu').classList.remove('open');
+    document.getElementById('maintFanMenu').classList.remove('open');
+    document.getElementById('fabMenu').classList.remove('drilled');
     document.getElementById('fabBackdrop').classList.remove('open');
     document.getElementById('fabToggle').classList.remove('open');
     document.getElementById('fabToggle').setAttribute('aria-expanded', 'false');
@@ -224,6 +272,14 @@
   function toggleFabMenu() {
     if (document.getElementById('fabMenu').classList.contains('open')) closeFabMenu();
     else openFabMenu();
+  }
+  // "Add Maintenance" drills the FAB into a second 6-item arc from the same anchor point (see the
+  // HTML comment above #maintFanMenu) — swap which arc is showing without closing/reopening the
+  // FAB itself, so it reads as one menu fanning into another rather than a separate popup.
+  // closeFabMenu() above always clears both classes, so the FAB starts at level 1 again next time.
+  function showMaintFan() {
+    document.getElementById('fabMenu').classList.add('drilled');
+    document.getElementById('maintFanMenu').classList.add('open');
   }
 
   // Avatar → account dropdown. Same open/close/backdrop pattern as the FAB speed-dial above,

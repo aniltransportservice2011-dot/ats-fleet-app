@@ -9,11 +9,49 @@
   </div>
 </div>
 
-<form method="get" class="lg-search">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-  <input type="text" name="search" value="{{ f_search }}" placeholder="Search party or vendor name…" onchange="this.form.submit()">
-  {% if f_role %}<input type="hidden" name="role" value="{{ f_role }}">{% endif %}
-</form>
+<div class="a-search-row">
+  <form method="get" class="a-search-box" id="lgSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Search party or vendor name…" onchange="this.form.submit()">
+    {% if f_role %}<input type="hidden" name="role" value="{{ f_role }}">{% endif %}
+    {% if f_group %}<input type="hidden" name="group" value="{{ f_group }}">{% endif %}
+    {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_group or f_status }}" onclick="openLgFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<!-- Filter sheet — real filters (Group, Status), same fields the website's own accounts() route
+     supports. Type (Party/Vendor) is already handled by the tab strip below. -->
+<div class="vam-backdrop" id="lgFilterBackdrop" onclick="closeLgFilterSheet()"></div>
+<div class="vam-modal" id="lgFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeLgFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_ledger') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    {% if f_role %}<input type="hidden" name="role" value="{{ f_role }}">{% endif %}
+    <div class="vam-field vam-field-full">
+      <label>Group</label>
+      <select name="group"><option value="">All Groups</option>
+        {% for g in groups %}<option value="{{ g }}" {% if f_group == g %}selected{% endif %}>{{ g }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Status</label>
+      <select name="status"><option value="">All Status</option>
+        <option value="Active" {% if f_status == 'Active' %}selected{% endif %}>Active</option>
+        <option value="Inactive" {% if f_status == 'Inactive' %}selected{% endif %}>Inactive</option>
+      </select>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_ledger', search=f_search, role=f_role) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
 
 <div class="lg-kpi-grid">
   <div class="lg-kpi-card">
@@ -49,9 +87,9 @@
 </div>
 
 <div class="lg-tabstrip">
-  <a class="lg-tab {{ 'active' if not f_role }}" href="{{ url_for('app_ledger', search=f_search) }}">All</a>
-  <a class="lg-tab {{ 'active' if f_role=='Party' }}" href="{{ url_for('app_ledger', role='Party', search=f_search) }}">Parties</a>
-  <a class="lg-tab {{ 'active' if f_role=='Vendor' }}" href="{{ url_for('app_ledger', role='Vendor', search=f_search) }}">Vendors</a>
+  <a class="lg-tab {{ 'active' if not f_role }}" href="{{ url_for('app_ledger', search=f_search, group=f_group, status=f_status) }}">All</a>
+  <a class="lg-tab {{ 'active' if f_role=='Party' }}" href="{{ url_for('app_ledger', role='Party', search=f_search, group=f_group, status=f_status) }}">Parties</a>
+  <a class="lg-tab {{ 'active' if f_role=='Vendor' }}" href="{{ url_for('app_ledger', role='Vendor', search=f_search, group=f_group, status=f_status) }}">Vendors</a>
 </div>
 
 <div class="lg-showing">Showing {{ rows|length }} of {{ total_count }} entries</div>
@@ -86,7 +124,7 @@
 
 <div id="lg-load-area">
 {% if has_more %}
-<a class="vh-loadmore" data-loadmore href="{{ url_for('app_ledger', role=f_role, search=f_search, show=show+15) }}">
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_ledger', role=f_role, search=f_search, group=f_group, status=f_status, show=show+15) }}">
   Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
 </a>
 {% elif rows %}
@@ -121,5 +159,18 @@ document.addEventListener('click', function (e) {
       btn.style.pointerEvents = '';
     });
 });
+
+// Filter sheet — real filters (Group, Status), same open/close pattern as the Add Vehicle /
+// Add Service modals.
+function openLgFilterSheet() {
+  lockPageScroll();
+  document.getElementById('lgFilterBackdrop').classList.add('open');
+  document.getElementById('lgFilterSheet').classList.add('open');
+}
+function closeLgFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('lgFilterBackdrop').classList.remove('open');
+  document.getElementById('lgFilterSheet').classList.remove('open');
+}
 </script>
 {% endblock %}

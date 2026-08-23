@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Add Trip — {{ company_name }}</title>
+<!-- This page doesn't extend base_app.html (its own full-screen wizard flow), so it needs its
+     own copy of the same zoom lock — see base_app.html's viewport meta for the full rationale. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>{{ 'Update Trip' if mode == 'edit' else 'Add Trip' }} — {{ company_name }}</title>
 <link rel="manifest" href="{{ url_for('static', filename='app-manifest.json') }}">
 <meta name="theme-color" content="#c05621">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,20 +18,26 @@
 <body class="app-body tw-body">
 
 <div class="tw-header">
-  <a href="{{ url_for('app_dashboard') }}" class="tw-back" aria-label="Back">
+  <a href="{{ url_for('app_trip_detail', trip_id=trip_id) if mode == 'edit' else url_for('app_dashboard') }}" class="tw-back" aria-label="Back">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
   </a>
   <div class="tw-header-badge">
     <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
   </div>
   <div class="tw-header-titles">
-    <h1>Add Trip</h1>
-    <div class="sub">Enter trip details to create a new trip</div>
+    <h1>{{ 'Update Trip' if mode == 'edit' else 'Add Trip' }}</h1>
+    <div class="sub">{{ 'Update this trip\'s details' if mode == 'edit' else 'Enter trip details to create a new trip' }}</div>
   </div>
+  <!-- "Save Draft" is a client-side-only concept for a trip that doesn't exist yet (see
+       app_add_trip()'s docstring) — doesn't apply once you're editing a real, already-saved
+       trip, so it's dropped entirely in edit mode rather than risk it overwriting the same
+       localStorage key an in-progress Add Trip draft might be using. -->
+  {% if mode != 'edit' %}
   <button type="button" class="tw-draft-btn" id="twSaveDraftBtn" onclick="twSaveDraft()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
     Save Draft
   </button>
+  {% endif %}
 </div>
 
 <div class="tw-progress" id="twProgress">
@@ -44,7 +52,7 @@
 
 {% if error %}<div class="tw-error-banner" style="margin-top:12px;">⚠️ {{ error }}</div>{% endif %}
 
-<form method="POST" id="twForm" action="{{ url_for('app_add_trip') }}">
+<form method="POST" id="twForm" action="{{ url_for('app_edit_trip', trip_id=trip_id) if mode == 'edit' else url_for('app_add_trip') }}">
 <div class="tw-body-wrap">
 
   <!-- ================= STEP 1: TRIP DETAILS ================= -->
@@ -70,8 +78,14 @@
           <input type="text" name="lr_number" id="twLr" value="{{ t.get('lr_number','') or '' }}" placeholder="Enter LR Number" required></div>
 
         <div class="tw-field"><label>Vehicle <span class="req">*</span></label>
+          <!-- Read-only once a trip exists — a trip's vehicle is locked at creation and never
+               changeable on edit, same server-side rule edit_trip() enforces (see
+               _update_trip_from_form()'s comment); wanting a different vehicle means deleting
+               this trip and creating a fresh one, not editing this row out from under whatever
+               ledger/invoice entries already reference it by vehicle_id. -->
           <input type="text" name="vehicle_no" id="twVehicleNo" list="vehicle-list" value="{{ t.get('vehicle_no','') or '' }}"
-                 placeholder="Select Vehicle" oninput="twSyncVehicleType()" required></div>
+                 placeholder="Select Vehicle" oninput="twSyncVehicleType()" required
+                 {% if mode == 'edit' %}readonly style="background:var(--a-paper);color:var(--a-steel);"{% endif %}></div>
         <div class="tw-field"><label>Type <span class="req">*</span></label>
           <select id="twTypeSelect" onchange="document.getElementById('twTypeHidden').value=this.value" disabled>
             <option value="own">Own</option>
@@ -259,6 +273,9 @@
 
 <script>
 var VEHICLE_TYPE_MAP = {{ vehicle_type_map|tojson }};
+var TW_MODE = {{ mode|tojson }};
+var TW_CANCEL_URL = {{ (url_for('app_trip_detail', trip_id=trip_id) if mode == 'edit' else url_for('app_dashboard'))|tojson }};
+var TW_EXISTING_ITEMS = {{ custom_items|tojson }};
 var twStep = 1;
 var TOTAL_STEPS = 4;
 var twOtherRowId = 0;
@@ -312,22 +329,28 @@ function twNum(id) { var el = document.getElementById(id); return el ? (parseFlo
 function twVal(name) { var el = document.querySelector('[name="' + name + '"]'); return el ? el.value : ''; }
 function twMoney(n) { return '₹' + n.toLocaleString('en-IN', {maximumFractionDigits: 0}); }
 
-function twAddItemRow() {
+function twAddItemRow(prefill) {
+  prefill = prefill || {};
   twOtherRowId++;
   var id = twOtherRowId;
   document.getElementById('twOthersEmpty').style.display = 'none';
+  var desc = (prefill.description || '').replace(/"/g, '&quot;');
+  var type = prefill.item_type === 'deduction' ? 'deduction' : 'charge';
+  var vendor = (prefill.vendor_name || '').replace(/"/g, '&quot;');
+  var rate = prefill.rate != null ? prefill.rate : 0;
+  var qty = prefill.quantity != null ? prefill.quantity : 1;
   var div = document.createElement('div');
   div.className = 'tw-others-card';
   div.id = 'twOtherRow' + id;
   div.innerHTML =
     '<button type="button" class="tw-others-remove" onclick="twRemoveItemRow(' + id + ')">' +
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' +
-    '<div class="tw-field" style="margin-bottom:10px;"><label>Description</label><input type="text" name="other_desc" placeholder="e.g. Weighbridge slip"></div>' +
+    '<div class="tw-field" style="margin-bottom:10px;"><label>Description</label><input type="text" name="other_desc" value="' + desc + '" placeholder="e.g. Weighbridge slip"></div>' +
     '<div class="tw-others-card-grid">' +
-    '<div class="tw-field"><label>Type</label><select name="other_type"><option value="charge">Addition</option><option value="deduction">Deduction</option></select></div>' +
-    '<div class="tw-field"><label>Vendor (optional)</label><input type="text" name="other_vendor" list="combined-list"></div>' +
-    '<div class="tw-field"><label>Rate (₹)</label><input type="number" step="0.01" name="other_rate" value="0"></div>' +
-    '<div class="tw-field"><label>Quantity</label><input type="number" step="0.01" name="other_qty" value="1"></div>' +
+    '<div class="tw-field"><label>Type</label><select name="other_type"><option value="charge"' + (type === 'charge' ? ' selected' : '') + '>Addition</option><option value="deduction"' + (type === 'deduction' ? ' selected' : '') + '>Deduction</option></select></div>' +
+    '<div class="tw-field"><label>Vendor (optional)</label><input type="text" name="other_vendor" value="' + vendor + '" list="combined-list"></div>' +
+    '<div class="tw-field"><label>Rate (₹)</label><input type="number" step="0.01" name="other_rate" value="' + rate + '"></div>' +
+    '<div class="tw-field"><label>Quantity</label><input type="number" step="0.01" name="other_qty" value="' + qty + '"></div>' +
     '</div>';
   document.getElementById('twOthersList').appendChild(div);
 }
@@ -409,7 +432,7 @@ function twGoToStep(n) {
   twStep = n;
   document.getElementById('twBackBtn').textContent = n === 1 ? 'Cancel' : 'Back';
   document.getElementById('twNextBtn').innerHTML = n === TOTAL_STEPS
-    ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/></svg> Save Trip'
+    ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/></svg> ' + (TW_MODE === 'edit' ? 'Update Trip' : 'Save Trip')
     : 'Next <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
   if (n === TOTAL_STEPS) twUpdateReview();
   window.scrollTo(0, 0);
@@ -421,7 +444,7 @@ function twNextOrSubmit() {
   else { document.getElementById('twForm').submit(); }
 }
 function twPrevOrCancel() {
-  if (twStep === 1) { window.location.href = "{{ url_for('app_dashboard') }}"; }
+  if (twStep === 1) { window.location.href = TW_CANCEL_URL; }
   else { twGoToStep(twStep - 1); }
 }
 
@@ -465,6 +488,10 @@ twToggleOwnerRateType();
 {% if t.get('is_empty') %}twToggleEmpty();{% endif %}
 {% if not t %}twRestoreDraftIfAny();{% endif %}
 {% if error %}twGoToStep(1);{% endif %}
+// Pre-load this trip's existing "Other Items" (Step 3) when editing — without this, saving
+// would silently wipe them, since the server always replaces a trip's items from whatever the
+// submitted form actually contains (see _save_trip_custom_items() in app.py).
+TW_EXISTING_ITEMS.forEach(function (item) { twAddItemRow(item); });
 </script>
 </body>
 </html>
