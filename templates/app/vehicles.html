@@ -1,0 +1,156 @@
+{% extends "app/base_app.html" %}
+{% block title %}Vehicles — {{ company_name }}{% endblock %}
+{% block content %}
+
+<div class="vh-head">
+  <div>
+    <h1>Vehicles</h1>
+    <div class="sub">Manage your fleet, documents &amp; compliance</div>
+  </div>
+</div>
+
+<div class="vh-kpi-grid">
+  <div class="vh-kpi-card">
+    <div><div class="vh-kpi-lbl">Total Vehicles</div><div class="vh-kpi-val">{{ total_vehicles }}</div></div>
+    <div class="vh-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg></div>
+  </div>
+  <div class="vh-kpi-card">
+    <div><div class="vh-kpi-lbl">Active</div><div class="vh-kpi-val" style="color:var(--a-green);">{{ active_count }}</div><div class="vh-kpi-sub">{{ active_pct }}%</div></div>
+    <div class="vh-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+  </div>
+  <div class="vh-kpi-card">
+    <div><div class="vh-kpi-lbl">In Maintenance</div><div class="vh-kpi-val" style="color:{% if maint_count %}var(--a-amber){% endif %};">{{ maint_count }}</div></div>
+    <div class="vh-kpi-icon" style="background:#fff6e8;color:var(--a-amber);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
+  </div>
+  <div class="vh-kpi-card">
+    <div><div class="vh-kpi-lbl">Insurance Expiring</div><div class="vh-kpi-val" style="color:{% if ins_expiring %}var(--a-red){% endif %};">{{ ins_expiring }}</div><div class="vh-kpi-sub">In 30 days</div></div>
+    <div class="vh-kpi-icon" style="background:#fdecea;color:var(--a-red);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg></div>
+  </div>
+</div>
+
+{% if challan_vehicle_count or ins_expiring %}
+<div class="vh-alert">
+  {% if challan_vehicle_count %}
+  <div class="vh-alert-item">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    {{ challan_vehicle_count }} Challan{{ 's' if challan_vehicle_count != 1 else '' }} Pending · <span class="vh-alert-amt">₹{{ '{:,.0f}'.format(challan_total_amount) }}</span>
+  </div>
+  {% endif %}
+  {% if ins_expiring %}
+  <div class="vh-alert-item">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    {{ ins_expiring }} Insurance Expiring · In 30 days
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="vh-tabstrip">
+  <a class="vh-tab {{ 'active' if not f_status }}" href="{{ url_for('app_vehicles', search=f_search) }}">All</a>
+  <a class="vh-tab {{ 'active' if f_status=='Active' }}" href="{{ url_for('app_vehicles', status='Active', search=f_search) }}">Active</a>
+  <a class="vh-tab {{ 'active' if f_status=='In Maintenance' }}" href="{{ url_for('app_vehicles', status='In Maintenance', search=f_search) }}">In Maintenance</a>
+</div>
+
+<form method="get" class="vh-search">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  <input type="text" name="search" value="{{ f_search }}" placeholder="Search by Vehicle No…" onchange="this.form.submit()">
+  {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+</form>
+
+<div id="vh-list">
+{% for v in vehicles %}
+{% set status_class = v.status.replace(' ', '') %}
+<a href="{{ url_for('vehicle_detail', v_id=v.id) }}" class="vh-card">
+  <div class="vh-card-bar {{ status_class }}"></div>
+  <div class="vh-card-body">
+    <div class="vh-card-top">
+      <div>
+        <div class="vh-card-no">{{ v.vehicle_no }}</div>
+        <div class="vh-card-type">{{ v.body_type_short }}</div>
+        <div class="vh-card-meta">{% if v.age_years is not none %}Age: {{ v.age_years }} yrs{% else %}Age: —{% endif %}</div>
+      </div>
+      <span class="vh-status-badge {{ status_class }}">{{ v.status }}</span>
+    </div>
+    {% if v.challan_count > 0 %}
+    <div class="vh-challan-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      {{ v.challan_count }} Challan{{ 's' if v.challan_count != 1 else '' }} · ₹{{ '{:,.0f}'.format(v.challan_amount) }} pending
+    </div>
+    {% endif %}
+    <div class="vh-comp-grid">
+      <div class="vh-comp-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>
+        <div class="vh-comp-text"><div class="vh-comp-label">Insurance</div><div class="vh-comp-date {{ v.insurance.bucket }}">{{ v.insurance.date or '—' }}</div></div>
+      </div>
+      <div class="vh-comp-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        <div class="vh-comp-text"><div class="vh-comp-label">Fitness</div><div class="vh-comp-date {{ v.fitness.bucket }}">{{ v.fitness.date or '—' }}</div></div>
+      </div>
+      <div class="vh-comp-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8 6 5 9 5 13a7 7 0 0 0 14 0c0-4-3-7-7-11Z"/></svg>
+        <div class="vh-comp-text"><div class="vh-comp-label">PUC</div><div class="vh-comp-date {{ v.puc.bucket }}">{{ v.puc.date or '—' }}</div></div>
+      </div>
+      <div class="vh-comp-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        <div class="vh-comp-text"><div class="vh-comp-label">Permit</div><div class="vh-comp-date {{ v.permit.bucket }}">{{ v.permit.date or '—' }}</div></div>
+      </div>
+    </div>
+  </div>
+</a>
+{% else %}
+<div class="vh-empty">No vehicles found{% if f_search %} for "{{ f_search }}"{% endif %}.</div>
+{% endfor %}
+</div>
+
+<div id="vh-load-area">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_vehicles', status=f_status, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif vehicles %}
+<div class="vh-listend">You've reached the end · {{ total_count }} vehicle{{ 's' if total_count != 1 else '' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div><!-- clears the floating Add Vehicle button below -->
+
+<a href="{{ url_for('add_vehicle') }}" class="vh-addbtn">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Vehicle
+</a>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "Load More" fetches the same page with a bigger `show` count and swaps just the list + load
+// area in place — no full navigation, so the scroll position never jumps back to the top the
+// way a plain <a href> page load would. Event delegation on the whole document means a
+// Load-More link injected by a *previous* fetch (same markup, same data-loadmore attribute)
+// is handled automatically too, with nothing to re-bind.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('vh-list').innerHTML = doc.getElementById('vh-list').innerHTML;
+      document.getElementById('vh-load-area').innerHTML = doc.getElementById('vh-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+</script>
+{% endblock %}

@@ -34,7 +34,7 @@ a { color: inherit; text-decoration: none; }
 /* ---------- Top bar ---------- */
 .a-topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px; background: var(--a-white); border-bottom: 1px solid var(--a-line);
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px; background: var(--a-white); border-bottom: 1px solid var(--a-line);
   position: sticky; top: 0; z-index: 40;
 }
 .a-topbar-left { display: flex; align-items: center; gap: 10px; }
@@ -124,9 +124,42 @@ a { color: inherit; text-decoration: none; }
 .a-bn-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; text-decoration: none; color: var(--a-steel); font-size: 0.66rem; font-weight: 600; background: none; border: none; font-family: inherit; }
 .a-bn-item svg { width: 21px; height: 21px; }
 .a-bn-item.active { color: var(--a-accent); }
-.a-bn-fab-wrap { flex: 1; display: flex; justify-content: center; }
-.a-bn-fab { width: 50px; height: 50px; border-radius: 50%; background: var(--a-accent); color: #fff; display: flex; align-items: center; justify-content: center; margin-top: -26px; box-shadow: 0 6px 16px rgba(192,86,33,0.4); border: 3px solid var(--a-white); }
-.a-bn-fab svg { width: 24px; height: 24px; }
+.a-bn-fab-wrap { flex: 1; display: flex; justify-content: center; position: relative; }
+.a-bn-fab { width: 50px; height: 50px; border-radius: 50%; background: var(--a-accent); color: #fff; display: flex; align-items: center; justify-content: center;
+  margin-top: -26px; box-shadow: 0 6px 16px rgba(192,86,33,0.4); border: 3px solid var(--a-white);
+  font-family: inherit; padding: 0; cursor: pointer; position: relative; z-index: 62; transition: transform 0.2s; }
+.a-bn-fab svg { width: 24px; height: 24px; transition: transform 0.2s; }
+.a-bn-fab.open { background: var(--a-ink); }
+.a-bn-fab.open svg { transform: rotate(45deg); }
+
+/* ---------- FAB speed-dial (Add Trip / Add Maintenance / Add Expense / Add Vehicle) ---------- */
+.fab-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.35); z-index: 60; opacity: 0; pointer-events: none; transition: opacity 0.18s; }
+.fab-backdrop.open { opacity: 1; pointer-events: auto; }
+
+.fab-menu { position: absolute; left: 50%; bottom: 24px; z-index: 61; pointer-events: none; }
+.fab-option {
+  position: absolute; bottom: 0; left: 0; display: flex; align-items: center; gap: 5px;
+  opacity: 0; transform: translate(-50%, 10px) scale(0.7); transition: opacity 0.18s, transform 0.18s; pointer-events: none;
+}
+.fab-menu.open .fab-option { opacity: 1; pointer-events: auto; }
+/* Smaller circles + tighter labels + wider spread than the first pass — the previous sizing
+   put "Add Maintenance" close enough to its neighbor to visually overlap on a real ~375px
+   screen. Bottom pair sits lower/further out, top pair sits higher/further in, same arc shape
+   as the reference design, just with real breathing room between each stop. */
+.fab-option[data-pos="1"] { transform: translate(calc(-50% - 108px), -22px) scale(0.7); }
+.fab-menu.open .fab-option[data-pos="1"] { transform: translate(calc(-50% - 108px), -22px) scale(1); transition-delay: 0.02s; }
+.fab-option[data-pos="2"] { flex-direction: row-reverse; transform: translate(calc(-50% - 86px), -100px) scale(0.7); }
+.fab-menu.open .fab-option[data-pos="2"] { flex-direction: row-reverse; transform: translate(calc(-50% - 86px), -100px) scale(1); transition-delay: 0.06s; }
+.fab-option[data-pos="3"] { transform: translate(calc(-50% + 86px), -100px) scale(0.7); }
+.fab-menu.open .fab-option[data-pos="3"] { transform: translate(calc(-50% + 86px), -100px) scale(1); transition-delay: 0.1s; }
+.fab-option[data-pos="4"] { transform: translate(calc(-50% + 108px), -22px) scale(0.7); }
+.fab-menu.open .fab-option[data-pos="4"] { transform: translate(calc(-50% + 108px), -22px) scale(1); transition-delay: 0.14s; }
+
+.fab-option-ic { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--a-white); box-shadow: 0 4px 12px rgba(20,33,61,0.18); flex-shrink: 0; }
+.fab-option-ic svg { width: 16px; height: 16px; }
+.fab-option-label { background: var(--a-ink); color: #fff; font-size: 0.64rem; font-weight: 700; padding: 5px 9px;
+  border-radius: 999px; white-space: nowrap; box-shadow: 0 2px 8px rgba(20,33,61,0.18); }
 
 @media (min-width: 600px) {
   .a-kpi-grid { grid-template-columns: repeat(4, 1fr); }
@@ -139,7 +172,7 @@ a { color: inherit; text-decoration: none; }
 body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
 .tw-header {
   position: sticky; top: 0; z-index: 40; background: var(--a-white); border-bottom: 1px solid var(--a-line);
-  padding: 12px 16px; display: flex; align-items: center; gap: 12px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px; display: flex; align-items: center; gap: 12px;
 }
 .tw-back { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
   color: var(--a-ink); background: var(--a-paper); flex-shrink: 0; }
@@ -242,16 +275,20 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
    same health-band colors as the website's own Maintenance Overview
    (templates/partials/_maintenance_overview.html) for visual consistency.
    ========================================================================== */
-.mo-tabstrip { display: flex; gap: 4px; overflow-x: auto; padding: 10px 16px; background: var(--a-white);
+/* No extra left/right spacing on any of these — templates/app/base_app.html already wraps all
+   page content in .a-wrap (padding: 0 16px), same single gutter every other app page relies on
+   (.a-card, .a-kpi-grid, etc. never add their own). These used to add a second 16px on top of
+   that, doubling the side gap to 32px on this page only vs. 16px everywhere else. */
+.mo-tabstrip { display: flex; gap: 4px; overflow-x: auto; padding: 10px 0; background: var(--a-white);
   border-bottom: 1px solid var(--a-line); -webkit-overflow-scrolling: touch; }
 .mo-tab { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 6px 14px 8px; color: var(--a-steel); font-size: 0.68rem; font-weight: 700; border-bottom: 2px solid transparent; }
 .mo-tab svg { width: 19px; height: 19px; }
 .mo-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
-.mo-period-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px 4px; color: var(--a-steel); font-size: 0.78rem; font-weight: 600; }
+.mo-period-bar { display: flex; align-items: center; gap: 7px; padding: 12px 0 4px; color: var(--a-steel); font-size: 0.78rem; font-weight: 600; }
 .mo-period-bar svg { width: 15px; height: 15px; }
 
-.mo-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 16px; }
+.mo-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 0; }
 .mo-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; }
 .mo-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; }
 .mo-kpi-icon { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; flex-shrink: 0; }
@@ -259,7 +296,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
 .mo-kpi-val { font-size: 1.3rem; font-weight: 800; margin-top: 2px; }
 .mo-kpi-sub { font-size: 0.68rem; color: var(--a-steel); margin-top: 2px; }
 
-.mo-panel { background: var(--a-white); border-radius: 16px; padding: 16px; margin: 0 16px 14px; }
+.mo-panel { background: var(--a-white); border-radius: 16px; padding: 16px; margin: 0 0 14px; }
 .mo-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .mo-panel-head h2 { font-size: 0.92rem; margin: 0; font-weight: 800; }
 .mo-panel-link { font-size: 0.76rem; color: var(--a-accent); font-weight: 700; display: flex; align-items: center; gap: 2px; }
@@ -293,3 +330,140 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
 .mo-trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
 .mo-trend-bar { width: 100%; max-width: 28px; background: var(--a-accent); border-radius: 5px 5px 2px 2px; min-height: 3px; }
 .mo-trend-label { font-size: 0.64rem; color: var(--a-steel); font-weight: 600; }
+
+/* ==========================================================================
+   Trips list (templates/app/trips.html) — own prefix (tr-). No side padding
+   added on any of these either, same .a-wrap-supplies-the-16px-gutter reason
+   as the mo- rules above.
+   ========================================================================== */
+.tr-head { padding: 16px 0 4px; }
+.tr-head h1 { font-size: 1.35rem; margin: 0; }
+.tr-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
+
+.tr-tabstrip { display: flex; gap: 0; margin: 14px 0 12px; border-bottom: 1px solid var(--a-line); }
+.tr-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 0 10px;
+  color: var(--a-steel); font-size: 0.76rem; font-weight: 700; border-bottom: 2px solid transparent; }
+.tr-tab svg { width: 20px; height: 20px; }
+.tr-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
+
+.tr-search { display: flex; align-items: center; gap: 8px; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+.tr-search svg { color: var(--a-steel); flex-shrink: 0; width: 17px; height: 17px; }
+.tr-search input { border: none; outline: none; background: none; font-size: 0.86rem; font-family: inherit; color: var(--a-ink); flex: 1; min-width: 0; }
+
+.tr-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.tr-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; }
+.tr-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
+.tr-kpi-val { font-size: 1.25rem; font-weight: 800; margin-top: 3px; }
+.tr-kpi-sub { font-size: 0.66rem; color: var(--a-steel); margin-top: 2px; }
+.tr-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+.tr-list-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.tr-list-head h2 { font-size: 1rem; margin: 0; }
+
+.tr-card { display: flex; background: var(--a-white); border-radius: 14px; margin-bottom: 10px; overflow: hidden; text-decoration: none; color: var(--a-ink); }
+.tr-card-bar { width: 4px; flex-shrink: 0; }
+.tr-card-bar.ongoing { background: var(--a-green); }
+.tr-card-bar.completed { background: var(--a-blue); }
+.tr-card-body { flex: 1; min-width: 0; padding: 12px 12px; display: flex; align-items: center; gap: 10px; }
+.tr-card-status { flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.tr-card-status.ongoing { background: #e8f5ee; color: var(--a-green); }
+.tr-card-status.completed { background: #eaf1fb; color: var(--a-blue); }
+.tr-card-status svg { width: 16px; height: 16px; }
+.tr-card-main { flex: 1; min-width: 0; }
+.tr-card-lr { font-weight: 800; font-size: 0.88rem; }
+.tr-card-veh { display: flex; align-items: center; gap: 4px; font-size: 0.74rem; color: var(--a-steel); margin-top: 2px; }
+.tr-card-veh svg { width: 12px; height: 12px; flex-shrink: 0; }
+.tr-card-route { font-size: 0.74rem; color: var(--a-steel); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-card-date { display: flex; align-items: center; gap: 4px; font-size: 0.7rem; color: var(--a-steel); margin-top: 3px; }
+.tr-card-date svg { width: 11px; height: 11px; flex-shrink: 0; }
+.tr-card-right { text-align: right; flex-shrink: 0; }
+.tr-card-badge { font-size: 0.64rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; display: inline-block; }
+.tr-card-badge.ongoing { background: #e8f5ee; color: var(--a-green); }
+.tr-card-badge.completed { background: #eaf1fb; color: var(--a-blue); }
+.tr-card-amt { font-weight: 800; font-size: 0.86rem; margin-top: 8px; }
+.tr-empty { text-align: center; color: var(--a-steel); font-size: 0.86rem; padding: 40px 16px; }
+
+/* Same visual tier as the website's own a.add-btn (static/style.css) — white fill, orange
+   border/text, full pill radius — just repositioned as a floating button fixed to the
+   bottom-right corner (above the bottom nav) instead of inline in a desktop page header, since
+   there's no header toolbar row on mobile to put it inline into. */
+.tr-addbtn { position: fixed; right: 16px; bottom: calc(78px + env(safe-area-inset-bottom, 0px)); z-index: 45;
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--a-white); color: var(--a-accent); border: 1.5px solid var(--a-accent);
+  border-radius: 999px; padding: 12px 20px; font-size: 0.86rem; font-weight: 700; letter-spacing: 0.01em;
+  text-decoration: none; box-shadow: 0 3px 10px rgba(20,24,40,.12); transition: background .15s, color .15s; }
+.tr-addbtn:active { background: var(--a-accent); color: #fff; }
+.tr-addbtn svg { width: 17px; height: 17px; }
+
+/* ==========================================================================
+   Vehicles list (templates/app/vehicles.html) — own prefix (vh-). No extra
+   side padding on any of these, same .a-wrap-supplies-16px-gutter reason as
+   the mo-/tr- rules above.
+   ========================================================================== */
+.vh-head { padding: 16px 0 4px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.vh-head h1 { font-size: 1.35rem; margin: 0; }
+.vh-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
+
+.vh-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
+.vh-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; }
+.vh-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
+.vh-kpi-val { font-size: 1.25rem; font-weight: 800; margin-top: 3px; }
+.vh-kpi-sub { font-size: 0.66rem; color: var(--a-steel); margin-top: 2px; }
+.vh-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.9rem; }
+
+.vh-alert { display: flex; flex-wrap: wrap; gap: 10px 18px; background: #fdf0e8; border: 1px solid rgba(192,86,33,0.25);
+  border-radius: 14px; padding: 13px 14px; margin-bottom: 16px; }
+.vh-alert-item { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: var(--a-ink); font-weight: 600; }
+.vh-alert-item svg { width: 15px; height: 15px; color: var(--a-accent); flex-shrink: 0; }
+.vh-alert-amt { color: var(--a-accent); font-weight: 800; }
+
+.vh-tabstrip { display: flex; gap: 0; margin-bottom: 12px; border-bottom: 1px solid var(--a-line); }
+.vh-tab { flex: 1; text-align: center; padding: 0 0 10px; color: var(--a-steel); font-size: 0.78rem; font-weight: 700; border-bottom: 2px solid transparent; }
+.vh-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
+
+.vh-search { display: flex; align-items: center; gap: 8px; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+.vh-search svg { color: var(--a-steel); flex-shrink: 0; width: 17px; height: 17px; }
+.vh-search input { border: none; outline: none; background: none; font-size: 0.86rem; font-family: inherit; color: var(--a-ink); flex: 1; min-width: 0; }
+
+.vh-card { display: flex; background: var(--a-white); border-radius: 14px; margin-bottom: 10px; overflow: hidden; text-decoration: none; color: var(--a-ink); }
+.vh-card-bar { width: 4px; flex-shrink: 0; }
+.vh-card-bar.Active { background: var(--a-green); }
+.vh-card-bar.Inactive { background: var(--a-steel); }
+.vh-card-bar.InMaintenance { background: var(--a-amber); }
+.vh-card-body { flex: 1; min-width: 0; padding: 12px; }
+.vh-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.vh-card-no { font-weight: 800; font-size: 0.92rem; }
+.vh-card-type { font-size: 0.72rem; color: var(--a-blue); font-weight: 600; margin-top: 1px; }
+.vh-card-meta { font-size: 0.7rem; color: var(--a-steel); margin-top: 2px; }
+.vh-status-badge { font-size: 0.64rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; flex-shrink: 0; }
+.vh-status-badge.Active { background: #e8f5ee; color: var(--a-green); }
+.vh-status-badge.Inactive { background: #eef0f4; color: var(--a-steel); }
+.vh-status-badge.InMaintenance { background: #fff6e8; color: var(--a-amber); }
+.vh-challan-badge { display: inline-flex; align-items: center; gap: 6px; background: #fdecea; color: var(--a-red);
+  font-size: 0.72rem; font-weight: 700; padding: 5px 10px; border-radius: 8px; margin-top: 8px; }
+.vh-challan-badge svg { width: 13px; height: 13px; flex-shrink: 0; }
+.vh-comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--a-line); }
+.vh-comp-item { display: flex; align-items: center; gap: 6px; }
+.vh-comp-item svg { width: 13px; height: 13px; color: var(--a-steel); flex-shrink: 0; }
+.vh-comp-text { min-width: 0; }
+.vh-comp-label { font-size: 0.62rem; color: var(--a-steel); font-weight: 600; }
+.vh-comp-date { font-size: 0.72rem; font-weight: 700; }
+.vh-comp-date.ok { color: var(--a-ink); }
+.vh-comp-date.expiring { color: var(--a-amber); }
+.vh-comp-date.expired { color: var(--a-red); }
+.vh-comp-date.unknown { color: var(--a-steel); font-weight: 400; }
+.vh-empty { text-align: center; color: var(--a-steel); font-size: 0.86rem; padding: 40px 16px; }
+.vh-loadmore { display: block; text-align: center; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 12px; padding: 13px; font-size: 0.84rem; font-weight: 700; color: var(--a-accent); margin-bottom: 10px; }
+.vh-loadmore-count { font-weight: 400; color: var(--a-steel); }
+.vh-listend { text-align: center; color: var(--a-steel); font-size: 0.74rem; padding: 12px 0; }
+
+.vh-addbtn { position: fixed; right: 16px; bottom: calc(78px + env(safe-area-inset-bottom, 0px)); z-index: 45;
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--a-white); color: var(--a-accent); border: 1.5px solid var(--a-accent);
+  border-radius: 999px; padding: 12px 20px; font-size: 0.86rem; font-weight: 700; letter-spacing: 0.01em;
+  text-decoration: none; box-shadow: 0 3px 10px rgba(20,24,40,.12); }
+.vh-addbtn:active { background: var(--a-accent); color: #fff; }
+.vh-addbtn svg { width: 17px; height: 17px; }

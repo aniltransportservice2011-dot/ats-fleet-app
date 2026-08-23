@@ -52,10 +52,29 @@
     Trips
   </a>
   <div class="a-bn-fab-wrap">
-    <a href="/app/trips/add" class="a-bn-fab">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-    </a>
+    <button type="button" class="a-bn-fab" id="fabToggle" onclick="toggleFabMenu()" aria-label="Quick add" aria-expanded="false">
+      <svg id="fabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <div class="fab-menu" id="fabMenu">
+      <a href="/app/trips/add" class="fab-option" data-pos="1">
+        <span class="fab-option-ic" style="background:#fdecea;color:var(--a-red);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg></span>
+        <span class="fab-option-label">Add Trip</span>
+      </a>
+      <a href="/maintenance/add" class="fab-option" data-pos="2">
+        <span class="fab-option-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+        <span class="fab-option-label">Add Maintenance</span>
+      </a>
+      <a href="/overheads/add" class="fab-option" data-pos="3">
+        <span class="fab-option-ic" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg></span>
+        <span class="fab-option-label">Add Expense</span>
+      </a>
+      <a href="/vehicles/add" class="fab-option" data-pos="4">
+        <span class="fab-option-ic" style="background:#e8f5ee;color:var(--a-green);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg></span>
+        <span class="fab-option-label">Add Vehicle</span>
+      </a>
+    </div>
   </div>
+  <div class="fab-backdrop" id="fabBackdrop" onclick="closeFabMenu()"></div>
   <a href="/app/maintenance" class="a-bn-item {% if active=='maintenance' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
     Maintenance
@@ -74,6 +93,27 @@
       navigator.serviceWorker.register("{{ url_for('static', filename='app-sw.js') }}", { scope: '/app/' })
         .catch(function (err) { console.warn('Service worker registration failed:', err); });
     });
+  }
+
+  // FAB speed-dial — tapping + fans out 4 real quick-add links (each routes to an existing,
+  // working page: /app/trips/add, /maintenance/add, /overheads/add, /vehicles/add) instead of
+  // jumping straight to Add Trip. Lives here (base_app.html), not a per-page script, since the
+  // FAB itself is shared chrome on every /app/ page.
+  function openFabMenu() {
+    document.getElementById('fabMenu').classList.add('open');
+    document.getElementById('fabBackdrop').classList.add('open');
+    document.getElementById('fabToggle').classList.add('open');
+    document.getElementById('fabToggle').setAttribute('aria-expanded', 'true');
+  }
+  function closeFabMenu() {
+    document.getElementById('fabMenu').classList.remove('open');
+    document.getElementById('fabBackdrop').classList.remove('open');
+    document.getElementById('fabToggle').classList.remove('open');
+    document.getElementById('fabToggle').setAttribute('aria-expanded', 'false');
+  }
+  function toggleFabMenu() {
+    if (document.getElementById('fabMenu').classList.contains('open')) closeFabMenu();
+    else openFabMenu();
   }
 </script>
 {% block extra_scripts %}{% endblock %}
