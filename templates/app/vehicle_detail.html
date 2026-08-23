@@ -1,0 +1,147 @@
+{% extends "app/base_app.html" %}
+{% block title %}{{ v['vehicle_no'] }} — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _vehicle_detail_data() in app.py, shared verbatim with the website's own
+     vehicle_detail(). No fabricated "Overview"/"Documents"/"Reminders" tabs: the real page only
+     ever has Insurance/Permit/Fitness/PUC/eChallan/History (vehicle_detail.html's own
+     tab_titles). Insurance/Permit/Fitness/PUC are shown as summary cards that bridge (↗) to the
+     real website's edit-capable tab — each is a large multi-section add/edit form (policy type,
+     premium, agent details, document uploads) out of scope to natively rebuild here; eChallan
+     and History are pure read-only displays, so those are native tabs below. -->
+<div class="vd-crumb"><a href="{{ url_for('app_vehicles') }}">Vehicles</a> &rsaquo; {{ v['vehicle_no'] }}</div>
+
+<div class="vd-head-card">
+  <div class="vd-head-top">
+    <div class="vd-photo">{{ body_type_icon }}</div>
+    <div class="vd-head-title">
+      <h1>{{ v['vehicle_no'] }}</h1>
+      <span class="vh-status-badge {{ (v['status'] or 'Active').replace(' ', '') }}">{{ v['status'] or 'Active' }}</span>
+    </div>
+  </div>
+  <div class="vd-info-grid">
+    <div><div class="lbl">Vehicle Type</div><div class="v">{{ VEHICLE_TYPE_LABELS.get(v['type'], v['type'] or '—') }}</div></div>
+    <div><div class="lbl">Manufacturer</div><div class="v">{{ (rc_data.rc_maker_desc if rc_data else none) or '—' }}</div></div>
+    <div><div class="lbl">Model</div><div class="v">{{ (rc_data.rc_maker_model if rc_data else none) or '—' }}</div></div>
+    <div><div class="lbl">Fuel Type</div><div class="v">{{ (rc_data.rc_fuel_desc if rc_data else none) or '—' }}</div></div>
+    <div><div class="lbl">Year</div><div class="v">{{ rc_year or (v['registration_date'][:4] if v['registration_date'] else '—') }}</div></div>
+    <div><div class="lbl">Vehicle Age</div><div class="v">{% if age_years is not none %}{{ age_years }} yrs{% else %}—{% endif %}</div></div>
+    <div><div class="lbl">Owner</div><div class="v">{{ company_name }}</div></div>
+    <div><div class="lbl">Chassis No.</div><div class="v">{{ v['chassis_number'] or (rc_data.rc_chasi_no if rc_data else none) or '—' }}</div></div>
+    <div><div class="lbl">Engine No.</div><div class="v">{{ v['engine_number'] or (rc_data.rc_eng_no if rc_data else none) or '—' }}</div></div>
+    <div><div class="lbl">Registration Date</div><div class="v">{{ v['registration_date'] or '—' }}</div></div>
+  </div>
+  {% if v['type'] == VEHICLE_TYPE_OWN %}
+  <form method="POST" action="{{ url_for('vehicle_sync_now', v_id=v['id']) }}" class="vd-sync-row">
+    <input type="hidden" name="return_to" value="{{ url_for('app_vehicle_detail', v_id=v['id'], tab=tab) }}">
+    <button type="submit" class="vd-sync-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      Sync Latest Data
+    </button>
+    <span class="vd-sync-sub">Last synced: {{ v['rc_last_synced'] or 'Never' }}</span>
+  </form>
+  {% endif %}
+</div>
+
+{% set comp_colors = {'Valid': ('#e8f5ee','var(--a-green)'), 'Expiring Soon': ('#fff3e8','var(--a-accent)'), 'Expired': ('#fdecea','var(--a-red)'), 'Unknown': ('var(--a-paper)','var(--a-steel)')} %}
+<div class="vd-comp-grid">
+  <a href="{{ url_for('vehicle_detail', v_id=v['id']) }}?tab=insurance" class="vd-comp-card">
+    <div class="hd"><span class="ic" style="background:#eaf1fb;color:#2a78d6;">🛡️</span>Insurance <span class="vd-ext">↗</span></div>
+    {% if comp_row %}
+    <span class="vd-comp-badge" style="background:{{ comp_colors[comp_row.insurance.status][0] }};color:{{ comp_colors[comp_row.insurance.status][1] }};">{{ comp_row.insurance.status if comp_row.insurance.status != 'Unknown' else 'No Data' }}</span>
+    {% if comp_row.insurance.expiry %}<div class="exp">Exp: {{ comp_row.insurance.expiry }}</div>{% if comp_row.insurance.days_left is not none %}<div class="days">{% if comp_row.insurance.days_left < 0 %}{{ -comp_row.insurance.days_left }} days overdue{% else %}({{ comp_row.insurance.days_left }} days left){% endif %}</div>{% endif %}{% endif %}
+    {% else %}<span class="vd-comp-badge" style="background:var(--a-paper);color:var(--a-steel);">—</span>{% endif %}
+  </a>
+  <a href="{{ url_for('vehicle_detail', v_id=v['id']) }}?tab=permit" class="vd-comp-card">
+    <div class="hd"><span class="ic" style="background:#f1ecfb;color:#7a5ad6;">📄</span>Permit <span class="vd-ext">↗</span></div>
+    {% if comp_row %}
+    <span class="vd-comp-badge" style="background:{{ comp_colors[comp_row.permit.status][0] }};color:{{ comp_colors[comp_row.permit.status][1] }};">{{ comp_row.permit.status if comp_row.permit.status != 'Unknown' else 'No Data' }}</span>
+    {% if comp_row.permit.expiry %}<div class="exp">Exp: {{ comp_row.permit.expiry }}</div>{% if comp_row.permit.days_left is not none %}<div class="days">{% if comp_row.permit.days_left < 0 %}{{ -comp_row.permit.days_left }} days overdue{% else %}({{ comp_row.permit.days_left }} days left){% endif %}</div>{% endif %}{% endif %}
+    {% else %}<span class="vd-comp-badge" style="background:var(--a-paper);color:var(--a-steel);">—</span>{% endif %}
+  </a>
+  <a href="{{ url_for('vehicle_detail', v_id=v['id']) }}?tab=fitness" class="vd-comp-card">
+    <div class="hd"><span class="ic" style="background:#eaf1fb;color:#2a78d6;">🛡️</span>Fitness <span class="vd-ext">↗</span></div>
+    {% if comp_row %}
+    <span class="vd-comp-badge" style="background:{{ comp_colors[comp_row.fitness.status][0] }};color:{{ comp_colors[comp_row.fitness.status][1] }};">{{ comp_row.fitness.status if comp_row.fitness.status != 'Unknown' else 'No Data' }}</span>
+    {% if comp_row.fitness.expiry %}<div class="exp">Exp: {{ comp_row.fitness.expiry }}</div>{% if comp_row.fitness.days_left is not none %}<div class="days">{% if comp_row.fitness.days_left < 0 %}{{ -comp_row.fitness.days_left }} days overdue{% else %}({{ comp_row.fitness.days_left }} days left){% endif %}</div>{% endif %}{% endif %}
+    {% else %}<span class="vd-comp-badge" style="background:var(--a-paper);color:var(--a-steel);">—</span>{% endif %}
+  </a>
+  <a href="{{ url_for('vehicle_detail', v_id=v['id']) }}?tab=puc" class="vd-comp-card">
+    <div class="hd"><span class="ic" style="background:#e8f5ee;color:#1a9c5b;">✅</span>PUC <span class="vd-ext">↗</span></div>
+    {% if comp_row %}
+    <span class="vd-comp-badge" style="background:{{ comp_colors[comp_row.puc.status][0] }};color:{{ comp_colors[comp_row.puc.status][1] }};">{{ comp_row.puc.status if comp_row.puc.status != 'Unknown' else 'No Data' }}</span>
+    {% if comp_row.puc.expiry %}<div class="exp">Exp: {{ comp_row.puc.expiry }}</div>{% if comp_row.puc.days_left is not none %}<div class="days">{% if comp_row.puc.days_left < 0 %}{{ -comp_row.puc.days_left }} days overdue{% else %}({{ comp_row.puc.days_left }} days left){% endif %}</div>{% endif %}{% endif %}
+    {% else %}<span class="vd-comp-badge" style="background:var(--a-paper);color:var(--a-steel);">—</span>{% endif %}
+  </a>
+  <div class="vd-comp-card vd-comp-card-full">
+    <div class="hd"><span class="ic" style="background:#fdecea;color:var(--a-red);">⚠️</span>eChallan</div>
+    {% if challan_pending_n > 0 %}
+    <span class="vd-comp-badge" style="background:#fdecea;color:var(--a-red);">{{ challan_pending_n }} Pending</span>
+    <div class="exp">Total Amount</div><div class="days">₹{{ '{:,.0f}'.format(challan_pending_amount) }}</div>
+    {% else %}
+    <span class="vd-comp-badge" style="background:#e8f5ee;color:var(--a-green);">No Challan</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="mo-tabstrip">
+  <a class="mo-tab {{ 'active' if tab=='echallan' }}" href="{{ url_for('app_vehicle_detail', v_id=v['id'], tab='echallan') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span>Challans{% if challans %} ({{ challans|length }}){% endif %}</span></a>
+  <a class="mo-tab {{ 'active' if tab=='history' }}" href="{{ url_for('app_vehicle_detail', v_id=v['id'], tab='history') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+    <span>History</span></a>
+</div>
+
+{% if tab == 'echallan' %}
+<div class="vd-kpi-grid">
+  <div class="vd-kpi-card"><div class="lbl">Total Challans</div><div class="big">{{ challans|length }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Total Amount</div><div class="big">₹{{ '{:,.0f}'.format(challan_pending_amount + challan_paid_amount) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Pending</div><div class="big" style="color:var(--a-red);">{{ challan_pending_n }}</div><div class="sub">₹{{ '{:,.0f}'.format(challan_pending_amount) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Paid</div><div class="big" style="color:var(--a-green);">{{ challan_paid_n }}</div><div class="sub">₹{{ '{:,.0f}'.format(challan_paid_amount) }}</div></div>
+</div>
+
+{% if challans %}
+{% for c in challans %}
+<div class="vd-chl-row" id="vdChl{{ loop.index }}">
+  <div class="vd-chl-head" onclick="document.getElementById('vdChl{{ loop.index }}').classList.toggle('open')">
+    <svg class="vd-chl-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    <div class="vd-chl-main">
+      <div class="no">{{ c.challan_no or '—' }}</div>
+      <div class="dt">{{ c.date_display }}{% if c.time_display %}, {{ c.time_display }}{% endif %}</div>
+    </div>
+    <div class="vd-chl-amt">₹{{ '{:,.0f}'.format(c.fine_imposed or 0) }}</div>
+    <span class="vd-comp-badge" style="background:{% if (c.challan_status or '').lower() != 'pending' %}#e8f5ee;color:var(--a-green){% else %}#fff6e8;color:var(--a-accent){% endif %};">{{ c.challan_status or 'Pending' }}</span>
+  </div>
+  <div class="vd-chl-body">
+    {% if c.offence_list %}
+    <div class="vd-chl-offences">
+      {% for o in c.offence_list %}<span class="vd-chl-offence-chip" title="{{ o.name }}">MV Act {{ o.act }}</span>{% endfor %}
+    </div>
+    {% endif %}
+    <div class="vd-chl-detail-row"><span class="k">Location</span><span class="v">{{ c.challan_place or '—' }}</span></div>
+    <div class="vd-chl-detail-row"><span class="k">RTO District</span><span class="v">{{ c.rto_distric_name or '—' }}</span></div>
+    <div class="vd-chl-detail-row"><span class="k">Driver Name</span><span class="v">{{ c.driver_name or '—' }}</span></div>
+    <div class="vd-chl-detail-row"><span class="k">Owner Name</span><span class="v">{{ c.owner_name or '—' }}</span></div>
+    <div class="vd-chl-detail-row"><span class="k">Sent to Court</span><span class="v">{{ c.sent_to_reg_court or 'No' }}</span></div>
+    {% if c.remark %}<div class="vd-chl-remark"><b>Remark:</b> {{ c.remark }}</div>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="vd-empty">No challans on file for this vehicle.</div>
+{% endif %}
+
+{% else %}
+<div class="ld-card">
+  {% if history %}
+  {% for h in history %}
+  <div class="vd-history-item"><div class="date">{{ h.date }}</div><div class="txt">{{ h.text }}</div></div>
+  {% endfor %}
+  {% else %}
+  <div class="vd-empty">No recorded history yet.</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

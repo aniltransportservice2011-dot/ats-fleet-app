@@ -27,6 +27,8 @@ body.app-body {
   background: var(--a-paper); color: var(--a-ink);
   padding-bottom: 84px; /* clears the fixed bottom bar */
   -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden; /* safety net — a native form element (date-picker icon etc.) rendering
+    wider than its box on some device clips here instead of pushing the whole screen sideways */
   /* Floor the page height to the screen even on short-content pages (e.g. Business Overview's
      4-card list) — without this, a short page never becomes scrollable, so mobile browsers keep
      their own address bar expanded there while a taller page (that the user has scrolled) has
@@ -248,7 +250,7 @@ body.a-scroll-lock { overflow: hidden; }
    Trip wizard (templates/app/trip_add.html) — Add Trip, 4 steps.
    Own prefix (tw-) so nothing here can collide with the rest of app.css.
    ========================================================================== */
-body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
+body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hidden; }
 .tw-header {
   position: sticky; top: 0; z-index: 40; background: var(--a-white); border-bottom: 1px solid var(--a-line);
   padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px; display: flex; align-items: center; gap: 12px;
@@ -292,14 +294,26 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
 .tw-section-toggle { font-size: 0.76rem; color: var(--a-accent); font-weight: 700; display: flex; align-items: center; gap: 3px; }
 .tw-section-toggle svg { width: 13px; height: 13px; transition: transform 0.15s; }
 .tw-section.collapsed .tw-section-toggle svg { transform: rotate(-90deg); }
-.tw-section-body { padding: 4px 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tw-section-body { padding: 4px 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
 .tw-section.collapsed .tw-section-body { display: none; }
-.tw-field { display: flex; flex-direction: column; gap: 5px; }
+/* Single column on narrow phones — same reasoning as .vam-grid (Add Vehicle modal): a fixed
+   2-column split can get visually cramped with native date-picker/select rendering on a small
+   screen even without literal box overlap, so remove the possibility entirely below this width. */
+@media (max-width: 359px) {
+  .tw-section-body { grid-template-columns: 1fr; }
+}
+/* min-width:0 — without this, a grid item defaults to never shrinking below its content's own
+   intrinsic width, so a native date-picker's own calendar-icon rendering (device/OS-dependent,
+   not something CSS controls) can force the cell wider than its grid track and overflow into the
+   neighboring column — reads as one text box "overlapping" the next, even though width:100%
+   below is doing exactly what it says on any device where the intrinsic width doesn't win. Same
+   fix as .vam-field (Add Vehicle modal). */
+.tw-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .tw-field.full { grid-column: 1 / -1; }
 .tw-field label { font-size: 0.72rem; font-weight: 700; color: var(--a-steel); display: flex; align-items: center; gap: 5px; }
 .tw-field label .req { color: var(--a-red); }
 .tw-field input, .tw-field select { border: 1px solid var(--a-line); border-radius: 10px; padding: 10px 11px; font-size: 0.86rem;
-  font-family: inherit; color: var(--a-ink); background: var(--a-paper); width: 100%; }
+  font-family: inherit; color: var(--a-ink); background: var(--a-paper); width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
 .tw-field input:focus, .tw-field select:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
 .tw-field input:disabled { color: var(--a-steel); }
 .tw-hint { grid-column: 1 / -1; font-size: 0.7rem; color: var(--a-steel); line-height: 1.4; margin-top: -4px; }
@@ -358,12 +372,38 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
    page content in .a-wrap (padding: 0 16px), same single gutter every other app page relies on
    (.a-card, .a-kpi-grid, etc. never add their own). These used to add a second 16px on top of
    that, doubling the side gap to 32px on this page only vs. 16px everywhere else. */
-.mo-tabstrip { display: flex; gap: 4px; overflow-x: auto; padding: 10px 0; background: var(--a-white);
-  border-bottom: 1px solid var(--a-line); -webkit-overflow-scrolling: touch; }
-.mo-tab { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 6px 14px 8px; color: var(--a-steel); font-size: 0.68rem; font-weight: 700; border-bottom: 2px solid transparent; }
-.mo-tab svg { width: 19px; height: 19px; }
-.mo-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
+.mo-tabstrip { display: flex; gap: 7px; padding: 12px 0 6px; background: transparent; }
+/* Boxed pill style (white card per tab, active = light-orange fill) instead of the old
+   underline-tab-strip look. 5 real tabs (Overview/Service/Tyres/Battery/Urea) + a 6th "More" box
+   that opens .mo-more-sheet below for the remaining 2 real tabs (Toll, Compliance) — see the big
+   HTML comment above the tab strip markup for why nothing here is fabricated. */
+.mo-tab { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 11px 3px; background: var(--a-white); border-radius: 14px; border: none; font-family: inherit; cursor: pointer;
+  color: var(--a-ink); font-size: 0.6rem; font-weight: 700; }
+.mo-tab svg { width: 19px; height: 19px; flex-shrink: 0; }
+.mo-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mo-tab.active { background: #fff3e8; color: var(--a-accent); }
+
+/* ---------- "More" tabs sheet (Toll / Compliance) ---------- */
+.mo-more-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.4); z-index: 80;
+  opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility .2s; }
+.mo-more-backdrop.open { opacity: 1; visibility: visible; }
+.mo-more-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 81;
+  background: var(--a-white); border-radius: 20px 20px 0 0; box-shadow: 0 -8px 28px rgba(20,24,40,.2);
+  padding: 10px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  transform: translateY(100%); transition: transform .25s ease;
+}
+.mo-more-sheet.open { transform: translateY(0); }
+.mo-more-handle { width: 40px; height: 4px; border-radius: 999px; background: var(--a-line); margin: 4px auto 14px; }
+.mo-more-title { font-size: 0.95rem; font-weight: 800; color: var(--a-ink); margin-bottom: 14px; }
+.mo-more-grid { display: flex; flex-wrap: wrap; gap: 18px; }
+.mo-more-item { display: flex; flex-direction: column; align-items: center; gap: 7px; width: 70px;
+  text-decoration: none; color: var(--a-ink); font-size: 0.74rem; font-weight: 700; text-align: center; }
+.mo-more-ic { width: 52px; height: 52px; border-radius: 14px; background: var(--a-paper);
+  display: flex; align-items: center; justify-content: center; color: var(--a-ink); }
+.mo-more-ic svg { width: 22px; height: 22px; }
+
 .mo-period-bar { display: flex; align-items: center; gap: 7px; padding: 12px 0 4px; color: var(--a-steel); font-size: 0.78rem; font-weight: 600; }
 .mo-period-bar svg { width: 15px; height: 15px; }
 
@@ -543,9 +583,146 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
   display: inline-flex; align-items: center; gap: 7px;
   background: var(--a-white); color: var(--a-accent); border: 1.5px solid var(--a-accent);
   border-radius: 999px; padding: 12px 20px; font-size: 0.86rem; font-weight: 700; letter-spacing: 0.01em;
-  text-decoration: none; box-shadow: 0 3px 10px rgba(20,24,40,.12); }
+  text-decoration: none; box-shadow: 0 3px 10px rgba(20,24,40,.12); font-family: inherit; cursor: pointer; }
 .vh-addbtn:active { background: var(--a-accent); color: #fff; }
 .vh-addbtn svg { width: 17px; height: 17px; }
+
+/* ---------- Add Vehicle modal (vehicles.html) ----------------------------------------------
+   Bottom-sheet style covering most of the screen, opened in place instead of navigating to the
+   website's own /vehicles/add — same real fields/route (app_add_vehicle(), which shares
+   _insert_vehicle_from_form() with the website), just our own app tokens/components (--a-accent,
+   --a-white cards, the same input styling as the auth screens) rather than copying any reference
+   image's own colors/fonts. z-index range (80+) kept clear of the FAB/account/More overlays
+   (60-71) and the topbar/bottom-nav (40/50) so it always sits on top of everything else. */
+.vam-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.45); z-index: 80; opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility .2s; }
+.vam-backdrop.open { opacity: 1; visibility: visible; }
+.vam-modal {
+  position: fixed; left: 0; right: 0; bottom: 0; top: 48px; z-index: 81;
+  background: var(--a-paper); border-radius: 20px 20px 0 0; box-shadow: 0 -8px 32px rgba(20,24,40,.22);
+  display: flex; flex-direction: column; transform: translateY(100%); transition: transform .25s ease;
+}
+.vam-modal.open { transform: translateY(0); }
+.vam-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  padding: 16px 18px; background: var(--a-white); border-bottom: 1px solid var(--a-line); border-radius: 20px 20px 0 0; }
+.vam-head h2 { margin: 0; font-size: 1.05rem; font-weight: 800; color: var(--a-ink); }
+.vam-close { width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--a-paper);
+  color: var(--a-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.vam-close svg { width: 16px; height: 16px; }
+
+.vam-form { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
+  padding: 16px 18px calc(20px + env(safe-area-inset-bottom, 0px)); }
+.vam-error { background: #fdeceb; border: 1px solid rgba(227,73,72,.3); color: var(--a-red);
+  border-radius: 10px; padding: 10px 12px; font-size: 0.82rem; margin-bottom: 14px; }
+.vam-section-title { font-size: 0.7rem; font-weight: 800; color: var(--a-steel); text-transform: uppercase;
+  letter-spacing: 0.04em; margin: 18px 0 10px; }
+.vam-section-title:first-child { margin-top: 0; }
+.vam-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+/* Single column on narrow phones — native date-picker rendering (calendar icon width especially)
+   varies enough across devices/browsers that a fixed 2-column split can crowd on a small screen;
+   stacking removes any chance of that regardless of the device. */
+@media (max-width: 359px) {
+  .vam-grid { grid-template-columns: 1fr; }
+}
+.vam-field-full { grid-column: 1 / -1; }
+/* min-width:0 on the grid item AND the input/select itself — without this, a grid item defaults
+   to never shrinking below its content's own intrinsic width, so a native date-picker's own
+   calendar-icon rendering (which varies by device/OS, unlike anything we control with CSS) can
+   force the cell wider than its grid track and overflow into the neighboring column — reading
+   as one text box "overlapping" the next, even though width:100% below is doing exactly what it
+   says on any device where the intrinsic width doesn't win. */
+.vam-field { min-width: 0; }
+.vam-field label { display: block; font-size: 0.74rem; font-weight: 700; color: var(--a-ink); margin-bottom: 5px; }
+.vam-field .req { color: var(--a-red); }
+.vam-field input, .vam-field select, .vam-field textarea {
+  width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--a-line); border-radius: 10px; padding: 10px 11px;
+  font-size: 0.86rem; font-family: inherit; color: var(--a-ink); background: var(--a-white);
+}
+.vam-field input:focus, .vam-field select:focus, .vam-field textarea:focus { outline: none; border-color: var(--a-accent); }
+.vam-field textarea { resize: vertical; }
+
+.vam-actions { display: flex; gap: 10px; margin-top: 22px; }
+.vam-btn-cancel { flex: 1; border: 1.5px solid var(--a-line); background: var(--a-white); color: var(--a-ink);
+  border-radius: 12px; padding: 13px; font-weight: 700; font-size: 0.9rem; font-family: inherit; cursor: pointer; }
+.vam-btn-save { flex: 1; border: none; background: var(--a-accent); color: #fff;
+  border-radius: 12px; padding: 13px; font-weight: 700; font-size: 0.9rem; font-family: inherit; cursor: pointer; }
+.vam-btn-save:active { background: var(--a-accent-dark); }
+.vam-btn-save:disabled { opacity: 0.6; }
+
+/* ==========================================================================
+   Vehicle detail (templates/app/vehicle_detail.html) — own prefix (vd-).
+   Reuses .mo-tab (Maintenance's box tabs), .ld-card and .vh-status-badge
+   from elsewhere rather than redefining them.
+   ========================================================================== */
+.vd-crumb { font-size: 0.78rem; color: var(--a-steel); margin: 14px 0 10px; }
+.vd-crumb a { color: var(--a-steel); font-weight: 600; }
+
+.vd-head-card { background: var(--a-white); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+.vd-head-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.vd-photo { width: 52px; height: 52px; border-radius: 12px; background: var(--a-paper);
+  display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
+.vd-head-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.vd-head-title h1 { font-size: 1.15rem; margin: 0; }
+.vd-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; padding-top: 12px; border-top: 1px solid var(--a-line); }
+.vd-info-grid .lbl { font-size: 0.68rem; color: var(--a-steel); text-transform: uppercase; letter-spacing: 0.02em; }
+.vd-info-grid .v { font-size: 0.84rem; font-weight: 700; margin-top: 2px; word-break: break-word; }
+.vd-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--a-line); flex-wrap: wrap; }
+.vd-sync-btn { display: flex; align-items: center; gap: 7px; border: 1.5px solid var(--a-accent);
+  background: var(--a-white); color: var(--a-accent); border-radius: 999px; padding: 9px 16px;
+  font-size: 0.8rem; font-weight: 700; font-family: inherit; cursor: pointer; }
+.vd-sync-btn svg { width: 15px; height: 15px; }
+.vd-sync-btn:active { background: var(--a-accent); color: #fff; }
+.vd-sync-sub { font-size: 0.7rem; color: var(--a-steel); }
+
+.vd-comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.vd-comp-card { background: var(--a-white); border-radius: 14px; padding: 12px; text-decoration: none; color: var(--a-ink); }
+.vd-comp-card-full { grid-column: 1 / -1; }
+.vd-comp-card .hd { display: flex; align-items: center; gap: 7px; font-size: 0.76rem; font-weight: 700; color: var(--a-steel); margin-bottom: 8px; }
+.vd-comp-card .hd .ic { width: 24px; height: 24px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; flex-shrink: 0; }
+.vd-ext { margin-left: auto; color: var(--a-steel); font-weight: 600; font-size: 0.72rem; }
+.vd-comp-badge { display: inline-block; font-size: 0.7rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.vd-comp-card .exp { font-size: 0.78rem; font-weight: 700; margin-top: 7px; }
+.vd-comp-card .days { font-size: 0.7rem; color: var(--a-steel); }
+
+.vd-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+.vd-kpi-card { background: var(--a-white); border-radius: 14px; padding: 13px; }
+.vd-kpi-card .lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
+.vd-kpi-card .big { font-size: 1.25rem; font-weight: 800; margin-top: 3px; }
+.vd-kpi-card .sub { font-size: 0.7rem; color: var(--a-steel); }
+
+.vd-chl-row { background: var(--a-white); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+.vd-chl-head { display: flex; align-items: center; gap: 10px; padding: 12px; cursor: pointer; }
+.vd-chl-chev { width: 14px; height: 14px; color: var(--a-steel); flex-shrink: 0; transition: transform 0.15s; }
+.vd-chl-row.open .vd-chl-chev { transform: rotate(90deg); }
+.vd-chl-main { flex: 1; min-width: 0; }
+.vd-chl-main .no { font-weight: 700; font-size: 0.84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vd-chl-main .dt { font-size: 0.72rem; color: var(--a-steel); margin-top: 1px; }
+.vd-chl-amt { font-weight: 700; font-size: 0.84rem; flex-shrink: 0; }
+.vd-chl-body { display: none; padding: 0 12px 14px; }
+.vd-chl-row.open .vd-chl-body { display: block; }
+.vd-chl-offences { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.vd-chl-offence-chip { background: #eaf1fb; color: #2a78d6; font-size: 0.68rem; font-weight: 700; padding: 4px 9px; border-radius: 999px; }
+.vd-chl-detail-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 0.8rem; border-top: 1px solid var(--a-line); }
+.vd-chl-detail-row .k { color: var(--a-steel); }
+.vd-chl-detail-row .v { font-weight: 600; text-align: right; }
+.vd-chl-remark { margin-top: 10px; font-size: 0.78rem; color: var(--a-steel); }
+
+.vd-history-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--a-line); font-size: 0.82rem; }
+.vd-history-item:last-child { border-bottom: none; }
+.vd-history-item .date { color: var(--a-steel); font-size: 0.72rem; white-space: nowrap; min-width: 78px; }
+.vd-empty { text-align: center; color: var(--a-steel); font-size: 0.82rem; padding: 28px 12px; background: var(--a-white); border-radius: 14px; }
+
+/* ---------- Shared success/error toast (base_app.html, showToast()) ---------- */
+.a-toast {
+  position: fixed; left: 50%; bottom: calc(78px + env(safe-area-inset-bottom, 0px)); z-index: 90;
+  display: flex; align-items: center; gap: 9px; max-width: calc(100% - 32px);
+  background: var(--a-ink); color: #fff; border-radius: 12px; padding: 12px 16px;
+  font-size: 0.86rem; font-weight: 700; box-shadow: 0 6px 20px rgba(20,24,40,.28);
+  transform: translate(-50%, 12px); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease, visibility .2s;
+}
+.a-toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+.a-toast svg { width: 19px; height: 19px; color: var(--a-green); flex-shrink: 0; }
 
 /* ==========================================================================
    Route Analytics — Best Routes tab (templates/app/analytics.html). Own

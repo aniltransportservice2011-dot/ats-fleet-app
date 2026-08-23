@@ -106,7 +106,7 @@
         <span class="fab-option-ic" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg></span>
         <span class="fab-option-label">Add Expense</span>
       </a>
-      <a href="/vehicles/add" class="fab-option" data-pos="4">
+      <a href="/app/vehicles?add=1" class="fab-option" data-pos="4">
         <span class="fab-option-ic" style="background:#e8f5ee;color:var(--a-green);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg></span>
         <span class="fab-option-label">Add Vehicle</span>
       </a>
@@ -161,6 +161,26 @@
   <div class="more-backdrop" id="moreBackdrop" onclick="closeMoreSheet()"></div>
 </nav>
 
+<!-- Shared success/error toast — any /app/ page can call showToast('message') (e.g. after an
+     Add-Vehicle-style modal saves and redirects with ?added=1 in the URL). One shared component
+     here rather than a per-page one, since every future "Add X" modal (trip, expense,
+     maintenance, ...) needs the exact same "Saved!" confirmation. -->
+<div class="a-toast" id="aToast">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5"/></svg>
+  <span id="aToastMsg"></span>
+</div>
+
+<script>
+  var _aToastTimer = null;
+  function showToast(message) {
+    var el = document.getElementById('aToast');
+    document.getElementById('aToastMsg').textContent = message;
+    el.classList.add('show');
+    clearTimeout(_aToastTimer);
+    _aToastTimer = setTimeout(function () { el.classList.remove('show'); }, 3000);
+  }
+</script>
+
 <script>
   // Registered with an explicit scope of /app/ — this service worker can only ever control pages
   // under /app/, never the website's own pages, even though it's served from the shared /static/.
@@ -171,10 +191,12 @@
     });
   }
 
-  // FAB speed-dial — tapping + fans out 4 real quick-add links (each routes to an existing,
-  // working page: /app/trips/add, /maintenance/add, /overheads/add, /vehicles/add) instead of
-  // jumping straight to Add Trip. Lives here (base_app.html), not a per-page script, since the
-  // FAB itself is shared chrome on every /app/ page.
+  // FAB speed-dial — tapping + fans out 4 real quick-add links: /app/trips/add and
+  // /maintenance/add, /overheads/add are existing working pages; /app/vehicles?add=1 instead
+  // navigates to the real Vehicles list and auto-opens its native Add Vehicle modal (see the
+  // ?add=1 handling at the bottom of vehicles.html) rather than the website's own full-page
+  // /vehicles/add. Lives here (base_app.html), not a per-page script, since the FAB itself is
+  // shared chrome on every /app/ page.
   //
   // lockPageScroll()/unlockPageScroll() — while any of the 3 overlays below (FAB, account
   // dropdown, More speed-dial) is open, the page body can't scroll. This isn't just to stop
