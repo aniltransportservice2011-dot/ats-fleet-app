@@ -64,7 +64,7 @@
 <div id="vh-list">
 {% for v in vehicles %}
 {% set status_class = v.status.replace(' ', '') %}
-<a href="{{ url_for('vehicle_detail', v_id=v.id) }}" class="vh-card">
+<a href="{{ url_for('app_vehicle_detail', v_id=v.id) }}" class="vh-card">
   <div class="vh-card-bar {{ status_class }}"></div>
   <div class="vh-card-body">
     <div class="vh-card-top">
@@ -118,10 +118,102 @@
 
 <div style="height:56px;"></div><!-- clears the floating Add Vehicle button below -->
 
-<a href="{{ url_for('add_vehicle') }}" class="vh-addbtn">
+<button type="button" class="vh-addbtn" onclick="openAddVehicleModal()">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
   Add Vehicle
-</a>
+</button>
+
+<!-- Add Vehicle modal — real fields, real route. Same columns/logic as the website's own
+     /vehicles/add (templates/add_vehicle.html → add_vehicle()), just posted via fetch to
+     app_add_vehicle() (a thin JSON wrapper around the same _insert_vehicle_from_form() helper)
+     instead of a full-page navigation, so it can open in place and close back into a refreshed
+     list. Only Vehicle No is actually required — that matches the real backend's own validation,
+     not the reference mockup's asterisks, which mark fields the backend doesn't actually enforce.
+     No "Upload Documents" section — add_vehicle() has no file-upload handling at all, on the
+     website or here; inventing one here would be exactly the kind of fabricated feature this
+     app avoids elsewhere (Change Password, Reports, etc.). Type is Own/Hired only (the real
+     VEHICLE_TYPE_LABELS, injected into every template already) — not a fabricated list. -->
+<div class="vam-backdrop" id="vamBackdrop" onclick="closeAddVehicleModal()"></div>
+<div class="vam-modal" id="vamModal" role="dialog" aria-modal="true" aria-label="Add Vehicle">
+  <div class="vam-head">
+    <h2>Add Vehicle</h2>
+    <button type="button" class="vam-close" onclick="closeAddVehicleModal()" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <form id="vamForm" class="vam-form">
+    <div class="vam-error" id="vamError" style="display:none;"></div>
+
+    <div class="vam-section-title">Basic Information</div>
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full">
+        <label>Vehicle No <span class="req">*</span></label>
+        <input type="text" name="vehicle_no" placeholder="e.g. OD14AD0117" required autocomplete="off">
+      </div>
+      <div class="vam-field">
+        <label>Type</label>
+        <select name="type">
+          <option value="">Select type</option>
+          {% for code, label in VEHICLE_TYPE_LABELS.items() %}
+          <option value="{{ code }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vam-field">
+        <label>Body Type</label>
+        <select name="body_type">
+          <option value="">Select body type</option>
+          {% for bt in ['Truck','Trailer','Tanker','Pickup','Other'] %}
+          <option value="{{ bt }}">{{ bt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vam-field">
+        <label>Status</label>
+        <select name="status">
+          <option value="Active">Active</option>
+          <option value="In Maintenance">In Maintenance</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </div>
+      <div class="vam-field">
+        <label>Registration Date</label>
+        <input type="date" name="registration_date">
+      </div>
+      <div class="vam-field">
+        <label>Capacity (MT)</label>
+        <input type="number" step="0.01" name="capacity_mt" placeholder="e.g. 25">
+      </div>
+      <div class="vam-field">
+        <label>Chassis Number</label>
+        <input type="text" name="chassis_number" placeholder="Chassis / VIN number">
+      </div>
+      <div class="vam-field">
+        <label>Engine Number</label>
+        <input type="text" name="engine_number" placeholder="Engine number">
+      </div>
+    </div>
+
+    <div class="vam-section-title">Validity Details</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>Insurance Expiry</label><input type="date" name="insurance_expiry"></div>
+      <div class="vam-field"><label>Fitness Expiry</label><input type="date" name="fitness_expiry"></div>
+      <div class="vam-field"><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto"></div>
+      <div class="vam-field"><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto"></div>
+    </div>
+
+    <div class="vam-section-title">Additional Information</div>
+    <div class="vam-field">
+      <label>Notes (Optional)</label>
+      <textarea name="notes" rows="3" maxlength="200" placeholder="Any additional notes..."></textarea>
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddVehicleModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="vamSaveBtn">Save Vehicle</button>
+    </div>
+  </form>
+</div>
 
 {% endblock %}
 {% block extra_scripts %}
@@ -152,5 +244,69 @@ document.addEventListener('click', function (e) {
       btn.style.pointerEvents = '';
     });
 });
+
+// Add Vehicle modal — same lock/backdrop pattern as the FAB/account/More overlays in
+// base_app.html (see lockPageScroll() there), just page-local since only vehicles.html uses it.
+function openAddVehicleModal() {
+  document.getElementById('vamBackdrop').classList.add('open');
+  document.getElementById('vamModal').classList.add('open');
+  document.body.classList.add('a-scroll-lock');
+}
+function closeAddVehicleModal() {
+  document.getElementById('vamBackdrop').classList.remove('open');
+  document.getElementById('vamModal').classList.remove('open');
+  document.body.classList.remove('a-scroll-lock');
+}
+document.getElementById('vamForm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var btn = document.getElementById('vamSaveBtn');
+  var errBox = document.getElementById('vamError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  fetch("{{ url_for('app_add_vehicle') }}", { method: 'POST', body: new FormData(e.target) })
+    .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+    .then(function (r) {
+      if (r.data.ok) {
+        // ?added=1 survives the redirect so the fresh page load can show the confirmation
+        // toast — a JS-only "show a toast now" call would never make it, since this is a real
+        // navigation to a freshly-rendered list, not a same-page update.
+        window.location.href = (r.data.redirect || "{{ url_for('app_vehicles') }}") + '?added=1';
+      } else {
+        errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Save Vehicle';
+      }
+    })
+    .catch(function () {
+      errBox.textContent = 'Network error — please check your connection and try again.';
+      errBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Save Vehicle';
+    });
+});
+// Auto-open when landing here from the FAB's "Add Vehicle" quick-add (/app/vehicles?add=1),
+// same idea as Load More's history.replaceState — strip the param right back out so a refresh
+// or back-navigation doesn't reopen the modal.
+// Post-save confirmation (/app/vehicles?added=1) — the toast itself (showToast()) lives in
+// base_app.html since every future Add-X modal will need the same "Saved!" confirmation.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Vehicle added successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddVehicleModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
 </script>
 {% endblock %}

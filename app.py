@@ -1108,18 +1108,17 @@ def _rc_month_year(value):
         return None
     return value.split('/')[-1]
 
-@app.route('/vehicles/<int:v_id>')
-def vehicle_detail(v_id):
-    """Full per-vehicle detail page — everything about one vehicle in one place, replacing the
-    old modal-based row view. Every tab reads straight from tables already populated elsewhere
-    in the app (vehicle_compliance, insurance_policies, vehicle_challans, the eChallan RC
-    cache) — this page itself never calls a live API; only the "Sync Latest Data" button does,
-    same cache-then-read pattern as the rest of this integration."""
-    conn = get_db()
+def _vehicle_detail_data(conn, v_id):
+    """Shared by vehicle_detail() (website, full 6-tab page with add/edit forms) and
+    app_vehicle_detail() (mobile, read-only summary + Challans/History) — every real field/row
+    either page needs about one vehicle, computed once so the two can never disagree. Returns
+    None if the vehicle doesn't exist. Every tab reads straight from tables already populated
+    elsewhere in the app (vehicle_compliance, insurance_policies, vehicle_challans, the eChallan
+    RC cache) — never calls a live API itself; only the "Sync Latest Data" button does, same
+    cache-then-read pattern as the rest of this integration."""
     v = conn.execute("SELECT * FROM vehicles WHERE id=?", (v_id,)).fetchone()
     if not v:
-        conn.close()
-        return redirect(url_for('vehicles_list'))
+        return None
 
     rc_data = json.loads(v['rc_synced_data']) if v['rc_synced_data'] else None
     age_years = _vehicle_age_years(v['registration_date'])
@@ -1191,18 +1190,30 @@ def vehicle_detail(v_id):
     company_name_row = conn.execute("SELECT value FROM settings WHERE key='company_name'").fetchone()
     company_name = company_name_row['value'] if company_name_row else 'Anil Transport Service'
 
+    return {'v': v, 'rc_data': rc_data, 'age_years': age_years,
+            'comp_row': comp_row, 'insurance_rows': insurance_rows, 'active_insurance': active_insurance,
+            'challans': challans, 'challan_pending_amount': challan_pending_amount, 'challan_paid_amount': challan_paid_amount,
+            'challan_pending_n': challan_pending_n, 'challan_paid_n': challan_paid_n,
+            'reminders': reminders, 'history': history, 'body_type_icon': body_type_icon,
+            'company_name': company_name, 'rc_year': _rc_month_year(rc_data.get('rc_manu_month_yr')) if rc_data else None,
+            'today_str': datetime.date.today().isoformat()}
+
+@app.route('/vehicles/<int:v_id>')
+def vehicle_detail(v_id):
+    """Full per-vehicle detail page — everything about one vehicle in one place, replacing the
+    old modal-based row view. See _vehicle_detail_data() above for what's computed; this route
+    just adds the tab param and renders."""
+    conn = get_db()
+    data = _vehicle_detail_data(conn, v_id)
+    if data is None:
+        conn.close()
+        return redirect(url_for('vehicles_list'))
+    conn.close()
+
     tab = request.args.get('tab', 'insurance')
     if tab not in ('insurance', 'permit', 'fitness', 'puc', 'echallan', 'history'):
         tab = 'insurance'
-
-    conn.close()
-    return render_template('vehicle_detail.html', v=v, rc_data=rc_data, age_years=age_years,
-                            comp_row=comp_row, insurance_rows=insurance_rows, active_insurance=active_insurance,
-                            challans=challans, challan_pending_amount=challan_pending_amount, challan_paid_amount=challan_paid_amount,
-                            challan_pending_n=challan_pending_n, challan_paid_n=challan_paid_n,
-                            reminders=reminders, history=history, body_type_icon=body_type_icon,
-                            company_name=company_name, rc_year=_rc_month_year(rc_data.get('rc_manu_month_yr')) if rc_data else None,
-                            today_str=datetime.date.today().isoformat(), tab=tab, active='vehicles')
+    return render_template('vehicle_detail.html', tab=tab, active='vehicles', **data)
 
 @app.route('/vehicles/<int:v_id>/sync-now', methods=['POST'])
 def vehicle_sync_now(v_id):
@@ -5773,35 +5784,45 @@ def delete_overhead(o_id):
     conn.close()
     return redirect(url_for('overheads_list'))
 
+def _insert_vehicle_from_form(conn, f):
+    """Shared by add_vehicle() (website) and app_add_vehicle() (mobile modal) — the same
+    insert-or-update-by-vehicle_no logic, unchanged. Every column add_vehicle() ever wrote here
+    too, or re-saving an existing vehicle_no through one surface would silently null out columns
+    only the other surface knows about (see add_vehicle.html's own comment about this exact bug).
+    Returns (ok, error_message_or_None)."""
+    vno = (f.get('vehicle_no') or '').strip()
+    if not vno:
+        return False, 'Vehicle No is required.'
+    vtype = f.get('type')
+    existing = conn.execute("SELECT id FROM vehicles WHERE vehicle_no=?", (vno,)).fetchone()
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if existing:
+        conn.execute("""UPDATE vehicles SET type=?, registration_date=?, capacity_mt=?,
+                        insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
+                        status=?, body_type=?, chassis_number=?, engine_number=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
+                     (vtype, f.get('registration_date'), f.get('capacity_mt') or None,
+                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                      f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                      f.get('chassis_number') or None, f.get('engine_number') or None,
+                      f.get('notes'), session.get('user_id'), _now, existing[0]))
+    else:
+        conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
+                        insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
+                        status, body_type, chassis_number, engine_number, notes, created_by, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     (vno, vtype, f.get('registration_date'), f.get('capacity_mt') or None,
+                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                      f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
+                      f.get('chassis_number') or None, f.get('engine_number') or None,
+                      f.get('notes'), session.get('user_id'), _now))
+    conn.commit()
+    return True, None
+
 @app.route('/vehicles/add', methods=['GET', 'POST'])
 def add_vehicle():
     conn = get_db()
     if request.method == 'POST':
-        f = request.form
-        vno = (f.get('vehicle_no') or '').strip()
-        vtype = f.get('type')
-        existing = conn.execute("SELECT id FROM vehicles WHERE vehicle_no=?", (vno,)).fetchone()
-        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        if existing:
-            conn.execute("""UPDATE vehicles SET type=?, registration_date=?, capacity_mt=?,
-                            insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
-                            status=?, body_type=?, chassis_number=?, engine_number=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
-                         (vtype, f.get('registration_date'), f.get('capacity_mt') or None,
-                          f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
-                          f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
-                          f.get('chassis_number') or None, f.get('engine_number') or None,
-                          f.get('notes'), session.get('user_id'), _now, existing[0]))
-        else:
-            conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
-                            insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
-                            status, body_type, chassis_number, engine_number, notes, created_by, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                         (vno, vtype, f.get('registration_date'), f.get('capacity_mt') or None,
-                          f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
-                          f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
-                          f.get('chassis_number') or None, f.get('engine_number') or None,
-                          f.get('notes'), session.get('user_id'), _now))
-        conn.commit()
+        _insert_vehicle_from_form(conn, request.form)
         conn.close()
         return redirect(url_for('vehicles_list'))
     conn.close()
@@ -10171,6 +10192,53 @@ def app_vehicles():
         active_pct=round(active_count / total_vehicles * 100, 1) if total_vehicles else 0,
         maint_count=maint_count, ins_expiring=ins_expiring,
         challan_vehicle_count=challan_vehicle_count, challan_total_amount=challan_total_amount)
+
+@app.route('/app/vehicles/<int:v_id>')
+def app_vehicle_detail(v_id):
+    """Mobile Vehicle detail — same real data as the website's own vehicle_detail() (see
+    _vehicle_detail_data() above): header info + the same 5 compliance summary cards, plus two
+    native tabs (Challans, History) since both are pure read-only displays. The 4 compliance
+    cards (Insurance/Permit/Fitness/PUC) each bridge (↗) to the real website's own edit-capable
+    tab instead — each one is a genuinely large multi-section add/edit form (policy type,
+    premium, agent details, document uploads...) that doesn't belong rebuilt natively on a phone
+    screen for this pass. No fabricated "Overview"/"Documents"/"Reminders" tabs — the real page
+    only ever had Insurance/Permit/Fitness/PUC/eChallan/History (see vehicle_detail.html's own
+    tab_titles)."""
+    conn = get_db()
+    data = _vehicle_detail_data(conn, v_id)
+    if data is None:
+        conn.close()
+        return redirect(url_for('app_vehicles'))
+    # _vehicle_detail_data() returns its own 'company_name' (used for the Owner field) — drop it
+    # in favor of the canonical get_company_name()-backed one from _app_user_display(), same as
+    # every other /app/ page's topbar; in practice they're the same value today.
+    data.pop('company_name', None)
+    company_name, user_initials = _app_user_display(conn)
+    conn.close()
+
+    tab = request.args.get('tab', 'echallan')
+    if tab not in ('echallan', 'history'):
+        tab = 'echallan'
+    return render_template('app/vehicle_detail.html', company_name=company_name, user_initials=user_initials,
+        active='vehicles', notif_count=0, tab=tab, **data)
+
+@app.route('/app/vehicles/add', methods=['POST'])
+def app_add_vehicle():
+    """In-app "Add Vehicle" modal (vehicles.html) posts here via fetch instead of navigating to
+    the real /vehicles/add page — same _insert_vehicle_from_form() the website itself uses (same
+    fields, same insert-or-update-by-vehicle_no behavior), just returning JSON instead of a
+    redirect so the modal can close in place and reload the real list without a full navigation.
+    No file-upload handling here (or in the website's own add_vehicle()) — that's a real gap
+    matching the real backend, not something invented for the modal."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, error = _insert_vehicle_from_form(conn, request.form)
+    conn.close()
+    if not ok:
+        return jsonify({'ok': False, 'error': error}), 400
+    return jsonify({'ok': True, 'redirect': url_for('app_vehicles')})
 
 @app.route('/app/analysis')
 def app_analysis():
