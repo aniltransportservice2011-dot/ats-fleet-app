@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign In — {{ company_name }}</title>
+
+<!-- Same install metadata as base_app.html — a user can land here first (session expired, or
+     the installed app was just opened logged-out), so this page needs to look and install the
+     same way the rest of /app/ does, not fall back to being just "a web page". -->
+<link rel="manifest" href="{{ url_for('static', filename='app-manifest.json') }}">
+<meta name="theme-color" content="#c05621">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="{{ company_name }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
+<link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
+
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<style>
+  /* Scoped to this page only — a full-screen centered card, no topbar/bottom-nav chrome at all,
+     since there's no signed-in identity yet for either of those to show. */
+  body.app-login-body{ background:var(--a-paper); min-height:100vh; padding:0; display:flex;
+    align-items:center; justify-content:center;
+    font-family:-apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color:var(--a-ink); }
+  .a-login-wrap{ width:100%; max-width:380px; padding:32px 20px; }
+  .a-login-badge{ width:64px; height:64px; border-radius:18px; background:var(--a-accent);
+    display:flex; align-items:center; justify-content:center; margin:0 auto 18px; }
+  .a-login-badge svg{ width:32px; height:32px; }
+  .a-login-title{ text-align:center; font-size:1.05rem; font-weight:800; margin:0 0 2px; }
+  .a-login-sub{ text-align:center; color:var(--a-steel); font-size:0.82rem; margin:0 0 26px; }
+  .a-login-card{ background:var(--a-white); border-radius:18px; padding:22px 18px; box-shadow:0 1px 3px rgba(20,24,40,.08); }
+  .a-login-field{ margin-bottom:14px; }
+  .a-login-field label{ display:block; font-size:0.72rem; font-weight:700; color:var(--a-steel);
+    text-transform:uppercase; letter-spacing:.03em; margin-bottom:6px; }
+  .a-login-field input{ width:100%; border:1px solid var(--a-line); border-radius:11px; padding:12px 13px;
+    font-size:0.92rem; font-family:inherit; color:var(--a-ink); background:var(--a-paper); }
+  .a-login-field input:focus{ outline:none; border-color:var(--a-accent); background:var(--a-white); }
+  .a-login-remember{ display:flex; align-items:center; gap:8px; font-size:0.8rem; color:var(--a-steel); margin-bottom:18px; }
+  .a-login-btn{ width:100%; border:none; border-radius:12px; background:var(--a-accent); color:#fff;
+    font-size:0.95rem; font-weight:700; padding:13px; font-family:inherit; cursor:pointer; }
+  .a-login-btn:active{ background:var(--a-accent-dark); }
+  .a-login-error{ background:#fdeceb; border:1px solid rgba(227,73,72,.3); color:var(--a-red);
+    border-radius:10px; padding:10px 12px; font-size:0.82rem; margin-bottom:14px; }
+  .a-login-footer{ text-align:center; color:var(--a-steel); font-size:0.72rem; margin-top:20px; }
+</style>
+</head>
+<body class="app-login-body">
+<div class="a-login-wrap">
+  <div class="a-login-badge">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
+  </div>
+  <p class="a-login-title">{{ company_name }}</p>
+  <p class="a-login-sub">Sign in to your fleet dashboard</p>
+
+  <div class="a-login-card">
+    {% if error %}<div class="a-login-error">{{ error }}</div>{% endif %}
+    <form method="post">
+      <div class="a-login-field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="a-login-field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <label class="a-login-remember">
+        <input type="checkbox" name="remember_me" value="1"> Remember me
+      </label>
+      <button type="submit" class="a-login-btn">Sign In</button>
+    </form>
+  </div>
+  <p class="a-login-footer">&copy; {{ year }} {{ company_name }}. All rights reserved.</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block title %}Anil Transport{% endblock %}</title>
+
+<!-- Installable app manifest — scoped to /app/ only. The website's own pages (base.html) never
+     link this, so only this section ever offers "Add to Home Screen" / "Install app", and only
+     this section is what launches full-screen with no browser chrome once installed. -->
+<link rel="manifest" href="{{ url_for('static', filename='app-manifest.json') }}">
+<meta name="theme-color" content="#c05621">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Anil Transport">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
+<link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
+
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+{% block extra_head %}{% endblock %}
+</head>
+<body class="app-body">
+
+<header class="a-topbar">
+  <div class="a-topbar-left">
+    <span class="a-brand-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
+    </span>
+    <span class="a-brand-name">{{ company_name }}</span>
+  </div>
+  <div class="a-topbar-right">
+    <a href="/app/notifications" class="a-bell">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      {% if notif_count %}<span class="a-badge">{{ notif_count }}</span>{% endif %}
+    </a>
+    <div class="a-avatar">{{ user_initials }}</div>
+  </div>
+</header>
+
+<main class="a-wrap">
+  {% block content %}{% endblock %}
+</main>
+
+<nav class="a-bottom-nav">
+  <a href="/app/dashboard" class="a-bn-item {% if active=='dashboard' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
+    Home
+  </a>
+  <a href="/app/trips" class="a-bn-item {% if active=='trips' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.4"/></svg>
+    Trips
+  </a>
+  <div class="a-bn-fab-wrap">
+    <a href="/app/trips/add" class="a-bn-fab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    </a>
+  </div>
+  <a href="/app/invoices" class="a-bn-item {% if active=='invoices' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3Z"/><path d="M9 8h6M9 12h6"/></svg>
+    Invoices
+  </a>
+  <a href="/app/more" class="a-bn-item {% if active=='more' %}active{% endif %}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    More
+  </a>
+</nav>
+
+<script>
+  // Registered with an explicit scope of /app/ — this service worker can only ever control pages
+  // under /app/, never the website's own pages, even though it's served from the shared /static/.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register("{{ url_for('static', filename='app-sw.js') }}", { scope: '/app/' })
+        .catch(function (err) { console.warn('Service worker registration failed:', err); });
+    });
+  }
+</script>
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>
