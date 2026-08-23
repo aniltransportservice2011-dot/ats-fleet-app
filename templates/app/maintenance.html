@@ -2,23 +2,33 @@
 {% block title %}Maintenance — {{ company_name }}{% endblock %}
 {% block content %}
 
+<div class="vh-head">
+  <div>
+    <h1>Maintenance</h1>
+    <div class="sub">{{ 'Service — track fleet upkeep, costs and vendor activity.' if tab == 'service' else 'Overview of your fleet\'s upkeep and compliance.' }}</div>
+  </div>
+</div>
+
 <!-- 5 real tabs shown as boxes (Overview/Service/Tyres/Battery/Urea) + a "More" box for the
      remaining 2 real tabs (Toll, Compliance) — same 7 real tabs as templates/maintenance.html's
      own tab_titles, just split across a visible row + an overflow sheet instead of either
      scrolling sideways or squeezing 7 into one line. No fabricated tabs (Fuel/Documents/Drivers/
      Reports/Settings aren't real maintenance sub-tabs anywhere in this codebase — see
-     MAINTENANCE_TAB_LABELS / maintenance_list() in app.py). -->
+     MAINTENANCE_TAB_LABELS / maintenance_list() in app.py). Overview and Service are both native
+     now; Tyres and Battery are their own native top-level pages (see app_tyres()/app_battery()),
+     not sub-tabs here — the boxes below link straight to them; Urea/Toll/Compliance still bridge
+     to the real website. -->
 <div class="mo-tabstrip">
-  <a class="mo-tab active" href="{{ url_for('app_maintenance') }}">
+  <a class="mo-tab {{ 'active' if tab == 'overview' }}" href="{{ url_for('app_maintenance') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
     <span>Overview</span></a>
-  <a class="mo-tab" href="/maintenance?tab=service">
+  <a class="mo-tab {{ 'active' if tab == 'service' }}" href="{{ url_for('app_maintenance', tab='service') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
     <span>Service</span></a>
-  <a class="mo-tab" href="/maintenance?tab=tyres">
+  <a class="mo-tab" href="{{ url_for('app_tyres') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
     <span>Tyres</span></a>
-  <a class="mo-tab" href="/maintenance?tab=battery">
+  <a class="mo-tab" href="{{ url_for('app_battery') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
     <span>Battery</span></a>
   <a class="mo-tab" href="/maintenance?tab=urea">
@@ -48,6 +58,7 @@
   </div>
 </div>
 
+{% if tab == 'overview' %}
 <div class="mo-period-bar">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
   {{ period_label }}
@@ -142,6 +153,176 @@
     {% endfor %}
   </div>
 </div>
+{% endif %}
+
+{% if tab == 'service' %}
+<!-- Real data only — see _maintenance_service_rows() in app.py, shared verbatim with the
+     website's own Service tab. Charts (Service by Type / Monthly Trend / Top Costly Vehicles)
+     left off this pass — the reference design didn't include them. Filters collapsed to a
+     search box + filter icon (per instruction) instead of showing all 6 fields inline; the
+     icon opens a bottom sheet with the full real filter set, "Apply" reloads the list with
+     them. "+ Add Service" is a floating bottom-right button + native modal (same pattern/
+     position as Add Vehicle), not the reference image's top-right inline button (per
+     instruction) — posts to the same real add_service() logic the website uses. -->
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card"><div class="mo-kpi-top"><div><div class="mo-kpi-lbl">Open Jobs</div><div class="mo-kpi-val" style="color:var(--a-accent);">{{ open_jobs }}</div><div class="mo-kpi-sub">In progress</div></div><div class="mo-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">🔧</div></div></div>
+  <div class="mo-kpi-card"><div class="mo-kpi-top"><div><div class="mo-kpi-lbl">Due Service</div><div class="mo-kpi-val" style="color:{% if due_soon %}var(--a-red){% endif %};">{{ due_soon }}</div><div class="mo-kpi-sub">Due in next 7 days</div></div><div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">📅</div></div></div>
+  <div class="mo-kpi-card"><div class="mo-kpi-top"><div><div class="mo-kpi-lbl">Breakdown</div><div class="mo-kpi-val" style="color:{% if breakdown_count %}var(--a-red){% endif %};">{{ breakdown_count }}</div><div class="mo-kpi-sub">This selection</div></div><div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">🚛</div></div></div>
+  <div class="mo-kpi-card"><div class="mo-kpi-top"><div><div class="mo-kpi-lbl">Total Cost</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(total_cost) }}</div><div class="mo-kpi-sub">This selection</div></div><div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">₹</div></div></div>
+  <div class="mo-kpi-card"><div class="mo-kpi-top"><div><div class="mo-kpi-lbl">Avg Cost / Service</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(avg_cost) }}</div><div class="mo-kpi-sub">All time average</div></div><div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📈</div></div></div>
+  <div class="mo-kpi-card"><div class="mo-kpi-top"><div><div class="mo-kpi-lbl">Completed</div><div class="mo-kpi-val" style="color:var(--a-green);">{{ completed_jobs }}</div><div class="mo-kpi-sub">This selection</div></div><div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">✅</div></div></div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="msSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Vehicle, type, invoice…" onchange="this.form.submit()">
+    <input type="hidden" name="tab" value="service">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_vehicle or f_workshop or f_service_type or f_status or f_date_from or f_date_to }}" onclick="openMsFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Service Records</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">{{ rows|length }} of {{ total_count }}</span>
+  </div>
+  <div id="ms-list">
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-date">{{ r.date }}</div>
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ r.vehicle_no or '—' }}</div>
+        <div class="ms-row-amt">₹{{ '{:,.0f}'.format(r.amount or 0) }}</div>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.service_type or r.category or '—' }}{% if r.vendor_name %} · {{ r.vendor_name }}{% endif %}</div>
+        <span class="vh-status-badge {{ 'Active' if (r.status or 'Completed') == 'Completed' else 'InMaintenance' }}">{{ r.status or 'Completed' }}</span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No service records found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="ms-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_maintenance', tab='service', vehicle=f_vehicle, workshop=f_workshop, service_type=f_service_type, status=f_status, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} record{{ 's' if total_count != 1 else '' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddServiceModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Service
+</button>
+
+<!-- Filter sheet — real filter set (Vehicle/Workshop/Service Type/Status/From-To Date), same
+     fields the website's own filter bar has, just collapsed behind this icon instead of shown
+     inline. Applying is a real GET navigation (not fetch) since it's just re-running the same
+     query with different request.args — simplest, and matches how the search box already works. -->
+<div class="vam-backdrop" id="msFilterBackdrop" onclick="closeMsFilterSheet()"></div>
+<div class="vam-modal" id="msFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeMsFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_maintenance') }}">
+    <input type="hidden" name="tab" value="service">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v }}" {% if f_vehicle == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Workshop</label>
+      <select name="workshop"><option value="">All Workshops</option>
+        {% for w in workshops %}<option value="{{ w }}" {% if f_workshop == w %}selected{% endif %}>{{ w }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Service Type</label>
+      <select name="service_type"><option value="">All Types</option>
+        {% for st in service_types %}<option value="{{ st }}" {% if f_service_type == st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Status</label>
+      <select name="status"><option value="">All Status</option>
+        <option value="Open" {% if f_status == 'Open' %}selected{% endif %}>Open</option>
+        <option value="Completed" {% if f_status == 'Completed' %}selected{% endif %}>Completed</option>
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_maintenance', tab='service', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Service modal — real fields/route, same as the website's own #addServiceModal
+     (templates/partials/_maintenance_service_modals.html → add_service()). Floating
+     bottom-right button, same position/style as Add Vehicle's .vh-addbtn, not the reference
+     image's inline top-right button (per instruction). -->
+<div class="vam-backdrop" id="asBackdrop" onclick="closeAddServiceModal()"></div>
+<div class="vam-modal" id="asModal" role="dialog" aria-modal="true" aria-label="Add Service">
+  <div class="vam-head">
+    <h2>Add New Service</h2>
+    <button type="button" class="vam-close" onclick="closeAddServiceModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form id="asForm" class="vam-form">
+    <div class="vam-error" id="asError" style="display:none;"></div>
+
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="ms-vehicle-list" required></div>
+      <div class="vam-field vam-field-full"><label>Service Type <span class="req">*</span></label><input type="text" name="service_type" list="ms-service-type-list" required placeholder="e.g. Engine Service"></div>
+      <div class="vam-field"><label>Service Date <span class="req">*</span></label><input type="date" name="date" required></div>
+      <div class="vam-field"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
+      <div class="vam-field vam-field-full"><label>Vendor / Workshop <span class="req">*</span></label><input type="text" name="vendor_name" list="ms-vendor-list" required></div>
+      <div class="vam-field"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
+      <div class="vam-field"><label>Invoice Date</label><input type="date" name="invoice_date"></div>
+      <div class="vam-field"><label>Status <span class="req">*</span></label>
+        <select name="status"><option value="Completed">Completed</option><option value="Open">Open</option></select>
+      </div>
+      <div class="vam-field"><label>Next Service Due (KM)</label><input type="number" step="1" name="next_due_km"></div>
+      <div class="vam-field vam-field-full"><label>Next Service Reminder Date</label><input type="date" name="next_service_date"></div>
+      <div class="vam-field vam-field-full"><label>Total Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" required></div>
+      <div class="vam-field vam-field-full"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
+      <div class="vam-field vam-field-full"><label>Work Description</label><textarea name="notes" rows="2" placeholder="Brief description of work done..."></textarea></div>
+    </div>
+
+    <div class="vam-section-title">Job Card Checklist</div>
+    <div class="ms-checklist">
+      {% for item in checklist_items %}
+      <label class="ms-checklist-item"><input type="checkbox" name="checklist" value="{{ item }}">{{ item }}</label>
+      {% endfor %}
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddServiceModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="asSaveBtn">Save Service</button>
+    </div>
+  </form>
+</div>
+<datalist id="ms-vehicle-list">{% for v in vehicles %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="ms-vendor-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+<datalist id="ms-service-type-list">{% for st in service_types %}<option value="{{ st }}">{% endfor %}</datalist>
+{% endif %}
 
 {% endblock %}
 {% block extra_scripts %}
@@ -167,5 +348,103 @@ function toggleMoMoreSheet() {
   if (document.getElementById('moMoreSheet').classList.contains('open')) closeMoMoreSheet();
   else openMoMoreSheet();
 }
+
+{% if tab == 'service' %}
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as Vehicles/Trips/Ledger,
+// so the scroll position never jumps back to the top the way a plain <a href> page load would.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('ms-list').innerHTML = doc.getElementById('ms-list').innerHTML;
+      document.getElementById('ms-load-area').innerHTML = doc.getElementById('ms-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet — same open/close/backdrop pattern as the Add Vehicle / End Trip modals.
+function openMsFilterSheet() {
+  lockPageScroll();
+  document.getElementById('msFilterBackdrop').classList.add('open');
+  document.getElementById('msFilterSheet').classList.add('open');
+}
+function closeMsFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('msFilterBackdrop').classList.remove('open');
+  document.getElementById('msFilterSheet').classList.remove('open');
+}
+
+// Add Service modal.
+function openAddServiceModal() {
+  lockPageScroll();
+  document.getElementById('asBackdrop').classList.add('open');
+  document.getElementById('asModal').classList.add('open');
+}
+function closeAddServiceModal() {
+  unlockPageScroll();
+  document.getElementById('asBackdrop').classList.remove('open');
+  document.getElementById('asModal').classList.remove('open');
+}
+var asForm = document.getElementById('asForm');
+if (asForm) {
+  asForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('asSaveBtn');
+    var errBox = document.getElementById('asError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_add_service') }}", { method: 'POST', body: new FormData(e.target) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_maintenance', tab='service') }}") + '&added=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Save Service';
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Save Service';
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Service added successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's "Add Maintenance" picker
+// (/app/maintenance?tab=service&add=1), same ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddServiceModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+{% endif %}
 </script>
 {% endblock %}

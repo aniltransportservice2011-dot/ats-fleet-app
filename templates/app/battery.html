@@ -1,0 +1,443 @@
+{% extends "app/base_app.html" %}
+{% block title %}Battery — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _battery_management_data() in app.py, shared verbatim with the
+     website's own Maintenance > Battery tab. Its own top-level page (not a Maintenance sub-tab),
+     reached from the bottom nav's More sheet and this Maintenance tab strip, same pattern as
+     Tyres. Filters collapsed to a search box + filter icon instead of showing all 6 fields
+     inline; the icon opens a bottom sheet with the full real filter set (Vehicle/Brand/Status/
+     Battery Type/From-To Date), "Apply" reloads the list with them. "Add Battery" is a floating
+     bottom-right button + native modal (same position/style as Add Vehicle/Add Tyre), not the
+     reference image's top-right inline button + inline filter row. -->
+<div class="vh-head">
+  <div>
+    <h1>Battery Management</h1>
+    <div class="sub">Manage battery stock and track all battery related activities.</div>
+  </div>
+</div>
+
+<!-- Same Maintenance tab strip as maintenance.html/tyres.html — this page IS one of those real
+     tabs (Battery), just promoted to its own top-level route/URL instead of a ?tab= query param
+     on /app/maintenance. See the same comment on tyres.html for why this repeats here. -->
+<div class="mo-tabstrip">
+  <a class="mo-tab" href="{{ url_for('app_maintenance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+    <span>Overview</span></a>
+  <a class="mo-tab" href="{{ url_for('app_maintenance', tab='service') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    <span>Service</span></a>
+  <a class="mo-tab" href="{{ url_for('app_tyres') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
+    <span>Tyres</span></a>
+  <a class="mo-tab active" href="{{ url_for('app_battery') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
+    <span>Battery</span></a>
+  <a class="mo-tab" href="/maintenance?tab=urea">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
+    <span>Urea</span></a>
+  <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>More</span></button>
+</div>
+
+<div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
+<div class="mo-more-sheet" id="moMoreSheet">
+  <div class="mo-more-handle"></div>
+  <div class="mo-more-title">All Tabs</div>
+  <div class="mo-more-grid">
+    <a href="/maintenance?tab=toll" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+      <span>Toll</span>
+    </a>
+    <a href="/maintenance?tab=compliance-expenses" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/></svg></span>
+      <span>Compliance</span>
+    </a>
+  </div>
+</div>
+
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Batteries</div><div class="mo-kpi-val">{{ total_batteries }}</div><div class="mo-kpi-sub">All batteries</div></div>
+      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🔋</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Good Condition</div><div class="mo-kpi-val" style="color:var(--a-green);">{{ in_use }}</div><div class="mo-kpi-sub">Working fine</div></div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">✅</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Needs Attention</div><div class="mo-kpi-val" style="color:{% if weak_soon %}var(--a-amber){% endif %};">{{ weak_soon }}</div><div class="mo-kpi-sub">Check soon</div></div>
+      <div class="mo-kpi-icon" style="background:#fff6e8;color:var(--a-amber);">⚠️</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Dead</div><div class="mo-kpi-val" style="color:{% if dead_count %}var(--a-red){% endif %};">{{ dead_count }}</div><div class="mo-kpi-sub">Not working</div></div>
+      <div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">✕</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card" style="grid-column:1 / -1;">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Avg. Health</div><div class="mo-kpi-val">{% if avg_health_pct is not none %}{{ avg_health_pct }}%{% else %}—{% endif %}</div><div class="mo-kpi-sub">Fleet average</div></div>
+      <div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📈</div>
+    </div>
+  </div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="batSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Battery ID, Brand, Serial…" onchange="this.form.submit()">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_vehicle or f_brand or f_status or f_battery_type or f_date_from or f_date_to }}" onclick="openBatFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Battery Inventory</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">Showing {{ rows|length }} of {{ total_count }}</span>
+  </div>
+  <div id="bat-list">
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ r.battery_no }}</div>
+        <span class="vh-status-badge {{ 'Active' if r.status == 'Good' else ('InMaintenance' if r.status in ('Weak','Replace Soon') else ('Scrapped' if r.status in ('Dead','Scrapped') else 'InStock')) }}">{{ r.status }}</span>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.brand or 'Brand n/a' }}{% if r.model %} {{ r.model }}{% endif %}{% if r.capacity_ah %} · {{ r.capacity_ah|round(0)|int }}AH{% endif %}{% if r.vehicle_no %} · {{ r.vehicle_no }}{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No batteries found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="bat-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_battery', vehicle=f_vehicle, brand=f_brand, status=f_status, battery_type=f_battery_type, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} batter{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddBatteryModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Battery
+</button>
+
+<!-- Filter sheet — real filter set (Vehicle/Brand/Status/Battery Type/From-To Date), same fields
+     the website's own filter bar has, just collapsed behind this icon instead of shown inline
+     (the reference image's inline filter row). Same pattern as Tyres/Service. -->
+<div class="vam-backdrop" id="batFilterBackdrop" onclick="closeBatFilterSheet()"></div>
+<div class="vam-modal" id="batFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeBatFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_battery') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v }}" {% if f_vehicle == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Brand</label>
+      <select name="brand"><option value="">All Brands</option>
+        {% for b in battery_brands %}<option value="{{ b }}" {% if f_brand == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Status</label>
+      <select name="status"><option value="">All Status</option>
+        {% for st in ['Good','Weak','Replace Soon','Dead','In Stock'] %}<option value="{{ st }}" {% if f_status == st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Battery Type</label>
+      <select name="battery_type"><option value="">All Types</option>
+        {% for t in battery_types %}<option value="{{ t }}" {% if f_battery_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_battery', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Battery modal — same 3 real modes as the website's own #addBatteryModal (see
+     templates/partials/_maintenance_battery_modals.html): Install to Vehicle (battery goes on now),
+     Add to Stock (keep in inventory), Install from Stock (use a battery already in stock). Each
+     mode posts to its own dedicated route (_insert_battery_from_form / same, mode='stock' /
+     _install_battery_from_form — all shared verbatim with the website), trimmed to only the
+     fields the website itself marks required plus the handful of optional ones that actually
+     identify a battery (Model/Serial No./Installed Location) — Invoice No. and the Initial Check
+     group (Voltage/Temp/Health%) dropped, same "only what's really needed" call already made for
+     Tyres/Add Service. Floating bottom-right button, same position/style as Add Vehicle/Add
+     Tyre's .vh-addbtn. -->
+<div class="vam-backdrop" id="abBackdrop" onclick="closeAddBatteryModal()"></div>
+<div class="vam-modal" id="abModal" role="dialog" aria-modal="true" aria-label="Add Battery">
+  <div class="vam-head">
+    <h2 id="abTitle">Add Battery</h2>
+    <button type="button" class="vam-close" onclick="closeAddBatteryModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
+  <div class="aty-modes">
+    <button type="button" class="aty-mode-btn active" id="abModeInstallBtn" onclick="abSetMode('install')">Install to Vehicle</button>
+    <button type="button" class="aty-mode-btn" id="abModeStockBtn" onclick="abSetMode('stock')">Add to Stock</button>
+    <button type="button" class="aty-mode-btn" id="abModeInstallStockBtn" onclick="abSetMode('install_stock')">Install from Stock</button>
+  </div>
+
+  <div class="vam-error" id="abError" style="display:none; margin:0 18px 14px;"></div>
+
+  <!-- INSTALL TO VEHICLE / ADD TO STOCK — one form, mode carried in a hidden field, matching
+       #batCoreFieldsWrap's required set (Brand/Capacity/Type always; Vehicle/Install Date only
+       in Install mode; Purchase Date/Warranty/Price/Vendor always). -->
+  <form id="abCoreForm" class="vam-form">
+    <input type="hidden" name="mode" id="abModeField" value="install">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Brand <span class="req">*</span></label><input type="text" name="brand" list="bat-brand-list" required placeholder="e.g. Exide"></div>
+      <div class="vam-field"><label>Model</label><input type="text" name="model" placeholder="e.g. N180"></div>
+      <div class="vam-field"><label>Capacity (AH) <span class="req">*</span></label><input type="number" step="1" name="capacity_ah" required placeholder="e.g. 180"></div>
+      <div class="vam-field vam-field-full"><label>Battery Type <span class="req">*</span></label><input type="text" name="battery_type" list="bat-type-list" required placeholder="e.g. Tubular"></div>
+      <div class="vam-field" id="abVehicleFld"><label>Install in Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="bat-vehicle-list"></div>
+      <div class="vam-field" id="abInstallDateFld"><label>Installation Date <span class="req">*</span></label><input type="date" name="install_date"></div>
+      <div class="vam-field vam-field-full" id="abLocationFld"><label>Installed Location</label>
+        <select name="installed_location">
+          <option value="Engine Compartment">Engine Compartment</option>
+          <option value="Under Seat">Under Seat</option>
+          <option value="Chassis Mounted">Chassis Mounted</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="vam-field"><label>Serial / Code</label><input type="text" name="serial_no"></div>
+      <div class="vam-field"><label>Warranty (Months) <span class="req">*</span></label><input type="number" step="1" name="warranty_months" required placeholder="e.g. 15"></div>
+      <div class="vam-field"><label>Purchase Date <span class="req">*</span></label><input type="date" name="purchase_date" required></div>
+      <div class="vam-field"><label>Purchase Price (₹) <span class="req">*</span></label><input type="number" step="0.01" name="purchase_price" required></div>
+      <div class="vam-field vam-field-full"><label>Vendor / Dealer <span class="req">*</span></label><input type="text" name="vendor_name" list="bat-vendor-list" required></div>
+      <div class="vam-field vam-field-full"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid"></div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Optional notes..."></textarea></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddBatteryModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Battery</button>
+    </div>
+  </form>
+
+  <!-- INSTALL FROM STOCK — matches #batInstallStockFieldsWrap's required set (stock pick/
+       Vehicle/Install Date). Only batteries currently "In Stock" are selectable. -->
+  <form id="abInstallForm" class="vam-form" style="display:none;">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full">
+        <label>Battery From Stock <span class="req">*</span></label>
+        <select id="abStockSelect" required>
+          <option value="">Select a battery in stock…</option>
+          {% for r in stock_batteries %}
+          <option value="{{ r.id }}">{{ r.battery_no }} — {{ r.brand or 'Brand n/a' }}{% if r.model %} {{ r.model }}{% endif %} — ₹{{ '{:,.0f}'.format(r.purchase_price or 0) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="bat-vehicle-list" required></div>
+      <div class="vam-field vam-field-full"><label>Install Date <span class="req">*</span></label><input type="date" name="install_date" required></div>
+      <div class="vam-field vam-field-full"><label>Installed Location</label>
+        <select name="installed_location">
+          <option value="Engine Compartment">Engine Compartment</option>
+          <option value="Under Seat">Under Seat</option>
+          <option value="Chassis Mounted">Chassis Mounted</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddBatteryModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Install</button>
+    </div>
+  </form>
+</div>
+<datalist id="bat-vehicle-list">{% for v in vehicles %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="bat-vendor-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+<datalist id="bat-brand-list">{% for b in battery_brands %}<option value="{{ b }}">{% endfor %}</datalist>
+<datalist id="bat-type-list">{% for t in battery_types %}<option value="{{ t }}">{% endfor %}</datalist>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "More" tabs sheet — same as maintenance.html/tyres.html's own.
+function openMoMoreSheet() {
+  lockPageScroll();
+  document.getElementById('moMoreSheet').classList.add('open');
+  document.getElementById('moMoreBackdrop').classList.add('open');
+  document.getElementById('moMoreTabBtn').classList.add('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'true');
+}
+function closeMoMoreSheet() {
+  unlockPageScroll();
+  document.getElementById('moMoreSheet').classList.remove('open');
+  document.getElementById('moMoreBackdrop').classList.remove('open');
+  document.getElementById('moMoreTabBtn').classList.remove('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'false');
+}
+function toggleMoMoreSheet() {
+  if (document.getElementById('moMoreSheet').classList.contains('open')) closeMoMoreSheet();
+  else openMoMoreSheet();
+}
+
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('bat-list').innerHTML = doc.getElementById('bat-list').innerHTML;
+      document.getElementById('bat-load-area').innerHTML = doc.getElementById('bat-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet — same open/close/backdrop pattern as every other modal.
+function openBatFilterSheet() {
+  lockPageScroll();
+  document.getElementById('batFilterBackdrop').classList.add('open');
+  document.getElementById('batFilterSheet').classList.add('open');
+}
+function closeBatFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('batFilterBackdrop').classList.remove('open');
+  document.getElementById('batFilterSheet').classList.remove('open');
+}
+
+// Add Battery modal — 3 real modes (Install to Vehicle / Add to Stock / Install from Stock),
+// same as the website's own #addBatteryModal mode-tabs. Install/Stock share one form (mode
+// carried in a hidden field, matching the website's own #batModeField trick — the Vehicle/
+// Install Date/Location fields just toggle required+visible); Install from Stock is a separate
+// form/route, same split as Tyres.
+var abMode = 'install';
+function abSetMode(mode) {
+  abMode = mode;
+  document.getElementById('abModeInstallBtn').classList.toggle('active', mode === 'install');
+  document.getElementById('abModeStockBtn').classList.toggle('active', mode === 'stock');
+  document.getElementById('abModeInstallStockBtn').classList.toggle('active', mode === 'install_stock');
+  var isInstallStock = (mode === 'install_stock');
+  document.getElementById('abCoreForm').style.display = isInstallStock ? 'none' : '';
+  document.getElementById('abInstallForm').style.display = isInstallStock ? '' : 'none';
+  if (!isInstallStock) {
+    document.getElementById('abModeField').value = mode;
+    var showInstall = (mode === 'install');
+    document.getElementById('abVehicleFld').style.display = showInstall ? '' : 'none';
+    document.getElementById('abInstallDateFld').style.display = showInstall ? '' : 'none';
+    document.getElementById('abLocationFld').style.display = showInstall ? '' : 'none';
+    document.querySelector('#abVehicleFld input').required = showInstall;
+    document.querySelector('#abInstallDateFld input').required = showInstall;
+  }
+  var titles = {install: 'Add Battery', stock: 'Add Battery Stock', install_stock: 'Install Battery from Stock'};
+  document.getElementById('abTitle').textContent = titles[mode];
+  document.getElementById('abError').style.display = 'none';
+}
+function openAddBatteryModal() {
+  lockPageScroll();
+  abSetMode('install');
+  document.getElementById('abBackdrop').classList.add('open');
+  document.getElementById('abModal').classList.add('open');
+}
+function closeAddBatteryModal() {
+  unlockPageScroll();
+  document.getElementById('abBackdrop').classList.remove('open');
+  document.getElementById('abModal').classList.remove('open');
+}
+function abHandleSubmit(e, url) {
+  e.preventDefault();
+  var form = e.target;
+  var btn = form.querySelector('.vam-btn-save');
+  var origText = btn.textContent;
+  var errBox = document.getElementById('abError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  fetch(url, { method: 'POST', body: new FormData(form) })
+    .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+    .then(function (r) {
+      if (r.data.ok) {
+        window.location.href = (r.data.redirect || "{{ url_for('app_battery') }}") + '?added=1';
+      } else {
+        errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    })
+    .catch(function () {
+      errBox.textContent = 'Network error — please check your connection and try again.';
+      errBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = origText;
+    });
+}
+var abCoreForm = document.getElementById('abCoreForm');
+if (abCoreForm) abCoreForm.addEventListener('submit', function (e) { abHandleSubmit(e, "{{ url_for('app_add_battery') }}"); });
+var abInstallForm = document.getElementById('abInstallForm');
+if (abInstallForm) {
+  abInstallForm.addEventListener('submit', function (e) {
+    var stockId = document.getElementById('abStockSelect').value;
+    if (!stockId) {
+      e.preventDefault();
+      var errBox = document.getElementById('abError');
+      errBox.textContent = 'Select a battery from stock.';
+      errBox.style.display = 'block';
+      return;
+    }
+    abHandleSubmit(e, '/app/battery/' + stockId + '/install');
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's "Add Maintenance" picker (/app/battery?add=1), same
+// ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddBatteryModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+</script>
+{% endblock %}

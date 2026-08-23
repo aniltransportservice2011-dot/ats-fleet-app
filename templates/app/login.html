@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- This page doesn't extend base_app.html (it's the pre-login entry point), so it needs its own
+     copy of the same zoom lock — see base_app.html's viewport meta for the full rationale. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Sign In — {{ company_name }}</title>
 
 <!-- Same install metadata as base_app.html — a user can land here first (session expired, or

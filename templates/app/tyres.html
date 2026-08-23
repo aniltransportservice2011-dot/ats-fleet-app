@@ -1,0 +1,478 @@
+{% extends "app/base_app.html" %}
+{% block title %}Tyres — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _tyre_management_data() in app.py, shared verbatim with the website's
+     own Maintenance > Tyres tab. Its own top-level page (not a Maintenance sub-tab), reached
+     from the bottom nav's More sheet, matching the reference design. Filters collapsed to a
+     search box + filter icon (same pattern as Maintenance > Service / Vehicles / Trips / Ledger)
+     instead of showing all 6 fields inline; the icon opens a bottom sheet with the full real
+     filter set (Vehicle/Action/Position/Vendor/From-To Date), "Apply" reloads the list with them.
+     "Add Tyre" is a floating bottom-right button + native modal (same position/style as Add
+     Vehicle/Add Service), not the reference image's top-right inline button — same instruction
+     already applied to Add Service. -->
+<div class="vh-head">
+  <div>
+    <h1>Tyre Management</h1>
+    <div class="sub">Manage tyre stock and track all tyre related activities.</div>
+  </div>
+</div>
+
+<!-- Same Maintenance tab strip as maintenance.html — this page IS one of those real tabs
+     (Tyres), just promoted to its own top-level route/URL instead of a ?tab= query param on
+     /app/maintenance. Landing here from that strip (or from More) must not lose the way back to
+     Overview/Service/Battery/Urea/Toll/Compliance, so the same strip repeats here with Tyres
+     marked active — matching precedent (this exact bug/fix already applies to Overview vs.
+     Service, which also each render this strip on their own page load). -->
+<div class="mo-tabstrip">
+  <a class="mo-tab" href="{{ url_for('app_maintenance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+    <span>Overview</span></a>
+  <a class="mo-tab" href="{{ url_for('app_maintenance', tab='service') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    <span>Service</span></a>
+  <a class="mo-tab active" href="{{ url_for('app_tyres') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
+    <span>Tyres</span></a>
+  <a class="mo-tab" href="{{ url_for('app_battery') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
+    <span>Battery</span></a>
+  <a class="mo-tab" href="/maintenance?tab=urea">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
+    <span>Urea</span></a>
+  <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>More</span></button>
+</div>
+
+<div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
+<div class="mo-more-sheet" id="moMoreSheet">
+  <div class="mo-more-handle"></div>
+  <div class="mo-more-title">All Tabs</div>
+  <div class="mo-more-grid">
+    <a href="/maintenance?tab=toll" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+      <span>Toll</span>
+    </a>
+    <a href="/maintenance?tab=compliance-expenses" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/></svg></span>
+      <span>Compliance</span>
+    </a>
+  </div>
+</div>
+
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Tyres</div><div class="mo-kpi-val">{{ total_count }}</div><div class="mo-kpi-sub">All entries</div></div>
+      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🛞</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">In Stock</div><div class="mo-kpi-val" style="color:var(--a-green);">{{ stock_in_count }}</div><div class="mo-kpi-sub">Ready to use</div></div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">📦</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Puncture Repair</div><div class="mo-kpi-val" style="color:{% if puncture_count %}var(--a-accent){% endif %};">{{ puncture_count }}</div><div class="mo-kpi-sub">Under repair</div></div>
+      <div class="mo-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">🔧</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Spent</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(total_cost) }}</div><div class="mo-kpi-sub">This selection</div></div>
+      <div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📈</div>
+    </div>
+  </div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="tyreSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Vehicle, tyre ID, brand…" onchange="this.form.submit()">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_vehicle or f_action or f_position or f_vendor or f_date_from or f_date_to }}" onclick="openTyFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Tyre Stock</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">{{ stock_in_count }} in stock · ₹{{ '{:,.0f}'.format(stock_value) }} value</span>
+  </div>
+  <div id="ty-stock-list">
+  {% for s in stock_rows %}
+  <div class="ms-row">
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ s.tyre_id or '—' }}</div>
+        <div class="ms-row-amt">₹{{ '{:,.0f}'.format(s.purchase_cost or 0) }}</div>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ s.tyre_type or 'New' }}{% if s.vendor_name %} · {{ s.vendor_name }}{% endif %}</div>
+        <span class="vh-status-badge {{ 'Scrapped' if s.status == 'Scrapped' else ('Active' if s.status == 'Installed' else 'InStock') }}">{{ s.status }}</span>
+      </div>
+      {% if s.status == 'Installed' and s.installed_position %}
+      <div class="ms-row-sub" style="margin-top:2px;">{{ s.installed_position }} on {{ s.installed_vehicle_no or '—' }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No tyre stock recorded yet.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div style="height:14px;"></div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Tyre Entries</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">Showing {{ rows|length }} of {{ total_count }}</span>
+  </div>
+  <div id="ty-list">
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-date">{{ r.date }}</div>
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ r.vehicle_no or '—' }}</div>
+        <div class="ms-row-amt">₹{{ '{:,.0f}'.format(r.amount or 0) }}</div>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.tyre_action or r.category or '—' }}{% if r.tyre_position %} · {{ r.tyre_position }}{% endif %}{% if r.tyre_brand %} · {{ r.tyre_brand }}{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No tyre entries found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="ty-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_tyres', vehicle=f_vehicle, action=f_action, position=f_position, vendor=f_vendor, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} entr{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddTyreModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Tyre
+</button>
+
+<!-- Filter sheet — real filter set (Vehicle/Action/Position/Vendor/From-To Date), same fields
+     the website's own filter bar has, just collapsed behind this icon instead of shown inline.
+     Applying is a real GET navigation (not fetch) since it's just re-running the same query with
+     different request.args — same pattern as Maintenance > Service's filter sheet. -->
+<div class="vam-backdrop" id="tyFilterBackdrop" onclick="closeTyFilterSheet()"></div>
+<div class="vam-modal" id="tyFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeTyFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_tyres') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v }}" {% if f_vehicle == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Action</label>
+      <select name="action"><option value="">All Actions</option>
+        {% for a in tyre_actions %}<option value="{{ a }}" {% if f_action == a %}selected{% endif %}>{{ a }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Position</label>
+      <select name="position"><option value="">All Positions</option>
+        {% for p in tyre_positions %}<option value="{{ p }}" {% if f_position == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Vendor</label>
+      <select name="vendor"><option value="">All Vendors</option>
+        {% for v in tyre_vendors %}<option value="{{ v }}" {% if f_vendor == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_tyres', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Tyre modal — same 3 real modes as the website's own #addTyreModal (see
+     templates/partials/_maintenance_tyre_modals.html): New Tyre (already fitted, log it now),
+     Add to Stock (bought ahead of use), Install from Stock (use a tyre already in stock). Each
+     mode is its own form posting to its own dedicated route (_insert_tyre_from_form /
+     _insert_tyre_stock_from_form / _install_tyre_stock_from_form — all shared verbatim with the
+     website), trimmed to only the fields the website itself marks required plus the handful of
+     optional ones that actually identify a tyre (Tyre ID/Brand/KM Reading) — Invoice No./Invoice
+     Date dropped, same "only what's really needed" call already made for Add Service's Parts &
+     Labour table. Floating bottom-right button, same position/style as Add Vehicle/Add Service's
+     .vh-addbtn. -->
+<div class="vam-backdrop" id="atBackdrop" onclick="closeAddTyreModal()"></div>
+<div class="vam-modal" id="atModal" role="dialog" aria-modal="true" aria-label="Add Tyre">
+  <div class="vam-head">
+    <h2 id="atTitle">Add Tyre</h2>
+    <button type="button" class="vam-close" onclick="closeAddTyreModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
+  <div class="aty-modes">
+    <button type="button" class="aty-mode-btn active" id="atModeNewBtn" onclick="atSetMode('new')">New Tyre</button>
+    <button type="button" class="aty-mode-btn" id="atModeStockBtn" onclick="atSetMode('stock')">Add to Stock</button>
+    <button type="button" class="aty-mode-btn" id="atModeInstallBtn" onclick="atSetMode('install')">Install from Stock</button>
+  </div>
+
+  <div class="vam-error" id="atError" style="display:none; margin:0 18px 14px;"></div>
+
+  <!-- NEW TYRE — matches #tyNewFieldsWrap's required set (Vehicle/Action/Date/Vendor/Cost). -->
+  <form id="atNewForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="ty-vehicle-list" required></div>
+      <div class="vam-field"><label>Action <span class="req">*</span></label>
+        <select name="tyre_action" required><option value="">Select…</option>
+          {% for a in tyre_actions %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field"><label>Position</label>
+        <select name="tyre_position"><option value="">Select…</option>
+          {% for p in tyre_positions %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field"><label>Date <span class="req">*</span></label><input type="date" name="date" required></div>
+      <div class="vam-field"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
+      <div class="vam-field"><label>Tyre ID</label><input type="text" name="tyre_id"></div>
+      <div class="vam-field vam-field-full"><label>Brand</label><input type="text" name="tyre_brand" list="ty-brand-list"></div>
+      <div class="vam-field vam-field-full"><label>Supplier / Vendor <span class="req">*</span></label><input type="text" name="vendor_name" list="ty-vendor-list" required></div>
+      <div class="vam-field"><label>Cost (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" required></div>
+      <div class="vam-field"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid"></div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Optional notes..."></textarea></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddTyreModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Tyre</button>
+    </div>
+  </form>
+
+  <!-- ADD TO STOCK — matches #tyStockFieldsWrap's required set (Purchase Date/Vendor/Cost). -->
+  <form id="atStockForm" class="vam-form" style="display:none;">
+    <div class="vam-grid">
+      <div class="vam-field"><label>Tyre ID</label><input type="text" name="tyre_id"></div>
+      <div class="vam-field"><label>Brand</label><input type="text" name="brand" list="ty-brand-list"></div>
+      <div class="vam-field"><label>Type</label>
+        <select name="tyre_type"><option value="New">New</option><option value="Resole">Resole / Reshuttered</option></select>
+      </div>
+      <div class="vam-field"><label>Purchase Date <span class="req">*</span></label><input type="date" name="purchase_date" required></div>
+      <div class="vam-field vam-field-full"><label>Supplier / Vendor <span class="req">*</span></label><input type="text" name="vendor_name" list="ty-vendor-list" required></div>
+      <div class="vam-field"><label>Purchase Cost (₹) <span class="req">*</span></label><input type="number" step="0.01" name="purchase_cost" required></div>
+      <div class="vam-field"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddTyreModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save to Stock</button>
+    </div>
+  </form>
+
+  <!-- INSTALL FROM STOCK — matches #tyInstallFieldsWrap's required set (stock pick/Vehicle/
+       Position/Install Date). Only tyres currently "In Stock" are selectable. -->
+  <form id="atInstallForm" class="vam-form" style="display:none;">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full">
+        <label>Tyre From Stock <span class="req">*</span></label>
+        <select id="atStockSelect" required>
+          <option value="">Select a tyre in stock…</option>
+          {% for s in stock_rows if s.status == 'In Stock' %}
+          <option value="{{ s.id }}">{{ s.tyre_id or ('Stock #' ~ s.id) }} — {{ s.brand or 'Brand n/a' }} ({{ s.tyre_type or 'New' }}) — ₹{{ '{:,.0f}'.format(s.purchase_cost or 0) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="ty-vehicle-list" required></div>
+      <div class="vam-field"><label>Position <span class="req">*</span></label>
+        <select name="position" required><option value="">Select…</option>
+          {% for p in tyre_positions %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field"><label>Install Date <span class="req">*</span></label><input type="date" name="install_date" required></div>
+      <div class="vam-field vam-field-full"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddTyreModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Install</button>
+    </div>
+  </form>
+</div>
+<datalist id="ty-vehicle-list">{% for v in vehicles %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="ty-vendor-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+<datalist id="ty-brand-list">{% for b in tyre_brands %}<option value="{{ b }}">{% endfor %}</datalist>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "More" tabs sheet — same as maintenance.html's own (this page repeats that tab strip, see the
+// comment above it, so it needs the same open/close JS too).
+function openMoMoreSheet() {
+  lockPageScroll();
+  document.getElementById('moMoreSheet').classList.add('open');
+  document.getElementById('moMoreBackdrop').classList.add('open');
+  document.getElementById('moMoreTabBtn').classList.add('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'true');
+}
+function closeMoMoreSheet() {
+  unlockPageScroll();
+  document.getElementById('moMoreSheet').classList.remove('open');
+  document.getElementById('moMoreBackdrop').classList.remove('open');
+  document.getElementById('moMoreTabBtn').classList.remove('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'false');
+}
+function toggleMoMoreSheet() {
+  if (document.getElementById('moMoreSheet').classList.contains('open')) closeMoMoreSheet();
+  else openMoMoreSheet();
+}
+
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list in
+// this app, so the scroll position never jumps back to the top the way a plain <a href> would.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('ty-list').innerHTML = doc.getElementById('ty-list').innerHTML;
+      document.getElementById('ty-load-area').innerHTML = doc.getElementById('ty-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet — same open/close/backdrop pattern as the Add Vehicle / Add Service modals.
+function openTyFilterSheet() {
+  lockPageScroll();
+  document.getElementById('tyFilterBackdrop').classList.add('open');
+  document.getElementById('tyFilterSheet').classList.add('open');
+}
+function closeTyFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('tyFilterBackdrop').classList.remove('open');
+  document.getElementById('tyFilterSheet').classList.remove('open');
+}
+
+// Add Tyre modal — 3 real modes (New Tyre / Add to Stock / Install from Stock), same as the
+// website's own #addTyreModal mode-tabs. Kept as 3 separate <form> elements (toggled by
+// display, one submit handler each) rather than the website's single-form field-renaming trick —
+// simpler and just as correct, since each mode posts to its own dedicated route anyway.
+var atMode = 'new';
+function atSetMode(mode) {
+  atMode = mode;
+  document.getElementById('atModeNewBtn').classList.toggle('active', mode === 'new');
+  document.getElementById('atModeStockBtn').classList.toggle('active', mode === 'stock');
+  document.getElementById('atModeInstallBtn').classList.toggle('active', mode === 'install');
+  document.getElementById('atNewForm').style.display = (mode === 'new') ? '' : 'none';
+  document.getElementById('atStockForm').style.display = (mode === 'stock') ? '' : 'none';
+  document.getElementById('atInstallForm').style.display = (mode === 'install') ? '' : 'none';
+  var titles = {new: 'Add Tyre', stock: 'Add Tyre Stock', install: 'Install Tyre from Stock'};
+  document.getElementById('atTitle').textContent = titles[mode];
+  document.getElementById('atError').style.display = 'none';
+}
+function openAddTyreModal() {
+  lockPageScroll();
+  atSetMode('new');
+  document.getElementById('atBackdrop').classList.add('open');
+  document.getElementById('atModal').classList.add('open');
+}
+function closeAddTyreModal() {
+  unlockPageScroll();
+  document.getElementById('atBackdrop').classList.remove('open');
+  document.getElementById('atModal').classList.remove('open');
+}
+function atHandleSubmit(e, url) {
+  e.preventDefault();
+  var form = e.target;
+  var btn = form.querySelector('.vam-btn-save');
+  var origText = btn.textContent;
+  var errBox = document.getElementById('atError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  fetch(url, { method: 'POST', body: new FormData(form) })
+    .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+    .then(function (r) {
+      if (r.data.ok) {
+        window.location.href = (r.data.redirect || "{{ url_for('app_tyres') }}") + '?added=1';
+      } else {
+        errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    })
+    .catch(function () {
+      errBox.textContent = 'Network error — please check your connection and try again.';
+      errBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = origText;
+    });
+}
+var atNewForm = document.getElementById('atNewForm');
+if (atNewForm) atNewForm.addEventListener('submit', function (e) { atHandleSubmit(e, "{{ url_for('app_add_tyre') }}"); });
+var atStockForm = document.getElementById('atStockForm');
+if (atStockForm) atStockForm.addEventListener('submit', function (e) { atHandleSubmit(e, "{{ url_for('app_add_tyre_stock') }}"); });
+var atInstallForm = document.getElementById('atInstallForm');
+if (atInstallForm) {
+  atInstallForm.addEventListener('submit', function (e) {
+    var stockId = document.getElementById('atStockSelect').value;
+    if (!stockId) {
+      e.preventDefault();
+      var errBox = document.getElementById('atError');
+      errBox.textContent = 'Select a tyre from stock.';
+      errBox.style.display = 'block';
+      return;
+    }
+    atHandleSubmit(e, '/app/tyres/stock/' + stockId + '/install');
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's "Add Maintenance" picker (/app/tyres?add=1), same
+// ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddTyreModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+</script>
+{% endblock %}

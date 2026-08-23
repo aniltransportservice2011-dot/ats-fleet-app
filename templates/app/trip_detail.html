@@ -1,0 +1,323 @@
+{% extends "app/base_app.html" %}
+{% block title %}{{ t.lr_number or 'Trip #' + t.id|string }} — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _trip_detail_data() in app.py, shared verbatim with the website's own
+     trip_view(). Tabs (Trip Info / Costs & Payments / Deductions / Completion) are a mobile-
+     friendly regrouping of the same real trip columns the website's own trip_form.html edit
+     wizard already uses — nothing fabricated. Two real actions: "Update Trip" opens the same
+     4-step wizard as Add Trip (app_edit_trip(), templates/app/trip_add.html with mode='edit'),
+     pre-filled with this trip's real values, over the exact same real update logic
+     (_update_trip_from_form()) the website's own edit_trip() uses; "End Trip" (native modal,
+     posts to the same real /trips/<id>/end endpoint the website's own per-row modal uses),
+     shown only while the trip is still open. -->
+<div class="vd-crumb"><a href="{{ url_for('app_trips') }}">Trips</a> &rsaquo; {{ t.lr_number or 'Trip #' + t.id|string }}</div>
+
+<div class="vd-head-card">
+  <div class="td-ref-row">
+    <span>REF / LR: <b>{{ t.lr_number or '—' }}</b></span>
+    <span>{{ t.date or '—' }}</span>
+  </div>
+  <div class="vd-head-top" style="margin-top:12px;">
+    <div class="vd-photo">🚛</div>
+    <div style="flex:1; min-width:0;">
+      <div class="vd-head-title">
+        <h1>{{ t.vehicle_no or '—' }}</h1>
+        <span class="vh-status-badge {{ 'Active' if not t.end_date else 'Completed' }}">{{ 'Active' if not t.end_date else 'Completed' }}</span>
+      </div>
+      <div class="td-veh-sub">{{ 'Hired Vehicle' if is_hired else 'Own Vehicle' }}</div>
+      {% if t.veh_id %}<a href="{{ url_for('app_vehicle_detail', v_id=t.veh_id) }}" class="td-view-veh">View Vehicle <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>{% endif %}
+    </div>
+    <div class="td-route">
+      <div class="td-route-pt"><span class="dot green"></span><div><b>{{ t.from_loc or '—' }}</b><div class="sub">Loading Point</div></div></div>
+      <div class="td-route-pt"><span class="dot red"></span><div><b>{{ t.to_loc or '—' }}</b><div class="sub">Unloading Point</div></div></div>
+    </div>
+  </div>
+  <div class="vd-info-grid" style="margin-top:14px;">
+    <div><div class="lbl">Trip Type</div><div class="v">{{ 'Hired' if is_hired else 'Own' }}</div></div>
+    <div><div class="lbl">Party</div><div class="v">{{ t.party_name or '—' }}</div></div>
+    <div><div class="lbl">Material</div><div class="v">{{ t.material or '—' }}</div></div>
+    <div><div class="lbl">Driver</div><div class="v">{{ t.driver_name or '—' }}</div></div>
+    <div><div class="lbl">LR Received</div><div class="v">{{ t.lr_received or 'No' }}</div></div>
+  </div>
+</div>
+
+<div class="vd-kpi-grid">
+  <div class="vd-kpi-card"><div class="lbl">Billed Amount</div><div class="big">₹{{ '{:,.0f}'.format(t.billed_amount or 0) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Driver Advance</div><div class="big">₹{{ '{:,.0f}'.format(t.driver_adv_amount or 0) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Deductions</div><div class="big" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(deductions_total) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Balance Due</div><div class="big" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(balance_due) }}</div></div>
+</div>
+
+<!-- Client-side tab switch (tdGoToTab() below) — all 4 panels render in the same page load
+     (the data's already all fetched together via _trip_detail_data()), so switching tabs is a
+     pure show/hide with no network round-trip, same idea as the Add Trip wizard's .tw-step
+     toggle. The `tab` query param still seeds which one starts active, so a shared/bookmarked
+     link (e.g. ?tab=completion) still opens directly on the right one. -->
+<div class="mo-tabstrip">
+  <button type="button" class="mo-tab {{ 'active' if tab=='info' }}" data-td-tab="info" onclick="tdGoToTab('info')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M9 16h6M9 8h6"/><rect x="4" y="3" width="16" height="18" rx="2"/></svg>
+    <span>Trip Info</span></button>
+  <button type="button" class="mo-tab {{ 'active' if tab=='costs' }}" data-td-tab="costs" onclick="tdGoToTab('costs')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+    <span>Costs</span></button>
+  <button type="button" class="mo-tab {{ 'active' if tab=='deductions' }}" data-td-tab="deductions" onclick="tdGoToTab('deductions')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+    <span>Deductions</span></button>
+  <button type="button" class="mo-tab {{ 'active' if tab=='completion' }}" data-td-tab="completion" onclick="tdGoToTab('completion')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    <span>Completion</span></button>
+</div>
+
+<div class="td-panel {{ 'active' if tab=='info' }}" data-td-panel="info">
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Trip Information</h2></div>
+  <div class="vd-info-grid">
+    <div><div class="lbl">LR Number</div><div class="v">{{ t.lr_number or '—' }}</div></div>
+    <div><div class="lbl">Date</div><div class="v">{{ t.date or '—' }}</div></div>
+    <div><div class="lbl">Driver</div><div class="v">{{ t.driver_name or '—' }}</div></div>
+    <div><div class="lbl">Charge Type</div><div class="v">{{ 'Fixed' if t.rate_type == 'FIXED' else 'Per MT' }}</div></div>
+    <div><div class="lbl">Quantity (MT)</div><div class="v">{{ t.quantity or 0 }}</div></div>
+    {% if t.rate_type == 'FIXED' %}
+    <div><div class="lbl">Fixed Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.fixed_rate_amount or 0) }}</div></div>
+    {% else %}
+    <div><div class="lbl">Rate (Per Unit)</div><div class="v">₹{{ '{:,.2f}'.format(t.rate or 0) }}</div></div>
+    {% endif %}
+    <div><div class="lbl">Empty Trip</div><div class="v">{{ 'Yes' if t.is_empty else 'No' }}</div></div>
+  </div>
+</div>
+
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Fuel</h2></div>
+  <div class="vd-info-grid">
+    <div><div class="lbl">Fuel Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.fuel_amount or 0) }}</div></div>
+    <div><div class="lbl">Fuel Vendor</div><div class="v">{{ t.fuel_vendor_name or '—' }}</div></div>
+    <div><div class="lbl">Fuel Filled (Litres)</div><div class="v">{{ t.fuel_liters or '—' }}</div></div>
+    <div><div class="lbl">Fuel Price (Per Litre)</div><div class="v">₹{{ '{:,.2f}'.format(t.fuel_price or 0) }}</div></div>
+  </div>
+</div>
+
+{% if is_hired %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Hired Vehicle Owner</h2></div>
+  <div class="vd-info-grid">
+    <div><div class="lbl">Owner Name</div><div class="v">{{ t.owner_name or '—' }}</div></div>
+    <div><div class="lbl">Owner Rate (Per Unit)</div><div class="v">₹{{ '{:,.2f}'.format(t.owner_rate or 0) }}</div></div>
+    <div><div class="lbl">Owner Charge Type</div><div class="v">{{ 'Fixed' if t.owner_rate_type == 'FIXED' else 'Per MT' }}</div></div>
+    <div><div class="lbl">Owner Amount</div><div class="v">₹{{ '{:,.0f}'.format(owner_amount) }}</div></div>
+    <div><div class="lbl">Paid To Owner</div><div class="v">₹{{ '{:,.0f}'.format(t.paid_to_owner or 0) }}</div></div>
+  </div>
+</div>
+{% endif %}
+</div>
+
+<div class="td-panel {{ 'active' if tab=='costs' }}" data-td-panel="costs">
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Billing &amp; Payments</h2></div>
+  <div class="vd-info-grid">
+    <div><div class="lbl">Billed Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.billed_amount or 0) }}</div></div>
+    <div><div class="lbl">Payment Received</div><div class="v">₹{{ '{:,.0f}'.format(t.payment_received or 0) }}</div></div>
+    <div><div class="lbl">Party Advance</div><div class="v">₹{{ '{:,.0f}'.format(t.party_advance or 0) }}</div></div>
+    <div><div class="lbl">Driver Advance</div><div class="v">₹{{ '{:,.0f}'.format(t.driver_adv_amount or 0) }}</div></div>
+    <div><div class="lbl">Balance Due</div><div class="v">₹{{ '{:,.0f}'.format(balance_due) }}</div></div>
+  </div>
+</div>
+{% set add_fields = [('detention_charges','Detention'), ('gps_cost','GPS'), ('loading_charge','Loading'), ('unloading_charge','Unloading'), ('police_charges','Police'), ('sim_tracking','SIM Tracking'), ('union_charges','Union'), ('weight_charges','Weight'), ('other_charges','Other')] %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Additional Charges <span style="color:var(--a-ink);font-weight:800;">₹{{ '{:,.0f}'.format(additions_total) }}</span></h2></div>
+  {% for key, label in add_fields %}
+  {% if t.get(key) %}
+  <div class="vd-chl-detail-row"><span class="k">{{ label }}</span><span class="v">₹{{ '{:,.0f}'.format(t.get(key) or 0) }}</span></div>
+  {% endif %}
+  {% endfor %}
+  {% for it in custom_items %}
+  {% if it.item_type == 'charge' %}
+  <div class="vd-chl-detail-row"><span class="k">{{ it.description }}{% if it.vendor_name %} ({{ it.vendor_name }}){% endif %}</span><span class="v">₹{{ '{:,.0f}'.format(it.amount or 0) }}</span></div>
+  {% endif %}
+  {% endfor %}
+</div>
+</div>
+
+<div class="td-panel {{ 'active' if tab=='deductions' }}" data-td-panel="deductions">
+{% set ded_fields = [('brokerage','Brokerage'), ('builty_commission','Builty Commission'), ('late_fees','Late Fees'), ('material_damage','Material Damage'), ('shortage_amount','Shortage'), ('tds','TDS'), ('other_deductions','Other')] %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Deductions <span style="color:var(--a-red);font-weight:800;">₹{{ '{:,.0f}'.format(deductions_total) }}</span></h2></div>
+  {% set any_ded = false %}
+  {% for key, label in ded_fields %}
+  {% if t.get(key) %}
+  {% set any_ded = true %}
+  <div class="vd-chl-detail-row"><span class="k">{{ label }}</span><span class="v">₹{{ '{:,.0f}'.format(t.get(key) or 0) }}</span></div>
+  {% endif %}
+  {% endfor %}
+  {% for it in custom_items %}
+  {% if it.item_type == 'deduction' %}
+  {% set any_ded = true %}
+  <div class="vd-chl-detail-row"><span class="k">{{ it.description }}{% if it.vendor_name %} ({{ it.vendor_name }}){% endif %}</span><span class="v">₹{{ '{:,.0f}'.format(it.amount or 0) }}</span></div>
+  {% endif %}
+  {% endfor %}
+  {% if not any_ded %}<div class="vd-empty">No deductions on this trip.</div>{% endif %}
+</div>
+</div>
+
+<div class="td-panel {{ 'active' if tab=='completion' }}" data-td-panel="completion">
+{% if t.end_date %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Completion Details</h2></div>
+  <div class="vd-info-grid">
+    <div><div class="lbl">End Date</div><div class="v">{{ t.end_date }}</div></div>
+    <div><div class="lbl">End Time</div><div class="v">{{ t.end_time or '—' }}</div></div>
+    <div><div class="lbl">Actual KM</div><div class="v">{{ t.actual_km or '—' }}</div></div>
+    <div><div class="lbl">LR Received</div><div class="v">{{ t.lr_received or 'No' }}</div></div>
+  </div>
+  {% if t.shortage_amount %}
+  <div class="vd-info-grid" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--a-line);">
+    <div><div class="lbl">Shortage Qty</div><div class="v">{{ t.shortage_qty or 0 }} {{ t.shortage_unit or '' }}</div></div>
+    <div><div class="lbl">Shortage Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.shortage_amount or 0) }}</div></div>
+  </div>
+  {% if t.shortage_remarks %}<div style="margin-top:10px;font-size:0.8rem;color:var(--a-steel);"><b style="color:var(--a-ink);">Shortage Remarks:</b> {{ t.shortage_remarks }}</div>{% endif %}
+  {% endif %}
+  {% if t.remarks %}<div style="margin-top:10px;font-size:0.8rem;color:var(--a-steel);"><b style="color:var(--a-ink);">Remarks:</b> {{ t.remarks }}</div>{% endif %}
+</div>
+{% else %}
+<div class="vd-empty">This trip hasn't been ended yet — tap "End Trip" below to complete it.</div>
+{% endif %}
+</div>
+
+<div class="td-actions">
+  <a href="{{ url_for('app_edit_trip', trip_id=t.id) }}" class="td-btn-outline">Update Trip</a>
+  {% if not t.end_date %}
+  <button type="button" class="td-btn-primary" onclick="openEndTripModal()">End Trip</button>
+  {% endif %}
+</div>
+
+{% if not t.end_date %}
+<!-- End Trip modal — real fields/endpoint, same as the website's own per-row popup
+     (templates/trips_list.html's #endTripModal{id}). -->
+<div class="vam-backdrop" id="etBackdrop" onclick="closeEndTripModal()"></div>
+<div class="vam-modal" id="etModal" role="dialog" aria-modal="true" aria-label="End Trip">
+  <div class="vam-head">
+    <h2>End Trip</h2>
+    <button type="button" class="vam-close" onclick="closeEndTripModal()" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <form id="etForm" class="vam-form">
+    <div class="vam-error" id="etError" style="display:none;"></div>
+    <div class="td-et-summary">LR: <b>{{ t.lr_number or '—' }}</b> · Vehicle: <b>{{ t.vehicle_no or '—' }}</b><br>{{ t.from_loc or '—' }} → {{ t.to_loc or '—' }}</div>
+
+    <div class="vam-section-title">Trip Completion</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>End Date <span class="req">*</span></label><input type="date" name="end_date" required></div>
+      <div class="vam-field"><label>End Time</label><input type="time" name="end_time"></div>
+      <div class="vam-field"><label>Actual KM</label><input type="number" step="0.01" name="actual_km"></div>
+      <div class="vam-field"><label>LR Received?</label>
+        <select name="lr_received">
+          <option value="">Select</option>
+          <option value="Yes" {% if t.lr_received == 'Yes' %}selected{% endif %}>Yes</option>
+          <option value="No" {% if t.lr_received and t.lr_received != 'Yes' %}selected{% endif %}>No</option>
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Freight Amount (₹)</label><input type="number" step="0.01" name="freight_amount" value="{{ t.billed_amount or 0 }}"></div>
+    </div>
+
+    <div class="vam-section-title">Shortage Details</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>Shortage Qty</label><input type="number" step="0.01" name="shortage_qty" value="{{ t.shortage_qty or '' }}"></div>
+      <div class="vam-field"><label>Shortage Unit</label>
+        <select name="shortage_unit">
+          <option value="MT" {% if not t.shortage_unit or t.shortage_unit == 'MT' %}selected{% endif %}>MT</option>
+          <option value="KG" {% if t.shortage_unit == 'KG' %}selected{% endif %}>KG</option>
+          <option value="Bags" {% if t.shortage_unit == 'Bags' %}selected{% endif %}>Bags</option>
+          <option value="Units" {% if t.shortage_unit == 'Units' %}selected{% endif %}>Units</option>
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Shortage Amount (₹)</label><input type="number" step="0.01" name="shortage_amount" value="{{ t.shortage_amount or 0 }}"></div>
+      <div class="vam-field vam-field-full"><label>Shortage Remarks</label><textarea name="shortage_remarks" rows="2" maxlength="300">{{ t.shortage_remarks or '' }}</textarea></div>
+    </div>
+
+    <div class="vam-field" style="margin-top:16px;"><label>Remarks</label><textarea name="remarks" rows="2" maxlength="300">{{ t.remarks or '' }}</textarea></div>
+
+    <div class="vam-error" style="background:rgba(42,120,214,0.08);border-color:rgba(42,120,214,0.2);color:var(--a-ink);margin-top:14px;display:block;">
+      ℹ️ Once you end this trip, it will be marked as completed and no further edits can be made.
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeEndTripModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="etSaveBtn">End Trip</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// Client-side tab switch — no navigation, just show/hide the panel that's already in the page
+// (all 4 render together on load) and swap which .mo-tab looks active. history.replaceState
+// keeps the URL's ?tab= in sync so a refresh/share still opens on the same tab, without it ever
+// being a real page load.
+function tdGoToTab(name) {
+  document.querySelectorAll('[data-td-tab]').forEach(function (btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-td-tab') === name);
+  });
+  document.querySelectorAll('[data-td-panel]').forEach(function (panel) {
+    panel.classList.toggle('active', panel.getAttribute('data-td-panel') === name);
+  });
+  var params = new URLSearchParams(window.location.search);
+  params.set('tab', name);
+  history.replaceState(null, '', window.location.pathname + '?' + params.toString());
+}
+
+function openEndTripModal() {
+  document.getElementById('etBackdrop').classList.add('open');
+  document.getElementById('etModal').classList.add('open');
+  document.body.classList.add('a-scroll-lock');
+}
+function closeEndTripModal() {
+  document.getElementById('etBackdrop').classList.remove('open');
+  document.getElementById('etModal').classList.remove('open');
+  document.body.classList.remove('a-scroll-lock');
+}
+var etForm = document.getElementById('etForm');
+if (etForm) {
+  etForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('etSaveBtn');
+    var errBox = document.getElementById('etError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Ending…';
+    fetch("{{ url_for('app_end_trip', trip_id=t.id) }}", { method: 'POST', body: new FormData(e.target) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_trip_detail', trip_id=t.id) }}") + '&ended=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'End Trip';
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'End Trip';
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('ended') === '1') {
+    showToast('Trip ended successfully');
+    params.delete('ended');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  } else if (params.get('updated') === '1') {
+    showToast('Trip updated successfully');
+    params.delete('updated');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+</script>
+{% endblock %}

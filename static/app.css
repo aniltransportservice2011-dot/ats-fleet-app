@@ -179,6 +179,10 @@ body.a-scroll-lock { overflow: hidden; }
 .fab-option {
   position: absolute; bottom: 0; left: 0; display: flex; align-items: center; gap: 5px;
   opacity: 0; transform: translate(-50%, 10px) scale(0.7); transition: opacity 0.18s, transform 0.18s; pointer-events: none;
+  /* border/background/font/padding reset — "Add Maintenance" is a <button> (opens a sheet in
+     place, same reasoning as .mo-tab's own button variant), the other 3 stay plain <a> links
+     (real navigation); this reset makes both look identical regardless of element type. */
+  border: none; background: none; font-family: inherit; padding: 0; text-align: left; cursor: pointer;
 }
 .fab-menu.open .fab-option { opacity: 1; pointer-events: auto; }
 /* Smaller circles + tighter labels + wider spread than the first pass — the previous sizing
@@ -201,6 +205,58 @@ body.a-scroll-lock { overflow: hidden; }
 .fab-option-ic svg { width: 16px; height: 16px; }
 .fab-option-label { background: var(--a-ink); color: #fff; font-size: 0.64rem; font-weight: 700; padding: 5px 9px;
   border-radius: 999px; white-space: nowrap; box-shadow: 0 2px 8px rgba(20,33,61,0.18); }
+
+/* "Add Maintenance" drill-down arc — the level-1 4 options (.fab-option) fade out (not removed;
+   .fab-menu.drilled keeps them in the DOM so closeFabMenu() can just clear the class and land
+   back on level 1 next open) while this second 5-stop arc fades/scales in from the exact same
+   anchor. Points sit on a true semicircle (radius 120px, centered straight above the FAB), 5
+   evenly-spaced angles from -70° to 70° off vertical (-70/-35/0/35/70) — same translate+scale+
+   opacity transition mechanism as .fab-option, just a 5-point arc instead of 4.
+   .fab-sub-option is the 34×34 ICON itself (fixed size, margin-left:-17px doing the centering —
+   a fixed pixel value, not .fab-option's translate(-50%) percentage trick) so every icon's
+   center lands exactly on its computed arc coordinate regardless of its label's text length; if
+   the label were part of the same centered flex box instead (as an earlier pass here did), a
+   longer label would visibly drag that one icon off the arc while its neighbors stayed put,
+   breaking the arc's symmetry. .fab-sub-label is positioned via plain absolute placement instead,
+   purely decorating outward from that fixed icon and never able to move it. Placement follows
+   each item's own spot on the arc: .fab-sub-side-l/-r (the 2 side stops each side, pos1/2 and
+   pos4/5) puts the label beside the icon pointing outward away from the FAB's center;
+   .fab-sub-top (pos3, the single straight-up stop) puts the label above the icon instead, since a
+   side label there would point sideways into empty space rather than reading naturally. */
+.fab-menu.drilled .fab-option { opacity: 0; pointer-events: none; }
+.fab-sub-option {
+  position: absolute; bottom: 0; left: 0; width: 34px; height: 34px; margin-left: -17px;
+  opacity: 0; transform: translate(0, 10px) scale(0.7); transition: opacity 0.18s, transform 0.18s;
+  pointer-events: none; text-decoration: none;
+}
+.maint-fan.open .fab-sub-option { opacity: 1; pointer-events: auto; }
+/* Y values are the icon's true arc coordinate (R=120, angles -70/-35/0/35/70 off vertical) PLUS
+   17px (half the 34px icon height) — .fab-sub-option is anchored by its bottom edge (bottom:0),
+   not its center, so without this correction every icon's actual visual center would sit 17px
+   below where the trigonometry says, and by a fixed amount rather than a fixed fraction, so it
+   also throws pos3 (the tallest point of the arc) out of true radius relative to pos1/pos5 (the
+   flattest points) rather than just shifting the whole arc down uniformly. Confirmed by
+   measuring rendered icon centers with getBoundingClientRect(): all 5 now come back within
+   rounding of the same 120px radius from the FAB's own center. */
+.fab-sub-option[data-pos="1"] { transform: translate(-113px, -24px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="1"] { transform: translate(-113px, -24px) scale(1); transition-delay: 0.02s; }
+.fab-sub-option[data-pos="2"] { transform: translate(-69px, -81px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="2"] { transform: translate(-69px, -81px) scale(1); transition-delay: 0.06s; }
+.fab-sub-option[data-pos="3"] { transform: translate(0, -103px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="3"] { transform: translate(0, -103px) scale(1); transition-delay: 0.1s; }
+.fab-sub-option[data-pos="4"] { transform: translate(69px, -81px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="4"] { transform: translate(69px, -81px) scale(1); transition-delay: 0.14s; }
+.fab-sub-option[data-pos="5"] { transform: translate(113px, -24px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="5"] { transform: translate(113px, -24px) scale(1); transition-delay: 0.18s; }
+.fab-sub-ic { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--a-white); box-shadow: 0 4px 12px rgba(20,33,61,0.18); flex-shrink: 0; }
+.fab-sub-ic svg { width: 15px; height: 15px; }
+.fab-sub-label { position: absolute; top: 50%; transform: translateY(-50%); background: var(--a-ink); color: #fff;
+  font-size: 0.6rem; font-weight: 700; padding: 4px 7px; border-radius: 999px; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(20,33,61,0.18); }
+.fab-sub-side-l .fab-sub-label { right: 100%; margin-right: 6px; }
+.fab-sub-side-r .fab-sub-label { left: 100%; margin-left: 6px; }
+.fab-sub-top .fab-sub-label { top: auto; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 6px; }
 
 /* ---------- "More" speed-dial (opened from the bottom-nav More button) ----------------------
    Deliberately built exactly like the FAB speed-dial above (same .fab-option/-ic/-label sizing
@@ -314,6 +370,27 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .tw-field label .req { color: var(--a-red); }
 .tw-field input, .tw-field select { border: 1px solid var(--a-line); border-radius: 10px; padding: 10px 11px; font-size: 0.86rem;
   font-family: inherit; color: var(--a-ink); background: var(--a-paper); width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+/* Higher specificity than the rule above on purpose, so it always wins regardless of source
+   order — smaller font/padding gives a native calendar-icon real breathing room inside the same
+   half-width column, on any device, without needing extra column space. Paired with min-width:0
+   above (a grid item otherwise refuses to shrink below its content's own intrinsic width, which
+   is what let the icon force the cell wider than its track and bleed into the field next to it). */
+.tw-field input[type="date"] { padding-left: 9px; padding-right: 6px; font-size: 0.8rem; }
+/* iOS Safari specifically — see the matching comment on .vam-field input[type="date"] above for
+   why the rule above alone isn't enough there: these WebKit-only pseudo-elements reach into the
+   date input's actual internal rendering (day/month/year segments + calendar icon), which is
+   what really controls its minimum width on a real iPhone. */
+.tw-field input[type="date"]::-webkit-datetime-edit,
+.tw-field input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+.tw-field input[type="date"]::-webkit-datetime-edit-text,
+.tw-field input[type="date"]::-webkit-datetime-edit-month-field,
+.tw-field input[type="date"]::-webkit-datetime-edit-day-field,
+.tw-field input[type="date"]::-webkit-datetime-edit-year-field {
+  font-size: 0.74rem; padding: 0;
+}
+.tw-field input[type="date"]::-webkit-calendar-picker-indicator {
+  padding: 0; margin-left: 2px; width: 14px; height: 14px;
+}
 .tw-field input:focus, .tw-field select:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
 .tw-field input:disabled { color: var(--a-steel); }
 .tw-hint { grid-column: 1 / -1; font-size: 0.7rem; color: var(--a-steel); line-height: 1.4; margin-top: -4px; }
@@ -450,6 +527,36 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .mo-trend-bar { width: 100%; max-width: 28px; background: var(--a-accent); border-radius: 5px 5px 2px 2px; min-height: 3px; }
 .mo-trend-label { font-size: 0.64rem; color: var(--a-steel); font-weight: 600; }
 
+/* ---------- Shared search-box + filter-icon row (prefix a-search-*) ----------
+   Search box (whatever that page's own search already covers) + a filter icon that opens a
+   .vam-modal bottom sheet with that page's *other* real filters — "Apply" reloads with them.
+   One consistent pattern reused across Vehicles/Trips/Ledger/Maintenance-Service instead of
+   each page inventing its own filter UI. Originally built for Maintenance's Service tab,
+   promoted to a shared component. */
+.a-search-row { display: flex; gap: 8px; margin: 14px 0; }
+.a-search-box { flex: 1; display: flex; align-items: center; gap: 8px; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 12px; padding: 10px 13px; }
+.a-search-box svg { color: var(--a-steel); flex-shrink: 0; width: 17px; height: 17px; }
+.a-search-box input { border: none; outline: none; background: none; font-size: 0.86rem; font-family: inherit; color: var(--a-ink); flex: 1; min-width: 0; }
+.a-filter-btn { width: 42px; height: 42px; flex-shrink: 0; border-radius: 12px; border: 1px solid var(--a-line);
+  background: var(--a-white); color: var(--a-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.a-filter-btn svg { width: 18px; height: 18px; }
+.a-filter-btn.active { border-color: var(--a-accent); background: #fff3e8; color: var(--a-accent); }
+
+.ms-row { display: flex; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--a-line); }
+.ms-row:last-child { border-bottom: none; }
+.ms-row-date { flex-shrink: 0; width: 52px; font-size: 0.72rem; font-weight: 700; color: var(--a-steel); line-height: 1.3; }
+.ms-row-main { flex: 1; min-width: 0; }
+.ms-row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ms-row-vehicle { font-weight: 800; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-row-amt { font-weight: 700; font-size: 0.86rem; flex-shrink: 0; }
+.ms-row-bottom { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 3px; }
+.ms-row-sub { font-size: 0.76rem; color: var(--a-steel); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ms-checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin-top: 4px; }
+.ms-checklist-item { display: flex; align-items: center; gap: 7px; font-size: 0.78rem; color: var(--a-ink); }
+.ms-checklist-item input { accent-color: var(--a-accent); width: 15px; height: 15px; flex-shrink: 0; }
+
 /* ==========================================================================
    Trips list (templates/app/trips.html) — own prefix (tr-). No side padding
    added on any of these either, same .a-wrap-supplies-the-16px-gutter reason
@@ -560,6 +667,9 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .vh-status-badge.Active { background: #e8f5ee; color: var(--a-green); }
 .vh-status-badge.Inactive { background: #eef0f4; color: var(--a-steel); }
 .vh-status-badge.InMaintenance { background: #fff6e8; color: var(--a-amber); }
+.vh-status-badge.Completed { background: #eaf1fb; color: var(--a-blue); }
+.vh-status-badge.InStock { background: #eaf1fb; color: var(--a-blue); }
+.vh-status-badge.Scrapped { background: #fdecea; color: var(--a-red); }
 .vh-challan-badge { display: inline-flex; align-items: center; gap: 6px; background: #fdecea; color: var(--a-red);
   font-size: 0.72rem; font-weight: 700; padding: 5px 10px; border-radius: 8px; margin-top: 8px; }
 .vh-challan-badge svg { width: 13px; height: 13px; flex-shrink: 0; }
@@ -611,6 +721,14 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 
 .vam-form { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
   padding: 16px 18px calc(20px + env(safe-area-inset-bottom, 0px)); }
+
+/* Add Tyre modal's 3 real modes (New Tyre / Add to Stock / Install from Stock) — a segmented
+   control sitting between .vam-head and the mode's own .vam-form, same real modes as the
+   website's own #addTyreModal bat-mode-tabs, restyled to this app's own component language. */
+.aty-modes { display: flex; gap: 8px; padding: 14px 18px 0; flex-shrink: 0; }
+.aty-mode-btn { flex: 1; text-align: center; padding: 9px 4px; border-radius: 10px; border: 1px solid var(--a-line);
+  background: var(--a-white); font-size: 0.66rem; font-weight: 700; color: var(--a-steel); cursor: pointer; line-height: 1.25; font-family: inherit; }
+.aty-mode-btn.active { border-color: var(--a-accent); background: #fff3e8; color: var(--a-accent); }
 .vam-error { background: #fdeceb; border: 1px solid rgba(227,73,72,.3); color: var(--a-red);
   border-radius: 10px; padding: 10px 12px; font-size: 0.82rem; margin-bottom: 14px; }
 .vam-section-title { font-size: 0.7rem; font-weight: 800; color: var(--a-steel); text-transform: uppercase;
@@ -636,6 +754,29 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .vam-field input, .vam-field select, .vam-field textarea {
   width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--a-line); border-radius: 10px; padding: 10px 11px;
   font-size: 0.86rem; font-family: inherit; color: var(--a-ink); background: var(--a-white);
+}
+/* Higher specificity than the rule above on purpose, so it always wins regardless of source
+   order — same reasoning as .tw-field input[type="date"]: smaller font/padding gives a native
+   calendar-icon real breathing room inside a half-width column on any device, and this is now
+   the shared field style for every Add/Filter modal in the app (Vehicle, Trip's End/Edit,
+   Service, and every filter sheet), so fixing it here covers all of them at once. */
+.vam-field input[type="date"] { padding-left: 9px; padding-right: 6px; font-size: 0.8rem; }
+/* iOS Safari specifically: a date input's visible text/icon isn't regular text, it's drawn by an
+   internal system component that font-size on the <input> itself doesn't reliably reach — that's
+   why the rule above (which works fine in Chrome) can still overflow on a real iPhone. These
+   WebKit-only pseudo-elements reach into that internal rendering directly: shrink the actual
+   day/month/year segments and separators, and pull the calendar-icon button's own padding in, so
+   the whole control's real minimum width comes down instead of just the outer box's CSS width. */
+.vam-field input[type="date"]::-webkit-datetime-edit,
+.vam-field input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+.vam-field input[type="date"]::-webkit-datetime-edit-text,
+.vam-field input[type="date"]::-webkit-datetime-edit-month-field,
+.vam-field input[type="date"]::-webkit-datetime-edit-day-field,
+.vam-field input[type="date"]::-webkit-datetime-edit-year-field {
+  font-size: 0.74rem; padding: 0;
+}
+.vam-field input[type="date"]::-webkit-calendar-picker-indicator {
+  padding: 0; margin-left: 2px; width: 14px; height: 14px;
 }
 .vam-field input:focus, .vam-field select:focus, .vam-field textarea:focus { outline: none; border-color: var(--a-accent); }
 .vam-field textarea { resize: vertical; }
@@ -711,6 +852,37 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .vd-history-item:last-child { border-bottom: none; }
 .vd-history-item .date { color: var(--a-steel); font-size: 0.72rem; white-space: nowrap; min-width: 78px; }
 .vd-empty { text-align: center; color: var(--a-steel); font-size: 0.82rem; padding: 28px 12px; background: var(--a-white); border-radius: 14px; }
+
+/* ==========================================================================
+   Trip detail (templates/app/trip_detail.html) — own prefix (td-). Reuses
+   .vd-head-card/.vd-head-top/.vd-photo/.vd-head-title/.vd-info-grid,
+   .vd-kpi-grid/.vd-kpi-card, .mo-tab, .ld-card, .vam-* (End Trip modal is
+   built from the exact same modal component as Add Vehicle).
+   ========================================================================== */
+.td-ref-row { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--a-steel); }
+.td-ref-row b { color: var(--a-ink); }
+.td-veh-sub { font-size: 0.78rem; color: var(--a-steel); margin-top: 2px; }
+.td-view-veh { display: inline-flex; align-items: center; gap: 2px; font-size: 0.78rem; font-weight: 700; color: var(--a-accent); margin-top: 4px; }
+.td-view-veh svg { width: 12px; height: 12px; }
+.td-route { display: flex; flex-direction: column; gap: 10px; padding-left: 14px; border-left: 1.5px dashed var(--a-line); flex-shrink: 0; }
+.td-route-pt { display: flex; align-items: flex-start; gap: 8px; font-size: 0.8rem; }
+.td-route-pt .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+.td-route-pt .dot.green { background: var(--a-green); }
+.td-route-pt .dot.red { background: var(--a-red); }
+.td-route-pt .sub { font-size: 0.7rem; color: var(--a-steel); font-weight: 400; }
+@media (max-width: 400px) { .vd-head-top { flex-wrap: wrap; } .td-route { padding-left: 0; border-left: none; padding-top: 10px; border-top: 1px solid var(--a-line); width: 100%; } }
+
+.td-actions { display: flex; gap: 10px; margin: 16px 0 8px; }
+.td-btn-outline { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1.5px solid var(--a-line); background: var(--a-white); color: var(--a-ink);
+  border-radius: 12px; padding: 13px; font-weight: 700; font-size: 0.88rem; text-decoration: none; }
+.td-btn-primary { flex: 1; border: none; background: var(--a-accent); color: #fff;
+  border-radius: 12px; padding: 13px; font-weight: 700; font-size: 0.88rem; font-family: inherit; cursor: pointer; }
+.td-btn-primary:active { background: var(--a-accent-dark); }
+.td-et-summary { background: var(--a-paper); border-radius: 10px; padding: 10px 12px; font-size: 0.8rem; color: var(--a-steel); margin-bottom: 16px; line-height: 1.5; }
+.td-et-summary b { color: var(--a-ink); }
+.td-panel { display: none; }
+.td-panel.active { display: block; }
 
 /* ---------- Shared success/error toast (base_app.html, showToast()) ---------- */
 .a-toast {
