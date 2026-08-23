@@ -1,0 +1,133 @@
+/* ==========================================================================
+   Anil Transport — /app/ section stylesheet.
+   Deliberately separate from static/style.css (the website's own stylesheet)
+   so nothing here can ever affect the website, and nothing there can ever
+   affect this. Same brand tokens (orange accent, ink/steel/line/paper) so it
+   still reads as the same company, just a different, mobile-first surface.
+   ========================================================================== */
+:root {
+  --a-ink: #14213d;
+  --a-steel: #5a6b8c;
+  --a-line: #e6e9f0;
+  --a-paper: #f5f6f9;
+  --a-accent: #c05621;
+  --a-accent-dark: #9a4419;
+  --a-white: #ffffff;
+  --a-green: #1a9c5b;
+  --a-red: #e34948;
+  --a-blue: #2a78d6;
+  --a-purple: #7a5ad6;
+  --a-amber: #eda100;
+  --a-teal: #0f9b8e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body.app-body {
+  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  background: var(--a-paper); color: var(--a-ink);
+  padding-bottom: 84px; /* clears the fixed bottom bar */
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: inherit; text-decoration: none; }
+.a-wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
+
+/* ---------- Top bar ---------- */
+.a-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; background: var(--a-white); border-bottom: 1px solid var(--a-line);
+  position: sticky; top: 0; z-index: 40;
+}
+.a-topbar-left { display: flex; align-items: center; gap: 10px; }
+.a-menu-btn { background: none; border: none; padding: 6px; color: var(--a-ink); display: flex; }
+.a-brand-badge { width: 34px; height: 34px; border-radius: 9px; background: var(--a-accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.a-brand-badge svg { width: 19px; height: 19px; }
+.a-brand-name { font-weight: 800; font-size: 1.02rem; }
+.a-topbar-right { display: flex; align-items: center; gap: 14px; }
+.a-bell { position: relative; color: var(--a-ink); }
+.a-bell svg { width: 22px; height: 22px; }
+.a-bell .a-badge { position: absolute; top: -5px; right: -6px; background: var(--a-red); color: #fff; font-size: 0.6rem; font-weight: 800; min-width: 15px; height: 15px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
+.a-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--a-ink); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 700; }
+
+/* ---------- Greeting + date ---------- */
+.a-greet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 18px 0 16px; flex-wrap: wrap; }
+.a-greet h1 { font-size: 1.25rem; margin: 0; }
+.a-greet .sub { color: var(--a-steel); font-size: 0.85rem; margin-top: 3px; }
+.a-date-chip { display: flex; align-items: center; gap: 7px; background: var(--a-white); border: 1px solid var(--a-line); border-radius: 999px; padding: 8px 14px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+
+/* ---------- KPI cards ---------- */
+.a-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.a-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; }
+.a-kpi-ic { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; margin-bottom: 10px; }
+.a-kpi-label { font-size: 0.76rem; color: var(--a-steel); font-weight: 600; }
+.a-kpi-value { font-size: 1.35rem; font-weight: 800; margin-top: 3px; }
+.a-kpi-link { font-size: 0.72rem; color: var(--a-accent); font-weight: 700; margin-top: 6px; display: flex; align-items: center; gap: 2px; text-decoration: none; }
+
+/* ---------- Section card shell (Quick Actions / Business Overview / Vehicle Status / Activity) ---------- */
+.a-card { background: var(--a-white); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+.a-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.a-card-head h2 { font-size: 0.98rem; margin: 0; font-weight: 700; }
+.a-card-link { font-size: 0.8rem; color: var(--a-accent); font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 2px; }
+
+/* ---------- Quick actions ---------- */
+.a-qa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px; text-align: center; }
+.a-qa-item { display: flex; flex-direction: column; align-items: center; gap: 7px; text-decoration: none; color: var(--a-ink); background: none; border: none; font-family: inherit; cursor: pointer; padding: 4px 0; }
+.a-qa-ic { width: 50px; height: 50px; border-radius: 50%; background: var(--a-paper); display: flex; align-items: center; justify-content: center; color: var(--a-accent); }
+.a-qa-ic svg { width: 21px; height: 21px; }
+.a-qa-label { font-size: 0.68rem; font-weight: 600; line-height: 1.2; }
+
+/* ---------- Alert banner ---------- */
+.a-alert { display: flex; align-items: flex-start; gap: 12px; background: #fdf0e8; border: 1px solid rgba(192,86,33,0.25); border-radius: 14px; padding: 14px; margin-bottom: 16px; text-decoration: none; color: var(--a-ink); }
+.a-alert-ic { color: var(--a-accent); flex-shrink: 0; margin-top: 1px; }
+.a-alert-ic svg { width: 20px; height: 20px; }
+.a-alert-body { flex: 1; min-width: 0; }
+.a-alert-title { font-weight: 700; font-size: 0.86rem; color: var(--a-accent-dark); }
+.a-alert-sub { font-size: 0.78rem; color: var(--a-steel); margin-top: 2px; }
+.a-alert-chevron { color: var(--a-steel); flex-shrink: 0; margin-top: 3px; }
+
+/* ---------- Business Overview 2x2 ---------- */
+.a-bo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+.a-bo-item { display: flex; gap: 10px; align-items: flex-start; }
+.a-bo-ic { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; flex-shrink: 0; }
+.a-bo-label { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
+.a-bo-value { font-size: 1.05rem; font-weight: 800; margin-top: 2px; }
+.a-bo-trend { font-size: 0.7rem; font-weight: 700; margin-top: 2px; }
+.a-bo-trend.up { color: var(--a-green); }
+.a-bo-trend.down { color: var(--a-red); }
+.a-bo-sub-link { font-size: 0.72rem; color: var(--a-accent); font-weight: 700; margin-top: 2px; text-decoration: none; display: inline-block; }
+
+/* ---------- Vehicle status chips ---------- */
+.a-vs-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.a-vs-chip { border-radius: 12px; padding: 12px 8px; text-align: center; }
+.a-vs-num { font-size: 1.15rem; font-weight: 800; }
+.a-vs-label { font-size: 0.68rem; font-weight: 600; margin-top: 2px; }
+
+/* ---------- Recent activity ---------- */
+.a-activity-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--a-line); text-decoration: none; color: var(--a-ink); }
+.a-activity-item:last-child { border-bottom: none; }
+.a-activity-ic { width: 36px; height: 36px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; flex-shrink: 0; }
+.a-activity-body { flex: 1; min-width: 0; }
+.a-activity-title { font-weight: 700; font-size: 0.84rem; }
+.a-activity-sub { font-size: 0.74rem; color: var(--a-steel); margin-top: 1px; }
+.a-activity-right { text-align: right; flex-shrink: 0; }
+.a-activity-time { font-size: 0.7rem; color: var(--a-steel); }
+.a-activity-amt { font-weight: 700; font-size: 0.84rem; margin-top: 2px; }
+.a-activity-chevron { color: var(--a-steel); flex-shrink: 0; }
+
+/* ---------- Bottom nav with elevated center FAB ---------- */
+.a-bottom-nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  background: var(--a-white); border-top: 1px solid var(--a-line);
+  display: flex; align-items: center; justify-content: space-around;
+  padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -2px 12px rgba(20,33,61,0.06);
+}
+.a-bn-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; text-decoration: none; color: var(--a-steel); font-size: 0.66rem; font-weight: 600; background: none; border: none; font-family: inherit; }
+.a-bn-item svg { width: 21px; height: 21px; }
+.a-bn-item.active { color: var(--a-accent); }
+.a-bn-fab-wrap { flex: 1; display: flex; justify-content: center; }
+.a-bn-fab { width: 50px; height: 50px; border-radius: 50%; background: var(--a-accent); color: #fff; display: flex; align-items: center; justify-content: center; margin-top: -26px; box-shadow: 0 6px 16px rgba(192,86,33,0.4); border: 3px solid var(--a-white); }
+.a-bn-fab svg { width: 24px; height: 24px; }
+
+@media (min-width: 600px) {
+  .a-kpi-grid { grid-template-columns: repeat(4, 1fr); }
+}

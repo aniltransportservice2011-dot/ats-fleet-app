@@ -8064,11 +8064,16 @@ IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero reques
 
 @app.before_request
 def require_login():
-    exempt = ['login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick']
+    exempt = ['login', 'app_login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick']
     if request.endpoint in exempt:
         return
+    # Every redirect-to-login below picks app_login instead of the website's own login for any
+    # request under /app/ — otherwise an installed, standalone-launched app would drop back into
+    # the full desktop marketing login page the instant a session isn't (or stops being) valid,
+    # which is exactly the "looks like the website" break this branch exists to avoid.
+    in_app_section = request.path.startswith('/app/')
     if not session.get('user_id'):
-        return redirect(url_for('login'))
+        return redirect(url_for('app_login') if in_app_section else url_for('login'))
     # Idle timeout — genuinely idle time, not a fixed session length: every authenticated request
     # (including "Remember me" sessions) refreshes this timestamp, so someone actively using the
     # app never gets logged out mid-work; only real inactivity for 3+ hours does.
@@ -8081,7 +8086,7 @@ def require_login():
             idle_seconds = 0
         if idle_seconds > IDLE_TIMEOUT_SECONDS:
             session.clear()
-            return redirect(url_for('login'))
+            return redirect(url_for('app_login') if in_app_section else url_for('login'))
     session['last_activity'] = now.isoformat()
 
 @app.after_request
@@ -8133,8 +8138,12 @@ def login():
 
 @app.route('/logout')
 def logout():
+    # Same app-vs-website redirect split as require_login above, for whenever the app section
+    # grows its own logout link — a Referer of /app/... means the sign-out happened from inside
+    # the installed app, so it should land back on the app's own login screen, not the website's.
+    came_from_app = bool(request.referrer) and '/app/' in request.referrer
     session.clear()
-    return redirect(url_for('login'))
+    return redirect(url_for('app_login') if came_from_app else url_for('login'))
 
 def _send_otp_sms(s, phone, otp):
     from twilio.rest import Client
@@ -9671,6 +9680,166 @@ def internal_sync_tick():
                       enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
         return {'ok': True, 'job': job}
 
+# ============================================================================
+# /app/ — separate installable mobile app section. Its own templates
+# (templates/app/), its own stylesheet (static/app.css), its own manifest +
+# service worker (static/app-manifest.json, static/app-sw.js). Reuses existing
+# read-only helper functions (get_company_name, _period_financials,
+# _pct_growth, _shift_period_back, _accounts_rows, _expiry_bucket) exactly as
+# they already are — nothing here modifies or calls into any existing route,
+# so the website (every route above this point) is completely unaffected by
+# this section existing.
+#
+# app_login below is a deliberate near-duplicate of login() (same password-hash check, same
+# session keys, same access_logs insert) rather than a refactor of login() itself — the two
+# render completely different templates (this one has no desktop marketing hero panel, matches
+# static/app.css) and redirect to app_dashboard instead of dashboard, so this app section still
+# feels like an installed app end-to-end instead of dropping back into the website's own login
+# screen. require_login() (below the website's own routes) sends unauthenticated /app/* requests
+# here instead of to login — see the `in_app_section` check there.
+# ============================================================================
+
+@app.route('/app/login', methods=['GET', 'POST'])
+def app_login():
+    from werkzeug.security import check_password_hash
+    error = None
+    if request.method == 'POST':
+        f = request.form
+        conn = get_db()
+        user = conn.execute("SELECT * FROM users WHERE username=?", (f.get('username'),)).fetchone()
+        if user and check_password_hash(user['password_hash'], f.get('password') or ''):
+            if (user['status'] or 'Active') == 'Inactive':
+                conn.close()
+                return render_template('app/login.html', error='This account has been deactivated. Contact an administrator.',
+                                        company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
+            session.permanent = bool(f.get('remember_me'))
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['is_admin'] = user['is_admin']
+            now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            session['login_at'] = now
+            session['show_zoom_tip'] = True
+            conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?",
+                         (now, user['id'], now, user['id']))
+            conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login', now))
+            conn.commit()
+            conn.close()
+            return redirect(url_for('app_dashboard'))
+        conn.close()
+        error = 'Invalid username or password.'
+    return render_template('app/login.html', error=error, company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
+
+@app.route('/app/dashboard')
+def app_dashboard():
+    conn = get_db()
+    today = datetime.date.today()
+    today_str = today.isoformat()
+
+    # ---------- Top bar ----------
+    username = session.get('username') or 'User'
+    user_initials = ''.join([p[0] for p in username.replace('_', ' ').replace('.', ' ').split()[:2]]).upper() or 'U'
+    greeting_name = username.replace('_', ' ').replace('.', ' ').split()[0].title()
+    company_name = get_company_name(session.get('company_id', 1))
+
+    # ---------- KPI row — real, right-now operational numbers, not the period-filtered
+    # financial summary the website's own Dashboard shows (this is a deliberately different,
+    # complementary view: "what's happening today", not "how did this month go"). ----------
+    total_vehicles = conn.execute("SELECT COUNT(*) FROM vehicles WHERE vehicle_no IS NOT NULL").fetchone()[0]
+    on_trip_count = conn.execute("""SELECT COUNT(DISTINCT vehicle_id) FROM trips
+                                    WHERE end_date IS NULL AND date<=? AND vehicle_id IS NOT NULL""", (today_str,)).fetchone()[0]
+    today_trips_completed = conn.execute("SELECT COUNT(*) FROM trips WHERE end_date=?", (today_str,)).fetchone()[0]
+    today_revenue = conn.execute("SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE date=?", (today_str,)).fetchone()[0]
+
+    # ---------- Alerts — every item here is a real, derived count. No EMI-due alert: the
+    # compliance_expenses table only records amounts already paid (a `date` of when it was
+    # incurred), there's no future due-date field anywhere in the schema to derive an upcoming
+    # EMI alert from, so it's left out rather than showing a fabricated number. ----------
+    invoiced_trip_ids = {r['trip_id'] for r in conn.execute("SELECT DISTINCT trip_id FROM invoice_batch_trips").fetchall()}
+    completed_trip_ids = {r['id'] for r in conn.execute("SELECT id FROM trips WHERE end_date IS NOT NULL").fetchall()}
+    pending_invoice_count = len(completed_trip_ids - invoiced_trip_ids)
+    insurance_expiring = 0
+    for r in conn.execute("SELECT insurance_expiry FROM vehicles WHERE type='own'").fetchall():
+        if _expiry_bucket(r['insurance_expiry']) in ('expiring', 'expired'):
+            insurance_expiring += 1
+    alert_bits = []
+    if pending_invoice_count:
+        alert_bits.append(f"{pending_invoice_count} trip{'s' if pending_invoice_count != 1 else ''} pending invoice")
+    if insurance_expiring:
+        alert_bits.append(f"{insurance_expiring} insurance expiring soon")
+    alert_count = len(alert_bits)
+    alert_summary = ', '.join(alert_bits)
+
+    # ---------- Business Overview — same shared, already-tested source of truth Business
+    # Performance itself uses, so this can never quietly disagree with that page. ----------
+    month_from, month_to = _month_bounds(today.year, today.month)
+    prev_from, prev_to = _shift_period_back(month_from, month_to)
+    curr_fin = _period_financials(conn, month_from, month_to)
+    prev_fin = _period_financials(conn, prev_from, prev_to)
+    bo_trip_growth = _pct_growth(curr_fin['trip_count'], prev_fin['trip_count'])
+    bo_revenue_growth = _pct_growth(curr_fin['revenue'], prev_fin['revenue'])
+    bo_expense_growth = _pct_growth(curr_fin['total_expenses'], prev_fin['total_expenses'])
+    acct_rows = _accounts_rows(conn)
+    total_receivables = sum(r['balance'] for r in acct_rows if r['balance'] > 0 and r['role'] == 'Party')
+    receivable_party_count = sum(1 for r in acct_rows if r['balance'] > 0.01 and r['role'] == 'Party')
+
+    # ---------- Vehicle status — three real, mutually-exclusive categories that always sum to
+    # total_vehicles. A fourth "Waiting" bucket (as opposed to Idle) isn't something this data
+    # model can honestly distinguish today — no field records "scheduled but not yet started" —
+    # so it's left out rather than inventing a number for it. ----------
+    in_workshop = conn.execute("SELECT COUNT(*) FROM vehicles WHERE status='In Maintenance'").fetchone()[0]
+    vs_idle = max(total_vehicles - on_trip_count - in_workshop, 0)
+
+    # ---------- Recent activity — same real event sources the website's Dashboard draws from,
+    # queried independently here rather than calling into dashboard() itself. ----------
+    activities = []
+    for r in conn.execute("""SELECT t.lr_number, v.vehicle_no, t.billed_amount, t.updated_at FROM trips t
+                             LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                             WHERE t.end_date IS NOT NULL AND t.updated_at IS NOT NULL ORDER BY t.updated_at DESC LIMIT 5""").fetchall():
+        activities.append({'icon': 'trip', 'title': 'Trip Completed', 'sub': f"{r['lr_number'] or '—'} • {r['vehicle_no'] or '—'}",
+                            'amount': r['billed_amount'] or 0, 'ts': r['updated_at']})
+    for r in conn.execute("""SELECT ib.invoice_number, ib.created_at, COALESCE(p.name, v.name) as who
+                             FROM invoice_batches ib LEFT JOIN parties p ON ib.party_id=p.id LEFT JOIN vendors v ON ib.vendor_id=v.id
+                             WHERE ib.created_at IS NOT NULL ORDER BY ib.created_at DESC LIMIT 5""").fetchall():
+        activities.append({'icon': 'invoice', 'title': 'Invoice Created', 'sub': f"{r['invoice_number']} • {r['who'] or '—'}",
+                            'amount': None, 'ts': r['created_at']})
+    for r in conn.execute("""SELECT m.category, m.amount, v.vehicle_no, m.created_at FROM maintenance m
+                             LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                             WHERE m.created_at IS NOT NULL ORDER BY m.created_at DESC LIMIT 5""").fetchall():
+        activities.append({'icon': 'expense', 'title': 'Expense Added', 'sub': f"{r['category'] or 'Maintenance'} • {r['vehicle_no'] or '—'}",
+                            'amount': r['amount'] or 0, 'ts': r['created_at']})
+
+    def _norm_ts(raw):
+        if not raw:
+            return None
+        try:
+            return datetime.datetime.strptime(raw[:19], '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return None
+    for a in activities:
+        a['_dt'] = _norm_ts(a['ts'])
+    activities = [a for a in activities if a['_dt']]
+    activities.sort(key=lambda a: a['_dt'], reverse=True)
+    activities = activities[:5]
+    now_dt = datetime.datetime.now()
+    for a in activities:
+        a['time_label'] = 'Today, ' + a['_dt'].strftime('%I:%M %p') if a['_dt'].date() == today else (
+            'Yesterday, ' + a['_dt'].strftime('%I:%M %p') if a['_dt'].date() == today - datetime.timedelta(days=1)
+            else a['_dt'].strftime('%d %b, %I:%M %p'))
+
+    conn.close()
+    return render_template('app/dashboard.html', active='dashboard',
+        company_name=company_name, user_initials=user_initials, greeting_name=greeting_name,
+        today_display=today.strftime('%d %b %Y'), notif_count=alert_count,
+        total_vehicles=total_vehicles, on_trip_count=on_trip_count,
+        today_trips_completed=today_trips_completed, today_revenue=today_revenue,
+        alert_count=alert_count, alert_summary=alert_summary,
+        bo_trips=curr_fin['trip_count'], bo_trip_growth=bo_trip_growth,
+        bo_revenue=curr_fin['revenue'], bo_revenue_growth=bo_revenue_growth,
+        bo_expenses=curr_fin['total_expenses'], bo_expense_growth=bo_expense_growth,
+        total_receivables=total_receivables, receivable_party_count=receivable_party_count,
+        vs_on_trip=on_trip_count, vs_workshop=in_workshop, vs_idle=vs_idle,
+        activities=activities)
+
 if __name__ == '__main__':
     # Defaults to the same debug=True this always ran with locally — nothing changes for local
     # `python app.py` unless FLASK_DEBUG is actually set. A real deployment MUST set
@@ -9702,4 +9871,8 @@ if __name__ == '__main__':
         # to trigger any live eChallan calls yet.
         start_scheduler(get_db, enable_rc_sync=(os.environ.get('ENABLE_RC_SYNC') == '1'),
                          enable_challan_sync=(os.environ.get('ENABLE_CHALLAN_SYNC') == '1'))
-    app.run(debug=debug_mode, port=5050)
+    # Defaults to 127.0.0.1 (localhost-only), same as this has always run — set FLASK_HOST=0.0.0.0
+    # to also accept connections from other devices on the same LAN/Wi-Fi (e.g. testing the /app/
+    # mobile section on an actual phone during local development). Never do this on a real
+    # deployment; that's what a real WSGI server + reverse proxy is for.
+    app.run(debug=debug_mode, port=5050, host=os.environ.get('FLASK_HOST', '127.0.0.1'))
