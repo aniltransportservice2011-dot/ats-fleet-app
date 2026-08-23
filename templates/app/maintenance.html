@@ -1,0 +1,118 @@
+{% extends "app/base_app.html" %}
+{% block title %}Maintenance — {{ company_name }}{% endblock %}
+{% block content %}
+
+<div class="mo-tabstrip">
+  <a class="mo-tab active" href="{{ url_for('app_maintenance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+    Overview</a>
+  <a class="mo-tab" href="/maintenance?tab=service">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    Service</a>
+  <a class="mo-tab" href="/maintenance?tab=tyres">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
+    Tyres</a>
+  <a class="mo-tab" href="/maintenance?tab=battery">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
+    Battery</a>
+  <a class="mo-tab" href="/maintenance?tab=urea">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
+    Urea</a>
+</div>
+
+<div class="mo-period-bar">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+  {{ period_label }}
+</div>
+
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Fleet</div><div class="mo-kpi-val">{{ total_fleet }}</div><div class="mo-kpi-sub">Own vehicles</div></div>
+      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🚛</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Vehicles Serviced</div><div class="mo-kpi-val">{{ vehicles_serviced }}</div><div class="mo-kpi-sub">This period</div></div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">🔧</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Pending Payments</div><div class="mo-kpi-val" style="color:{% if pending_count %}var(--a-red){% endif %};">{{ pending_count }}</div><div class="mo-kpi-sub">Unpaid entries</div></div>
+      <div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">💰</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Maintenance Cost</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(total_cost) }}</div><div class="mo-kpi-sub">₹{{ '{:,.0f}'.format(total_unpaid) }} unpaid</div></div>
+      <div class="mo-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">₹</div>
+    </div>
+  </div>
+</div>
+
+<div class="mo-panel">
+  <div class="mo-panel-head"><h2>Fleet Health Overview</h2></div>
+  <div class="mo-panel-note">Derived from this period's repair spend per vehicle vs. the fleet average — a spend-based proxy, not a mechanical inspection score.</div>
+  {% set band_colors = {'Excellent':'#0ca30c','Good':'#1baf7a','Average':'#eda100','Poor':'#eb6834','Critical':'#d03b3b'} %}
+  {% set total_v = total_fleet if total_fleet else 1 %}
+  <div class="mo-donut-wrap">
+    <svg viewBox="0 0 130 130" width="110" height="110">
+      {% set circ = 326.7 %}
+      {% set offset = 0 %}
+      {% for band in ['Excellent','Good','Average','Poor','Critical'] %}
+      {% set seg = circ * health_bands[band] / total_v %}
+      <circle cx="65" cy="65" r="52" fill="none" stroke="{{ band_colors[band] }}" stroke-width="20"
+              stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset|round(1) }}" transform="rotate(-90 65 65)"/>
+      {% set offset = offset + seg %}
+      {% endfor %}
+      <text x="65" y="61" font-size="22" font-weight="800" text-anchor="middle" fill="var(--a-ink)">{{ total_fleet }}</text>
+      <text x="65" y="77" font-size="9" text-anchor="middle" fill="var(--a-steel)">Vehicles</text>
+    </svg>
+    <table class="mo-band-table">
+      {% for band in ['Excellent','Good','Average','Poor','Critical'] %}
+      <tr>
+        <td><span class="mo-band-dot" style="background:{{ band_colors[band] }};"></span><span class="mo-band-name">{{ band }}</span></td>
+        <td style="width:70px;"><div class="mo-band-track"><div class="mo-band-fill" style="width:{{ (health_bands[band]/total_v*100)|round(0) }}%;background:{{ band_colors[band] }};"></div></div></td>
+        <td class="mo-band-count">{{ health_bands[band] }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="mo-panel">
+  <div class="mo-panel-head">
+    <h2>Action Required</h2>
+    <a class="mo-panel-link" href="/maintenance?tab=overview">View All
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></a>
+  </div>
+  {% for a in actions %}
+  <div class="mo-action-row">
+    <div class="mo-action-icon {{ a.kind }}">{{ a.icon }}</div>
+    <div class="mo-action-body">
+      <div class="mo-action-title">{{ a.label }}</div>
+      <div class="mo-action-sub">{{ a.vehicle }}</div>
+    </div>
+    <div class="mo-action-right {{ a.kind }}">{{ a.detail }}</div>
+  </div>
+  {% else %}
+  <div class="mo-empty-note">Nothing needs attention right now.</div>
+  {% endfor %}
+</div>
+
+<div class="mo-panel">
+  <div class="mo-panel-head"><h2>Maintenance Cost Trend</h2></div>
+  <div class="mo-panel-note">Last 6 months, own fleet.</div>
+  <div class="mo-trend-bars">
+    {% for t in trend %}
+    <div class="mo-trend-col">
+      <div class="mo-trend-bar" style="height:{{ ((t.cost / trend_max * 100) if trend_max else 0)|round(0) }}%;" title="₹{{ '{:,.0f}'.format(t.cost) }}"></div>
+      <div class="mo-trend-label">{{ t.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}
