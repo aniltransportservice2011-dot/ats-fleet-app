@@ -2247,98 +2247,111 @@ def trips_list():
                             delete_error_lr=request.args.get('lr', ''), delete_error_toll_count=request.args.get('toll_count', ''),
                             active='trips')
 
+def _duplicate_lr_trip(conn, lr_number):
+    """Real-world LR numbers are serially-unique documents (Lorry Receipt) — two trips sharing
+    one is a data-integrity problem (duplicate billing, reconciliation confusion), not a
+    legitimate case like two parties sharing a name. Returns the conflicting trip row
+    (id, date, vehicle_no) if lr_number is already used by another trip, else None. Shared by
+    add_trip() (website) and app_add_trip() (mobile app) so both reject a duplicate identically."""
+    lr_number = (lr_number or '').strip()
+    if not lr_number:
+        return None
+    return conn.execute("""SELECT t.id, t.date, v.vehicle_no FROM trips t
+                           LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                           WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != ''""",
+                        (lr_number,)).fetchone()
+
+def _insert_trip_from_form(conn, f):
+    """Builds and inserts one trips row from a submitted form — same field list, same computed
+    billed_amount, same get_or_create_*/vendor resolution used by both add_trip() (website) and
+    app_add_trip() (mobile app), extracted here so the two can never quietly compute a different
+    billed_amount or accept a different set of fields (exactly the kind of drift
+    get_or_create_vehicle above was already extracted to avoid). Caller must run
+    _duplicate_lr_trip() first — this function always inserts, unconditionally. Returns the new
+    trip's id; does not commit or close conn."""
+    def n(key):
+        return float(f.get(key) or 0)
+
+    vehicle_id = get_or_create_vehicle(conn, f.get('vehicle_no'), f.get('type'))
+    trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
+    party_id = get_or_create_party(conn, f.get('party_name'))
+    fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
+    driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
+    owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
+    misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
+
+    quantity = n('quantity')
+    rate = n('rate')
+    rate_type = f.get('rate_type')
+    fixed_rate_amount = n('fixed_rate_amount')
+    owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
+    owner_fixed_amount = n('owner_fixed_amount')
+
+    freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
+
+    # Note: driver_payment ("Driver Bata") is no longer collected from this form — Driver Advance
+    # already covers driver payments, so this legacy field is left at its schema default (0) for
+    # new trips instead of being asked for twice.
+    total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
+                      n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
+                      n('weight_charges')+n('other_charges'))
+    total_deductions = (n('brokerage')+n('builty_commission')+n('late_fees')+n('material_damage')+
+                         n('shortage_amount')+n('tds')+n('other_deductions'))
+    billed_amount = freight + total_charges - total_deductions
+
+    # conductor_expense/wear_tear are no longer collected from this form (dropped in favor of
+    # Fuel Liters/Fuel Price below) — simply left out of the INSERT so they take their schema
+    # default for every new trip, same "stop collecting, don't touch history" pattern as
+    # driver_payment above.
+    cols = ['date','lr_number','vehicle_id','type','party_id','from_loc','to_loc','quantity','rate',
+            'driver_name','material','rate_type','billed_amount',
+            'detention_charges','gps_cost','loading_charge','unloading_charge',
+            'police_charges','sim_tracking','union_charges','weight_charges','other_charges',
+            'brokerage','builty_commission','late_fees','material_damage','shortage_amount','shortage_qty','tds','other_deductions',
+            'fuel_amount','fuel_vendor_id','fuel_liters','fuel_price','driver_adv_amount','driver_adv_vendor_id','party_advance','payment_received',
+            'owner_name','fixed_rate_amount','owner_rate','owner_rate_type','owner_fixed_amount','paid_to_owner','owner_vendor_id',
+            'agent_commission','builty_expense','fine','labour_charges','parking','puncture',
+            'toll','urea','loading_expense','unloading_expense','weighbridge_charges','other_expense','misc_vendor_id',
+            'lr_received','is_empty']
+    vals = [f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
+            quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
+            n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
+            n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
+            n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
+            n('shortage_qty'), n('tds'), n('other_deductions'),
+            n('fuel_amount'), fuel_vendor_id, f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), driveradv_vendor_id, n('party_advance'), n('payment_received'),
+            f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, n('paid_to_owner'), owner_vendor_id,
+            n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
+            n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
+            n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
+            f.get('lr_received') or None, 1 if f.get('is_empty') else 0]
+    cols.extend(['created_by', 'created_at'])
+    vals.extend([session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+    placeholders = ','.join('?' * len(cols))
+    cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
+    _save_trip_custom_items(conn, cur.lastrowid, f)
+    return cur.lastrowid
+
 @app.route('/trips/add', methods=['GET', 'POST'])
 def add_trip():
     conn = get_db()
     if request.method == 'POST':
         f = request.form
-
-        # LR Number is a real-world serially-numbered document (Lorry Receipt) — two trips
-        # sharing one is a data-integrity problem (duplicate billing, reconciliation confusion),
-        # not a legitimate case like two parties sharing a name. Checked here, before any of the
-        # get_or_create_* calls below, so a rejected duplicate never leaves behind a stray new
-        # vehicle/party/vendor row from a save that's about to be refused anyway.
-        lr_number = (f.get('lr_number') or '').strip()
-        if lr_number:
-            dup = conn.execute("""SELECT t.id, t.date, v.vehicle_no FROM trips t
-                                  LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                                  WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != ''""",
-                               (lr_number,)).fetchone()
-            if dup:
-                conn.close()
-                vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-                conn2 = get_db()
-                employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
-                vehicle_type_map = _vehicle_type_map(conn2)
-                conn2.close()
-                error = (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
-                         f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
-                return render_template('trip_form.html', mode='add', t=f, custom_items=[],
-                                        vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
-                                        employees=employees, vehicle_type_map=vehicle_type_map,
-                                        return_to=f.get('return_to', ''), active='trips', error=error)
-
-        def n(key):
-            return float(f.get(key) or 0)
-
-        vehicle_id = get_or_create_vehicle(conn, f.get('vehicle_no'), f.get('type'))
-        trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
-        party_id = get_or_create_party(conn, f.get('party_name'))
-        fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
-        driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
-        owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
-        misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
-
-        quantity = n('quantity')
-        rate = n('rate')
-        rate_type = f.get('rate_type')
-        fixed_rate_amount = n('fixed_rate_amount')
-        owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
-        owner_fixed_amount = n('owner_fixed_amount')
-
-        freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
-
-        # Note: driver_payment ("Driver Bata") is no longer collected from this form — Driver Advance
-        # already covers driver payments, so this legacy field is left at its schema default (0) for
-        # new trips instead of being asked for twice.
-        total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
-                          n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
-                          n('weight_charges')+n('other_charges'))
-        total_deductions = (n('brokerage')+n('builty_commission')+n('late_fees')+n('material_damage')+
-                             n('shortage_amount')+n('tds')+n('other_deductions'))
-        billed_amount = freight + total_charges - total_deductions
-
-        # conductor_expense/wear_tear are no longer collected from this form (dropped in favor of
-        # Fuel Liters/Fuel Price below) — simply left out of the INSERT so they take their schema
-        # default for every new trip, same "stop collecting, don't touch history" pattern as
-        # driver_payment above.
-        cols = ['date','lr_number','vehicle_id','type','party_id','from_loc','to_loc','quantity','rate',
-                'driver_name','material','rate_type','billed_amount',
-                'detention_charges','gps_cost','loading_charge','unloading_charge',
-                'police_charges','sim_tracking','union_charges','weight_charges','other_charges',
-                'brokerage','builty_commission','late_fees','material_damage','shortage_amount','shortage_qty','tds','other_deductions',
-                'fuel_amount','fuel_vendor_id','fuel_liters','fuel_price','driver_adv_amount','driver_adv_vendor_id','party_advance','payment_received',
-                'owner_name','fixed_rate_amount','owner_rate','owner_rate_type','owner_fixed_amount','paid_to_owner','owner_vendor_id',
-                'agent_commission','builty_expense','fine','labour_charges','parking','puncture',
-                'toll','urea','loading_expense','unloading_expense','weighbridge_charges','other_expense','misc_vendor_id',
-                'lr_received','is_empty']
-        vals = [f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
-                quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
-                n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
-                n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
-                n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
-                n('shortage_qty'), n('tds'), n('other_deductions'),
-                n('fuel_amount'), fuel_vendor_id, f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), driveradv_vendor_id, n('party_advance'), n('payment_received'),
-                f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, n('paid_to_owner'), owner_vendor_id,
-                n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
-                n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
-                n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
-                f.get('lr_received') or None, 1 if f.get('is_empty') else 0]
-        cols.extend(['created_by', 'created_at'])
-        vals.extend([session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
-        placeholders = ','.join('?' * len(cols))
-        cur = conn.execute(f"INSERT INTO trips ({','.join(cols)}) VALUES ({placeholders})", vals)
-        _save_trip_custom_items(conn, cur.lastrowid, f)
+        dup = _duplicate_lr_trip(conn, f.get('lr_number'))
+        if dup:
+            conn.close()
+            vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+            conn2 = get_db()
+            employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+            vehicle_type_map = _vehicle_type_map(conn2)
+            conn2.close()
+            error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
+                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+            return render_template('trip_form.html', mode='add', t=f, custom_items=[],
+                                    vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
+                                    employees=employees, vehicle_type_map=vehicle_type_map,
+                                    return_to=f.get('return_to', ''), active='trips', error=error)
+        _insert_trip_from_form(conn, f)
         conn.commit()
         conn.close()
         return redirect(url_for('trips_list'))
@@ -9839,6 +9852,51 @@ def app_dashboard():
         total_receivables=total_receivables, receivable_party_count=receivable_party_count,
         vs_on_trip=on_trip_count, vs_workshop=in_workshop, vs_idle=vs_idle,
         activities=activities)
+
+@app.route('/app/trips/add', methods=['GET', 'POST'])
+def app_add_trip():
+    """Mobile Add Trip — a 4-step wizard (Trip Details / Cost & Charges / Other Items / Review)
+    over the exact same fields, validation, and insert logic as the website's own Add Trip page
+    (templates/trip_form.html, add_trip() above): both call _duplicate_lr_trip() and
+    _insert_trip_from_form(), so the two can never quietly disagree on what a trip is or how its
+    billed_amount is computed. Deliberately does NOT reproduce the demo mockup's "Trip ID (Auto)"
+    display, per-leg Transit Point/date-time/contact fields, or a server-side "Save Draft" — none
+    of those correspond to a real column this app actually has; the wizard only ever asks for
+    fields that exist on trips (see _insert_trip_from_form) so nothing entered here is silently
+    discarded. "Save Draft" in the UI is a real feature, just client-side only (localStorage on
+    the phone), not a server-side draft trips row — there's no draft/status concept on trips
+    for a server-side draft to belong to.
+    """
+    conn = get_db()
+    company_name = get_company_name(session.get('company_id', 1))
+    if request.method == 'POST':
+        f = request.form
+        dup = _duplicate_lr_trip(conn, f.get('lr_number'))
+        if dup:
+            conn.close()
+            vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+            conn2 = get_db()
+            employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+            vehicle_type_map = _vehicle_type_map(conn2)
+            conn2.close()
+            error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
+                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+            return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles],
+                                    combined_names=combined_names, employees=[e['name'] for e in employees],
+                                    vehicle_type_map=vehicle_type_map, error=error, company_name=company_name)
+        _insert_trip_from_form(conn, f)
+        conn.commit()
+        conn.close()
+        return redirect(url_for('app_dashboard', trip_added='1'))
+    conn.close()
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    conn2 = get_db()
+    employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+    vehicle_type_map = _vehicle_type_map(conn2)
+    conn2.close()
+    return render_template('app/trip_add.html', t={}, vehicles=[v['vehicle_no'] for v in vehicles],
+                            combined_names=combined_names, employees=[e['name'] for e in employees],
+                            vehicle_type_map=vehicle_type_map, error=None, company_name=company_name)
 
 if __name__ == '__main__':
     # Defaults to the same debug=True this always ran with locally — nothing changes for local
