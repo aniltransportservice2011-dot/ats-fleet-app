@@ -8093,7 +8093,8 @@ IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero reques
 
 @app.before_request
 def require_login():
-    exempt = ['login', 'app_login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick']
+    exempt = ['login', 'app_login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick',
+              'app_login_otp', 'app_verify_login_otp']
     if request.endpoint in exempt:
         return
     # Every redirect-to-login below picks app_login instead of the website's own login for any
@@ -8451,19 +8452,12 @@ def export_users():
     return send_file(buf, as_attachment=True, download_name='users.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-@app.route('/route-analytics')
-def route_analytics():
-    conn = get_db()
-    tab = request.args.get('tab', 'best-routes')
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
-    from_f = request.args.get('from', '')
-    to_f = request.args.get('to', '')
-    type_f = request.args.get('vehicle_type', '')
-
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
-
+def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f):
+    """Shared per-route revenue/cost/profit rollup — both the Best Routes and Route Rates tabs
+    draw from the `trips` list this returns, so app_route_analytics() (mobile) reads the exact
+    same numbers as route_analytics() (website) for the fields both surfaces show. Extracted
+    unchanged from route_analytics() below; that route now just calls this and continues with
+    its own Route Rates computation using the returned trips list."""
     # All origins/destinations ever seen (unfiltered), for the From/To dropdowns — independent of
     # the current filters, and independent of each other, so you can filter by From alone, To
     # alone, or both together for one exact route.
@@ -8483,7 +8477,6 @@ def route_analytics():
     trips = conn.execute(trip_query, params).fetchall()
     route_toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
 
-    # ---------- Shared per-route revenue/cost/profit (both tabs draw from this) ----------
     groups = {}
     for t in trips:
         cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
@@ -8528,6 +8521,34 @@ def route_analytics():
     top_rev_max = max([r['revenue'] for r in top5_by_revenue], default=1) or 1
     for r in top5_by_revenue:
         r['pct'] = round(r['revenue'] / top_rev_max * 100, 1)
+
+    return {
+        'trips': trips, 'route_rows': route_rows, 'all_from_list': all_from_list, 'all_to_list': all_to_list,
+        'total_routes': total_routes, 'total_trips_sel': total_trips_sel, 'total_revenue_sel': total_revenue_sel,
+        'total_cost_sel': total_cost_sel, 'avg_margin': avg_margin, 'avg_rate': avg_rate,
+        'top5_by_margin': top5_by_margin, 'top5_by_revenue': top5_by_revenue,
+    }
+
+@app.route('/route-analytics')
+def route_analytics():
+    conn = get_db()
+    tab = request.args.get('tab', 'best-routes')
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2027-03-31')
+    from_f = request.args.get('from', '')
+    to_f = request.args.get('to', '')
+    type_f = request.args.get('vehicle_type', '')
+
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    _ra = _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f)
+    trips = _ra['trips']; route_rows = _ra['route_rows']
+    all_from_list = _ra['all_from_list']; all_to_list = _ra['all_to_list']
+    total_routes = _ra['total_routes']; total_trips_sel = _ra['total_trips_sel']
+    total_revenue_sel = _ra['total_revenue_sel']; total_cost_sel = _ra['total_cost_sel']
+    avg_margin = _ra['avg_margin']; avg_rate = _ra['avg_rate']
+    top5_by_margin = _ra['top5_by_margin']; top5_by_revenue = _ra['top5_by_revenue']
 
     # Route Summary table — same rows, paginated, sorted by revenue.
     route_rows.sort(key=lambda r: r['revenue'], reverse=True)
@@ -10150,6 +10171,408 @@ def app_vehicles():
         active_pct=round(active_count / total_vehicles * 100, 1) if total_vehicles else 0,
         maint_count=maint_count, ins_expiring=ins_expiring,
         challan_vehicle_count=challan_vehicle_count, challan_total_amount=challan_total_amount)
+
+@app.route('/app/analysis')
+def app_analysis():
+    """Mobile Analysis hub — the same 4 real pages the website's own sidebar groups under its
+    "Analysis" nav-label (templates/base.html): Route Analytics, Fleet Utilization, Performance,
+    Business Performance. Only Route Analytics is rebuilt natively so far (app_analytics()
+    below); the other 3 are each their own substantial page, so they bridge to the real website
+    routes (same session, real data) rather than being faked here — same pattern as Route Rates.
+    """
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    conn = get_db()
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    conn.close()
+    return render_template('app/analysis.html', company_name=company_name, user_initials=user_initials,
+        active='analysis', notif_count=0)
+
+@app.route('/app/analytics')
+def app_analytics():
+    """Mobile Route Analytics. The website's own /route-analytics (templates/route_analytics.html)
+    has exactly 2 real tabs — Best Routes and Route Rates — not 4; there is no separate "Route
+    Performance" or "Cost Analysis" tab or route anywhere in this app (checked: no matching
+    @app.route exists), so this deliberately does NOT invent two extra tabs to match a 4-tab
+    reference design. Best Routes is built natively here on _route_analytics_data(), the exact
+    same per-route revenue/cost/profit rollup route_analytics() (website) uses, extracted above
+    so the two can never disagree on a route's margin. Route Rates is its own substantial
+    sub-page (rate stats grouped by from/to/vehicle-type, Driver Advance and Fuel Taken ranges,
+    Own vs Hired split) — real future scope to rebuild natively, so that tab links to the real
+    website tab instead (same session, real data, just not yet reskinned for mobile) rather than
+    being faked here.
+    Filters trimmed to Vehicle Type only (All/Own/Hired, real tabs, cheap) — the website's
+    From/To route-pair dropdowns are real too but need a proper searchable picker to be usable
+    on a small screen, which is real future scope rather than something to fake as a plain
+    dropdown here. Date range fixed to the same fiscal-year default the website itself defaults
+    to (2026-04-01 to 2027-03-31) rather than a picker, for the same "keep this tab simple"
+    reason the rest of this app's mobile pages trim filters.
+    """
+    conn = get_db()
+    date_from, date_to = '2026-04-01', '2027-03-31'
+    type_f = request.args.get('vehicle_type', '')
+
+    d = _route_analytics_data(conn, date_from, date_to, '', '', type_f)
+    route_rows = d['route_rows']
+    most_trips_route = max(route_rows, key=lambda r: r['trips']) if route_rows else None
+    avg_revenue_per_trip = round(d['total_revenue_sel'] / d['total_trips_sel']) if d['total_trips_sel'] else 0
+
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    conn.close()
+
+    return render_template('app/analytics.html', company_name=company_name, user_initials=user_initials,
+        active='analytics', notif_count=0, f_vehicle_type=type_f,
+        date_from=date_from, date_to=date_to,
+        total_routes=d['total_routes'], total_trips_sel=d['total_trips_sel'], total_revenue_sel=d['total_revenue_sel'],
+        avg_margin=d['avg_margin'], top5_by_margin=d['top5_by_margin'], top5_by_revenue=d['top5_by_revenue'],
+        most_trips_route=most_trips_route, avg_revenue_per_trip=avg_revenue_per_trip)
+
+@app.route('/app/ledger')
+def app_ledger():
+    """Mobile Ledger — same real source of truth as the website's own /accounts (which itself
+    powers the Dashboard's and Business Performance's receivable/payable figures too):
+    _accounts_rows(), used completely unchanged, not re-derived. Every stat card and every row
+    here is the exact same computation the website's accounts() route does — same balance sign
+    convention (positive = receivable, negative = payable), same Active/Inactive status, same
+    GSTIN field.
+    Search here is deliberately narrower than the website's own (name + contact + email): name
+    only, matching real party/vendor names, not phone/email — a mobile-specific simplification,
+    not a website behavior being reproduced.
+    Trimmed for a small screen: Group and Status filters dropped (Type — All/Parties/Vendors —
+    covers the common case as a tab strip, same as Trips/Vehicles already do here); no numbered
+    pagination, "Load More" instead (see app_vehicles()/app_trips() for the same pattern); no
+    "Sort by" control since _accounts_rows() already returns everything sorted by name and the
+    website itself has no other real sort option to mirror. No download/export button for now
+    (removed per instruction) — the real /accounts/export still exists and could be wired back
+    in later if wanted.
+    """
+    conn = get_db()
+    search_f = (request.args.get('search') or '').strip()
+    role_f = request.args.get('role', '')  # '', 'Party', 'Vendor' — same convention accounts() uses
+
+    all_rows = _accounts_rows(conn)
+    total_parties = sum(1 for r in all_rows if r['role'] == 'Party')
+    active_parties = sum(1 for r in all_rows if r['role'] == 'Party' and r['status'] == 'Active')
+    total_vendors = sum(1 for r in all_rows if r['role'] == 'Vendor')
+    active_vendors = sum(1 for r in all_rows if r['role'] == 'Vendor' and r['status'] == 'Active')
+    total_receivable = sum(r['balance'] for r in all_rows if r['balance'] > 0)
+    receivable_from = sum(1 for r in all_rows if r['balance'] > 0)
+    total_payable = sum(-r['balance'] for r in all_rows if r['balance'] < 0)
+    payable_to = sum(1 for r in all_rows if r['balance'] < 0)
+    net_balance = sum(r['balance'] for r in all_rows)
+
+    # Name-only search here, not the website's name+contact+email — narrower on purpose per this
+    # app's design direction, still matching real party/vendor names, just not phone/email too.
+    filtered_rows = all_rows
+    if search_f:
+        s = search_f.lower()
+        filtered_rows = [r for r in filtered_rows if s in r['name'].lower()]
+    if role_f:
+        filtered_rows = [r for r in filtered_rows if r['role'] == role_f]
+    total_count = len(filtered_rows)
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    rows = filtered_rows[:show]
+    has_more = total_count > show
+    # Avatar initials from the first two *letters* actually found in the name — plain
+    # word-splitting picks up stray leading punctuation (e.g. "ACT (ALLIANCE..." -> "A("),
+    # this skips straight past anything that isn't a letter.
+    for r in rows:
+        letters = [c for c in r['name'].upper() if c.isalpha()]
+        r['initials'] = ''.join(letters[:2]) or '?'
+
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    conn.close()
+
+    return render_template('app/ledger.html', company_name=company_name, user_initials=user_initials,
+        active='ledger', notif_count=0, f_search=search_f, f_role=role_f, show=show, has_more=has_more,
+        total_count=total_count, rows=rows,
+        total_parties=total_parties, active_parties=active_parties,
+        total_vendors=total_vendors, active_vendors=active_vendors,
+        total_receivable=total_receivable, receivable_from=receivable_from,
+        total_payable=total_payable, payable_to=payable_to, net_balance=net_balance)
+
+def _app_user_display(conn):
+    """company_name + avatar initials for the logged-in user — the same few lines every /app/
+    route has been repeating individually; factored out here rather than copy-pasted an 8th time."""
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    return company_name, user_initials
+
+def _app_entity_ledger(entity_type, entity_id):
+    """Shared by app_party_ledger()/app_vendor_ledger() below — same real entries as the
+    website's own party_ledger()/vendor_ledger(): _get_party_ledger_entries()/
+    _get_vendor_ledger_entries(), _filter_ledger_entries(), _tab_filter_entries(), all called
+    completely unchanged. No download/export button (per instruction — the real export route
+    still exists at /ledger/party/<id>/export and /ledger/vendor/<id>/export if wanted later).
+    Filters trimmed to just the tab strip (All/Receivables/Payables, the same real
+    _tab_filter_entries() the website itself uses) — the website's From/To Date, Vehicle Type
+    and Transaction Type dropdowns are real too, but a 4-field filter form is exactly the kind of
+    thing this app's other list pages already trim in favor of a simpler control (see
+    app_vehicles()/app_trips()/app_ledger()); "Load More" instead of numbered pages, same pattern
+    as everywhere else. The Summary card (Opening Balance/Total Debit/Total Credit/Closing
+    Balance) doesn't actually exist on the website's own ledger.html — it's computed here from
+    real fields anyway (opening_balance, and real debit/credit across every entry), since the
+    data's genuinely there even though the website's own page doesn't happen to surface it this
+    way.
+    """
+    conn = get_db()
+    if entity_type == 'party':
+        row = conn.execute("SELECT * FROM parties WHERE id=?", (entity_id,)).fetchone()
+        if not row:
+            conn.close()
+            return None
+        all_entries = _get_party_ledger_entries(entity_id)
+        notes = row['notes']
+        payment_url = f'/payment/party/{entity_id}'
+        role_label = 'Party Ledger'
+    else:
+        row = conn.execute("SELECT * FROM vendors WHERE id=?", (entity_id,)).fetchone()
+        if not row:
+            conn.close()
+            return None
+        if row['linked_party_id']:
+            conn.close()
+            return {'redirect_party_id': row['linked_party_id']}
+        all_entries = _get_vendor_ledger_entries(entity_id)
+        notes = None  # vendors have no notes column at all — real schema difference, not a bug
+        payment_url = f'/payment/vendor/{entity_id}'
+        role_label = 'Vendor Ledger'
+    conn.close()
+
+    tab_f = request.args.get('tab', '')
+    entries = _filter_ledger_entries(all_entries, request.args.get('date_from', ''), request.args.get('date_to', ''),
+                                      request.args.get('txn_type', ''), request.args.get('type', ''))
+    entries = _tab_filter_entries(entries, tab_f)
+    total_count = len(entries)
+    try:
+        show = int(request.args.get('show', 10))
+    except (TypeError, ValueError):
+        show = 10
+    show = max(10, show)
+    page_entries = entries[:show]
+    has_more = total_count > show
+
+    final_balance = all_entries[0]['balance'] if all_entries else 0
+    total_receivable = max(final_balance, 0)
+    total_payable = max(-final_balance, 0)
+
+    opening_balance = row['opening_balance'] or 0
+    total_debit = sum(e['debit'] for e in all_entries)
+    total_credit = sum(e['credit'] for e in all_entries)
+
+    # Pre-built here rather than a conditional url_for(party-endpoint-or-vendor-endpoint) in the
+    # template — much less fragile than juggling two mutually-exclusive optional id kwargs there.
+    endpoint = 'app_party_ledger' if entity_type == 'party' else 'app_vendor_ledger'
+    id_kwarg = {'party_id': entity_id} if entity_type == 'party' else {'vendor_id': entity_id}
+    detail_url_all = url_for(endpoint, **id_kwarg)
+    detail_url_receivables = url_for(endpoint, tab='receivables', **id_kwarg)
+    detail_url_payables = url_for(endpoint, tab='payables', **id_kwarg)
+    load_more_kwargs = dict(id_kwarg, show=show + 10)
+    if tab_f:
+        load_more_kwargs['tab'] = tab_f
+    detail_url_load_more = url_for(endpoint, **load_more_kwargs)
+
+    return {
+        'name': row['name'], 'role_label': role_label, 'category': row['category'], 'status': row['status'] or 'Active',
+        'contact': row['contact'], 'email': row['email'], 'address': row['address'], 'gstin': row['gstin'],
+        'since_date': row['since_date'], 'credit_limit': row['credit_limit'], 'notes': notes,
+        'payment_url': payment_url, 'entity_type': entity_type, 'entity_id': entity_id,
+        'final_balance': final_balance, 'total_receivable': total_receivable, 'total_payable': total_payable,
+        'opening_balance': opening_balance, 'total_debit': total_debit, 'total_credit': total_credit,
+        'entries': page_entries, 'total_count': total_count, 'show': show, 'has_more': has_more, 'f_tab': tab_f or 'all',
+        'detail_url_all': detail_url_all, 'detail_url_receivables': detail_url_receivables,
+        'detail_url_payables': detail_url_payables, 'detail_url_load_more': detail_url_load_more,
+    }
+
+@app.route('/app/ledger/party/<int:party_id>')
+def app_party_ledger(party_id):
+    data = _app_entity_ledger('party', party_id)
+    if data is None:
+        return redirect(url_for('app_ledger'))
+    _conn = get_db()
+    company_name, user_initials = _app_user_display(_conn)
+    _conn.close()
+    return render_template('app/ledger_detail.html', company_name=company_name, user_initials=user_initials, active='ledger', notif_count=0, **data)
+
+@app.route('/app/ledger/vendor/<int:vendor_id>')
+def app_vendor_ledger(vendor_id):
+    data = _app_entity_ledger('vendor', vendor_id)
+    if data is None:
+        return redirect(url_for('app_ledger'))
+    if 'redirect_party_id' in data:
+        return redirect(url_for('app_party_ledger', party_id=data['redirect_party_id']))
+    _conn = get_db()
+    company_name, user_initials = _app_user_display(_conn)
+    _conn.close()
+    return render_template('app/ledger_detail.html', company_name=company_name, user_initials=user_initials, active='ledger', notif_count=0, **data)
+
+@app.context_processor
+def _app_header_context():
+    """Injects the logged-in user's name/role/email into every /app/ page automatically, so the
+    avatar dropdown in base_app.html doesn't need every single app_* route to pass it through by
+    hand (the same reasoning as _app_user_display(), one step further). Guarded to /app/ paths
+    only so it never touches the website's own templates/context. role_label mirrors the same
+    is_admin-wins-over-role logic login()/app_login() already use to set session['is_admin']."""
+    if not request.path.startswith('/app/') or not session.get('user_id'):
+        return {}
+    conn = get_db()
+    u = conn.execute("SELECT full_name, username, role, email FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    conn.close()
+    if not u:
+        return {}
+    return {
+        'app_user_name': u['full_name'] or u['username'],
+        'app_user_role': 'Administrator' if session.get('is_admin') else (u['role'] or 'Staff'),
+        'app_user_email': u['email'] or '',
+        'app_is_admin': bool(session.get('is_admin')),
+    }
+
+@app.route('/app/profile')
+def app_profile():
+    """Native Profile page — avatar, name/role/email (same fields as the dropdown above) plus a
+    Personal Information block of real users-table columns. Deliberately does NOT include
+    Change Password, Notification Preferences, Language or Theme toggles, or an app version
+    footer: none of those have a real backend anywhere in this codebase (no self-service
+    password-change route, no per-user preferences table, no tracked version number) — same
+    "don't fabricate it" call already made for Create Account / Forgot Password on login.html."""
+    if not session.get('user_id'):
+        return redirect(url_for('app_login'))
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    u = conn.execute("""SELECT username, full_name, phone, email, role, access_level, status, created_at
+                         FROM users WHERE id=?""", (session['user_id'],)).fetchone()
+    conn.close()
+    if not u:
+        return redirect(url_for('app_login'))
+    member_since = ''
+    if u['created_at']:
+        try:
+            member_since = datetime.datetime.strptime(u['created_at'][:19], '%Y-%m-%d %H:%M:%S').strftime('%d %b %Y')
+        except ValueError:
+            member_since = u['created_at']
+    return render_template('app/profile.html', company_name=company_name, user_initials=user_initials,
+        active='profile', notif_count=0,
+        full_name=u['full_name'] or u['username'], username=u['username'], phone=u['phone'] or '',
+        email=u['email'] or '', role_label='Administrator' if session.get('is_admin') else (u['role'] or 'Staff'),
+        access_level=u['access_level'] or '', status=u['status'] or 'Active', member_since=member_since,
+        is_admin=bool(session.get('is_admin')))
+
+@app.route('/app/login/otp', methods=['GET', 'POST'])
+def app_login_otp():
+    """Mobile Login-with-Mobile-OTP — deliberate near-duplicate of send_login_otp() (same phone
+    lookup, same OTP generation/hash/session storage, same Twilio call via _send_otp_sms()) for
+    the same reason app_login() duplicates login() rather than refactoring it: this renders a
+    completely different template (no desktop hero panel) and, on success, shows the app's own
+    Verify OTP screen instead of re-rendering the website's login.html inline. GET just shows the
+    phone-entry form; the real send_login_otp()/verify_login_otp() are POST-only with no GET page
+    of their own (the website handles that state inline within login.html), so a dedicated GET
+    view is new here, not a duplicate of anything.
+    """
+    import random, hashlib
+    company_name = get_company_name(session.get('company_id', 1))
+    if request.method == 'POST':
+        phone = (request.form.get('phone') or '').strip()
+        conn = get_db()
+        user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+        s = _get_all_settings(conn, session.get('company_id', 1))
+        conn.close()
+
+        if not phone:
+            return render_template('app/login_otp.html', company_name=company_name, error='Enter a mobile number.')
+        if not user:
+            return render_template('app/login_otp.html', company_name=company_name, error='No account found with that mobile number.')
+        if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
+            return render_template('app/login_otp.html', company_name=company_name,
+                                    error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
+
+        otp = f"{random.randint(0, 999999):06d}"
+        session['otp_user_id'] = user['id']
+        session['otp_phone'] = phone
+        session['otp_hash'] = hashlib.sha256(otp.encode()).hexdigest()
+        session['otp_expires'] = (datetime.datetime.now() + datetime.timedelta(minutes=5)).timestamp()
+
+        try:
+            _send_otp_sms(s, phone, otp)
+        except Exception as e:
+            return render_template('app/login_otp.html', company_name=company_name, error=f'Could not send OTP: {e}')
+
+        return render_template('app/verify_otp.html', company_name=company_name, phone=phone, error=None)
+    return render_template('app/login_otp.html', company_name=company_name, error=None)
+
+@app.route('/app/login/otp/verify', methods=['POST'])
+def app_verify_login_otp():
+    """Verifies the same session-stored OTP hash send_login_otp()/app_login_otp() set — identical
+    checks (session match, 5-minute expiry, hash match) — then redirects to app_dashboard instead
+    of dashboard on success, and back to the app's own Verify OTP screen (not login.html) on
+    failure."""
+    import hashlib
+    company_name = get_company_name(session.get('company_id', 1))
+    code = (request.form.get('otp') or '').strip()
+    phone = request.form.get('phone') or ''
+
+    if not session.get('otp_user_id') or session.get('otp_phone') != phone:
+        return render_template('app/login_otp.html', company_name=company_name, error='Session expired. Please request a new OTP.')
+    if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
+        return render_template('app/login_otp.html', company_name=company_name, error='OTP expired. Please request a new one.')
+    if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
+        return render_template('app/verify_otp.html', company_name=company_name, phone=phone, error='Incorrect OTP. Please try again.')
+
+    conn = get_db()
+    user = conn.execute("SELECT * FROM users WHERE id=?", (session['otp_user_id'],)).fetchone()
+    for key in ('otp_user_id', 'otp_phone', 'otp_hash', 'otp_expires'):
+        session.pop(key, None)
+    if not user:
+        conn.close()
+        return redirect(url_for('app_login'))
+    if (user['status'] or 'Active') == 'Inactive':
+        conn.close()
+        return render_template('app/login_otp.html', company_name=company_name,
+                                error='This account has been deactivated. Contact an administrator.')
+    session['user_id'] = user['id']
+    session['username'] = user['username']
+    session['is_admin'] = user['is_admin']
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    session['login_at'] = now
+    session['show_zoom_tip'] = True
+    conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?",
+                 (now, user['id'], now, user['id']))
+    conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login (OTP)', now))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('app_dashboard'))
 
 if __name__ == '__main__':
     # Defaults to the same debug=True this always ran with locally — nothing changes for local

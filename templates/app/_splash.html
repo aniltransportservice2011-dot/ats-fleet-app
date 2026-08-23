@@ -1,0 +1,28 @@
+<!-- Cold-open splash screen — shown once per browser/app session (sessionStorage-gated), never
+     on ordinary in-app navigation between pages. Included identically at the very top of <body>
+     in both base_app.html (covers /app/dashboard, the manifest's start_url, and every other
+     page that extends it) and login.html (the pre-auth landing page, the other realistic
+     "just opened the app" entry point) so it fires no matter which one is hit first. -->
+<div class="app-splash" id="appSplash">
+  <div class="app-splash-badge">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
+  </div>
+  <div class="app-splash-name">{{ company_name }}</div>
+  <div class="app-splash-tag">Fleet Management</div>
+</div>
+<script>
+(function () {
+  var splash = document.getElementById('appSplash');
+  if (sessionStorage.getItem('fleetapp_splash_shown')) {
+    // Already shown once this session — hide instantly, synchronously, before the browser
+    // gets a chance to paint this element, so ordinary navigation never flashes it.
+    splash.style.display = 'none';
+    return;
+  }
+  sessionStorage.setItem('fleetapp_splash_shown', '1');
+  setTimeout(function () {
+    splash.classList.add('app-splash-out');
+    setTimeout(function () { splash.style.display = 'none'; }, 350);
+  }, 1100);
+})();
+</script>

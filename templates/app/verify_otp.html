@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Verify OTP — {{ company_name }}</title>
+<link rel="manifest" href="{{ url_for('static', filename='app-manifest.json') }}">
+<meta name="theme-color" content="#c05621">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
+<link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='app-auth.css') }}">
+</head>
+<body class="app-login-body">
+<div class="au-wrap" style="padding-top:24px;">
+  <div class="au-subhead">
+    <a href="{{ url_for('app_login_otp') }}" class="au-back-btn" aria-label="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </a>
+    <div>
+      <div class="au-subhead-title">Verify OTP</div>
+      <div class="au-subhead-sub">Enter the 6-digit code sent to<br><strong style="color:var(--a-accent);">+91 {{ phone }}</strong></div>
+    </div>
+  </div>
+
+  <div class="au-card">
+    {% if error %}<div class="au-error">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ url_for('app_verify_login_otp') }}" id="otpForm">
+      <input type="hidden" name="phone" value="{{ phone }}">
+      <input type="hidden" name="otp" id="otpCombined">
+      <div class="au-otp-row" id="otpRow">
+        {% for i in range(6) %}
+        <input type="text" inputmode="numeric" maxlength="1" class="au-otp-box" data-idx="{{ i }}" autocomplete="one-time-code">
+        {% endfor %}
+      </div>
+      <div class="au-resend" id="resendWrap">
+        Resend OTP in <span id="resendTimer">00:25</span>
+      </div>
+      <button type="submit" class="au-btn-primary" id="verifyBtn">Verify &amp; Login</button>
+    </form>
+
+    <form method="post" action="{{ url_for('app_login_otp') }}" id="resendForm" style="display:none;">
+      <input type="hidden" name="phone" value="{{ phone }}">
+    </form>
+
+    <div class="au-info-box">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="16" rx="2"/><path d="M6 8h6M6 12h4"/></svg>
+      <div>
+        <div class="t">Didn't receive the code?</div>
+        <div class="d"><button type="button" id="resendBtn" onclick="document.getElementById('resendForm').submit()" disabled style="color:var(--a-steel);">Resend OTP</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var boxes = Array.from(document.querySelectorAll('.au-otp-box'));
+boxes[0] && boxes[0].focus();
+boxes.forEach(function (box, i) {
+  box.addEventListener('input', function () {
+    box.value = box.value.replace(/[^0-9]/g, '').slice(0, 1);
+    box.classList.toggle('filled', !!box.value);
+    if (box.value && i < boxes.length - 1) boxes[i + 1].focus();
+  });
+  box.addEventListener('keydown', function (e) {
+    if (e.key === 'Backspace' && !box.value && i > 0) boxes[i - 1].focus();
+  });
+  box.addEventListener('paste', function (e) {
+    var text = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+    if (!text) return;
+    e.preventDefault();
+    text.split('').slice(0, 6).forEach(function (ch, j) {
+      if (boxes[j]) { boxes[j].value = ch; boxes[j].classList.add('filled'); }
+    });
+    (boxes[Math.min(text.length, 6) - 1] || boxes[5]).focus();
+  });
+});
+document.getElementById('otpForm').addEventListener('submit', function (e) {
+  var code = boxes.map(function (b) { return b.value; }).join('');
+  document.getElementById('otpCombined').value = code;
+  if (code.length !== 6) {
+    e.preventDefault();
+    alert('Enter the full 6-digit code.');
+  }
+});
+
+// Real 25s resend cooldown (matches the real 5-minute OTP validity window server-side; this is
+// just the "don't spam Send" client-side throttle) — counts down, then enables the real
+// Resend button, which posts back to app_login_otp() to actually request a fresh OTP.
+var secondsLeft = 25;
+var timerEl = document.getElementById('resendTimer');
+var resendBtn = document.getElementById('resendBtn');
+var resendWrap = document.getElementById('resendWrap');
+var iv = setInterval(function () {
+  secondsLeft--;
+  if (secondsLeft <= 0) {
+    clearInterval(iv);
+    resendWrap.style.display = 'none';
+    resendBtn.disabled = false;
+    resendBtn.style.color = 'var(--a-accent)';
+    return;
+  }
+  timerEl.textContent = '00:' + (secondsLeft < 10 ? '0' : '') + secondsLeft;
+}, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+{% extends "app/base_app.html" %}
+{% block title %}Route Analytics — {{ company_name }}{% endblock %}
+{% block content %}
+
+<div class="ra-head">
+  <h1>Route Analytics</h1>
+  <div class="sub">Analyze performance, rates &amp; profitability</div>
+</div>
+
+<div class="ra-tabstrip">
+  <a class="ra-tab active" href="{{ url_for('app_analytics', vehicle_type=f_vehicle_type) }}">Best Routes</a>
+  <a class="ra-tab bridge" href="/route-analytics?tab=route-rates">Route Rates
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+  </a>
+</div>
+
+<div class="ra-period-bar">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+  {{ date_from }} – {{ date_to }} (FY)
+</div>
+
+<div class="ra-vtype-row">
+  <a class="ra-vtype-pill {{ 'active' if not f_vehicle_type }}" href="{{ url_for('app_analytics') }}">All</a>
+  <a class="ra-vtype-pill {{ 'active' if f_vehicle_type=='own' }}" href="{{ url_for('app_analytics', vehicle_type='own') }}">Own</a>
+  <a class="ra-vtype-pill {{ 'active' if f_vehicle_type=='hired' }}" href="{{ url_for('app_analytics', vehicle_type='hired') }}">Hired</a>
+</div>
+
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Routes</div><div class="ra-kpi-val">{{ total_routes }}</div><div class="ra-kpi-sub">Active Routes</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a1 1 0 0 1 1-1h4l2 3h8a1 1 0 0 1 1 1v2"/><path d="M4 19h16"/></svg></div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Trips</div><div class="ra-kpi-val">{{ total_trips_sel }}</div><div class="ra-kpi-sub">Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg></div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Revenue</div><div class="ra-kpi-val">₹{{ '{:,.0f}'.format(total_revenue_sel) }}</div><div class="ra-kpi-sub">Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">₹</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Avg Margin</div><div class="ra-kpi-val" style="color:{{ 'var(--a-green)' if avg_margin >= 0 else 'var(--a-red)' }};">{{ avg_margin }}%</div><div class="ra-kpi-sub">Revenue - Cost</div></div>
+    <div class="ra-kpi-icon" style="background:#efeaff;color:var(--a-purple);">%</div>
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head">
+    <h2>Top 5 Best Performing Routes</h2>
+  </div>
+  {% for r in top5_by_margin %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.clean_from }} → {{ r.clean_to }}</div>
+      <div class="ra-route-meta">{{ r.trips }} trip{{ 's' if r.trips != 1 else '' }} · ₹{{ '{:,.0f}'.format(r.revenue) }}</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin">{{ r.margin }}%</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No route data for this period.</div>
+  {% endfor %}
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head">
+    <h2>Top Routes by Revenue</h2>
+  </div>
+  {% for r in top5_by_revenue %}
+  <div class="ra-bar-row">
+    <div class="ra-bar-top">
+      <span class="ra-bar-name">{{ r.clean_from }} → {{ r.clean_to }}</span>
+      <span class="ra-bar-val">₹{{ '{:,.0f}'.format(r.revenue) }}</span>
+    </div>
+    <div class="ra-bar-track"><div class="ra-bar-fill" style="width:{{ r.pct }}%;"></div></div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No route data for this period.</div>
+  {% endfor %}
+</div>
+
+<div class="ra-stat-grid">
+  <div class="ra-stat-card">
+    <div class="ra-stat-lbl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg>
+      Highest Revenue Route</div>
+    {% if top5_by_revenue %}
+    <div class="ra-stat-val">{{ top5_by_revenue[0].clean_from }} → {{ top5_by_revenue[0].clean_to }}</div>
+    <div class="ra-stat-sub">₹{{ '{:,.0f}'.format(top5_by_revenue[0].revenue) }}</div>
+    {% else %}<div class="ra-stat-val">—</div>{% endif %}
+  </div>
+  <div class="ra-stat-card">
+    <div class="ra-stat-lbl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+      Highest Margin Route</div>
+    {% if top5_by_margin %}
+    <div class="ra-stat-val">{{ top5_by_margin[0].clean_from }} → {{ top5_by_margin[0].clean_to }}</div>
+    <div class="ra-stat-sub">{{ top5_by_margin[0].margin }}%</div>
+    {% else %}<div class="ra-stat-val">—</div>{% endif %}
+  </div>
+  <div class="ra-stat-card">
+    <div class="ra-stat-lbl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+      Most Trips Route</div>
+    <div class="ra-stat-val">{% if most_trips_route %}{{ most_trips_route.clean_from }} → {{ most_trips_route.clean_to }}{% else %}—{% endif %}</div>
+    <div class="ra-stat-sub">{% if most_trips_route %}{{ most_trips_route.trips }} Trips{% else %}—{% endif %}</div>
+  </div>
+  <div class="ra-stat-card">
+    <div class="ra-stat-lbl">₹ Avg Revenue per Trip</div>
+    <div class="ra-stat-val">₹{{ '{:,.0f}'.format(avg_revenue_per_trip) }}</div>
+    <div class="ra-stat-sub" style="color:var(--a-steel);font-weight:600;">All Routes</div>
+  </div>
+</div>
+
+{% endblock %}

@@ -3,7 +3,7 @@
 // does NOT cache any page or data response: every fleet number must always come straight from
 // the server, same "always fresh" principle the rest of this app follows. Only the tiny static
 // shell (icons) gets cached, purely so the installed app's icon/manifest resolve instantly.
-const SHELL_CACHE = 'ats-app-shell-v1';
+const SHELL_CACHE = 'ats-app-shell-v4'; // bumped again: real reference image (clipboard), cropped tight to remove white margin
 const SHELL_ASSETS = [
   '/static/app-icons/icon-192.png',
   '/static/app-icons/icon-512.png',

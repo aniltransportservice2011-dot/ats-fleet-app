@@ -1,0 +1,169 @@
+{% extends "app/base_app.html" %}
+{% block title %}{{ name }} — {{ company_name }}{% endblock %}
+{% block content %}
+
+<div class="ld-head">
+  <div>
+    <h1>{{ name }}</h1>
+    <div class="sub">{{ role_label }}{% if category %} · {{ category }}{% endif %}</div>
+  </div>
+  <a class="ld-addpay-btn" href="{{ payment_url }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    Add Payment
+  </a>
+</div>
+
+<div class="ld-card">
+  <div class="ld-card-head">
+    <h2>Contact Information <span class="lg-row-status {{ status }}">{{ status }}</span></h2>
+  </div>
+  <div class="ld-info-grid">
+    <div class="ld-info-item">
+      <div class="ld-info-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+      <div><div class="ld-info-label">Phone</div><div class="ld-info-val">{{ contact or '—' }}</div></div>
+    </div>
+    <div class="ld-info-item">
+      <div class="ld-info-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6 12 13 2 6"/><path d="M2 6h20v12H2z"/></svg></div>
+      <div><div class="ld-info-label">Email</div><div class="ld-info-val">{{ email or '—' }}</div></div>
+    </div>
+    <div class="ld-info-item">
+      <div class="ld-info-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+      <div><div class="ld-info-label">Address</div><div class="ld-info-val">{{ address or '—' }}</div></div>
+    </div>
+    <div class="ld-info-item">
+      <div class="ld-info-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg></div>
+      <div><div class="ld-info-label">Since</div><div class="ld-info-val">{{ since_date or '—' }}</div></div>
+    </div>
+    <div class="ld-info-item">
+      <div class="ld-info-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14"/></svg></div>
+      <div><div class="ld-info-label">GSTIN</div><div class="ld-info-val">{{ gstin or '—' }}</div></div>
+    </div>
+    <div class="ld-info-item">
+      <div class="ld-info-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+      <div><div class="ld-info-label">Type</div><div class="ld-info-val">{{ category or '—' }}</div></div>
+    </div>
+  </div>
+</div>
+
+{% if entity_type == 'party' %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Notes</h2></div>
+  <div class="ld-notes-body">{{ notes or '—' }}</div>
+</div>
+{% endif %}
+
+<div class="ld-kpi-grid">
+  <div class="ld-kpi-card">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Total Receivable</div><div class="ld-kpi-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(total_receivable) }}</div><div class="ld-kpi-sub">From {{ role_label.split(' ')[0]|lower }}</div></div>
+      <div class="ld-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">₹</div>
+    </div>
+  </div>
+  <div class="ld-kpi-card">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Total Payable</div><div class="ld-kpi-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(total_payable) }}</div><div class="ld-kpi-sub">To {{ role_label.split(' ')[0]|lower }}</div></div>
+      <div class="ld-kpi-icon" style="background:#fdecea;color:var(--a-red);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></div>
+    </div>
+  </div>
+  <div class="ld-kpi-card">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Net Balance</div><div class="ld-kpi-val" style="color:{{ 'var(--a-green)' if final_balance>=0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(final_balance|abs) }}</div><div class="ld-kpi-sub">{{ 'You will receive' if final_balance >= 0 else 'You will pay' }}</div></div>
+      <div class="ld-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H9m0-18v18M3 9v10a2 2 0 0 0 2 2h4"/></svg></div>
+    </div>
+  </div>
+  <div class="ld-kpi-card">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Credit Limit</div><div class="ld-kpi-val">{% if credit_limit %}₹{{ '{:,.0f}'.format(credit_limit) }}{% else %}₹0{% endif %}</div><div class="ld-kpi-sub">{{ 'Set' if credit_limit else 'Not set' }}</div></div>
+      <div class="ld-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+    </div>
+  </div>
+</div>
+
+<div class="ld-tabstrip">
+  <a class="ld-tab {{ 'active' if f_tab=='all' }}" href="{{ detail_url_all }}">All Transactions</a>
+  <a class="ld-tab {{ 'active' if f_tab=='receivables' }}" href="{{ detail_url_receivables }}">Receivables</a>
+  <a class="ld-tab {{ 'active' if f_tab=='payables' }}" href="{{ detail_url_payables }}">Payables</a>
+</div>
+
+<div class="ld-txn-head">
+  <h2>Transactions</h2>
+  <span class="ld-txn-count">{{ total_count }}</span>
+</div>
+
+<div id="ld-list">
+{% for e in entries %}
+{% set kind_class = 'k-bill' if e.kind=='Trip Bill' else ('k-pay' if e.kind in ['Payment In','Payment Out'] else ('k-ob' if e.kind=='Opening Balance' else 'k-exp')) %}
+{% if e.link %}<a href="{{ e.link }}" class="ld-txn-card">{% else %}<div class="ld-txn-card">{% endif %}
+  <div class="ld-txn-top">
+    <span class="ld-txn-date">{{ e.date or '—' }}</span>
+    <span class="ld-txn-kind {{ kind_class }}">{{ e.kind }}</span>
+  </div>
+  <div class="ld-txn-detail">{{ e.detail }}</div>
+  {% if e.ref %}<div class="ld-txn-ref">Ref: {{ e.ref }}</div>{% endif %}
+  <div class="ld-txn-bottom">
+    <div class="ld-txn-amts">
+      {% if e.debit %}<span class="ld-txn-debit">+₹{{ '{:,.0f}'.format(e.debit) }}</span>{% endif %}
+      {% if e.credit %}<span class="ld-txn-credit">-₹{{ '{:,.0f}'.format(e.credit) }}</span>{% endif %}
+    </div>
+    <div class="ld-txn-balance {{ 'dr' if e.balance > 0 else ('cr' if e.balance < 0 else '') }}">₹{{ '{:,.0f}'.format(e.balance|abs) }}{% if e.balance > 0 %} Dr{% elif e.balance < 0 %} Cr{% endif %}</div>
+  </div>
+{% if e.link %}</a>{% else %}</div>{% endif %}
+{% else %}
+<div class="lg-empty">No transactions in this view.</div>
+{% endfor %}
+</div>
+
+<div id="ld-load-area">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ detail_url_load_more }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif entries %}
+<div class="vh-listend">You've reached the end · {{ total_count }} transaction{{ 's' if total_count != 1 else '' }} total</div>
+{% endif %}
+</div>
+
+<div class="ld-summary">
+  <div class="ld-summary-head">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    Summary
+  </div>
+  <div class="ld-summary-grid">
+    <div><div class="ld-summary-lbl">Opening Balance</div><div class="ld-summary-val">₹{{ '{:,.0f}'.format(opening_balance|abs) }}{% if opening_balance > 0 %} Dr{% elif opening_balance < 0 %} Cr{% endif %}</div></div>
+    <div><div class="ld-summary-lbl">Total Debit</div><div class="ld-summary-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(total_debit) }}</div></div>
+    <div><div class="ld-summary-lbl">Total Credit</div><div class="ld-summary-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(total_credit) }}</div></div>
+    <div><div class="ld-summary-lbl">Closing Balance</div><div class="ld-summary-val">₹{{ '{:,.0f}'.format(final_balance|abs) }}{% if final_balance > 0 %} Dr{% elif final_balance < 0 %} Cr{% endif %}</div></div>
+  </div>
+</div>
+
+<div style="height:16px;"></div>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('ld-list').innerHTML = doc.getElementById('ld-list').innerHTML;
+      document.getElementById('ld-load-area').innerHTML = doc.getElementById('ld-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+</script>
+{% endblock %}

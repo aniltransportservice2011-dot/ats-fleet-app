@@ -1,0 +1,99 @@
+/* ==========================================================================
+   Pre-auth screens only (login.html, login_otp.html, verify_otp.html) — own
+   file, own prefix (au-), loaded alongside app.css (reuses its --a-* tokens)
+   but never linked from any authenticated page, so nothing here can ever
+   affect the rest of the app.
+   ========================================================================== */
+body.app-login-body {
+  background: var(--a-paper); min-height: 100vh;
+  padding: env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);
+  display: flex; align-items: center; justify-content: center;
+  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: var(--a-ink);
+  position: relative; overflow-x: hidden;
+}
+.au-wrap { width: 100%; max-width: 380px; padding: 40px 20px 110px; position: relative; z-index: 1; }
+
+.au-logo-badge { width: 76px; height: 76px; border-radius: 20px; background: var(--a-accent);
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;
+  box-shadow: 0 10px 24px rgba(192,86,33,0.28); }
+.au-logo-badge svg { width: 38px; height: 38px; }
+.au-brand { text-align: center; font-size: 1.2rem; font-weight: 800; margin: 0 0 4px; }
+.au-tagline { text-align: center; color: var(--a-steel); font-size: 0.82rem; margin: 0 0 26px; }
+
+.au-card { background: var(--a-white); border-radius: 20px; padding: 24px 20px; box-shadow: 0 1px 3px rgba(20,24,40,.08); }
+.au-card-title { text-align: center; font-size: 1.05rem; font-weight: 800; margin: 0 0 3px; }
+.au-card-sub { text-align: center; color: var(--a-steel); font-size: 0.8rem; margin: 0 0 20px; }
+
+.au-error { background: #fdeceb; border: 1px solid rgba(227,73,72,.3); color: var(--a-red);
+  border-radius: 10px; padding: 10px 12px; font-size: 0.82rem; margin-bottom: 14px; }
+
+.au-field { margin-bottom: 15px; }
+.au-field label { display: block; font-size: 0.74rem; font-weight: 700; color: var(--a-ink); margin-bottom: 6px; }
+.au-input-wrap { position: relative; display: flex; align-items: center; }
+.au-input-icon { position: absolute; left: 13px; width: 18px; height: 18px; color: var(--a-steel); pointer-events: none; }
+.au-input-wrap input { width: 100%; border: 1px solid var(--a-line); border-radius: 12px; padding: 12px 13px 12px 40px;
+  font-size: 0.92rem; font-family: inherit; color: var(--a-ink); background: var(--a-paper); }
+.au-input-wrap input:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
+.au-eye-btn { position: absolute; right: 10px; background: none; border: none; padding: 6px; color: var(--a-steel); display: flex; }
+.au-eye-btn svg { width: 18px; height: 18px; }
+
+.au-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; font-size: 0.8rem; }
+.au-remember { display: flex; align-items: center; gap: 7px; color: var(--a-steel); }
+.au-remember input { accent-color: var(--a-accent); width: 15px; height: 15px; }
+.au-link { color: var(--a-accent); font-weight: 700; }
+
+.au-btn-primary { width: 100%; border: none; border-radius: 12px; background: var(--a-accent); color: #fff;
+  font-size: 0.95rem; font-weight: 700; padding: 14px; font-family: inherit; cursor: pointer; }
+.au-btn-primary:active { background: var(--a-accent-dark); }
+.au-btn-primary:disabled { opacity: 0.55; }
+
+.au-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; color: var(--a-steel); font-size: 0.72rem; font-weight: 700; }
+.au-divider::before, .au-divider::after { content: ''; flex: 1; height: 1px; background: var(--a-line); }
+
+.au-btn-outline { width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px;
+  border: 1.5px solid var(--a-accent); border-radius: 12px; background: var(--a-white); color: var(--a-accent);
+  font-size: 0.9rem; font-weight: 700; padding: 13px; }
+.au-btn-outline svg { width: 18px; height: 18px; }
+.au-btn-outline:active { background: #fdf0e8; }
+
+.au-footer { text-align: center; color: var(--a-steel); font-size: 0.72rem; margin-top: 22px; }
+
+.au-decor { position: fixed; left: 0; right: 0; bottom: 0; width: 100%; height: 90px; z-index: 0; pointer-events: none; }
+
+/* ---------- Sub-page header (login_otp.html / verify_otp.html): back arrow + title ---------- */
+.au-subhead { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 28px; }
+.au-back-btn { width: 38px; height: 38px; border-radius: 11px; background: var(--a-white); border: 1px solid var(--a-line);
+  display: flex; align-items: center; justify-content: center; color: var(--a-ink); flex-shrink: 0; }
+.au-back-btn svg { width: 18px; height: 18px; }
+.au-subhead-title { font-size: 1.15rem; font-weight: 800; margin: 6px 0 3px; }
+.au-subhead-sub { color: var(--a-steel); font-size: 0.82rem; }
+
+.au-icon-circle { width: 92px; height: 92px; border-radius: 50%; background: #fdf0e8;
+  display: flex; align-items: center; justify-content: center; margin: 8px auto 26px; }
+.au-icon-circle svg { width: 42px; height: 42px; color: var(--a-accent); }
+
+.au-phone-input { display: flex; align-items: center; border: 1px solid var(--a-line); border-radius: 12px;
+  background: var(--a-paper); overflow: hidden; }
+.au-phone-input:focus-within { border-color: var(--a-accent); background: var(--a-white); }
+.au-phone-prefix { display: flex; align-items: center; gap: 6px; padding: 12px 12px; color: var(--a-steel);
+  border-right: 1px solid var(--a-line); font-size: 0.88rem; font-weight: 700; flex-shrink: 0; }
+.au-phone-prefix svg { width: 16px; height: 16px; }
+.au-phone-input input { flex: 1; min-width: 0; border: none; background: none; padding: 12px 13px;
+  font-size: 0.92rem; font-family: inherit; color: var(--a-ink); }
+.au-phone-input input:focus { outline: none; }
+
+.au-info-box { display: flex; align-items: flex-start; gap: 11px; background: #fdf0e8; border-radius: 14px; padding: 14px; margin-top: 22px; }
+.au-info-box svg { width: 20px; height: 20px; color: var(--a-accent); flex-shrink: 0; margin-top: 1px; }
+.au-info-box .t { font-weight: 700; font-size: 0.84rem; }
+.au-info-box .d { color: var(--a-steel); font-size: 0.76rem; margin-top: 2px; line-height: 1.4; }
+
+/* ---------- OTP digit boxes ---------- */
+.au-otp-row { display: flex; gap: 9px; justify-content: center; margin: 22px 0 18px; }
+.au-otp-box { width: 46px; height: 54px; border: 1.5px solid var(--a-line); border-radius: 12px; text-align: center;
+  font-size: 1.3rem; font-weight: 800; font-family: inherit; color: var(--a-ink); background: var(--a-paper); }
+.au-otp-box:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
+.au-otp-box.filled { border-color: var(--a-accent); background: var(--a-white); }
+
+.au-resend { text-align: center; font-size: 0.82rem; color: var(--a-steel); margin-bottom: 22px; }
+.au-resend a, .au-resend button { color: var(--a-accent); font-weight: 700; background: none; border: none; font-family: inherit; font-size: inherit; padding: 0; }
+.au-resend button:disabled { color: var(--a-steel); }
