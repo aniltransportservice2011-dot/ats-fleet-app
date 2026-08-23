@@ -9787,14 +9787,27 @@ def app_dashboard():
     completed_trip_ids = {r['id'] for r in conn.execute("SELECT id FROM trips WHERE end_date IS NOT NULL").fetchall()}
     pending_invoice_count = len(completed_trip_ids - invoiced_trip_ids)
     insurance_expiring = 0
-    for r in conn.execute("SELECT insurance_expiry FROM vehicles WHERE type='own'").fetchall():
+    fitness_expiring = 0
+    for r in conn.execute("SELECT insurance_expiry, fitness_expiry FROM vehicles WHERE type='own'").fetchall():
         if _expiry_bucket(r['insurance_expiry']) in ('expiring', 'expired'):
             insurance_expiring += 1
+        if _expiry_bucket(r['fitness_expiry']) in ('expiring', 'expired'):
+            fitness_expiring += 1
+    # Same real fields vehicles_list() reads for its own challan alert strip
+    # (vehicles.challan_count/challan_amount, populated by the 15-day auto RC/challan sync) —
+    # zero on every vehicle until that sync has actually run at least once, same as there.
+    challan_rows = conn.execute("SELECT challan_count, challan_amount FROM vehicles WHERE COALESCE(challan_count,0) > 0").fetchall()
+    challan_vehicle_count = len(challan_rows)
+    challan_total_amount = sum(r['challan_amount'] or 0 for r in challan_rows)
     alert_bits = []
     if pending_invoice_count:
         alert_bits.append(f"{pending_invoice_count} trip{'s' if pending_invoice_count != 1 else ''} pending invoice")
+    if challan_vehicle_count:
+        alert_bits.append(f"{challan_vehicle_count} challan{'s' if challan_vehicle_count != 1 else ''} pending (₹{challan_total_amount:,.0f})")
     if insurance_expiring:
         alert_bits.append(f"{insurance_expiring} insurance expiring soon")
+    if fitness_expiring:
+        alert_bits.append(f"{fitness_expiring} fitness expiring soon")
     alert_count = len(alert_bits)
     alert_summary = ', '.join(alert_bits)
 
@@ -9951,6 +9964,192 @@ def app_maintenance():
         total_cost=d['total_cost'], total_unpaid=d['total_unpaid'],
         health_bands=d['health_bands'],
         actions=d['actions'], trend=d['trend'], trend_max=d['trend_max'])
+
+@app.route('/app/trips')
+def app_trips():
+    """Mobile Trips list. Real fields only, matching the website's own /trips exactly — no
+    fabricated "Trip ID" code (trips have no such column, just an internal numeric id; LR Number
+    is the real human-facing identifier used everywhere else in this app, so that's what's shown
+    here too) and no "Cancelled" tab/status (trips only have a real 2-state model — end_date IS
+    NULL means ongoing, NOT NULL means completed; there is no cancellation concept anywhere in
+    the schema, so a 3rd tab for it would be inventing data, not reflecting it).
+    """
+    conn = get_db()
+    status_f = request.args.get('status', '')  # '', 'active', 'completed' — same convention trips_list() already uses
+    search_f = (request.args.get('search') or '').strip()
+
+    where = " WHERE 1=1"
+    params = []
+    if status_f == 'active':
+        where += " AND t.end_date IS NULL"
+    elif status_f == 'completed':
+        where += " AND t.end_date IS NOT NULL"
+    if search_f:
+        where += """ AND (t.lr_number LIKE ? OR v.vehicle_no LIKE ? OR p.name LIKE ? OR t.driver_name LIKE ?)"""
+        like = f"%{search_f}%"
+        params.extend([like, like, like, like])
+
+    total_count = conn.execute(
+        f"SELECT COUNT(*) FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id{where}",
+        params).fetchone()[0]
+
+    # "Load More" (growing window) rather than the website's numbered Prev/1/2/3/Next — see the
+    # same reasoning on app_vehicles() above; this is the mobile-list convention.
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+
+    query = f"""SELECT t.id, t.date, t.lr_number, t.end_date, t.billed_amount, t.driver_name,
+                      t.from_loc, t.to_loc, v.vehicle_no, p.name as party_name
+               FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id
+               {where} ORDER BY t.date DESC, t.id DESC LIMIT ?"""
+    rows = conn.execute(query, params + [show]).fetchall()
+    trips = [{'id': r['id'], 'date': r['date'], 'lr_number': r['lr_number'] or f"Trip #{r['id']}",
+              'ongoing': r['end_date'] is None, 'billed_amount': r['billed_amount'] or 0,
+              'vehicle_no': r['vehicle_no'] or '—', 'route': ' → '.join(x for x in [r['from_loc'], r['to_loc']] if x) or '—'}
+             for r in rows]
+
+    month_from, month_to = _month_bounds(datetime.date.today().year, datetime.date.today().month)
+    month_trips = conn.execute("SELECT billed_amount, end_date FROM trips WHERE date>=? AND date<=?", (month_from, month_to)).fetchall()
+    total_trips_month = len(month_trips)
+    completed_month = sum(1 for t in month_trips if t['end_date'] is not None)
+    total_freight_month = sum(t['billed_amount'] or 0 for t in month_trips)
+    ongoing_count = conn.execute("SELECT COUNT(*) FROM trips WHERE end_date IS NULL").fetchone()[0]
+
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    conn.close()
+
+    def _fmt_freight(n):
+        if n >= 100000:
+            return f"₹{n/100000:.2f}L"
+        return f"₹{n:,.0f}"
+
+    return render_template('app/trips.html', company_name=company_name, user_initials=user_initials,
+        active='trips', notif_count=ongoing_count,
+        trips=trips, f_status=status_f, f_search=search_f, show=show, has_more=has_more, total_count=total_count,
+        total_trips_month=total_trips_month, ongoing_count=ongoing_count,
+        completed_month=completed_month, total_freight_month=_fmt_freight(total_freight_month))
+
+@app.route('/app/vehicles')
+def app_vehicles():
+    """Mobile Vehicles — same real fields/thresholds as the website's own vehicles_list():
+    _expiry_bucket() for Insurance/Fitness/PUC/Permit (expired / expiring within 30 days / ok),
+    _vehicle_age_years() for Age, vehicles.challan_count/challan_amount for the challan alert.
+    Trimmed for a small screen per this app's design direction: no Permit Expiring tile (Insurance
+    is the one that matters most day-to-day), no Model/Type filter dropdowns (there's no "model"
+    column on vehicles at all — that part of the reference mockup doesn't correspond to a real
+    field) — just a status tab strip (All/Active/In Maintenance, the same three real status
+    values vehicles_list() already counts) and a vehicle-number search, both real. Road Tax is
+    intentionally left off each card — it only ever has data after an RC sync has run for that
+    vehicle, and showing "No Data" on every card by default would be more noise than signal on a
+    small screen; still on the website's own detail page.
+    Sorted by Age (oldest first — vehicles.registration_date via _vehicle_age_years(), same
+    unknown-ages-sort-last rule vehicles_list()'s own sort=age already uses) by default. Uses
+    "Load More" (a growing `show` count, re-rendering the top N of the same sorted/filtered list
+    on each tap) instead of the website's numbered Prev/1/2/3/Next pagination — that's a desktop
+    convention; every mobile list worth copying (Instagram, X, etc.) either infinite-scrolls or
+    uses Load More, never numbered pages.
+    """
+    conn = get_db()
+    status_f = request.args.get('status', '')
+    search_f = (request.args.get('search') or '').strip()
+
+    query = """SELECT id, vehicle_no, type, registration_date, status, body_type,
+                      insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
+                      challan_count, challan_amount
+               FROM vehicles WHERE type IS NOT NULL"""
+    params = []
+    if status_f:
+        query += " AND COALESCE(status,'Active') = ?"
+        params.append(status_f)
+    if search_f:
+        query += " AND vehicle_no LIKE ?"
+        params.append(f"%{search_f}%")
+    raw_rows = conn.execute(query, params).fetchall()
+
+    def _exp_field(date_str):
+        bucket = _expiry_bucket(date_str)
+        days_left = None
+        if date_str:
+            try:
+                days_left = (datetime.datetime.strptime(date_str, '%Y-%m-%d').date() - datetime.date.today()).days
+            except ValueError:
+                pass
+        return {'date': date_str, 'bucket': bucket or 'unknown', 'days_left': days_left}
+
+    all_vehicles = []
+    for r in raw_rows:
+        all_vehicles.append({
+            'id': r['id'], 'vehicle_no': r['vehicle_no'],
+            'body_type_short': _short_body_type(r['body_type']) or (r['type'] or '').title(),
+            'status': r['status'] or 'Active', 'age_years': _vehicle_age_years(r['registration_date']),
+            'insurance': _exp_field(r['insurance_expiry']), 'fitness': _exp_field(r['fitness_expiry']),
+            'puc': _exp_field(r['puc_valid_upto']), 'permit': _exp_field(r['permit_valid_upto']),
+            'challan_count': r['challan_count'] or 0, 'challan_amount': r['challan_amount'] or 0,
+        })
+    # Oldest first; unknown age (no registration_date on file) always sorts last regardless —
+    # "unknown" isn't meaningfully old or young, same rule vehicles_list() uses for sort=age.
+    known = [v for v in all_vehicles if v['age_years'] is not None]
+    unknown = [v for v in all_vehicles if v['age_years'] is None]
+    known.sort(key=lambda v: v['age_years'], reverse=True)
+    all_vehicles = known + unknown
+
+    # "Load More" (growing window), not desktop-style numbered pages — the standard mobile-list
+    # pattern (Instagram, X, etc. all do this, or true infinite scroll; numbered Prev/1/2/3/Next
+    # is a desktop convention that doesn't translate well to a small screen or a thumb). Each tap
+    # just re-requests this same URL with a bigger `show` count and a full-page reload re-renders
+    # the top N of the same sorted/filtered list — no JS, no offset math, no separate "page" state
+    # to keep in sync with the filters above.
+    total_count = len(all_vehicles)
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    vehicles = all_vehicles[:show]
+    has_more = total_count > show
+
+    # Same real counts as vehicles_list() itself (unfiltered by the tab/search above, so the
+    # stat row always reflects the whole fleet, not just what's currently shown in the list).
+    stat_rows = conn.execute("SELECT status, insurance_expiry, challan_count, challan_amount FROM vehicles WHERE type IS NOT NULL").fetchall()
+    total_vehicles = len(stat_rows)
+    active_count = sum(1 for r in stat_rows if (r['status'] or 'Active') == 'Active')
+    maint_count = sum(1 for r in stat_rows if r['status'] == 'In Maintenance')
+    ins_expiring = sum(1 for r in stat_rows if _expiry_bucket(r['insurance_expiry']) in ('expiring', 'expired'))
+    challan_rows = [r for r in stat_rows if (r['challan_count'] or 0) > 0]
+    challan_vehicle_count = len(challan_rows)
+    challan_total_amount = sum(r['challan_amount'] or 0 for r in challan_rows)
+
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    conn.close()
+
+    return render_template('app/vehicles.html', company_name=company_name, user_initials=user_initials,
+        active='vehicles', notif_count=ins_expiring + challan_vehicle_count,
+        vehicles=vehicles, f_status=status_f, f_search=search_f,
+        show=show, has_more=has_more, total_count=total_count,
+        total_vehicles=total_vehicles, active_count=active_count,
+        active_pct=round(active_count / total_vehicles * 100, 1) if total_vehicles else 0,
+        maint_count=maint_count, ins_expiring=ins_expiring,
+        challan_vehicle_count=challan_vehicle_count, challan_total_amount=challan_total_amount)
 
 if __name__ == '__main__':
     # Defaults to the same debug=True this always ran with locally — nothing changes for local

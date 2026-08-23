@@ -1,0 +1,122 @@
+{% extends "app/base_app.html" %}
+{% block title %}Trips — {{ company_name }}{% endblock %}
+{% block content %}
+
+<div class="tr-head">
+  <h1>Trips</h1>
+  <div class="sub">Track and manage all trips</div>
+</div>
+
+<div class="tr-tabstrip">
+  <a class="tr-tab {{ 'active' if not f_status }}" href="{{ url_for('app_trips', search=f_search) }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg>
+    All Trips</a>
+  <a class="tr-tab {{ 'active' if f_status=='active' }}" href="{{ url_for('app_trips', status='active', search=f_search) }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+    Ongoing</a>
+  <a class="tr-tab {{ 'active' if f_status=='completed' }}" href="{{ url_for('app_trips', status='completed', search=f_search) }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>
+    Completed</a>
+</div>
+
+<form method="get" class="tr-search">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  <input type="text" name="search" value="{{ f_search }}" placeholder="Search by LR No., Vehicle, Party, Driver…" onchange="this.form.submit()">
+  {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
+</form>
+
+<div class="tr-kpi-grid">
+  <div class="tr-kpi-card">
+    <div><div class="tr-kpi-lbl">Total Trips</div><div class="tr-kpi-val">{{ total_trips_month }}</div><div class="tr-kpi-sub">This Month</div></div>
+    <div class="tr-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg></div>
+  </div>
+  <div class="tr-kpi-card">
+    <div><div class="tr-kpi-lbl">Ongoing</div><div class="tr-kpi-val" style="color:var(--a-green);">{{ ongoing_count }}</div><div class="tr-kpi-sub">In Progress</div></div>
+    <div class="tr-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><polygon points="10 8 16 12 10 16 10 8"/></svg></div>
+  </div>
+  <div class="tr-kpi-card">
+    <div><div class="tr-kpi-lbl">Completed</div><div class="tr-kpi-val" style="color:var(--a-blue);">{{ completed_month }}</div><div class="tr-kpi-sub">This Month</div></div>
+    <div class="tr-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg></div>
+  </div>
+  <div class="tr-kpi-card">
+    <div><div class="tr-kpi-lbl">Total Freight</div><div class="tr-kpi-val">{{ total_freight_month }}</div><div class="tr-kpi-sub">This Month</div></div>
+    <div class="tr-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">₹</div>
+  </div>
+</div>
+
+<div class="tr-list-head"><h2>Trips List</h2></div>
+
+<div id="tr-list">
+{% for t in trips %}
+<a href="{{ url_for('trip_view', trip_id=t.id) }}" class="tr-card">
+  <div class="tr-card-bar {{ 'ongoing' if t.ongoing else 'completed' }}"></div>
+  <div class="tr-card-body">
+    <div class="tr-card-status {{ 'ongoing' if t.ongoing else 'completed' }}">
+      {% if t.ongoing %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="10 8 16 12 10 16 10 8"/></svg>
+      {% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{% endif %}
+    </div>
+    <div class="tr-card-main">
+      <div class="tr-card-lr">{{ t.lr_number }}</div>
+      <div class="tr-card-veh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16V11l2-5h12l2 5v5"/></svg>{{ t.vehicle_no }}</div>
+      <div class="tr-card-route">{{ t.route }}</div>
+      <div class="tr-card-date"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>{{ t.date }}</div>
+    </div>
+    <div class="tr-card-right">
+      <span class="tr-card-badge {{ 'ongoing' if t.ongoing else 'completed' }}">{{ 'Ongoing' if t.ongoing else 'Completed' }}</span>
+      <div class="tr-card-amt">₹{{ '{:,.0f}'.format(t.billed_amount) }}</div>
+    </div>
+  </div>
+</a>
+{% else %}
+<div class="tr-empty">No trips found{% if f_search %} for "{{ f_search }}"{% endif %}.</div>
+{% endfor %}
+</div>
+
+<div id="tr-load-area">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_trips', status=f_status, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif trips %}
+<div class="vh-listend">You've reached the end · {{ total_count }} trip{{ 's' if total_count != 1 else '' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div><!-- clears the floating Add Trip button below -->
+
+<a href="{{ url_for('app_add_trip') }}" class="tr-addbtn">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Trip
+</a>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// Same in-place "Load More" as templates/app/vehicles.html — fetches the same page with a
+// bigger `show` count and swaps just the list + load area, no full navigation, no scroll jump.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('tr-list').innerHTML = doc.getElementById('tr-list').innerHTML;
+      document.getElementById('tr-load-area').innerHTML = doc.getElementById('tr-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+</script>
+{% endblock %}
