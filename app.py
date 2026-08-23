@@ -2524,14 +2524,14 @@ def maintenance_list():
         return _maintenance_category_tab(conn, tab)
     return _maintenance_overview_tab(conn)
 
-def _maintenance_overview_tab(conn):
-    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
-    default_from, default_to = _month_bounds(last_month_end.year, last_month_end.month)
-    date_from = request.args.get('date_from') or default_from
-    date_to = request.args.get('date_to') or default_to
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
-
+def _maintenance_overview_data(conn, date_from, date_to):
+    """All the real computation behind the Maintenance Overview tab — stat cards, category
+    cards, fleet health bands, action-required list, top spenders, 6-month cost trend — factored
+    out of _maintenance_overview_tab() so the mobile app's /app/maintenance can reuse the exact
+    same numbers (same 'own' vehicle filter, same spend-based health-band proxy, same
+    90-day-stale threshold) without a second hand-written copy that could quietly drift from the
+    website's. Returns one dict; the website route below unpacks it into its own render_template
+    call exactly as before this refactor — zero behavior change there."""
     own_vehicles = conn.execute("SELECT id, vehicle_no, registration_date FROM vehicles WHERE type = 'own' ORDER BY vehicle_no").fetchall()
     total_fleet = len(own_vehicles)
 
@@ -2659,13 +2659,29 @@ def _maintenance_overview_tab(conn):
         t['x'] = round((i / (n - 1) * (chart_w - 40) + 30) if n > 1 else chart_w / 2, 1)
         t['y'] = round(chart_h - (t['cost'] / trend_max * (chart_h - 30)) - 15, 1)
 
+    return {
+        'total_fleet': total_fleet, 'vehicles_serviced': vehicles_serviced, 'pending_count': pending_count,
+        'total_cost': total_cost, 'total_unpaid': total_unpaid, 'avg_cost_km': avg_cost_km, 'fleet_availability': fleet_availability,
+        'category_cards': category_cards, 'health_bands': health_bands, 'actions': actions,
+        'recent_entries': recent_entries, 'top_spend': top_spend, 'trend': trend, 'trend_max': trend_max,
+        'chart_w': chart_w, 'chart_h': chart_h, 'date_from': date_from, 'date_to': date_to,
+    }
+
+def _maintenance_overview_tab(conn):
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    default_from, default_to = _month_bounds(last_month_end.year, last_month_end.month)
+    date_from = request.args.get('date_from') or default_from
+    date_to = request.args.get('date_to') or default_to
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    d = _maintenance_overview_data(conn, date_from, date_to)
     conn.close()
     return render_template('maintenance.html', tab='overview',
-        total_fleet=total_fleet, vehicles_serviced=vehicles_serviced, pending_count=pending_count,
-        total_cost=total_cost, total_unpaid=total_unpaid, avg_cost_km=avg_cost_km, fleet_availability=fleet_availability,
-        category_cards=category_cards, health_bands=health_bands, actions=actions,
-        recent_entries=recent_entries, top_spend=top_spend, trend=trend, trend_max=trend_max, chart_w=chart_w, chart_h=chart_h,
-        f_date_from=date_from, f_date_to=date_to, active='maintenance')
+        total_fleet=d['total_fleet'], vehicles_serviced=d['vehicles_serviced'], pending_count=d['pending_count'],
+        total_cost=d['total_cost'], total_unpaid=d['total_unpaid'], avg_cost_km=d['avg_cost_km'], fleet_availability=d['fleet_availability'],
+        category_cards=d['category_cards'], health_bands=d['health_bands'], actions=d['actions'],
+        recent_entries=d['recent_entries'], top_spend=d['top_spend'], trend=d['trend'], trend_max=d['trend_max'],
+        chart_w=d['chart_w'], chart_h=d['chart_h'], f_date_from=date_from, f_date_to=date_to, active='maintenance')
 
 UREA_LOW_STOCK_THRESHOLD_L = 200  # default reorder point per location — no Settings field for
                                    # this yet, so it's a documented constant rather than a
@@ -9897,6 +9913,44 @@ def app_add_trip():
     return render_template('app/trip_add.html', t={}, vehicles=[v['vehicle_no'] for v in vehicles],
                             combined_names=combined_names, employees=[e['name'] for e in employees],
                             vehicle_type_map=vehicle_type_map, error=None, company_name=company_name)
+
+@app.route('/app/maintenance')
+def app_maintenance():
+    """Mobile Maintenance — Overview tab only, real numbers straight from
+    _maintenance_overview_data() (the exact same computation the website's own Maintenance
+    Overview tab uses — see the refactor above it). Trimmed to the data points that matter most
+    on a small screen (per this app's design direction: no Avg Cost/KM or Fleet Availability
+    tiles; trend simplified to a 6-month bar strip instead of a plotted SVG line) — nothing here
+    is fabricated, it's a subset of the same real dict the website renders in full. The 5-band
+    health legend (Excellent/Good/Average/Poor/Critical) is kept complete, same as the website,
+    including bands currently at 0.
+    No "+ Add Maintenance" button on this tab, by design — Service/Tyres/Battery/Urea (reached
+    from the tab strip) each carry their own real add flow already on the website; this Overview
+    is read-only, matching the instruction that Add belongs on those tabs, not here.
+    """
+    conn = get_db()
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    date_from, date_to = _month_bounds(last_month_end.year, last_month_end.month)
+    d = _maintenance_overview_data(conn, date_from, date_to)
+
+    company_name = get_company_name(session.get('company_id', 1))
+    display_name = session.get('username', '')
+    if session.get('user_id'):
+        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u:
+            display_name = u['full_name'] or u['username']
+    name_parts = [p for p in (display_name or '').split() if p]
+    user_initials = ((name_parts[0][0] if name_parts else '') +
+                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    conn.close()
+
+    return render_template('app/maintenance.html', company_name=company_name, user_initials=user_initials,
+        notif_count=d['pending_count'] + len(d['actions']), active='maintenance',
+        period_label=datetime.datetime.strptime(date_from, '%Y-%m-%d').strftime('%b %Y'),
+        total_fleet=d['total_fleet'], vehicles_serviced=d['vehicles_serviced'], pending_count=d['pending_count'],
+        total_cost=d['total_cost'], total_unpaid=d['total_unpaid'],
+        health_bands=d['health_bands'],
+        actions=d['actions'], trend=d['trend'], trend_max=d['trend_max'])
 
 if __name__ == '__main__':
     # Defaults to the same debug=True this always ran with locally — nothing changes for local
