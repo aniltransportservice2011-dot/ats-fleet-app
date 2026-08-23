@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Add Trip — {{ company_name }}</title>
+<link rel="manifest" href="{{ url_for('static', filename='app-manifest.json') }}">
+<meta name="theme-color" content="#c05621">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
+<link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="app-body tw-body">
+
+<div class="tw-header">
+  <a href="{{ url_for('app_dashboard') }}" class="tw-back" aria-label="Back">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+  </a>
+  <div class="tw-header-badge">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
+  </div>
+  <div class="tw-header-titles">
+    <h1>Add Trip</h1>
+    <div class="sub">Enter trip details to create a new trip</div>
+  </div>
+  <button type="button" class="tw-draft-btn" id="twSaveDraftBtn" onclick="twSaveDraft()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+    Save Draft
+  </button>
+</div>
+
+<div class="tw-progress" id="twProgress">
+  <div class="tw-progress-step current" data-step="1"><div class="tw-progress-dot">1</div><div class="tw-progress-label">Trip Details</div></div>
+  <div class="tw-progress-line" data-line="1"></div>
+  <div class="tw-progress-step" data-step="2"><div class="tw-progress-dot">2</div><div class="tw-progress-label">Cost &amp; Charges</div></div>
+  <div class="tw-progress-line" data-line="2"></div>
+  <div class="tw-progress-step" data-step="3"><div class="tw-progress-dot">3</div><div class="tw-progress-label">Other Items</div></div>
+  <div class="tw-progress-line" data-line="3"></div>
+  <div class="tw-progress-step" data-step="4"><div class="tw-progress-dot">4</div><div class="tw-progress-label">Review</div></div>
+</div>
+
+{% if error %}<div class="tw-error-banner" style="margin-top:12px;">⚠️ {{ error }}</div>{% endif %}
+
+<form method="POST" id="twForm" action="{{ url_for('app_add_trip') }}">
+<div class="tw-body-wrap">
+
+  <!-- ================= STEP 1: TRIP DETAILS ================= -->
+  <div class="tw-step active" data-step="1">
+
+    <div class="tw-empty-row">
+      <div class="lbl">Empty Trip<span class="sub">Vehicle ran with no cargo/party — hides freight fields</span></div>
+      <label class="tw-switch">
+        <input type="checkbox" name="is_empty" id="twIsEmpty" onchange="twToggleEmpty()" {% if t.get('is_empty') %}checked{% endif %}>
+        <span class="tw-switch-track"></span>
+      </label>
+    </div>
+
+    <div class="tw-section">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Trip Information</h2>
+        <span class="tw-section-toggle">Collapse <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        <div class="tw-field"><label>Trip Date <span class="req">*</span></label>
+          <input type="date" name="date" id="twDate" value="{{ t.get('date','') }}" required></div>
+        <div class="tw-field"><label>LR Number <span class="req">*</span></label>
+          <input type="text" name="lr_number" id="twLr" value="{{ t.get('lr_number','') or '' }}" placeholder="Enter LR Number" required></div>
+
+        <div class="tw-field"><label>Vehicle <span class="req">*</span></label>
+          <input type="text" name="vehicle_no" id="twVehicleNo" list="vehicle-list" value="{{ t.get('vehicle_no','') or '' }}"
+                 placeholder="Select Vehicle" oninput="twSyncVehicleType()" required></div>
+        <div class="tw-field"><label>Type <span class="req">*</span></label>
+          <select id="twTypeSelect" onchange="document.getElementById('twTypeHidden').value=this.value" disabled>
+            <option value="own">Own</option>
+            <option value="hired">Hired</option>
+          </select>
+          <input type="hidden" name="type" id="twTypeHidden" value="{{ t.get('type','') or '' }}"></div>
+
+        <div class="tw-field twcargo"><label>Party / Customer <span class="req">*</span></label>
+          <input type="text" name="party_name" id="twParty" list="combined-list" value="{{ t.get('party_name','') or '' }}"
+                 placeholder="Select Party / Customer"></div>
+        <div class="tw-field"><label>Driver</label>
+          <input type="text" name="driver_name" list="employee-list" value="{{ t.get('driver_name','') or '' }}" placeholder="Select Driver"></div>
+
+        <div class="tw-field twcargo"><label>Material</label>
+          <input type="text" name="material" value="{{ t.get('material','') or '' }}" placeholder="e.g. Steel, Cement"></div>
+        <div class="tw-field twcargo"><label>Freight Type <span class="req">*</span></label>
+          <select name="rate_type" id="twRateType" onchange="twToggleRateType()">
+            <option value="PER_MT" {% if t.get('rate_type','PER_MT')=='PER_MT' %}selected{% endif %}>Per MT</option>
+            <option value="FIXED" {% if t.get('rate_type')=='FIXED' %}selected{% endif %}>Fixed</option>
+          </select></div>
+
+        <div class="tw-field"><label>From</label>
+          <input type="text" name="from_loc" value="{{ t.get('from_loc','') or '' }}" placeholder="Loading location"></div>
+        <div class="tw-field"><label>To</label>
+          <input type="text" name="to_loc" value="{{ t.get('to_loc','') or '' }}" placeholder="Unloading location"></div>
+
+        <div class="tw-field twcargo" id="twQtyFld"><label>Quantity (MT)</label>
+          <input type="number" step="0.01" class="tw-calc" name="quantity" id="twQuantity" value="{{ t.get('quantity',0) or 0 }}"></div>
+        <div class="tw-field twcargo" id="twRateFld"><label>Rate (per unit)</label>
+          <input type="number" step="0.01" class="tw-calc" name="rate" id="twRate" value="{{ t.get('rate',0) or 0 }}"></div>
+        <div class="tw-field twcargo" id="twFixedFld" style="display:none;"><label>Fixed Freight Amount</label>
+          <input type="number" step="0.01" class="tw-calc" name="fixed_rate_amount" id="twFixedAmt" value="{{ t.get('fixed_rate_amount',0) or 0 }}"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= STEP 2: COST & CHARGES ================= -->
+  <div class="tw-step" data-step="2">
+
+    <div class="tw-section">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Additional Charges</h2>
+        <span class="tw-section-toggle">Collapse <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        {% for key, label in [('detention_charges','Detention Charges'),('gps_cost','GPS Cost'),('loading_charge','Loading Charge'),
+                               ('unloading_charge','Unloading Charge'),('police_charges','Police Charges'),('sim_tracking','SIM Tracking'),
+                               ('union_charges','Union Charges'),('weight_charges','Weight Charges'),('other_charges','Other Charges')] %}
+        <div class="tw-field"><label>{{ label }}</label><input type="number" step="0.01" class="tw-calc tw-add" name="{{ key }}" id="tw_{{ key }}" value="{{ t.get(key,0) or 0 }}"></div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="tw-section collapsed">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Deductions</h2>
+        <span class="tw-section-toggle">Expand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        {% for key, label in [('brokerage','Brokerage'),('builty_commission','Builty Commission'),('late_fees','Late Fees'),
+                               ('material_damage','Material Damage'),('shortage_amount','Shortage Amount'),('shortage_qty','Shortage Qty (MT)'),
+                               ('tds','TDS'),('other_deductions','Other Deductions')] %}
+        <div class="tw-field"><label>{{ label }}</label><input type="number" step="0.01" class="tw-calc tw-ded" name="{{ key }}" id="tw_{{ key }}" value="{{ t.get(key,0) or 0 }}"></div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="tw-section collapsed">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Fuel &amp; Driver Advance</h2>
+        <span class="tw-section-toggle">Expand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        <div class="tw-field"><label>Fuel Amount</label><input type="number" step="0.01" name="fuel_amount" value="{{ t.get('fuel_amount',0) or 0 }}"></div>
+        <div class="tw-field"><label>Fuel Vendor</label><input type="text" name="fuel_vendor" list="combined-list" value="{{ t.get('fuel_vendor_name','') or '' }}" placeholder="Blank = paid directly"></div>
+        <div class="tw-field"><label>Fuel Filled (Litres)</label><input type="text" name="fuel_liters" value="{{ t.get('fuel_liters','') or '' }}" placeholder="e.g. 120"></div>
+        <div class="tw-field"><label>Fuel Price (per Litre)</label><input type="number" step="0.01" name="fuel_price" value="{{ t.get('fuel_price',0) or 0 }}"></div>
+        <div class="tw-field"><label>Driver Advance</label><input type="number" step="0.01" name="driver_adv_amount" value="{{ t.get('driver_adv_amount',0) or 0 }}"></div>
+        <div class="tw-field"><label>Driver Adv. Vendor</label><input type="text" name="driver_adv_vendor" list="combined-list" value="{{ t.get('driveradv_vendor_name','') or '' }}"></div>
+      </div>
+    </div>
+
+    <div class="tw-section collapsed">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Other Expenses</h2>
+        <span class="tw-section-toggle">Expand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        {% for key, label in [('agent_commission','Agent Commission'),('builty_expense','Builty Expense'),('fine','Fine'),
+                               ('labour_charges','Labour Charges'),('parking','Parking'),('puncture','Puncture'),('toll','Toll'),
+                               ('urea','Urea'),('loading_expense','Loading Expense'),('unloading_expense','Unloading Expense'),
+                               ('weighbridge_charges','Weighbridge Charges'),('other_expense','Other Expense')] %}
+        <div class="tw-field"><label>{{ label }}</label><input type="number" step="0.01" name="{{ key }}" id="tw_{{ key }}" value="{{ t.get(key,0) or 0 }}"></div>
+        {% endfor %}
+        <div class="tw-field full"><label>Misc Vendor</label><input type="text" name="misc_vendor" list="combined-list" value="{{ t.get('misc_vendor_name','') or '' }}"></div>
+      </div>
+    </div>
+
+    <div class="tw-section collapsed" id="twOwnerSection" style="display:none;">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Hired Vehicle Owner</h2>
+        <span class="tw-section-toggle">Expand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        <div class="tw-field"><label>Owner Name</label><input type="text" name="owner_name" id="twOwnerName" list="combined-list" value="{{ t.get('owner_name','') or '' }}"></div>
+        <div class="tw-field"><label>Owner Charge Type</label>
+          <select name="owner_rate_type" id="twOwnerRateType" onchange="twToggleOwnerRateType()">
+            <option value="PER_MT" {% if t.get('owner_rate_type','PER_MT')=='PER_MT' %}selected{% endif %}>Per MT</option>
+            <option value="FIXED" {% if t.get('owner_rate_type')=='FIXED' %}selected{% endif %}>Fixed</option>
+          </select></div>
+        <div class="tw-field" id="twOwnerRateFld"><label>Owner Rate (per unit)</label><input type="number" step="0.01" class="tw-calc" name="owner_rate" id="twOwnerRate" value="{{ t.get('owner_rate',0) or 0 }}"></div>
+        <div class="tw-field" id="twOwnerFixedFld" style="display:none;"><label>Owner Fixed Amount</label><input type="number" step="0.01" class="tw-calc" name="owner_fixed_amount" id="twOwnerFixed" value="{{ t.get('owner_fixed_amount',0) or 0 }}"></div>
+        <div class="tw-field full"><label>Advance / Paid to Owner</label><input type="number" step="0.01" name="paid_to_owner" value="{{ t.get('paid_to_owner',0) or 0 }}"></div>
+        <div class="tw-hint">Owner Amount is what you owe this vehicle's owner — Per MT uses Quantity × Owner Rate, Fixed uses Owner Fixed Amount. Set independently of the party's own Freight Type.</div>
+      </div>
+    </div>
+
+    <div class="tw-section">
+      <div class="tw-section-head" onclick="twToggleSection(this)">
+        <h2><span class="tw-accordion-dot"></span>Payment Tracking</h2>
+        <span class="tw-section-toggle">Collapse <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </div>
+      <div class="tw-section-body">
+        <div class="tw-field"><label>Party Advance</label><input type="number" step="0.01" name="party_advance" value="{{ t.get('party_advance',0) or 0 }}"></div>
+        <div class="tw-field"><label>Payment Received</label><input type="number" step="0.01" name="payment_received" value="{{ t.get('payment_received',0) or 0 }}"></div>
+        <div class="tw-field full"><label>LR Received</label>
+          <select name="lr_received">
+            <option value="" {% if t.get('lr_received')!='Yes' %}selected{% endif %}>No</option>
+            <option value="Yes" {% if t.get('lr_received')=='Yes' %}selected{% endif %}>Yes</option>
+          </select></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= STEP 3: OTHER ITEMS ================= -->
+  <div class="tw-step" data-step="3">
+    <div id="twOthersEmpty" class="tw-others-empty">No other items added yet.<br>Custom charges/deductions that appear on this trip's invoice — doesn't change the Billed Amount.</div>
+    <div id="twOthersList"></div>
+    <button type="button" class="tw-add-item-btn" onclick="twAddItemRow()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add Item
+    </button>
+  </div>
+
+  <!-- ================= STEP 4: REVIEW ================= -->
+  <div class="tw-step" data-step="4">
+    <div class="tw-review-card">
+      <h3>Trip Summary</h3>
+      <div class="tw-review-row"><span class="lbl">Date</span><span class="val" id="rvDate">—</span></div>
+      <div class="tw-review-row"><span class="lbl">LR Number</span><span class="val" id="rvLr">—</span></div>
+      <div class="tw-review-row"><span class="lbl">Vehicle</span><span class="val" id="rvVehicle">—</span></div>
+      <div class="tw-review-row"><span class="lbl">Party</span><span class="val" id="rvParty">—</span></div>
+      <div class="tw-review-row"><span class="lbl">Route</span><span class="val" id="rvRoute">—</span></div>
+    </div>
+    <div class="tw-review-card">
+      <h3>Amount Breakdown</h3>
+      <div class="tw-review-row"><span class="lbl">Freight</span><span class="val" id="rvFreight">₹0</span></div>
+      <div class="tw-review-row"><span class="lbl">Total Additions</span><span class="val" style="color:var(--a-green);" id="rvAdditions">+ ₹0</span></div>
+      <div class="tw-review-row"><span class="lbl">Total Deductions</span><span class="val" style="color:var(--a-red);" id="rvDeductions">- ₹0</span></div>
+      <div class="tw-review-row"><span class="lbl">Other Items <span style="font-weight:400;">(invoice only)</span></span><span class="val" id="rvOthers">₹0</span></div>
+      <div class="tw-review-net"><span class="lbl">Net Billed Amount</span><span class="val" id="rvNet">₹0</span></div>
+    </div>
+    <div class="tw-review-card" id="rvOwnerCard" style="display:none;">
+      <h3>Hired Vehicle Profit</h3>
+      <div class="tw-review-row"><span class="lbl">Billed Amount (Party)</span><span class="val" id="rvOwnerBilled">₹0</span></div>
+      <div class="tw-review-row"><span class="lbl">Owner Amount (Cost)</span><span class="val" style="color:var(--a-red);" id="rvOwnerCost">₹0</span></div>
+      <div class="tw-review-net"><span class="lbl">Estimated Profit</span><span class="val" style="color:var(--a-green);" id="rvProfit">₹0</span></div>
+    </div>
+  </div>
+
+</div>
+<input type="hidden" name="return_to" value="">
+</form>
+
+<datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="combined-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
+<datalist id="employee-list">{% for e in employees %}<option value="{{ e }}">{% endfor %}</datalist>
+
+<div class="tw-footer">
+  <button type="button" class="tw-btn tw-btn-ghost" id="twBackBtn" onclick="twPrevOrCancel()">Cancel</button>
+  <button type="button" class="tw-btn tw-btn-primary" id="twNextBtn" onclick="twNextOrSubmit()">Next
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+  </button>
+</div>
+
+<script>
+var VEHICLE_TYPE_MAP = {{ vehicle_type_map|tojson }};
+var twStep = 1;
+var TOTAL_STEPS = 4;
+var twOtherRowId = 0;
+
+function twToggleSection(headEl) {
+  headEl.closest('.tw-section').classList.toggle('collapsed');
+  var toggle = headEl.querySelector('.tw-section-toggle');
+  var collapsed = headEl.closest('.tw-section').classList.contains('collapsed');
+  toggle.childNodes[0].nodeValue = collapsed ? 'Expand ' : 'Collapse ';
+}
+
+function twToggleEmpty() {
+  var on = document.getElementById('twIsEmpty').checked;
+  document.querySelectorAll('.twcargo').forEach(function(el) { el.style.display = on ? 'none' : ''; });
+  if (on) { document.getElementById('twParty').required = false; }
+  else { document.getElementById('twParty').required = true; }
+}
+
+function twSyncVehicleType() {
+  var vno = document.getElementById('twVehicleNo').value.trim();
+  var sel = document.getElementById('twTypeSelect');
+  var hidden = document.getElementById('twTypeHidden');
+  var known = VEHICLE_TYPE_MAP[vno];
+  if (known) {
+    sel.value = known; sel.disabled = true; hidden.value = known;
+  } else {
+    sel.disabled = false; hidden.value = sel.value;
+  }
+  twToggleOwnerSection();
+}
+
+function twToggleOwnerSection() {
+  var type = document.getElementById('twTypeHidden').value;
+  document.getElementById('twOwnerSection').style.display = (type === 'hired') ? '' : 'none';
+}
+
+function twToggleRateType() {
+  var fixed = document.getElementById('twRateType').value === 'FIXED';
+  document.getElementById('twQtyFld').style.display = fixed ? 'none' : '';
+  document.getElementById('twRateFld').style.display = fixed ? 'none' : '';
+  document.getElementById('twFixedFld').style.display = fixed ? '' : 'none';
+}
+
+function twToggleOwnerRateType() {
+  var fixed = document.getElementById('twOwnerRateType').value === 'FIXED';
+  document.getElementById('twOwnerRateFld').style.display = fixed ? 'none' : '';
+  document.getElementById('twOwnerFixedFld').style.display = fixed ? '' : 'none';
+}
+
+function twNum(id) { var el = document.getElementById(id); return el ? (parseFloat(el.value) || 0) : 0; }
+function twVal(name) { var el = document.querySelector('[name="' + name + '"]'); return el ? el.value : ''; }
+function twMoney(n) { return '₹' + n.toLocaleString('en-IN', {maximumFractionDigits: 0}); }
+
+function twAddItemRow() {
+  twOtherRowId++;
+  var id = twOtherRowId;
+  document.getElementById('twOthersEmpty').style.display = 'none';
+  var div = document.createElement('div');
+  div.className = 'tw-others-card';
+  div.id = 'twOtherRow' + id;
+  div.innerHTML =
+    '<button type="button" class="tw-others-remove" onclick="twRemoveItemRow(' + id + ')">' +
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' +
+    '<div class="tw-field" style="margin-bottom:10px;"><label>Description</label><input type="text" name="other_desc" placeholder="e.g. Weighbridge slip"></div>' +
+    '<div class="tw-others-card-grid">' +
+    '<div class="tw-field"><label>Type</label><select name="other_type"><option value="charge">Addition</option><option value="deduction">Deduction</option></select></div>' +
+    '<div class="tw-field"><label>Vendor (optional)</label><input type="text" name="other_vendor" list="combined-list"></div>' +
+    '<div class="tw-field"><label>Rate (₹)</label><input type="number" step="0.01" name="other_rate" value="0"></div>' +
+    '<div class="tw-field"><label>Quantity</label><input type="number" step="0.01" name="other_qty" value="1"></div>' +
+    '</div>';
+  document.getElementById('twOthersList').appendChild(div);
+}
+function twRemoveItemRow(id) {
+  var el = document.getElementById('twOtherRow' + id);
+  if (el) el.remove();
+  if (!document.getElementById('twOthersList').children.length) document.getElementById('twOthersEmpty').style.display = '';
+}
+
+function twOthersTotal() {
+  var rows = document.querySelectorAll('#twOthersList .tw-others-card');
+  var total = 0;
+  rows.forEach(function(row) {
+    var type = row.querySelector('[name="other_type"]').value;
+    var rate = parseFloat(row.querySelector('[name="other_rate"]').value) || 0;
+    var qty = parseFloat(row.querySelector('[name="other_qty"]').value) || 1;
+    var amt = rate * qty;
+    total += (type === 'deduction') ? -amt : amt;
+  });
+  return total;
+}
+
+function twValidateStep1() {
+  var required = ['date', 'lr_number', 'vehicle_no'];
+  for (var i = 0; i < required.length; i++) {
+    var el = document.querySelector('[name="' + required[i] + '"]');
+    if (!el.value.trim()) { el.focus(); alert('Please fill in all required fields.'); return false; }
+  }
+  if (!document.getElementById('twIsEmpty').checked && !document.getElementById('twParty').value.trim()) {
+    document.getElementById('twParty').focus();
+    alert('Party / Customer is required unless this is an Empty Trip.');
+    return false;
+  }
+  return true;
+}
+
+function twUpdateReview() {
+  document.getElementById('rvDate').textContent = twVal('date') || '—';
+  document.getElementById('rvLr').textContent = twVal('lr_number') || '—';
+  document.getElementById('rvVehicle').textContent = twVal('vehicle_no') || '—';
+  document.getElementById('rvParty').textContent = document.getElementById('twIsEmpty').checked ? 'Empty Trip' : (twVal('party_name') || '—');
+  var from = twVal('from_loc'), to = twVal('to_loc');
+  document.getElementById('rvRoute').textContent = (from || to) ? ((from || '?') + ' → ' + (to || '?')) : '—';
+
+  var rateType = twVal('rate_type');
+  var freight = rateType === 'FIXED' ? twNum('twFixedAmt') : (twNum('twQuantity') * twNum('twRate'));
+  var additions = ['detention_charges','gps_cost','loading_charge','unloading_charge','police_charges','sim_tracking','union_charges','weight_charges','other_charges']
+    .reduce(function(s, k) { return s + twNum('tw_' + k); }, 0);
+  var deductions = ['brokerage','builty_commission','late_fees','material_damage','shortage_amount','tds','other_deductions']
+    .reduce(function(s, k) { return s + twNum('tw_' + k); }, 0);
+  var net = freight + additions - deductions;
+  var othersTotal = twOthersTotal();
+
+  document.getElementById('rvFreight').textContent = twMoney(freight);
+  document.getElementById('rvAdditions').textContent = '+ ' + twMoney(additions);
+  document.getElementById('rvDeductions').textContent = '- ' + twMoney(deductions);
+  document.getElementById('rvOthers').textContent = twMoney(othersTotal);
+  document.getElementById('rvNet').textContent = twMoney(net);
+
+  var isHired = document.getElementById('twTypeHidden').value === 'hired' && twVal('owner_name');
+  document.getElementById('rvOwnerCard').style.display = isHired ? '' : 'none';
+  if (isHired) {
+    var ownerFixed = twVal('owner_rate_type') === 'FIXED';
+    var ownerAmt = ownerFixed ? twNum('twOwnerFixed') : (twNum('twQuantity') * twNum('twOwnerRate'));
+    document.getElementById('rvOwnerBilled').textContent = twMoney(net);
+    document.getElementById('rvOwnerCost').textContent = twMoney(ownerAmt);
+    document.getElementById('rvProfit').textContent = twMoney(net - ownerAmt);
+  }
+}
+
+function twGoToStep(n) {
+  document.querySelectorAll('.tw-step').forEach(function(s) { s.classList.toggle('active', parseInt(s.dataset.step) === n); });
+  document.querySelectorAll('.tw-progress-step').forEach(function(s) {
+    var sn = parseInt(s.dataset.step);
+    s.classList.toggle('current', sn === n);
+    s.classList.toggle('done', sn < n);
+  });
+  document.querySelectorAll('.tw-progress-line').forEach(function(l) { l.classList.toggle('done', parseInt(l.dataset.line) < n); });
+  twStep = n;
+  document.getElementById('twBackBtn').textContent = n === 1 ? 'Cancel' : 'Back';
+  document.getElementById('twNextBtn').innerHTML = n === TOTAL_STEPS
+    ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/></svg> Save Trip'
+    : 'Next <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+  if (n === TOTAL_STEPS) twUpdateReview();
+  window.scrollTo(0, 0);
+}
+
+function twNextOrSubmit() {
+  if (twStep === 1 && !twValidateStep1()) return;
+  if (twStep < TOTAL_STEPS) { twGoToStep(twStep + 1); }
+  else { document.getElementById('twForm').submit(); }
+}
+function twPrevOrCancel() {
+  if (twStep === 1) { window.location.href = "{{ url_for('app_dashboard') }}"; }
+  else { twGoToStep(twStep - 1); }
+}
+
+// ---------- Draft (client-side only — localStorage, not a server-side trips row; see the
+// app_add_trip() docstring in app.py for why there's no real "draft" backend concept). ----------
+var TW_DRAFT_KEY = 'fleetapp_trip_draft_v1';
+function twSaveDraft() {
+  var data = {};
+  document.querySelectorAll('#twForm [name]').forEach(function(el) {
+    if (el.name === 'other_desc' || el.name === 'other_type' || el.name === 'other_rate' || el.name === 'other_qty' || el.name === 'other_vendor') return;
+    data[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  localStorage.setItem(TW_DRAFT_KEY, JSON.stringify(data));
+  var btn = document.getElementById('twSaveDraftBtn');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Saved ✓';
+  setTimeout(function() { btn.innerHTML = original; }, 1500);
+}
+function twRestoreDraftIfAny() {
+  var raw = localStorage.getItem(TW_DRAFT_KEY);
+  if (!raw) return;
+  try { var data = JSON.parse(raw); } catch (e) { return; }
+  if (!Object.keys(data).length) return;
+  if (!confirm('Restore your saved draft trip?')) { localStorage.removeItem(TW_DRAFT_KEY); return; }
+  Object.keys(data).forEach(function(name) {
+    var el = document.querySelector('#twForm [name="' + name + '"]');
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = data[name]; else el.value = data[name];
+  });
+  twSyncVehicleType();
+  twToggleRateType();
+  twToggleOwnerRateType();
+  twToggleEmpty();
+}
+
+document.getElementById('twForm').addEventListener('submit', function() { localStorage.removeItem(TW_DRAFT_KEY); });
+
+twSyncVehicleType();
+twToggleRateType();
+twToggleOwnerRateType();
+{% if t.get('is_empty') %}twToggleEmpty();{% endif %}
+{% if not t %}twRestoreDraftIfAny();{% endif %}
+{% if error %}twGoToStep(1);{% endif %}
+</script>
+</body>
+</html>
