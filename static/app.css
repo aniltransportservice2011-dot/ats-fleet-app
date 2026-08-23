@@ -27,8 +27,20 @@ body.app-body {
   background: var(--a-paper); color: var(--a-ink);
   padding-bottom: 84px; /* clears the fixed bottom bar */
   -webkit-tap-highlight-color: transparent;
+  /* Floor the page height to the screen even on short-content pages (e.g. Business Overview's
+     4-card list) — without this, a short page never becomes scrollable, so mobile browsers keep
+     their own address bar expanded there while a taller page (that the user has scrolled) has
+     already auto-collapsed it; that difference in browser chrome height is what was making
+     .a-bottom-nav (position:fixed) visibly sit at a different height from one screen to the
+     next. min-height, not height, so it's a floor only — never shrinks pages that are already
+     taller than the screen. */
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 a { color: inherit; text-decoration: none; }
+/* Applied while the FAB / account dropdown / More speed-dial is open — see lockPageScroll() in
+   base_app.html. */
+body.a-scroll-lock { overflow: hidden; }
 .a-wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
 
 /* ---------- Top bar ---------- */
@@ -46,7 +58,32 @@ a { color: inherit; text-decoration: none; }
 .a-bell { position: relative; color: var(--a-ink); }
 .a-bell svg { width: 22px; height: 22px; }
 .a-bell .a-badge { position: absolute; top: -5px; right: -6px; background: var(--a-red); color: #fff; font-size: 0.6rem; font-weight: 800; min-width: 15px; height: 15px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
-.a-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--a-ink); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 700; }
+.a-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--a-ink); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 700; border: none; padding: 0; font-family: inherit; cursor: pointer; flex-shrink: 0; }
+
+/* ---------- Avatar → account dropdown ---------- */
+.a-avatar-wrap { position: relative; }
+.acct-backdrop { display: none; position: fixed; inset: 0; z-index: 45; background: rgba(20,24,40,0.28); }
+.acct-backdrop.open { display: block; }
+.acct-menu {
+  position: absolute; top: calc(100% + 12px); right: 0; width: 262px; z-index: 50;
+  background: var(--a-white); border-radius: 16px; box-shadow: 0 10px 32px rgba(20,24,40,.18);
+  padding: 8px; opacity: 0; visibility: hidden; transform: translateY(-8px) scale(0.97); transform-origin: top right;
+  transition: opacity .16s ease, transform .16s ease, visibility .16s;
+}
+.acct-menu.open { opacity: 1; visibility: visible; transform: translateY(0) scale(1); }
+.acct-menu-head { display: flex; align-items: center; gap: 11px; padding: 10px 10px 14px; border-bottom: 1px solid var(--a-line); margin-bottom: 6px; }
+.acct-menu-avatar { width: 42px; height: 42px; font-size: 0.9rem; cursor: default; }
+.acct-menu-who { min-width: 0; }
+.acct-menu-name { font-weight: 800; font-size: 0.92rem; color: var(--a-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-menu-role { font-size: 0.74rem; color: var(--a-accent); font-weight: 700; margin-top: 1px; }
+.acct-menu-email { font-size: 0.72rem; color: var(--a-steel); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-menu-item { display: flex; align-items: center; gap: 11px; padding: 10px 10px; border-radius: 10px; font-size: 0.85rem; font-weight: 600; color: var(--a-ink); }
+.acct-menu-item:active { background: var(--a-paper); }
+.acct-menu-item svg { width: 18px; height: 18px; color: var(--a-steel); flex-shrink: 0; }
+.acct-menu-ext { margin-left: auto; color: var(--a-steel); font-size: 0.8rem; }
+.acct-menu-sep { height: 1px; background: var(--a-line); margin: 6px 4px; }
+.acct-menu-logout { color: var(--a-red); }
+.acct-menu-logout svg { color: var(--a-red); }
 
 /* ---------- Greeting + date ---------- */
 .a-greet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 18px 0 16px; flex-wrap: wrap; }
@@ -121,7 +158,7 @@ a { color: inherit; text-decoration: none; }
   padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
   box-shadow: 0 -2px 12px rgba(20,33,61,0.06);
 }
-.a-bn-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; text-decoration: none; color: var(--a-steel); font-size: 0.66rem; font-weight: 600; background: none; border: none; font-family: inherit; }
+.a-bn-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; text-decoration: none; color: var(--a-steel); font-size: 0.66rem; font-weight: 600; background: none; border: none; font-family: inherit; cursor: pointer; }
 .a-bn-item svg { width: 21px; height: 21px; }
 .a-bn-item.active { color: var(--a-accent); }
 .a-bn-fab-wrap { flex: 1; display: flex; justify-content: center; position: relative; }
@@ -145,9 +182,11 @@ a { color: inherit; text-decoration: none; }
 /* Smaller circles + tighter labels + wider spread than the first pass — the previous sizing
    put "Add Maintenance" close enough to its neighbor to visually overlap on a real ~375px
    screen. Bottom pair sits lower/further out, top pair sits higher/further in, same arc shape
-   as the reference design, just with real breathing room between each stop. */
-.fab-option[data-pos="1"] { transform: translate(calc(-50% - 108px), -22px) scale(0.7); }
-.fab-menu.open .fab-option[data-pos="1"] { transform: translate(calc(-50% - 108px), -22px) scale(1); transition-delay: 0.02s; }
+   as the reference design, just with real breathing room between each stop. Only "Add Trip" and
+   "Add Maintenance" are icon-on-the-right/label-on-the-left (row-reverse); "Add Expense" and
+   "Add Vehicle" stay icon-on-the-left/label-on-the-right, unchanged from before. */
+.fab-option[data-pos="1"] { flex-direction: row-reverse; transform: translate(calc(-50% - 108px), -22px) scale(0.7); }
+.fab-menu.open .fab-option[data-pos="1"] { flex-direction: row-reverse; transform: translate(calc(-50% - 108px), -22px) scale(1); transition-delay: 0.02s; }
 .fab-option[data-pos="2"] { flex-direction: row-reverse; transform: translate(calc(-50% - 86px), -100px) scale(0.7); }
 .fab-menu.open .fab-option[data-pos="2"] { flex-direction: row-reverse; transform: translate(calc(-50% - 86px), -100px) scale(1); transition-delay: 0.06s; }
 .fab-option[data-pos="3"] { transform: translate(calc(-50% + 86px), -100px) scale(0.7); }
@@ -159,6 +198,46 @@ a { color: inherit; text-decoration: none; }
   background: var(--a-white); box-shadow: 0 4px 12px rgba(20,33,61,0.18); flex-shrink: 0; }
 .fab-option-ic svg { width: 16px; height: 16px; }
 .fab-option-label { background: var(--a-ink); color: #fff; font-size: 0.64rem; font-weight: 700; padding: 5px 9px;
+  border-radius: 999px; white-space: nowrap; box-shadow: 0 2px 8px rgba(20,33,61,0.18); }
+
+/* ---------- "More" speed-dial (opened from the bottom-nav More button) ----------------------
+   Deliberately built exactly like the FAB speed-dial above (same .fab-option/-ic/-label sizing
+   and transition style, copied into a .more-option/-ic/-label set below) rather than a bottom
+   sheet — the difference is only the direction: the FAB fans left+right from the nav's center,
+   this stacks straight up in a vertical line because the More button sits at the right edge of
+   the nav and fanning sideways would run options off the screen. Nested inside .a-bottom-nav, same reasoning as
+   .fab-backdrop — a backdrop placed outside the nav's own stacking context would paint over the
+   menu instead of behind it. z-index range (70+) kept clear of the FAB's (60-62) so the two can
+   never visually collide even though only one is ever open at once (see toggleMoreSheet()/
+   toggleFabMenu() mutual-close in base_app.html). */
+.more-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.35); z-index: 70; opacity: 0; pointer-events: none; transition: opacity 0.18s; }
+.more-backdrop.open { opacity: 1; pointer-events: auto; }
+
+.a-bn-more-wrap { flex: 1; display: flex; justify-content: center; position: relative; }
+.more-menu { position: absolute; right: 6px; bottom: 30px; z-index: 71; pointer-events: none; }
+.more-option {
+  position: absolute; bottom: 0; right: 0; display: flex; flex-direction: row-reverse; align-items: center; gap: 5px;
+  opacity: 0; transform: translate(0, 10px) scale(0.7); transition: opacity 0.18s, transform 0.18s; pointer-events: none;
+}
+.more-menu.open .more-option { opacity: 1; pointer-events: auto; }
+/* Straight vertical stack, bottom-to-top, directly in line with the More button — no sideways
+   drift (x stays 0 for every stop), same "each stop gets a bit of stagger delay" feel as the
+   FAB's own arc. */
+.more-option[data-pos="1"] { transform: translate(0, -58px) scale(0.7); }
+.more-menu.open .more-option[data-pos="1"] { transform: translate(0, -58px) scale(1); transition-delay: 0.02s; }
+.more-option[data-pos="2"] { transform: translate(0, -116px) scale(0.7); }
+.more-menu.open .more-option[data-pos="2"] { transform: translate(0, -116px) scale(1); transition-delay: 0.05s; }
+.more-option[data-pos="3"] { transform: translate(0, -174px) scale(0.7); }
+.more-menu.open .more-option[data-pos="3"] { transform: translate(0, -174px) scale(1); transition-delay: 0.08s; }
+.more-option[data-pos="4"] { transform: translate(0, -232px) scale(0.7); }
+.more-menu.open .more-option[data-pos="4"] { transform: translate(0, -232px) scale(1); transition-delay: 0.11s; }
+.more-option[data-pos="5"] { transform: translate(0, -290px) scale(0.7); }
+.more-menu.open .more-option[data-pos="5"] { transform: translate(0, -290px) scale(1); transition-delay: 0.14s; }
+
+.more-option-ic { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--a-white); box-shadow: 0 4px 12px rgba(20,33,61,0.18); flex-shrink: 0; }
+.more-option-ic svg { width: 16px; height: 16px; }
+.more-option-label { background: var(--a-ink); color: #fff; font-size: 0.64rem; font-weight: 700; padding: 5px 9px;
   border-radius: 999px; white-space: nowrap; box-shadow: 0 2px 8px rgba(20,33,61,0.18); }
 
 @media (min-width: 600px) {
@@ -467,3 +546,248 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; }
   text-decoration: none; box-shadow: 0 3px 10px rgba(20,24,40,.12); }
 .vh-addbtn:active { background: var(--a-accent); color: #fff; }
 .vh-addbtn svg { width: 17px; height: 17px; }
+
+/* ==========================================================================
+   Route Analytics — Best Routes tab (templates/app/analytics.html). Own
+   prefix (ra-), no extra side padding (relies on .a-wrap's 16px, same as
+   every other app page).
+   ========================================================================== */
+.ra-head { padding: 16px 0 4px; }
+.ra-head h1 { font-size: 1.35rem; margin: 0; }
+.ra-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
+
+.ra-tabstrip { display: flex; gap: 0; margin: 14px 0 12px; border-bottom: 1px solid var(--a-line); overflow-x: auto; }
+.ra-tab { flex-shrink: 0; text-align: center; padding: 0 16px 10px; color: var(--a-steel); font-size: 0.8rem; font-weight: 700; border-bottom: 2px solid transparent; white-space: nowrap; }
+.ra-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
+.ra-tab.bridge { display: inline-flex; align-items: center; gap: 4px; }
+.ra-tab.bridge svg { width: 11px; height: 11px; }
+
+.ra-period-bar { display: flex; align-items: center; gap: 7px; padding: 0 0 12px; color: var(--a-steel); font-size: 0.78rem; font-weight: 600; }
+.ra-period-bar svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+.ra-vtype-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.ra-vtype-pill { flex: 1; text-align: center; padding: 8px; border-radius: 10px; background: var(--a-white);
+  border: 1px solid var(--a-line); font-size: 0.78rem; font-weight: 700; color: var(--a-steel); }
+.ra-vtype-pill.active { background: var(--a-accent); color: #fff; border-color: var(--a-accent); }
+
+.ra-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+.ra-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; }
+.ra-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
+.ra-kpi-val { font-size: 1.2rem; font-weight: 800; margin-top: 3px; }
+.ra-kpi-sub { font-size: 0.64rem; color: var(--a-steel); margin-top: 2px; }
+.ra-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.9rem; }
+
+.ra-panel { background: var(--a-white); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+.ra-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.ra-panel-head h2 { font-size: 0.92rem; margin: 0; font-weight: 800; }
+
+.ra-route-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--a-line); }
+.ra-route-row:last-child { border-bottom: none; padding-bottom: 0; }
+.ra-route-row:first-child { padding-top: 0; }
+.ra-rank { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 800; color: #fff; flex-shrink: 0; }
+.ra-rank.r1 { background: #eda100; }
+.ra-rank.r2 { background: #94a3b8; }
+.ra-rank.r3 { background: #c05621; }
+.ra-rank.rn { background: var(--a-line); color: var(--a-steel); }
+.ra-route-body { flex: 1; min-width: 0; }
+.ra-route-name { font-weight: 700; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-route-meta { font-size: 0.7rem; color: var(--a-steel); margin-top: 1px; }
+.ra-route-right { text-align: right; flex-shrink: 0; }
+.ra-route-margin { font-weight: 800; font-size: 0.84rem; color: var(--a-green); }
+.ra-route-revenue { font-weight: 800; font-size: 0.84rem; }
+
+.ra-bar-row { margin-bottom: 12px; }
+.ra-bar-row:last-child { margin-bottom: 0; }
+.ra-bar-top { display: flex; justify-content: space-between; font-size: 0.76rem; margin-bottom: 5px; }
+.ra-bar-name { font-weight: 600; color: var(--a-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 65%; }
+.ra-bar-val { font-weight: 700; color: var(--a-ink); }
+.ra-bar-track { background: var(--a-paper); border-radius: 5px; height: 8px; overflow: hidden; }
+.ra-bar-fill { height: 100%; border-radius: 5px; background: var(--a-green); }
+
+.ra-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ra-stat-card { background: var(--a-white); border-radius: 14px; padding: 12px; }
+.ra-stat-lbl { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; display: flex; align-items: center; gap: 5px; }
+.ra-stat-lbl svg { width: 13px; height: 13px; flex-shrink: 0; }
+.ra-stat-val { font-size: 0.86rem; font-weight: 800; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ra-stat-sub { font-size: 0.78rem; font-weight: 700; color: var(--a-green); margin-top: 2px; }
+.ra-empty { text-align: center; color: var(--a-steel); font-size: 0.84rem; padding: 24px 0; }
+
+/* ==========================================================================
+   Analysis hub (templates/app/analysis.html) — own prefix (an-).
+   ========================================================================== */
+.an-head { padding: 16px 0 4px; }
+.an-head h1 { font-size: 1.35rem; margin: 0; }
+.an-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
+.an-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.an-card { display: flex; align-items: center; gap: 14px; background: var(--a-white); border-radius: 16px; padding: 16px;
+  text-decoration: none; color: var(--a-ink); }
+.an-card-icon { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.an-card-icon svg { width: 22px; height: 22px; }
+.an-card-body { flex: 1; min-width: 0; }
+.an-card-title { font-weight: 800; font-size: 0.92rem; display: flex; align-items: center; gap: 6px; }
+.an-card-title svg { width: 12px; height: 12px; color: var(--a-steel); flex-shrink: 0; }
+.an-card-sub { font-size: 0.76rem; color: var(--a-steel); margin-top: 2px; }
+.an-card-chevron { color: var(--a-steel); flex-shrink: 0; }
+
+/* ==========================================================================
+   Cold-open splash screen (templates/app/_splash.html) — shown once per
+   session via sessionStorage, see the script in that partial.
+   ========================================================================== */
+.app-splash {
+  position: fixed; inset: 0; z-index: 999; background: var(--a-accent);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  opacity: 1; transition: opacity 0.35s ease;
+}
+.app-splash.app-splash-out { opacity: 0; pointer-events: none; }
+.app-splash-badge {
+  width: 88px; height: 88px; border-radius: 22px; background: rgba(255,255,255,0.16);
+  display: flex; align-items: center; justify-content: center;
+  animation: appSplashPop 0.5s cubic-bezier(.34,1.56,.64,1) both;
+}
+.app-splash-badge svg { width: 44px; height: 44px; }
+.app-splash-name { color: #fff; font-weight: 800; font-size: 1.15rem; margin-top: 18px;
+  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  animation: appSplashFadeUp 0.5s ease 0.15s both; }
+.app-splash-tag { color: rgba(255,255,255,0.8); font-size: 0.8rem; margin-top: 4px;
+  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  animation: appSplashFadeUp 0.5s ease 0.25s both; }
+@keyframes appSplashPop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes appSplashFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ==========================================================================
+   Ledger (templates/app/ledger.html) — own prefix (lg-). No extra side
+   padding (relies on .a-wrap's 16px, same as every other app page).
+   ========================================================================== */
+.lg-head { padding: 16px 0 4px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.lg-head h1 { font-size: 1.35rem; margin: 0; }
+.lg-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
+.lg-head-actions { display: flex; gap: 8px; flex-shrink: 0; margin-top: 4px; }
+.lg-head-btn { width: 36px; height: 36px; border-radius: 10px; background: var(--a-white); border: 1px solid var(--a-line);
+  display: flex; align-items: center; justify-content: center; color: var(--a-ink); }
+.lg-head-btn svg { width: 17px; height: 17px; }
+
+.lg-search { display: flex; align-items: center; gap: 8px; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 12px; padding: 10px 12px; margin: 14px 0; }
+.lg-search svg { color: var(--a-steel); flex-shrink: 0; width: 17px; height: 17px; }
+.lg-search input { border: none; outline: none; background: none; font-size: 0.86rem; font-family: inherit; color: var(--a-ink); flex: 1; min-width: 0; }
+
+.lg-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.lg-kpi-card { background: var(--a-white); border-radius: 16px; padding: 13px; }
+.lg-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; }
+.lg-kpi-icon { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.lg-kpi-icon svg { width: 15px; height: 15px; }
+.lg-kpi-lbl { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; margin-top: 8px; }
+.lg-kpi-val { font-size: 1.1rem; font-weight: 800; margin-top: 2px; }
+.lg-kpi-sub { font-size: 0.64rem; color: var(--a-steel); margin-top: 1px; }
+/* White center, orange boundary — same tier as the rest of the app's cards, not the navy
+   (read as "blue") fill this used before. */
+.lg-net-card { background: var(--a-white); border: 1.5px solid var(--a-accent); border-radius: 16px; padding: 14px 16px; margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between; }
+.lg-net-lbl { color: var(--a-steel); font-size: 0.76rem; font-weight: 600; }
+.lg-net-val { color: var(--a-accent); font-size: 1.25rem; font-weight: 800; margin-top: 2px; }
+.lg-net-sub { color: var(--a-steel); font-size: 0.66rem; text-align: right; }
+
+.lg-tabstrip { display: flex; gap: 0; margin-bottom: 10px; border-bottom: 1px solid var(--a-line); }
+.lg-tab { flex: 1; text-align: center; padding: 0 0 10px; color: var(--a-steel); font-size: 0.8rem; font-weight: 700; border-bottom: 2px solid transparent; }
+.lg-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
+
+.lg-showing { font-size: 0.74rem; color: var(--a-steel); margin: 4px 0 10px; }
+
+.lg-row { display: flex; align-items: center; gap: 12px; background: var(--a-white); border-radius: 14px;
+  padding: 12px; margin-bottom: 10px; text-decoration: none; color: var(--a-ink); }
+.lg-avatar { width: 40px; height: 40px; border-radius: 11px; background: #fdecea; color: var(--a-accent);
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.78rem; flex-shrink: 0; }
+.lg-row-body { flex: 1; min-width: 0; }
+.lg-row-name { font-weight: 800; font-size: 0.84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-row-meta { font-size: 0.72rem; color: var(--a-steel); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-row-gstin { font-size: 0.68rem; color: var(--a-steel); margin-top: 1px; }
+.lg-row-right { text-align: right; flex-shrink: 0; }
+.lg-row-amt { font-weight: 800; font-size: 0.86rem; }
+.lg-row-amt.recv { color: var(--a-green); }
+.lg-row-amt.pay { color: var(--a-red); }
+.lg-row-amt.bal { color: var(--a-steel); }
+.lg-row-tag { font-size: 0.68rem; font-weight: 700; margin-top: 1px; }
+.lg-row-tag.recv { color: var(--a-green); }
+.lg-row-tag.pay { color: var(--a-red); }
+.lg-row-tag.bal { color: var(--a-steel); }
+.lg-row-status { display: inline-block; font-size: 0.62rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-top: 5px; }
+.lg-row-status.Active { background: #e8f5ee; color: var(--a-green); }
+.lg-row-status.Inactive { background: #eef0f4; color: var(--a-steel); }
+.lg-empty { text-align: center; color: var(--a-steel); font-size: 0.86rem; padding: 30px 0; }
+
+/* ==========================================================================
+   Party/Vendor Ledger detail (templates/app/ledger_detail.html) — own
+   prefix (ld-). No extra side padding (relies on .a-wrap's 16px).
+   ========================================================================== */
+.ld-head { padding: 16px 0 4px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.ld-head h1 { font-size: 1.1rem; margin: 0; line-height: 1.25; }
+.ld-head .sub { color: var(--a-steel); font-size: 0.78rem; margin-top: 2px; }
+.ld-addpay-btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; background: var(--a-white);
+  color: var(--a-accent); border: 1.5px solid var(--a-accent); border-radius: 999px; padding: 9px 14px;
+  font-size: 0.76rem; font-weight: 700; white-space: nowrap; }
+.ld-addpay-btn svg { width: 14px; height: 14px; }
+
+.ld-card { background: var(--a-white); border-radius: 16px; padding: 16px; margin: 14px 0; }
+.ld-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.ld-card-head h2 { font-size: 0.88rem; margin: 0; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+.ld-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; }
+.ld-info-item { display: flex; align-items: flex-start; gap: 9px; }
+.ld-info-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--a-paper); color: var(--a-steel);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ld-info-icon svg { width: 14px; height: 14px; }
+.ld-info-label { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; }
+.ld-info-val { font-size: 0.8rem; font-weight: 700; margin-top: 1px; word-break: break-word; }
+.ld-notes-body { font-size: 0.82rem; color: var(--a-ink); line-height: 1.5; }
+
+/* ---------- Profile page ---------- */
+.pr-hero { text-align: center; padding: 22px 16px 6px; }
+.pr-hero-avatar { width: 72px; height: 72px; font-size: 1.5rem; margin: 0 auto 12px; cursor: default; }
+.pr-hero-name { font-size: 1.08rem; font-weight: 800; color: var(--a-ink); }
+.pr-hero-role { font-size: 0.8rem; font-weight: 700; color: var(--a-accent); margin-top: 2px; }
+.pr-hero-email { font-size: 0.78rem; color: var(--a-steel); margin-top: 2px; }
+.pr-linkrow { padding: 12px 6px; }
+.pr-linkrow svg { width: 18px; height: 18px; }
+.pr-linkrow + .pr-linkrow { border-top: 1px solid var(--a-line); }
+
+.ld-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ld-kpi-card { background: var(--a-white); border-radius: 16px; padding: 13px; }
+.ld-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; }
+.ld-kpi-icon { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ld-kpi-icon svg { width: 15px; height: 15px; }
+.ld-kpi-lbl { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; }
+.ld-kpi-val { font-size: 1.05rem; font-weight: 800; margin-top: 3px; }
+.ld-kpi-sub { font-size: 0.64rem; color: var(--a-steel); margin-top: 1px; }
+
+.ld-tabstrip { display: flex; gap: 0; margin: 16px 0 12px; border-bottom: 1px solid var(--a-line); }
+.ld-tab { flex: 1; text-align: center; padding: 0 0 10px; color: var(--a-steel); font-size: 0.78rem; font-weight: 700; border-bottom: 2px solid transparent; }
+.ld-tab.active { color: var(--a-accent); border-bottom-color: var(--a-accent); }
+
+.ld-txn-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ld-txn-head h2 { font-size: 0.92rem; margin: 0; font-weight: 800; }
+.ld-txn-count { background: var(--a-paper); color: var(--a-steel); font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+
+.ld-txn-card { display: block; background: var(--a-white); border-radius: 14px; padding: 12px; margin-bottom: 9px; text-decoration: none; color: var(--a-ink); }
+.ld-txn-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.ld-txn-date { font-size: 0.7rem; color: var(--a-steel); font-weight: 600; }
+.ld-txn-kind { font-size: 0.62rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.ld-txn-kind.k-bill { background: #eaf1fb; color: var(--a-blue); }
+.ld-txn-kind.k-pay { background: #e8f5ee; color: var(--a-green); }
+.ld-txn-kind.k-exp { background: #efeaff; color: var(--a-purple); }
+.ld-txn-kind.k-ob { background: var(--a-paper); color: var(--a-steel); }
+.ld-txn-detail { font-size: 0.82rem; font-weight: 700; line-height: 1.35; }
+.ld-txn-ref { font-size: 0.68rem; color: var(--a-steel); margin-top: 2px; }
+.ld-txn-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--a-line); }
+.ld-txn-amts { display: flex; gap: 14px; font-size: 0.74rem; }
+.ld-txn-debit { color: var(--a-green); font-weight: 700; }
+.ld-txn-credit { color: var(--a-red); font-weight: 700; }
+.ld-txn-balance { font-size: 0.78rem; font-weight: 800; }
+.ld-txn-balance.dr { color: var(--a-green); }
+.ld-txn-balance.cr { color: var(--a-red); }
+
+.ld-summary { background: #fff3e8; border: 1px solid rgba(192,86,33,0.2); border-radius: 16px; padding: 16px; margin: 14px 0; }
+.ld-summary-head { display: flex; align-items: center; gap: 8px; color: var(--a-accent-dark); font-weight: 800; font-size: 0.86rem; margin-bottom: 12px; }
+.ld-summary-head svg { width: 16px; height: 16px; }
+.ld-summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.ld-summary-lbl { font-size: 0.7rem; color: var(--a-steel); font-weight: 600; }
+.ld-summary-val { font-size: 0.9rem; font-weight: 800; margin-top: 2px; }

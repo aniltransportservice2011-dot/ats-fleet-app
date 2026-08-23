@@ -1,0 +1,125 @@
+{% extends "app/base_app.html" %}
+{% block title %}Ledger — {{ company_name }}{% endblock %}
+{% block content %}
+
+<div class="lg-head">
+  <div>
+    <h1>Ledger</h1>
+    <div class="sub">Party &amp; Vendor Ledger</div>
+  </div>
+</div>
+
+<form method="get" class="lg-search">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  <input type="text" name="search" value="{{ f_search }}" placeholder="Search party or vendor name…" onchange="this.form.submit()">
+  {% if f_role %}<input type="hidden" name="role" value="{{ f_role }}">{% endif %}
+</form>
+
+<div class="lg-kpi-grid">
+  <div class="lg-kpi-card">
+    <div class="lg-kpi-top">
+      <div><div class="lg-kpi-lbl">Total Parties</div><div class="lg-kpi-val">{{ total_parties }}</div><div class="lg-kpi-sub">Active {{ active_parties }}</div></div>
+      <div class="lg-kpi-icon" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+    </div>
+  </div>
+  <div class="lg-kpi-card">
+    <div class="lg-kpi-top">
+      <div><div class="lg-kpi-lbl">Total Vendors</div><div class="lg-kpi-val">{{ total_vendors }}</div><div class="lg-kpi-sub">Active {{ active_vendors }}</div></div>
+      <div class="lg-kpi-icon" style="background:#e8f5ee;color:var(--a-green);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1m-6 4h1m4 0h1m-6 4h1m4 0h1"/></svg></div>
+    </div>
+  </div>
+  <div class="lg-kpi-card">
+    <div class="lg-kpi-top">
+      <div><div class="lg-kpi-lbl">Total Receivable</div><div class="lg-kpi-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(total_receivable) }}</div><div class="lg-kpi-sub">From {{ receivable_from }} parties</div></div>
+      <div class="lg-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">₹</div>
+    </div>
+  </div>
+  <div class="lg-kpi-card">
+    <div class="lg-kpi-top">
+      <div><div class="lg-kpi-lbl">Total Payable</div><div class="lg-kpi-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(total_payable) }}</div><div class="lg-kpi-sub">To {{ payable_to }} vendors</div></div>
+      <div class="lg-kpi-icon" style="background:#fdecea;color:var(--a-red);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></div>
+    </div>
+  </div>
+</div>
+
+<div class="lg-net-card">
+  <div><div class="lg-net-lbl">Net Balance</div><div class="lg-net-val">₹{{ '{:,.0f}'.format(net_balance) }}</div></div>
+  <div class="lg-net-sub">Overall<br>Position</div>
+</div>
+
+<div class="lg-tabstrip">
+  <a class="lg-tab {{ 'active' if not f_role }}" href="{{ url_for('app_ledger', search=f_search) }}">All</a>
+  <a class="lg-tab {{ 'active' if f_role=='Party' }}" href="{{ url_for('app_ledger', role='Party', search=f_search) }}">Parties</a>
+  <a class="lg-tab {{ 'active' if f_role=='Vendor' }}" href="{{ url_for('app_ledger', role='Vendor', search=f_search) }}">Vendors</a>
+</div>
+
+<div class="lg-showing">Showing {{ rows|length }} of {{ total_count }} entries</div>
+
+<div id="lg-list">
+{% for r in rows %}
+<a href="{{ url_for('app_party_ledger', party_id=r.id) if r.role=='Party' else url_for('app_vendor_ledger', vendor_id=r.id) }}" class="lg-row">
+  <div class="lg-avatar">{{ r.initials }}</div>
+  <div class="lg-row-body">
+    <div class="lg-row-name">{{ r.name }}</div>
+    <div class="lg-row-meta">{{ r.role }} · {{ r.group or '—' }}</div>
+    {% if r.gstin %}<div class="lg-row-gstin">GSTIN: {{ r.gstin }}</div>{% endif %}
+  </div>
+  <div class="lg-row-right">
+    {% if r.balance > 0 %}
+      <div class="lg-row-amt recv">₹{{ '{:,.0f}'.format(r.balance) }}</div>
+      <div class="lg-row-tag recv">Receivable</div>
+    {% elif r.balance < 0 %}
+      <div class="lg-row-amt pay">-₹{{ '{:,.0f}'.format(-r.balance) }}</div>
+      <div class="lg-row-tag pay">Payable</div>
+    {% else %}
+      <div class="lg-row-amt bal">₹0</div>
+      <div class="lg-row-tag bal">Balanced</div>
+    {% endif %}
+    <span class="lg-row-status {{ r.status }}">{{ r.status }}</span>
+  </div>
+</a>
+{% else %}
+<div class="lg-empty">No parties or vendors found{% if f_search %} for "{{ f_search }}"{% endif %}.</div>
+{% endfor %}
+</div>
+
+<div id="lg-load-area">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_ledger', role=f_role, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} entr{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:16px;"></div>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// Same in-place "Load More" as templates/app/vehicles.html / trips.html.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('lg-list').innerHTML = doc.getElementById('lg-list').innerHTML;
+      document.getElementById('lg-load-area').innerHTML = doc.getElementById('lg-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+</script>
+{% endblock %}
