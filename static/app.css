@@ -485,11 +485,19 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .mo-period-bar svg { width: 15px; height: 15px; }
 
 .mo-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 0; }
-.mo-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; }
-.mo-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; }
+/* min-width:0 on the grid item, its flex child, and word-break on the value itself — without
+   this, a grid item defaults to never shrinking below its content's own intrinsic width, so a
+   wide KPI number (₹11,145,357, ₹-190,654, ...) can force the whole 2-column grid wider than the
+   screen. That horizontal overflow is what was making the fixed bottom nav visibly drift/"move"
+   on real phones (worst on iOS Safari, which allows the page to pan sideways when anything
+   overflows) — the same root-cause class as the .vam-field/.tw-field date-field fix earlier;
+   this is the KPI-card equivalent of it, applied everywhere this card is used app-wide. */
+.mo-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; min-width: 0; }
+.mo-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; min-width: 0; }
+.mo-kpi-top > div:first-child { min-width: 0; flex: 1; }
 .mo-kpi-icon { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; flex-shrink: 0; }
 .mo-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; margin-top: 8px; }
-.mo-kpi-val { font-size: 1.3rem; font-weight: 800; margin-top: 2px; }
+.mo-kpi-val { font-size: 1.3rem; font-weight: 800; margin-top: 2px; overflow-wrap: break-word; }
 .mo-kpi-sub { font-size: 0.68rem; color: var(--a-steel); margin-top: 2px; }
 
 .mo-panel { background: var(--a-white); border-radius: 16px; padding: 16px; margin: 0 0 14px; }
@@ -500,10 +508,16 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 
 .mo-donut-wrap { display: flex; align-items: center; gap: 16px; }
 .mo-donut-wrap svg { flex-shrink: 0; }
-.mo-band-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+/* min-width:0 — this table is the flex row's second (non-shrink-exempt) child; without it, a
+   long legend label (e.g. Fleet Utilization's real vehicle body_type names, unlike the fixed
+   short "Excellent/Good/Poor..." labels this table was first built for) can force the whole row
+   — and the page — wider than the screen, which is what makes the fixed bottom nav visibly
+   drift on real phones. .mo-band-name now truncates with an ellipsis instead. */
+.mo-band-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 0.76rem; }
 .mo-band-table td { padding: 4px 0; }
-.mo-band-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 7px; }
-.mo-band-name { color: var(--a-ink); white-space: nowrap; }
+.mo-band-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 7px; flex-shrink: 0; }
+.mo-band-name { color: var(--a-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: inline-block; max-width: 92px; vertical-align: middle; }
 .mo-band-track { background: var(--a-paper); border-radius: 4px; height: 6px; width: 100%; overflow: hidden; }
 .mo-band-fill { height: 100%; border-radius: 4px; }
 .mo-band-count { font-weight: 700; text-align: right; padding-left: 8px; }
@@ -523,9 +537,16 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .mo-empty-note { text-align: center; color: var(--a-steel); font-size: 0.82rem; padding: 10px 0; }
 
 .mo-trend-bars { display: flex; align-items: flex-end; gap: 8px; height: 110px; padding-top: 6px; }
-.mo-trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
+/* min-width:0 — Maintenance Overview's original 6-column trend only ever had short 3-letter
+   month labels ("Jan","Feb"...), narrow enough this never came up; a longer trend (e.g. Fleet
+   Utilization's 12-week "7 Jan"/"25 Mar" labels, or Business Performance's 2-bars-per-column
+   Revenue vs Expenses) can force each column wider than its 1-of-N flex share on a narrow phone
+   without this, pushing the whole chart — and the page — past the screen width, which is what
+   makes the fixed bottom nav visibly drift on real phones. .mo-trend-label now truncates with an
+   ellipsis instead of forcing its column wider. */
+.mo-trend-col { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
 .mo-trend-bar { width: 100%; max-width: 28px; background: var(--a-accent); border-radius: 5px 5px 2px 2px; min-height: 3px; }
-.mo-trend-label { font-size: 0.64rem; color: var(--a-steel); font-weight: 600; }
+.mo-trend-label { font-size: 0.64rem; color: var(--a-steel); font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Shared search-box + filter-icon row (prefix a-search-*) ----------
    Search box (whatever that page's own search already covers) + a filter icon that opens a
@@ -920,9 +941,13 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .ra-vtype-pill.active { background: var(--a-accent); color: #fff; border-color: var(--a-accent); }
 
 .ra-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
-.ra-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; }
+/* min-width:0 (grid item + its own first flex child) + word-break on the value — same fix as
+   .mo-kpi-card, same reason: a wide KPI number must never force this 2-column grid past the
+   screen width, which is what was making the fixed bottom nav visibly drift on real phones. */
+.ra-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; min-width: 0; }
+.ra-kpi-card > div:first-child { min-width: 0; flex: 1; }
 .ra-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
-.ra-kpi-val { font-size: 1.2rem; font-weight: 800; margin-top: 3px; }
+.ra-kpi-val { font-size: 1.2rem; font-weight: 800; margin-top: 3px; overflow-wrap: break-word; }
 .ra-kpi-sub { font-size: 0.64rem; color: var(--a-steel); margin-top: 2px; }
 .ra-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.9rem; }
 
@@ -955,7 +980,11 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .ra-bar-fill { height: 100%; border-radius: 5px; background: var(--a-green); }
 
 .ra-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.ra-stat-card { background: var(--a-white); border-radius: 14px; padding: 12px; }
+/* min-width:0 — .ra-stat-val below already has ellipsis truncation, but a grid item never
+   shrinks below its content's intrinsic width without this, so that truncation never actually
+   engaged for a long route name (e.g. "ROURKELA → PARADIP"); the card just grew past the screen
+   instead, which is what was making the fixed bottom nav visibly drift on real phones. */
+.ra-stat-card { background: var(--a-white); border-radius: 14px; padding: 12px; min-width: 0; }
 .ra-stat-lbl { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; display: flex; align-items: center; gap: 5px; }
 .ra-stat-lbl svg { width: 13px; height: 13px; flex-shrink: 0; }
 .ra-stat-val { font-size: 0.86rem; font-weight: 800; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1100,12 +1129,15 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .pr-linkrow + .pr-linkrow { border-top: 1px solid var(--a-line); }
 
 .ld-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.ld-kpi-card { background: var(--a-white); border-radius: 16px; padding: 13px; }
-.ld-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; }
+/* min-width:0 (grid item + its own first flex child) + word-break on the value — same fix as
+   .mo-kpi-card/.ra-kpi-card, same reason. */
+.ld-kpi-card { background: var(--a-white); border-radius: 16px; padding: 13px; min-width: 0; }
+.ld-kpi-top { display: flex; align-items: flex-start; justify-content: space-between; min-width: 0; }
+.ld-kpi-top > div:first-child { min-width: 0; flex: 1; }
 .ld-kpi-icon { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ld-kpi-icon svg { width: 15px; height: 15px; }
 .ld-kpi-lbl { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; }
-.ld-kpi-val { font-size: 1.05rem; font-weight: 800; margin-top: 3px; }
+.ld-kpi-val { font-size: 1.05rem; font-weight: 800; margin-top: 3px; overflow-wrap: break-word; }
 .ld-kpi-sub { font-size: 0.64rem; color: var(--a-steel); margin-top: 1px; }
 
 .ld-tabstrip { display: flex; gap: 0; margin: 16px 0 12px; border-bottom: 1px solid var(--a-line); }

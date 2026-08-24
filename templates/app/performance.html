@@ -1,0 +1,133 @@
+{% extends "app/base_app.html" %}
+{% block title %}Performance — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _performance_data() in app.py, shared verbatim with the website's own
+     /performance. 2 real sub-tabs (Driver Performance/Vehicle Performance), same as the
+     website's own. Top 5 tables show real columns only (Trips/Total Billed/Profit) — no
+     fabricated rating/on-time/safety-score fields, see app_performance()'s own docstring. Date
+     range fixed to the same fiscal-year default Route Analytics already uses. -->
+<div class="ra-head">
+  <h1>Business Overview</h1>
+  <div class="sub">Route analytics, fleet utilization, performance &amp; business health.</div>
+</div>
+
+{% include "app/_overview_tabstrip.html" %}
+
+<div class="ra-tabstrip">
+  <a class="ra-tab {{ 'active' if tab == 'driver' }}" href="{{ url_for('app_performance', tab='driver') }}">Driver Performance</a>
+  <a class="ra-tab {{ 'active' if tab == 'vehicle' }}" href="{{ url_for('app_performance', tab='vehicle') }}">Vehicle Performance</a>
+</div>
+
+<div class="ra-period-bar">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+  {{ d.f_date_from }} – {{ d.f_date_to }} (FY)
+</div>
+
+{% if tab == 'driver' %}
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Drivers</div><div class="ra-kpi-val">{{ d.total_drivers }}</div><div class="ra-kpi-sub">Active Drivers</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">👤</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Trips</div><div class="ra-kpi-val">{{ d.driver_total_trips }}</div><div class="ra-kpi-sub">Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">🚚</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Avg Trips / Driver</div><div class="ra-kpi-val">{{ d.driver_avg_trips }}</div><div class="ra-kpi-sub">Per Driver</div></div>
+    <div class="ra-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">📊</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Profit</div><div class="ra-kpi-val" style="color:{{ 'var(--a-green)' if d.driver_total_profit >= 0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(d.driver_total_profit) }}</div><div class="ra-kpi-sub">All Drivers</div></div>
+    <div class="ra-kpi-icon" style="background:#efeaff;color:var(--a-purple);">₹</div>
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Top 5 Drivers (By Trips)</h2></div>
+  {% for r in d.top5_drivers %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.name }}</div>
+      <div class="ra-route-meta">{{ r.trip_count }} trip{{ 's' if r.trip_count != 1 else '' }} · ₹{{ '{:,.0f}'.format(r.total_billed) }} billed</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin" style="color:{{ 'var(--a-green)' if r.profit >= 0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(r.profit) }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No driver data for this period.</div>
+  {% endfor %}
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Monthly Trips Trend</h2></div>
+  <div class="mo-trend-bars">
+    {% for m in d.driver_monthly %}
+    <div class="mo-trend-col">
+      <div class="mo-trend-bar" style="height:{{ ((m.trips / d.driver_trend_max * 100) if d.driver_trend_max else 0)|round(0) }}%;" title="{{ m.trips }} trips"></div>
+      <div class="mo-trend-label">{{ m.label[5:] if m.label|length > 5 else m.label }}</div>
+    </div>
+    {% else %}
+    <div class="ra-empty">No trend data for this period.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if tab == 'vehicle' %}
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Vehicles</div><div class="ra-kpi-val">{{ d.total_vehicles }}</div><div class="ra-kpi-sub">Own Fleet</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🚛</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Trips</div><div class="ra-kpi-val">{{ d.vehicle_total_trips }}</div><div class="ra-kpi-sub">Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">🚚</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Avg Trips / Vehicle</div><div class="ra-kpi-val">{{ d.vehicle_avg_trips }}</div><div class="ra-kpi-sub">Per Vehicle</div></div>
+    <div class="ra-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">📊</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Profit</div><div class="ra-kpi-val" style="color:{{ 'var(--a-green)' if d.vehicle_total_profit >= 0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(d.vehicle_total_profit) }}</div><div class="ra-kpi-sub">All Vehicles</div></div>
+    <div class="ra-kpi-icon" style="background:#efeaff;color:var(--a-purple);">₹</div>
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Top 5 Vehicles (By Trips)</h2></div>
+  {% for r in d.top5_vehicles %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.name }}</div>
+      <div class="ra-route-meta">{{ r.trip_count }} trip{{ 's' if r.trip_count != 1 else '' }} · ₹{{ '{:,.0f}'.format(r.total_billed) }} billed</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin" style="color:{{ 'var(--a-green)' if r.profit >= 0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(r.profit) }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No vehicle data for this period.</div>
+  {% endfor %}
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Monthly Trips Trend</h2></div>
+  <div class="mo-trend-bars">
+    {% for m in d.vehicle_monthly %}
+    <div class="mo-trend-col">
+      <div class="mo-trend-bar" style="height:{{ ((m.trips / d.vehicle_trend_max * 100) if d.vehicle_trend_max else 0)|round(0) }}%;" title="{{ m.trips }} trips"></div>
+      <div class="mo-trend-label">{{ m.label[5:] if m.label|length > 5 else m.label }}</div>
+    </div>
+    {% else %}
+    <div class="ra-empty">No trend data for this period.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

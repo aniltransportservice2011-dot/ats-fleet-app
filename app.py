@@ -131,10 +131,20 @@ def _trip_toll(t, toll_map):
     linked = toll_map.get(t['id'])
     return linked if linked is not None else (t['toll'] or 0)
 
-def _period_financials(conn, date_from, date_to):
+def _period_financials(conn, date_from, date_to, vehicle_no=''):
     """Revenue/expense/profit breakdown for a date range, using the same charge
-    columns as dashboard()/monthly_summary() so the numbers agree app-wide."""
-    trips = conn.execute("SELECT * FROM trips WHERE date>=? AND date<=?", (date_from, date_to)).fetchall()
+    columns as dashboard()/monthly_summary() so the numbers agree app-wide.
+    vehicle_no is optional (default '' = all vehicles, every existing caller is
+    unaffected) and — when given — filters the same two query sets dashboard()'s
+    own vehicle_f filter does (trips, maintenance); overheads/salaries have no
+    vehicle column and stay unfiltered there too, so this can never disagree with
+    the website's own per-vehicle dashboard filter."""
+    if vehicle_no:
+        trips = conn.execute("""SELECT t.* FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                                WHERE t.date>=? AND t.date<=? AND v.vehicle_no=?""",
+                              (date_from, date_to, vehicle_no)).fetchall()
+    else:
+        trips = conn.execute("SELECT * FROM trips WHERE date>=? AND date<=?", (date_from, date_to)).fetchall()
     revenue = sum(t['billed_amount'] or 0 for t in trips)
     fuel = sum(t['fuel_amount'] or 0 for t in trips)
     driver_adv = sum(t['driver_adv_amount'] or 0 for t in trips)
@@ -145,12 +155,19 @@ def _period_financials(conn, date_from, date_to):
                (t['weighbridge_charges'] or 0) + (t['other_expense'] or 0) + (t['permit_charges'] or 0) for t in trips)
     owner_cost = sum((t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
                       for t in trips if t['type'] == VEHICLE_TYPE_HIRED)
-    maint_all = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
-    # Toll Management (Maintenance > Toll) is the source of truth for period-level toll cost now —
-    # 'maint' below means "maintenance excluding toll" so a breakdown chart showing both a
-    # 'Maintenance' slice and a 'Toll' slice never double-counts the same rupee in both.
-    toll = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE category='Toll' AND date>=? AND date<=?",
-                        (date_from, date_to)).fetchone()[0]
+    if vehicle_no:
+        maint_all = conn.execute("""SELECT COALESCE(SUM(m.amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                                    WHERE m.date>=? AND m.date<=? AND v.vehicle_no=?""", (date_from, date_to, vehicle_no)).fetchone()[0]
+        # Toll Management (Maintenance > Toll) is the source of truth for period-level toll cost now —
+        # 'maint' below means "maintenance excluding toll" so a breakdown chart showing both a
+        # 'Maintenance' slice and a 'Toll' slice never double-counts the same rupee in both.
+        toll = conn.execute("""SELECT COALESCE(SUM(m.amount),0) FROM maintenance m LEFT JOIN vehicles v ON m.vehicle_id=v.id
+                               WHERE m.category='Toll' AND m.date>=? AND m.date<=? AND v.vehicle_no=?""",
+                            (date_from, date_to, vehicle_no)).fetchone()[0]
+    else:
+        maint_all = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
+        toll = conn.execute("SELECT COALESCE(SUM(amount),0) FROM maintenance WHERE category='Toll' AND date>=? AND date<=?",
+                            (date_from, date_to)).fetchone()[0]
     maint = maint_all - toll
     overheads = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     salaries = conn.execute("SELECT COALESCE(SUM(amount),0) FROM salaries WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
@@ -1716,10 +1733,10 @@ def _employees_overview_tab(conn):
         rows=page_rows, total_count=total_count, page=page, total_pages=total_pages, per_page=per_page,
         page_tokens=page_tokens, base_qs=base_qs, f_date_from=date_from, f_date_to=date_to, active='salaries')
 
-def _employees_salary_tab(conn):
-    """Salary is a plain summary/overview now — pay salaries, give advances, and record
-    repayments all happen on the classic per-employee Ledger page (/employee/<name>), the same
-    proven flow this always used. This tab just reports what happened in the selected period."""
+def _employees_salary_data(conn):
+    """Real filters (from request.args) + real filtered rows + real KPI stats for the Salary tab
+    — shared by _employees_salary_tab() (website) and app_salary() (mobile). date_from/date_to/
+    role/search are all the website's own real filters. Returns a dict; does not close conn."""
     default_from = datetime.date.today().replace(day=1).isoformat()
     date_from = request.args.get('date_from') or default_from
     date_to = request.args.get('date_to') or datetime.date.today().isoformat()
@@ -1753,7 +1770,20 @@ def _employees_salary_tab(conn):
     total_outstanding_advances = sum(r['outstanding'] for r in rows)
     avg_salary = round(total_payroll / employees_paid, 0) if employees_paid else 0
 
-    total_count = len(rows)
+    roles = sorted(set((e['role'] or e['type'] or '') for e in conn.execute("SELECT role, type FROM employees").fetchall() if (e['role'] or e['type'])))
+
+    return {'rows': rows, 'total_count': len(rows), 'total_payroll': total_payroll,
+            'employees_paid': employees_paid, 'total_employees_all': len(employees),
+            'avg_salary': avg_salary, 'total_outstanding_advances': total_outstanding_advances,
+            'roles': roles, 'f_date_from': date_from, 'f_date_to': date_to, 'f_role': role_f, 'f_search': search_f}
+
+def _employees_salary_tab(conn):
+    """Salary is a plain summary/overview now — pay salaries, give advances, and record
+    repayments all happen on the classic per-employee Ledger page (/employee/<name>), the same
+    proven flow this always used. This tab just reports what happened in the selected period."""
+    d = _employees_salary_data(conn)
+    rows, total_count = d['rows'], d['total_count']
+
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(5, 10, 25, 50), default_per_page=5)
     page_rows = rows[(page - 1) * per_page: page * per_page]
@@ -1763,15 +1793,13 @@ def _employees_salary_tab(conn):
     base_params.pop('page', None); base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    roles = sorted(set((e['role'] or e['type'] or '') for e in conn.execute("SELECT role, type FROM employees").fetchall() if (e['role'] or e['type'])))
-
     conn.close()
     return render_template('employees.html', tab='salary',
-        rows=page_rows, total_count=total_count, total_payroll=total_payroll,
-        employees_paid=employees_paid, total_employees_all=len(employees),
-        avg_salary=avg_salary, total_outstanding_advances=total_outstanding_advances,
+        rows=page_rows, total_count=total_count, total_payroll=d['total_payroll'],
+        employees_paid=d['employees_paid'], total_employees_all=d['total_employees_all'],
+        avg_salary=d['avg_salary'], total_outstanding_advances=d['total_outstanding_advances'],
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
-        f_date_from=date_from, f_date_to=date_to, roles=roles, f_role=role_f, f_search=search_f,
+        f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], roles=d['roles'], f_role=d['f_role'], f_search=d['f_search'],
         active='salaries')
 
 def _recent_month_keys(n):
@@ -1909,15 +1937,22 @@ def _conic_gradient(segments):
     return gradient, legend
 
 
-@app.route('/overheads')
-def overheads_list():
-    conn = get_db()
+def _overhead_list_data(conn):
+    """Real filters (from request.args) + real filtered rows + real KPI stats for the Expenses
+    page — shared by overheads_list() (website, full page with donuts/trend/vendor+category
+    summary tabs) and app_expenses() (mobile, KPIs + list only). category/vendor/status/date_from/
+    date_to are the website's own real filters; search is new (the website itself has no search
+    box on this page) — added here as a plain substring match over category/vendor/description,
+    same "layer a search convenience on top of otherwise-real filters" call already made for
+    Ledger, so it's additive for the website (a query string it never sends) rather than a
+    behavior change. Returns a dict; does not close conn."""
     tab = request.args.get('tab', 'all')
     cat_f = request.args.get('category', '')
     vendor_f = request.args.get('vendor', '')
     status_f = request.args.get('status', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    search_f = request.args.get('search', '')
 
     query = """SELECT id, date, category, amount, notes, payment_mode, receipt_number,
                vendor, description, COALESCE(status,'Paid') as status, COALESCE(is_recurring,0) as is_recurring,
@@ -1959,6 +1994,11 @@ def overheads_list():
         d['days_left'] = days_left
         rows.append(d)
 
+    if search_f:
+        s = search_f.lower()
+        rows = [r for r in rows if s in (r['category'] or '').lower() or s in (r['vendor'] or '').lower()
+                or s in (r['description'] or '').lower()]
+
     categories = conn.execute("SELECT DISTINCT category FROM overheads WHERE category IS NOT NULL AND category != '' ORDER BY category").fetchall()
     vendors = conn.execute("SELECT DISTINCT vendor FROM overheads WHERE vendor IS NOT NULL AND vendor != '' ORDER BY vendor").fetchall()
 
@@ -1992,6 +2032,34 @@ def overheads_list():
     avg_monthly_expense = last6_amount / 6
 
     active_categories = len(categories)
+
+    return {'rows': rows, 'categories': categories, 'vendors': vendors,
+            'total_amount': total_amount, 'total_count': total_count, 'this_month_amount': this_month_amount,
+            'pending_amount': pending_amount, 'pending_count': pending_count,
+            'recurring_monthly_amount': recurring_monthly_amount, 'recurring_count': recurring_count,
+            'avg_monthly_expense': avg_monthly_expense, 'active_categories': active_categories,
+            'f_category': cat_f, 'f_vendor': vendor_f, 'f_status': status_f,
+            'f_date_from': date_from, 'f_date_to': date_to, 'f_search': search_f}
+
+@app.route('/overheads')
+def overheads_list():
+    conn = get_db()
+    d = _overhead_list_data(conn)
+    rows, categories, vendors = d['rows'], d['categories'], d['vendors']
+    total_amount, total_count, this_month_amount = d['total_amount'], d['total_count'], d['this_month_amount']
+    pending_amount, pending_count = d['pending_amount'], d['pending_count']
+    recurring_monthly_amount, recurring_count = d['recurring_monthly_amount'], d['recurring_count']
+    avg_monthly_expense, active_categories = d['avg_monthly_expense'], d['active_categories']
+    cat_f, vendor_f, status_f, date_from, date_to = d['f_category'], d['f_vendor'], d['f_status'], d['f_date_from'], d['f_date_to']
+
+    tab = request.args.get('tab', 'all')
+    today = datetime.date.today()
+    this_month_key = today.strftime('%Y-%m')
+    raw_rows = rows  # kept unfiltered-by-search since the website itself never sends ?search=
+    all_rows = conn.execute("""SELECT date, amount, category, vendor, payment_mode, COALESCE(status,'Paid') as status,
+                               COALESCE(is_recurring,0) as is_recurring, recurring_frequency, receipt_number, due_date
+                               FROM overheads""").fetchall()
+    pending_rows_all = [r for r in all_rows if r['status'] == 'Pending']
 
     # Upcoming Payments — pending bills, soonest due date first.
     upcoming = []
@@ -5629,84 +5697,112 @@ def export_vendor_ledger_pdf(vendor_id):
     entries = _ledger_export_entries(entries)
     return _export_ledger_pdf(vendor['name'], entries, role='Vendor', contact=vendor['contact'] or '', email=vendor['email'] or '', address=vendor['address'] or '')
 
+def _insert_party_payment_from_form(conn, party_id, f):
+    """Builds and inserts one payment-received-from-party row, allocating it across the selected
+    pending trips (oldest first, matching submission order) — same fields/logic used by both
+    add_party_payment() (website) and app_add_party_payment() (mobile). Returns
+    (ok, error_message_or_None) — does not commit or close conn."""
+    if not f.get('date'):
+        return False, 'Payment Date is required.'
+    if not f.get('amount'):
+        return False, 'Payment Amount is required.'
+    if not (f.get('mode') or '').strip():
+        return False, 'Payment Mode is required.'
+
+    total_amount = float(f.get('amount') or 0)
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, party_id, mode, reference_id, remarks, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (f.get('date'), 'received', total_amount, party_id, f.get('mode'),
+                         f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
+    payment_id = cur.lastrowid
+    # Pending is computed live (billed_amount - payment_received - party_advance) since it
+    # isn't a stored column; allocation fills each selected trip's balance in submitted
+    # order (oldest first) until the payment amount runs out.
+    trip_ids = f.getlist('trip_ids')
+    remaining = total_amount
+    allocated_total = 0
+    for tid in trip_ids:
+        if remaining <= 0.004:
+            break
+        trip = conn.execute("SELECT billed_amount, payment_received, party_advance FROM trips WHERE id=?", (tid,)).fetchone()
+        if not trip:
+            continue
+        pending = (trip['billed_amount'] or 0) - (trip['payment_received'] or 0) - (trip['party_advance'] or 0)
+        if pending <= 0.004:
+            continue
+        alloc = min(pending, remaining)
+        conn.execute("UPDATE trips SET payment_received = COALESCE(payment_received,0) + ?, updated_by=?, updated_at=? WHERE id=?",
+                     (alloc, session.get('user_id'), now, tid))
+        conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (payment_id, tid, alloc, session.get('user_id'), now))
+        remaining -= alloc
+        allocated_total += alloc
+    conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
+                 (allocated_total, session.get('user_id'), now, payment_id))
+    return True, None
+
 @app.route('/payment/party/<int:party_id>', methods=['GET', 'POST'])
 def add_party_payment(party_id):
     conn = get_db()
     party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
     if request.method == 'POST':
-        f = request.form
-        total_amount = float(f.get('amount') or 0)
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, party_id, mode, reference_id, remarks, created_by, created_at)
-                              VALUES (?,?,?,?,?,?,?,?,?)""",
-                            (f.get('date'), 'received', total_amount, party_id, f.get('mode'),
-                             f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
-        payment_id = cur.lastrowid
-        # Pending is computed live (billed_amount - payment_received - party_advance) since it
-        # isn't a stored column; allocation fills each selected trip's balance in submitted
-        # order (oldest first) until the payment amount runs out.
-        trip_ids = f.getlist('trip_ids')
-        remaining = total_amount
-        allocated_total = 0
-        for tid in trip_ids:
-            if remaining <= 0.004:
-                break
-            trip = conn.execute("SELECT billed_amount, payment_received, party_advance FROM trips WHERE id=?", (tid,)).fetchone()
-            if not trip:
-                continue
-            pending = (trip['billed_amount'] or 0) - (trip['payment_received'] or 0) - (trip['party_advance'] or 0)
-            if pending <= 0.004:
-                continue
-            alloc = min(pending, remaining)
-            conn.execute("UPDATE trips SET payment_received = COALESCE(payment_received,0) + ?, updated_by=?, updated_at=? WHERE id=?",
-                         (alloc, session.get('user_id'), now, tid))
-            conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
-                         (payment_id, tid, alloc, session.get('user_id'), now))
-            remaining -= alloc
-            allocated_total += alloc
-        conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
-                     (allocated_total, session.get('user_id'), now, payment_id))
+        _insert_party_payment_from_form(conn, party_id, request.form)
         conn.commit()
         conn.close()
         return redirect(url_for('party_ledger', party_id=party_id))
     conn.close()
     return render_template('add_payment.html', name=party['name'], role='Party', action_url=f'/payment/party/{party_id}', active='accounts')
 
+def _insert_vendor_payment_from_form(conn, vendor_id, f):
+    """Builds and inserts one payment-paid-to-vendor row, allocating it across the selected
+    pending trips — same fields/logic used by both add_vendor_payment() (website) and
+    app_add_vendor_payment() (mobile). Returns (ok, error_message_or_None) — does not commit or
+    close conn."""
+    if not f.get('date'):
+        return False, 'Payment Date is required.'
+    if not f.get('amount'):
+        return False, 'Payment Amount is required.'
+    if not (f.get('mode') or '').strip():
+        return False, 'Payment Mode is required.'
+
+    total_amount = float(f.get('amount') or 0)
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, vendor_id, mode, reference_id, remarks, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (f.get('date'), 'paid', total_amount, vendor_id, f.get('mode'),
+                         f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
+    payment_id = cur.lastrowid
+    trip_ids = f.getlist('trip_ids')
+    remaining = total_amount
+    allocated_total = 0
+    for tid in trip_ids:
+        if remaining <= 0.004:
+            break
+        trip = conn.execute("""SELECT (CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END) as owed,
+                               paid_to_owner FROM trips WHERE id=?""", (tid,)).fetchone()
+        if not trip:
+            continue
+        pending = (trip['owed'] or 0) - (trip['paid_to_owner'] or 0)
+        if pending <= 0.004:
+            continue
+        alloc = min(pending, remaining)
+        conn.execute("UPDATE trips SET paid_to_owner = COALESCE(paid_to_owner,0) + ?, updated_by=?, updated_at=? WHERE id=?",
+                     (alloc, session.get('user_id'), now, tid))
+        conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (payment_id, tid, alloc, session.get('user_id'), now))
+        remaining -= alloc
+        allocated_total += alloc
+    conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
+                 (allocated_total, session.get('user_id'), now, payment_id))
+    return True, None
+
 @app.route('/payment/vendor/<int:vendor_id>', methods=['GET', 'POST'])
 def add_vendor_payment(vendor_id):
     conn = get_db()
     vendor = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
     if request.method == 'POST':
-        f = request.form
-        total_amount = float(f.get('amount') or 0)
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, vendor_id, mode, reference_id, remarks, created_by, created_at)
-                              VALUES (?,?,?,?,?,?,?,?,?)""",
-                            (f.get('date'), 'paid', total_amount, vendor_id, f.get('mode'),
-                             f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
-        payment_id = cur.lastrowid
-        trip_ids = f.getlist('trip_ids')
-        remaining = total_amount
-        allocated_total = 0
-        for tid in trip_ids:
-            if remaining <= 0.004:
-                break
-            trip = conn.execute("""SELECT (CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END) as owed,
-                                   paid_to_owner FROM trips WHERE id=?""", (tid,)).fetchone()
-            if not trip:
-                continue
-            pending = (trip['owed'] or 0) - (trip['paid_to_owner'] or 0)
-            if pending <= 0.004:
-                continue
-            alloc = min(pending, remaining)
-            conn.execute("UPDATE trips SET paid_to_owner = COALESCE(paid_to_owner,0) + ?, updated_by=?, updated_at=? WHERE id=?",
-                         (alloc, session.get('user_id'), now, tid))
-            conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
-                         (payment_id, tid, alloc, session.get('user_id'), now))
-            remaining -= alloc
-            allocated_total += alloc
-        conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
-                     (allocated_total, session.get('user_id'), now, payment_id))
+        _insert_vendor_payment_from_form(conn, vendor_id, request.form)
         conn.commit()
         conn.close()
         return redirect(url_for('vendor_ledger', vendor_id=vendor_id))
@@ -5744,21 +5840,35 @@ def payment_view(payment_id):
                             entity_id=entity_id, allocations=allocations, leftover=max(leftover, 0), active='accounts')
 
 
+def _insert_overhead_from_form(conn, f):
+    """Builds and inserts one Expense row from a submitted form — same fields, same required set
+    (Date/Category/Amount, matching the website's own #addModal — see templates/overheads_list.html)
+    used by both add_overhead() (website) and app_add_overhead() (mobile). Returns
+    (ok, error_message_or_new_overhead_id) — does not commit or close conn."""
+    if not f.get('date'):
+        return False, 'Date is required.'
+    if not (f.get('category') or '').strip():
+        return False, 'Category is required.'
+    if not f.get('amount'):
+        return False, 'Amount is required.'
+
+    is_recurring = 1 if f.get('is_recurring') == 'on' else 0
+    status = f.get('status') or 'Paid'
+    cur = conn.execute("""INSERT INTO overheads (date, category, amount, notes, payment_mode, receipt_number,
+                    vendor, description, status, is_recurring, recurring_frequency, due_date, created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
+                  f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
+                  status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
+                  f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    return True, cur.lastrowid
+
 @app.route('/overheads/add', methods=['GET', 'POST'])
 def add_overhead():
     conn = get_db()
     if request.method == 'POST':
-        f = request.form
-        is_recurring = 1 if f.get('is_recurring') == 'on' else 0
-        status = f.get('status') or 'Paid'
-        conn.execute("""INSERT INTO overheads (date, category, amount, notes, payment_mode, receipt_number,
-                        vendor, description, status, is_recurring, recurring_frequency, due_date, created_by, created_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                     (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
-                      f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
-                      status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
-                      f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
-                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        _insert_overhead_from_form(conn, request.form)
         conn.commit()
         conn.close()
         return redirect(url_for('overheads_list'))
@@ -6529,6 +6639,42 @@ def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
             'opening_balance': emp_row['opening_balance'] if emp_row else 0,
             'opening_balance_date': emp_row['opening_balance_date'] if emp_row else ''}
 
+def _insert_employee_payment_from_form(conn, employee, f):
+    """Builds and inserts one Salary Paid / Advance Given / Advance Repaid entry for one employee
+    — same fields, same entry_kind branching used by both employee_ledger() (website) and
+    app_add_employee_payment() (mobile). Returns (ok, error_message_or_None) — does not commit or
+    close conn."""
+    entry_kind = f.get('entry_kind')
+    if entry_kind not in ('salary', 'given', 'repaid'):
+        return False, 'Type is required.'
+    if not f.get('date'):
+        return False, 'Date is required.'
+    if not f.get('amount'):
+        return False, 'Amount is required.'
+
+    tx_date = f.get('date')
+    amount = float(f.get('amount') or 0)
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if entry_kind == 'salary':
+        month_label = datetime.datetime.strptime(tx_date, '%Y-%m-%d').strftime('%b %Y') if tx_date else ''
+        month_key = tx_date[:7] if tx_date else ''
+        emp_row = conn.execute("SELECT id, basic_salary FROM employees WHERE name=? COLLATE NOCASE", (employee,)).fetchone()
+        emp_id = emp_row['id'] if emp_row else None
+        basic = emp_row['basic_salary'] if emp_row and emp_row['basic_salary'] else amount
+        conn.execute("""INSERT INTO salaries
+                         (employee, month, amount, date, created_at,
+                          employee_id, month_key, basic_salary, gross_salary, total_deductions,
+                          advance_recovery, net_salary, payment_status, payment_date, payment_mode, remarks,
+                          created_by)
+                         VALUES (?,?,?,?,?, ?,?,?,?,0, 0,?,'paid',?,?,?, ?)""",
+                     (employee, month_label, amount, tx_date, now,
+                      emp_id, month_key, basic, amount, amount, tx_date,
+                      f.get('payment_mode') or '', f.get('notes') or '', session.get('user_id')))
+    else:
+        conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
+                     (employee, tx_date, amount, entry_kind, f.get('notes'), now, session.get('user_id')))
+    return True, None
+
 @app.route('/employee/<employee>', methods=['GET', 'POST'])
 def employee_ledger(employee):
     import datetime
@@ -6536,28 +6682,7 @@ def employee_ledger(employee):
     if request.method == 'POST':
         f = request.form
         from_tab = f.get('from_tab', 'overview')
-        entry_kind = f.get('entry_kind')
-        tx_date = f.get('date')
-        amount = float(f.get('amount') or 0)
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        if entry_kind == 'salary':
-            month_label = datetime.datetime.strptime(tx_date, '%Y-%m-%d').strftime('%b %Y') if tx_date else ''
-            month_key = tx_date[:7] if tx_date else ''
-            emp_row = conn.execute("SELECT id, basic_salary FROM employees WHERE name=? COLLATE NOCASE", (employee,)).fetchone()
-            emp_id = emp_row['id'] if emp_row else None
-            basic = emp_row['basic_salary'] if emp_row and emp_row['basic_salary'] else amount
-            conn.execute("""INSERT INTO salaries
-                             (employee, month, amount, date, created_at,
-                              employee_id, month_key, basic_salary, gross_salary, total_deductions,
-                              advance_recovery, net_salary, payment_status, payment_date, payment_mode, remarks,
-                              created_by)
-                             VALUES (?,?,?,?,?, ?,?,?,?,0, 0,?,'paid',?,?,?, ?)""",
-                         (employee, month_label, amount, tx_date, now,
-                          emp_id, month_key, basic, amount, amount, tx_date,
-                          f.get('payment_mode') or '', f.get('notes') or '', session.get('user_id')))
-        else:
-            conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
-                         (employee, tx_date, amount, entry_kind, f.get('notes'), now, session.get('user_id')))
+        _insert_employee_payment_from_form(conn, employee, f)
         conn.commit()
         conn.close()
         return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
@@ -6573,14 +6698,23 @@ def employee_ledger(employee):
                             opening_balance_date=led['opening_balance_date'],
                             f_date_from=date_from, f_date_to=date_to, from_tab=from_tab, active='salaries')
 
+def _update_employee_opening_balance_from_form(conn, employee, f):
+    """Sets/replaces the carried-over opening advance balance for one employee — same logic used
+    by both update_employee_opening_balance() (website) and app_update_employee_opening_balance()
+    (mobile). Returns (ok, error_message_or_None) — does not commit or close conn."""
+    if not f.get('opening_balance'):
+        return False, 'Opening Advance Balance is required.'
+    conn.execute("UPDATE employees SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE name=? COLLATE NOCASE",
+                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
+                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee))
+    return True, None
+
 @app.route('/employee/<employee>/opening-balance', methods=['POST'])
 def update_employee_opening_balance(employee):
     conn = get_db()
     f = request.form
     from_tab = f.get('from_tab', 'overview')
-    conn.execute("UPDATE employees SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE name=? COLLATE NOCASE",
-                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
-                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee))
+    _update_employee_opening_balance_from_form(conn, employee, f)
     conn.commit()
     conn.close()
     return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
@@ -6604,11 +6738,11 @@ def _trend_chart_coords(monthly, value_key):
         y_ticks.append({'value': tick_val, 'y': round(pad_t + plot_h - (tick_val / vmax * plot_h), 1)})
     return chart_bottom, y_ticks
 
-@app.route('/performance')
-def performance():
-    conn = get_db()
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
+def _performance_data(conn, date_from, date_to):
+    """Real driver + vehicle performance rollup — shared by performance() (website) and
+    app_performance() (mobile). Same full real cost basis (see the big comment blocks below) for
+    both driver and vehicle profit. Returns a dict of the two unpaginated row sets plus their real
+    totals/trends; does not close conn."""
 
     # ---------- Driver Performance (same calculation as the original Driver Performance page) ----------
     # Full real cost basis, matching Route Analytics/Business Performance/Dashboard exactly — this
@@ -6765,16 +6899,34 @@ def performance():
     vehicle_trend_max = max([m['trips'] for m in vehicle_monthly], default=1) or 1
 
     conn.close()
+    return {'driver_rows': driver_rows, 'total_drivers': total_drivers, 'driver_total_trips': driver_total_trips,
+        'driver_total_billed': driver_total_billed, 'driver_total_fuel': driver_total_fuel, 'driver_total_profit': driver_total_profit,
+        'driver_avg_trips': driver_avg_trips, 'top5_drivers': top5_drivers,
+        'driver_monthly': driver_monthly, 'driver_trend_max': driver_trend_max,
+        'driver_chart_bottom': driver_chart_bottom, 'driver_y_ticks': driver_y_ticks,
+        'vehicle_rows': vehicle_rows, 'total_vehicles': total_vehicles, 'vehicle_total_trips': vehicle_total_trips,
+        'vehicle_total_billed': vehicle_total_billed, 'vehicle_total_fuel': vehicle_total_fuel, 'vehicle_total_maint': vehicle_total_maint,
+        'vehicle_total_profit': vehicle_total_profit, 'vehicle_avg_trips': vehicle_avg_trips, 'top5_vehicles': top5_vehicles,
+        'vehicle_monthly': vehicle_monthly, 'vehicle_trend_max': vehicle_trend_max,
+        'vehicle_chart_bottom': vehicle_chart_bottom, 'vehicle_y_ticks': vehicle_y_ticks,
+        'f_date_from': date_from, 'f_date_to': date_to}
+
+@app.route('/performance')
+def performance():
+    conn = get_db()
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2027-03-31')
+    d = _performance_data(conn, date_from, date_to)
 
     # ---------- Pagination (client-independent, shared page-size convention) ----------
     per_page_raw = request.args.get('per_page')
-    d_page, per_page, d_total_pages = _paginate(request.args.get('d_page'), per_page_raw, total_drivers,
+    d_page, per_page, d_total_pages = _paginate(request.args.get('d_page'), per_page_raw, d['total_drivers'],
                                                  per_page_options=(5, 10, 25, 50), default_per_page=5)
-    driver_page_rows = driver_rows[(d_page - 1) * per_page: d_page * per_page]
+    driver_page_rows = d['driver_rows'][(d_page - 1) * per_page: d_page * per_page]
 
-    v_page, per_page, v_total_pages = _paginate(request.args.get('v_page'), per_page_raw, total_vehicles,
+    v_page, per_page, v_total_pages = _paginate(request.args.get('v_page'), per_page_raw, d['total_vehicles'],
                                                  per_page_options=(5, 10, 25, 50), default_per_page=5)
-    vehicle_page_rows = vehicle_rows[(v_page - 1) * per_page: v_page * per_page]
+    vehicle_page_rows = d['vehicle_rows'][(v_page - 1) * per_page: v_page * per_page]
     d_page_tokens = _page_tokens(d_page, d_total_pages)
     v_page_tokens = _page_tokens(v_page, v_total_pages)
 
@@ -6785,17 +6937,17 @@ def performance():
     base_qs = urlencode(base_params)
 
     return render_template('performance.html', base_qs=base_qs,
-        driver_rows=driver_page_rows, total_drivers=total_drivers, driver_total_trips=driver_total_trips,
-        driver_total_billed=driver_total_billed, driver_total_fuel=driver_total_fuel, driver_total_profit=driver_total_profit,
-        driver_avg_trips=driver_avg_trips, top5_drivers=top5_drivers,
-        driver_monthly=driver_monthly, driver_trend_max=driver_trend_max, driver_chart_bottom=driver_chart_bottom, driver_y_ticks=driver_y_ticks,
+        driver_rows=driver_page_rows, total_drivers=d['total_drivers'], driver_total_trips=d['driver_total_trips'],
+        driver_total_billed=d['driver_total_billed'], driver_total_fuel=d['driver_total_fuel'], driver_total_profit=d['driver_total_profit'],
+        driver_avg_trips=d['driver_avg_trips'], top5_drivers=d['top5_drivers'],
+        driver_monthly=d['driver_monthly'], driver_trend_max=d['driver_trend_max'], driver_chart_bottom=d['driver_chart_bottom'], driver_y_ticks=d['driver_y_ticks'],
         d_page=d_page, d_total_pages=d_total_pages, d_page_tokens=d_page_tokens,
-        vehicle_rows=vehicle_page_rows, total_vehicles=total_vehicles, vehicle_total_trips=vehicle_total_trips,
-        vehicle_total_billed=vehicle_total_billed, vehicle_total_fuel=vehicle_total_fuel, vehicle_total_maint=vehicle_total_maint,
-        vehicle_total_profit=vehicle_total_profit, vehicle_avg_trips=vehicle_avg_trips, top5_vehicles=top5_vehicles,
-        vehicle_monthly=vehicle_monthly, vehicle_trend_max=vehicle_trend_max, vehicle_chart_bottom=vehicle_chart_bottom, vehicle_y_ticks=vehicle_y_ticks,
+        vehicle_rows=vehicle_page_rows, total_vehicles=d['total_vehicles'], vehicle_total_trips=d['vehicle_total_trips'],
+        vehicle_total_billed=d['vehicle_total_billed'], vehicle_total_fuel=d['vehicle_total_fuel'], vehicle_total_maint=d['vehicle_total_maint'],
+        vehicle_total_profit=d['vehicle_total_profit'], vehicle_avg_trips=d['vehicle_avg_trips'], top5_vehicles=d['top5_vehicles'],
+        vehicle_monthly=d['vehicle_monthly'], vehicle_trend_max=d['vehicle_trend_max'], vehicle_chart_bottom=d['vehicle_chart_bottom'], vehicle_y_ticks=d['vehicle_y_ticks'],
         v_page=v_page, v_total_pages=v_total_pages, v_page_tokens=v_page_tokens,
-        per_page=per_page, f_date_from=date_from, f_date_to=date_to, active='performance')
+        per_page=per_page, f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], active='performance')
 
 @app.route('/performance/export')
 def export_performance():
@@ -6880,32 +7032,48 @@ def export_performance():
     return send_file(buf, as_attachment=True, download_name='performance_export.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
+def _insert_employee_from_form(conn, f):
+    """Builds and inserts one new employee — same fields, same required set (Name/Type), same
+    duplicate-name no-op (an existing employee with that name just isn't re-created — matching
+    the website's own silent-skip behavior) and same auto-generated employee_code fallback used
+    by both add_employee() (website) and app_add_employee() (mobile). Returns
+    (ok, error_message_or_new_employee_id_or_None) — does not commit or close conn."""
+    name = (f.get('name') or '').strip()
+    etype = f.get('type')
+    if not name:
+        return False, 'Employee Name is required.'
+    if etype not in ('Driver', 'Staff'):
+        return False, 'Type is required.'
+
+    existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
+    if existing:
+        return True, None
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cur = conn.execute("""INSERT INTO employees (name, type, employee_code, role, mobile, email, address,
+                          joining_date, date_of_birth, bank_account, ifsc_code, upi_id, emergency_contact,
+                          aadhaar, pan, driving_license, status, basic_salary, created_by, created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active', ?, ?, ?)""",
+                        (name, etype, f.get('employee_code') or None, f.get('role') or etype,
+                         f.get('mobile') or None, f.get('email') or None, f.get('address') or None,
+                         f.get('joining_date') or None, f.get('date_of_birth') or None,
+                         f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
+                         f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
+                         f.get('driving_license') or None, float(f.get('basic_salary') or 0),
+                         session.get('user_id'), now))
+    new_id = cur.lastrowid
+    if not f.get('employee_code'):
+        conn.execute("UPDATE employees SET employee_code=?, updated_by=?, updated_at=? WHERE id=?",
+                     (f"{'DR' if etype=='Driver' else 'ST'}-{new_id:03d}", session.get('user_id'), now, new_id))
+    return True, new_id
+
 @app.route('/employees/add', methods=['GET', 'POST'])
 def add_employee():
     conn = get_db()
     if request.method == 'POST':
         f = request.form
         name = (f.get('name') or '').strip()
-        etype = f.get('type')
-        existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
-        if not existing:
-            now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cur = conn.execute("""INSERT INTO employees (name, type, employee_code, role, mobile, email, address,
-                                  joining_date, date_of_birth, bank_account, ifsc_code, upi_id, emergency_contact,
-                                  aadhaar, pan, driving_license, status, basic_salary, created_by, created_at)
-                                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active', ?, ?, ?)""",
-                                (name, etype, f.get('employee_code') or None, f.get('role') or etype,
-                                 f.get('mobile') or None, f.get('email') or None, f.get('address') or None,
-                                 f.get('joining_date') or None, f.get('date_of_birth') or None,
-                                 f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
-                                 f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
-                                 f.get('driving_license') or None, float(f.get('basic_salary') or 0),
-                                 session.get('user_id'), now))
-            new_id = cur.lastrowid
-            if not f.get('employee_code'):
-                conn.execute("UPDATE employees SET employee_code=?, updated_by=?, updated_at=? WHERE id=?",
-                             (f"{'DR' if etype=='Driver' else 'ST'}-{new_id:03d}", session.get('user_id'), now, new_id))
-            conn.commit()
+        _insert_employee_from_form(conn, f)
+        conn.commit()
         # 'next' lets the Add Employee modal (which lives on the tabbed Employees page) return the
         # admin to that page instead of the old standalone employee_ledger detail view.
         conn.close()
@@ -8343,14 +8511,22 @@ def update_contact(entity_type, entity_id):
         return redirect(url_for('party_ledger', party_id=entity_id))
     return redirect(url_for('vendor_ledger', vendor_id=entity_id))
 
-@app.route('/ledger/<entity_type>/<int:entity_id>/opening-balance', methods=['POST'])
-def update_opening_balance(entity_type, entity_id):
-    conn = get_db()
-    f = request.form
+def _update_ledger_opening_balance_from_form(conn, entity_type, entity_id, f):
+    """Sets/replaces the carried-over opening balance for one party/vendor — same logic used by
+    both update_opening_balance() (website) and app_update_ledger_opening_balance() (mobile).
+    Returns (ok, error_message_or_None) — does not commit or close conn."""
+    if not f.get('opening_balance'):
+        return False, 'Opening Balance is required.'
     table = 'parties' if entity_type == 'party' else 'vendors'
     conn.execute(f"UPDATE {table} SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE id=?",
                  (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
                   session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entity_id))
+    return True, None
+
+@app.route('/ledger/<entity_type>/<int:entity_id>/opening-balance', methods=['POST'])
+def update_opening_balance(entity_type, entity_id):
+    conn = get_db()
+    _update_ledger_opening_balance_from_form(conn, entity_type, entity_id, request.form)
     conn.commit()
     conn.close()
     if entity_type == 'party':
@@ -9128,13 +9304,14 @@ def empty_runs():
     args = request.args.to_dict()
     return redirect(url_for('fleet_utilization', **args))
 
-@app.route('/fleet-utilization')
-def fleet_utilization():
-    conn = get_db()
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
-    vehicle_f = request.args.get('vehicle', '')
-
+def _fleet_utilization_data(conn, date_from, date_to, vehicle_f=''):
+    """Real idle/active/empty-run rollup for Fleet Utilization — shared by fleet_utilization()
+    (website) and app_fleet_utilization() (mobile). date_from/date_to/vehicle are the website's
+    own real filters. Total KM / Total Fuel / Avg Fuel Efficiency are new here (the website page
+    itself has never surfaced them) but are real sums of trips.actual_km/fuel_amount for the same
+    own-fleet/period scope as everything else on this page — not fabricated, just not previously
+    named as page metrics; same "additive real metric" call already made for Ledger/Expenses/
+    Salary search. Returns a dict; does not close conn."""
     # From Date must never be after To Date — swap rather than let the math go negative.
     if date_from > date_to:
         date_from, date_to = date_to, date_from
@@ -9235,16 +9412,68 @@ def fleet_utilization():
         y_ticks.append({'value': tick_val, 'y': round(pad_t + plot_h - (tick_val / trend_max * plot_h if trend_max else 0), 1)})
 
     all_vehicles_list = conn.execute("SELECT vehicle_no FROM vehicles WHERE type = 'own' AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
+
+    # Real, own-fleet KM/Fuel rollup for the period — actual_km and fuel_liters (the real litres
+    # column, distinct from fuel_amount which is cost) already used elsewhere in this app (e.g.
+    # the Maintenance Overview's own cost-per-km), just not previously surfaced as a Fleet
+    # Utilization page metric.
+    km_fuel_row = conn.execute("""SELECT COALESCE(SUM(t.actual_km),0) as km,
+                                  COALESCE(SUM(CAST(t.fuel_liters AS REAL)),0) as fuel_ltr
+                                  FROM trips t JOIN vehicles v ON t.vehicle_id=v.id
+                                  WHERE v.type='own' AND t.date>=? AND t.date<=?""", (date_from, date_to)).fetchone()
+    fleet_total_km = km_fuel_row['km'] or 0
+    fleet_total_fuel_ltr = km_fuel_row['fuel_ltr'] or 0
+    avg_fuel_efficiency = round(fleet_total_km / fleet_total_fuel_ltr, 2) if fleet_total_fuel_ltr else 0
+
+    # Real vehicle-status 3-way split (On Trip / In Workshop / Idle) — same real, mutually-
+    # exclusive categories app_dashboard()'s own Business Overview panel already uses.
+    on_trip_count = conn.execute("""SELECT COUNT(DISTINCT vehicle_id) FROM trips
+                                    WHERE end_date IS NULL AND vehicle_id IN
+                                    (SELECT id FROM vehicles WHERE type='own')""").fetchone()[0]
+    in_workshop = conn.execute("SELECT COUNT(*) FROM vehicles WHERE type='own' AND status='In Maintenance'").fetchone()[0]
+    vs_idle = max(total_vehicles - on_trip_count - in_workshop, 0)
+
+    # Utilization by Vehicle Type — real body_type breakdown (own fleet), same _short_body_type()
+    # grouping the Tyre Layout diagram already uses, not a fabricated fixed category list.
+    body_types = conn.execute("SELECT body_type FROM vehicles WHERE type='own'").fetchall()
+    type_counts = {}
+    for b in body_types:
+        key = _short_body_type(b['body_type']) or 'Others'
+        type_counts[key] = type_counts.get(key, 0) + 1
+    type_breakdown = sorted(type_counts.items(), key=lambda kv: -kv[1])
+
     conn.close()
+    return {'rows': rows, 'most_idle': most_idle, 'empty_rows': empty_rows, 'trend': trend, 'trend_max': trend_max,
+        'chart_bottom': chart_bottom, 'y_ticks': y_ticks,
+        'total_vehicles': total_vehicles, 'active_vehicles': active_vehicles, 'idle_vehicles': idle_vehicles,
+        'active_pct': active_pct, 'idle_vehicles_pct': idle_vehicles_pct,
+        'total_active_days': total_active_days, 'total_idle_days': total_idle_days,
+        'active_days_pct': active_days_pct, 'idle_days_pct': idle_days_pct,
+        'avg_idle_days': avg_idle_days, 'avg_active_days': avg_active_days,
+        'empty_run_trips': empty_run_trips, 'empty_run_pct_overall': empty_run_pct_overall,
+        'total_fuel': total_fuel, 'total_toll': total_toll, 'total_empty_cost': total_empty_cost,
+        'f_date_from': date_from, 'f_date_to': date_to, 'f_vehicle': vehicle_f, 'vehicles': all_vehicles_list,
+        'fleet_total_km': fleet_total_km, 'on_trip_count': on_trip_count, 'in_workshop': in_workshop, 'vs_idle': vs_idle,
+        'type_breakdown': type_breakdown, 'fleet_total_fuel_ltr': fleet_total_fuel_ltr, 'avg_fuel_efficiency': avg_fuel_efficiency}
+
+@app.route('/fleet-utilization')
+def fleet_utilization():
+    conn = get_db()
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2027-03-31')
+    vehicle_f = request.args.get('vehicle', '')
+    d = _fleet_utilization_data(conn, date_from, date_to, vehicle_f)
     return render_template('fleet_utilization.html',
-        rows=rows, most_idle=most_idle, empty_rows=empty_rows, trend=trend, trend_max=trend_max,
-        chart_bottom=chart_bottom, y_ticks=y_ticks,
-        total_vehicles=total_vehicles, active_vehicles=active_vehicles, idle_vehicles=idle_vehicles,
-        active_pct=active_pct, idle_vehicles_pct=idle_vehicles_pct,
-        total_active_days=total_active_days, total_idle_days=total_idle_days, active_days_pct=active_days_pct, idle_days_pct=idle_days_pct,
-        avg_idle_days=avg_idle_days, avg_active_days=avg_active_days, empty_run_trips=empty_run_trips, empty_run_pct_overall=empty_run_pct_overall,
-        total_fuel=total_fuel, total_toll=total_toll, total_empty_cost=total_empty_cost,
-        f_date_from=date_from, f_date_to=date_to, f_vehicle=vehicle_f, vehicles=all_vehicles_list,
+        rows=d['rows'], most_idle=d['most_idle'], empty_rows=d['empty_rows'], trend=d['trend'], trend_max=d['trend_max'],
+        chart_bottom=d['chart_bottom'], y_ticks=d['y_ticks'],
+        total_vehicles=d['total_vehicles'], active_vehicles=d['active_vehicles'], idle_vehicles=d['idle_vehicles'],
+        active_pct=d['active_pct'], idle_vehicles_pct=d['idle_vehicles_pct'],
+        total_active_days=d['total_active_days'], total_idle_days=d['total_idle_days'],
+        active_days_pct=d['active_days_pct'], idle_days_pct=d['idle_days_pct'],
+        avg_idle_days=d['avg_idle_days'], avg_active_days=d['avg_active_days'],
+        empty_run_trips=d['empty_run_trips'], empty_run_pct_overall=d['empty_run_pct_overall'],
+        total_fuel=d['total_fuel'], total_toll=d['total_toll'], total_empty_cost=d['total_empty_cost'],
+        f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_vehicle=d['f_vehicle'], vehicles=d['vehicles'],
         active='fleet-utilization')
 
 @app.route('/fleet-utilization/export')
@@ -10163,17 +10392,39 @@ def app_dashboard():
     alert_summary = ', '.join(alert_bits)
 
     # ---------- Business Overview — same shared, already-tested source of truth Business
-    # Performance itself uses, so this can never quietly disagree with that page. ----------
+    # Performance itself uses, so this can never quietly disagree with that page. Filterable by
+    # the same Date From/To/Vehicle fields the website's own dashboard() filter_bar has (fy is a
+    # convenience preset over the same two date fields, exactly like the website's own fy select) —
+    # this is the one section on this page that's genuinely period-scoped, so it's the one the
+    # filter icon drives; the KPI row/Vehicle Status/Recent Activity below stay real-time "right
+    # now" numbers regardless of the filter, same deliberate split as before. Unset (no filter
+    # applied) keeps the original "this month vs last month" default behavior exactly as-is. ----------
+    f_date_from = request.args.get('date_from', '')
+    f_date_to = request.args.get('date_to', '')
+    f_vehicle = request.args.get('vehicle', '')
+    is_filtered = bool(f_date_from and f_date_to)
     month_from, month_to = _month_bounds(today.year, today.month)
-    prev_from, prev_to = _shift_period_back(month_from, month_to)
-    curr_fin = _period_financials(conn, month_from, month_to)
-    prev_fin = _period_financials(conn, prev_from, prev_to)
+    bo_from, bo_to = (f_date_from, f_date_to) if is_filtered else (month_from, month_to)
+    prev_from, prev_to = _shift_period_back(bo_from, bo_to)
+    curr_fin = _period_financials(conn, bo_from, bo_to, vehicle_no=f_vehicle)
+    prev_fin = _period_financials(conn, prev_from, prev_to, vehicle_no=f_vehicle)
     bo_trip_growth = _pct_growth(curr_fin['trip_count'], prev_fin['trip_count'])
     bo_revenue_growth = _pct_growth(curr_fin['revenue'], prev_fin['revenue'])
     bo_expense_growth = _pct_growth(curr_fin['total_expenses'], prev_fin['total_expenses'])
     acct_rows = _accounts_rows(conn)
     total_receivables = sum(r['balance'] for r in acct_rows if r['balance'] > 0 and r['role'] == 'Party')
     receivable_party_count = sum(1 for r in acct_rows if r['balance'] > 0.01 and r['role'] == 'Party')
+
+    # Same FY presets as the website's own dashboard() filter_bar, so "FY 2026-27" means the exact
+    # same date range in both places; f_fy only pre-selects the dropdown when date_from/date_to
+    # exactly match one of these presets, same matching logic as the website.
+    fy_map = {'2026-04-01|2027-03-31': ('2026-04-01', '2027-03-31'), '2025-04-01|2026-03-31': ('2025-04-01', '2026-03-31')}
+    f_fy = ''
+    for key, (fy_from, fy_to) in fy_map.items():
+        if f_date_from == fy_from and f_date_to == fy_to:
+            f_fy = key
+            break
+    dash_vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
 
     # ---------- Vehicle status — three real, mutually-exclusive categories that always sum to
     # total_vehicles. A fourth "Waiting" bucket (as opposed to Idle) isn't something this data
@@ -10231,7 +10482,9 @@ def app_dashboard():
         bo_expenses=curr_fin['total_expenses'], bo_expense_growth=bo_expense_growth,
         total_receivables=total_receivables, receivable_party_count=receivable_party_count,
         vs_on_trip=on_trip_count, vs_workshop=in_workshop, vs_idle=vs_idle,
-        activities=activities)
+        activities=activities,
+        is_filtered=is_filtered, f_date_from=f_date_from, f_date_to=f_date_to,
+        f_vehicle=f_vehicle, f_fy=f_fy, dash_vehicles=dash_vehicles)
 
 @app.route('/app/trips/add', methods=['GET', 'POST'])
 def app_add_trip():
@@ -10583,6 +10836,180 @@ def app_install_battery(battery_id):
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_battery')})
 
+@app.route('/app/expenses')
+def app_expenses():
+    """Mobile Expenses — real numbers straight from _overhead_list_data() (shared with the
+    website's own /overheads). KPIs (Total Expenses/This Month/Pending Bills/Recurring (Monthly)/
+    Avg Monthly Expense/Categories) and the real filtered Expenses list — the Recurring/Vendor
+    Summary/Category Summary tabs and the donut/trend charts are left off this pass, same call
+    already made for Tyres/Battery/Service. "Load More" (growing show count) instead of the
+    website's numbered pager, same convention every list in this app already uses."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    d = _overhead_list_data(conn)
+    total_count_filtered = len(d['rows'])
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count_filtered > show
+    page_rows = d['rows'][:show]
+    today = datetime.date.today()
+    conn.close()
+    return render_template('app/expenses.html', company_name=company_name, user_initials=user_initials,
+        active='overheads', notif_count=0,
+        rows=page_rows, total_count_filtered=total_count_filtered, show=show, has_more=has_more,
+        total_amount=d['total_amount'], total_count=d['total_count'], this_month_amount=d['this_month_amount'],
+        pending_amount=d['pending_amount'], pending_count=d['pending_count'],
+        recurring_monthly_amount=d['recurring_monthly_amount'], recurring_count=d['recurring_count'],
+        avg_monthly_expense=d['avg_monthly_expense'], active_categories=d['active_categories'],
+        categories=[c['category'] for c in d['categories']], vendors=[v['vendor'] for v in d['vendors']],
+        f_category=d['f_category'], f_vendor=d['f_vendor'], f_status=d['f_status'],
+        f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_search=d['f_search'],
+        today_str=today.isoformat(), month_labels_full=today.strftime('%b %Y'))
+
+@app.route('/app/expenses/add', methods=['POST'])
+def app_add_overhead():
+    """In-app "Add Expense" modal (expenses.html) posts here via fetch instead of the website's
+    own #addModal, same _insert_overhead_from_form() the website itself uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_overhead_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_expenses')})
+
+@app.route('/app/salary')
+def app_salary():
+    """Mobile Salary — real numbers straight from _employees_salary_data() (shared with the
+    website's own /salaries?tab=salary). KPIs (Total Payroll/Employees Paid/Avg Salary/
+    Outstanding Advance) and the real filtered employee list — tapping a row opens that
+    employee's own native Ledger (see app_employee_ledger()), same as the website's own "click
+    any row" hint. Only 2 tabs shown (Salary/Attendance) — Overview is dropped per instruction,
+    and Attendance is a real page on the website but shows a "Coming Soon" placeholder here
+    instead of being rebuilt natively this pass. "Load More" (growing show count) instead of the
+    website's numbered pager, same convention every list in this app already uses."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    d = _employees_salary_data(conn)
+    total_count = d['total_count']
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_rows = d['rows'][:show]
+    conn.close()
+    return render_template('app/salary.html', company_name=company_name, user_initials=user_initials,
+        active='salaries', notif_count=0, tab='salary',
+        rows=page_rows, total_count=total_count, show=show, has_more=has_more,
+        total_payroll=d['total_payroll'], employees_paid=d['employees_paid'],
+        total_employees_all=d['total_employees_all'], avg_salary=d['avg_salary'],
+        total_outstanding_advances=d['total_outstanding_advances'], roles=d['roles'],
+        f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_role=d['f_role'], f_search=d['f_search'])
+
+@app.route('/app/salary/attendance')
+def app_salary_attendance():
+    """"Coming Soon" placeholder — Attendance is a real, working tab on the website
+    (_employees_attendance_tab()) but isn't rebuilt natively this pass, per instruction."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    conn.close()
+    return render_template('app/salary.html', company_name=company_name, user_initials=user_initials,
+        active='salaries', notif_count=0, tab='attendance')
+
+@app.route('/app/employee/<employee>')
+def app_employee_ledger(employee):
+    """Mobile Employee Ledger — real entries straight from _employee_ledger_entries() (shared
+    verbatim with the website's own /employee/<name>). Search is new (the website itself has no
+    search box here) — added as a plain substring match over entry type/notes, same "layer a
+    search convenience on top of otherwise-real filters" call already made for Ledger/Expenses.
+    "Load More" (growing show count) instead of showing every entry at once."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    search_f = request.args.get('search', '')
+    led = _employee_ledger_entries(conn, employee, date_from, date_to)
+    entries = led['entries']
+    if search_f:
+        s = search_f.lower()
+        entries = [e for e in entries if s in (e['entry_type'] or '').lower() or s in (e['notes'] or '').lower()]
+    total_count = len(entries)
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_entries = entries[:show]
+    conn.close()
+    return render_template('app/employee_ledger.html', company_name=company_name, user_initials=user_initials,
+        active='salaries', notif_count=0, employee=employee,
+        entries=page_entries, total_count=total_count, show=show, has_more=has_more,
+        advance_balance=led['advance_balance'], total_salary_paid=led['total_salary_paid'],
+        opening_balance=led['opening_balance'], opening_balance_date=led['opening_balance_date'],
+        f_date_from=date_from, f_date_to=date_to, f_search=search_f)
+
+@app.route('/app/employee/<employee>/add', methods=['POST'])
+def app_add_employee_payment(employee):
+    """"Payment" mode of the in-app Add Payment modal (employee_ledger.html) — posts here via
+    fetch instead of the website's own #addModal, same _insert_employee_payment_from_form() the
+    website itself uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_employee_payment_from_form(conn, employee, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_employee_ledger', employee=employee)})
+
+@app.route('/app/employee/<employee>/opening-balance', methods=['POST'])
+def app_update_employee_opening_balance(employee):
+    """"Opening Balance" mode of the in-app Add Payment modal — same
+    _update_employee_opening_balance_from_form() the website's own #addModal (Opening Balance
+    tab) uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _update_employee_opening_balance_from_form(conn, employee, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_employee_ledger', employee=employee)})
+
+@app.route('/app/salary/add', methods=['POST'])
+def app_add_employee():
+    """Native "Add Employee" on the Salary page — same _insert_employee_from_form() the
+    website's own /employees Add Employee modal (add_employee(), templates/partials/
+    _employees_modals.html) uses, so a new employee can never quietly differ between the two
+    surfaces. JSON endpoint (fetch from salary.html), matching every other native Add route."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_employee_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_salary')})
+
 @app.route('/app/trips')
 def app_trips():
     """Mobile Trips list. Real fields only, matching the website's own /trips exactly — no
@@ -10894,25 +11321,13 @@ def app_add_vehicle():
 
 @app.route('/app/analysis')
 def app_analysis():
-    """Mobile Analysis hub — the same 4 real pages the website's own sidebar groups under its
-    "Analysis" nav-label (templates/base.html): Route Analytics, Fleet Utilization, Performance,
-    Business Performance. Only Route Analytics is rebuilt natively so far (app_analytics()
-    below); the other 3 are each their own substantial page, so they bridge to the real website
-    routes (same session, real data) rather than being faked here — same pattern as Route Rates.
-    """
-    company_name = get_company_name(session.get('company_id', 1))
-    display_name = session.get('username', '')
-    conn = get_db()
-    if session.get('user_id'):
-        u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
-        if u:
-            display_name = u['full_name'] or u['username']
-    name_parts = [p for p in (display_name or '').split() if p]
-    user_initials = ((name_parts[0][0] if name_parts else '') +
-                      (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
-    conn.close()
-    return render_template('app/analysis.html', company_name=company_name, user_initials=user_initials,
-        active='analysis', notif_count=0)
+    """Mobile Analysis hub — now just an alias straight to Route Analytics (app_analytics()),
+    the first of the 4 real tabs the website's own sidebar groups under "Analysis"
+    (templates/base.html): Route Analytics, Fleet Utilization, Performance, Business Performance.
+    All 4 are native now (see app_analytics()/app_fleet_utilization()/app_performance()/
+    app_business_performance()), each showing the same real top tab strip so switching between
+    them never leaves this "Business Overview" section."""
+    return redirect(url_for('app_analytics'))
 
 @app.route('/app/analytics')
 def app_analytics():
@@ -10955,11 +11370,107 @@ def app_analytics():
     conn.close()
 
     return render_template('app/analytics.html', company_name=company_name, user_initials=user_initials,
-        active='analytics', notif_count=0, f_vehicle_type=type_f,
+        active='analytics', notif_count=0, f_vehicle_type=type_f, active_ov='route',
         date_from=date_from, date_to=date_to,
         total_routes=d['total_routes'], total_trips_sel=d['total_trips_sel'], total_revenue_sel=d['total_revenue_sel'],
         avg_margin=d['avg_margin'], top5_by_margin=d['top5_by_margin'], top5_by_revenue=d['top5_by_revenue'],
         most_trips_route=most_trips_route, avg_revenue_per_trip=avg_revenue_per_trip)
+
+@app.route('/app/fleet-utilization')
+def app_fleet_utilization():
+    """Mobile Fleet Utilization — real numbers straight from _fleet_utilization_data() (shared
+    with the website's own /fleet-utilization). 3 real tabs (Overview/Idle Analysis/Empty Run
+    Analysis, same as the website's own). Date range fixed to the same fiscal-year default
+    app_analytics() already uses, for the same "keep this tab simple" reason; Vehicle filter
+    trimmed off this pass (Route Analytics' own Vehicle Type toggle stays, this page's per-
+    vehicle filter is real future scope)."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    date_from, date_to = '2026-04-01', '2027-03-31'
+    d = _fleet_utilization_data(conn, date_from, date_to)
+    conn.close()
+    tab = request.args.get('tab', 'overview')
+    if tab not in ('overview', 'idle', 'empty'):
+        tab = 'overview'
+    return render_template('app/fleet_utilization.html', company_name=company_name, user_initials=user_initials,
+        active='analytics', notif_count=0, tab=tab, d=d, active_ov='fleet')
+
+@app.route('/app/performance')
+def app_performance():
+    """Mobile Performance — real numbers straight from _performance_data() (shared with the
+    website's own /performance). 2 real tabs (Driver Performance/Vehicle Performance, same as the
+    website's own). Top 5 tables show real columns only (Trips/Total Billed/Profit) — the
+    reference design's "Avg Rating"/"On Time %"/"Safety Score" have no backing column anywhere in
+    this data model (checked: no rating/attendance-timeliness/safety field exists on trips,
+    drivers, or vehicles), so they're deliberately not invented here."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    date_from, date_to = '2026-04-01', '2027-03-31'
+    d = _performance_data(conn, date_from, date_to)
+    conn.close()
+    tab = request.args.get('tab', 'driver')
+    if tab not in ('driver', 'vehicle'):
+        tab = 'driver'
+    return render_template('app/performance.html', company_name=company_name, user_initials=user_initials,
+        active='analytics', notif_count=0, tab=tab, d=d, active_ov='performance')
+
+@app.route('/app/business-performance')
+def app_business_performance():
+    """Mobile Business Performance — a leaner native rollup built from the exact same
+    _period_financials()/_accounts_rows()/_pct_growth() primitives the website's own (much
+    larger) business_performance() route uses for its own headline numbers, so the two can never
+    disagree on Revenue/Expenses/Net Profit/Receivables — deliberately not extracted from that
+    350+ line function itself, which also computes a deeper AI-insights/health-score/suggestions
+    engine that's real future scope for mobile, not rebuilt this pass (same "trim to what's
+    really needed" call already made for Tyres/Battery/Service's own charts). Cash in Hand here
+    is cash_collected minus cash_paid for the period — a real derived figure from the same real
+    payments the website's own page already sums, just not previously named as one metric there."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    date_from, date_to = _month_bounds(last_month_end.year, last_month_end.month)
+    curr = _period_financials(conn, date_from, date_to)
+    prev_from, prev_to = _shift_period_back(date_from, date_to)
+    prev = _period_financials(conn, prev_from, prev_to)
+    revenue_growth = _pct_growth(curr['revenue'], prev['revenue'])
+    expense_growth = _pct_growth(curr['total_expenses'], prev['total_expenses'])
+    profit_growth = _pct_growth(curr['net_profit'], prev['net_profit'])
+
+    acct_rows = _accounts_rows(conn)
+    total_receivables = sum(r['balance'] for r in acct_rows if r['balance'] > 0)
+
+    cash_collected = conn.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type='received' AND date>=? AND date<=?",
+                                   (date_from, date_to)).fetchone()[0]
+    cash_collected += sum(t['party_advance'] or 0 for t in curr['trips'])
+    cash_paid = conn.execute("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_type='paid' AND date>=? AND date<=?",
+                              (date_from, date_to)).fetchone()[0]
+    cash_paid += curr['maint'] + curr['overheads'] + curr['salaries']
+    cash_in_hand = cash_collected - cash_paid
+
+    # Revenue vs Expenses — trailing 6 months, same trailing-month convention as the website's
+    # own Monthly Profit Trend.
+    end_d = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+    monthly_rows = []
+    yy_, mm_ = end_d.year, end_d.month
+    for i in range(5, -1, -1):
+        mm = mm_ - i
+        yy = yy_
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        mf, mt = _month_bounds(yy, mm)
+        mfin = _period_financials(conn, mf, mt)
+        monthly_rows.append({'label': calendar.month_abbr[mm], 'revenue': mfin['revenue'], 'expenses': mfin['total_expenses']})
+    trend_max = max([max(m['revenue'], m['expenses']) for m in monthly_rows], default=1) or 1
+    conn.close()
+
+    return render_template('app/business_performance.html', company_name=company_name, user_initials=user_initials,
+        active='analytics', notif_count=0,
+        total_revenue=curr['revenue'], total_expenses=curr['total_expenses'], net_profit=curr['net_profit'],
+        margin=curr['margin'], trip_count=curr['trip_count'], total_receivables=total_receivables,
+        cash_in_hand=cash_in_hand, revenue_growth=revenue_growth, expense_growth=expense_growth,
+        profit_growth=profit_growth, monthly_rows=monthly_rows, trend_max=trend_max,
+        period_label=datetime.datetime.strptime(date_from, '%Y-%m-%d').strftime('%b %Y'), active_ov='business')
 
 @app.route('/app/ledger')
 def app_ledger():
@@ -11087,6 +11598,16 @@ def _app_entity_ledger(entity_type, entity_id):
         notes = row['notes']
         payment_url = f'/payment/party/{entity_id}'
         role_label = 'Party Ledger'
+        # Real pending-trip rows, same query party_ledger() itself uses — needed for the native
+        # Add Payment modal's trip-allocation table (app_add_party_payment()).
+        pending_trips_raw = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount,
+                                        (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) as pending
+                                        FROM trips WHERE party_id=?
+                                        AND (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) > 0.01
+                                        ORDER BY date""", (entity_id,)).fetchall()
+        pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
+                           'to_loc': t['to_loc'], 'vehicle_no': None, 'billed_amount': t['billed_amount'] or 0,
+                           'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
     else:
         row = conn.execute("SELECT * FROM vendors WHERE id=?", (entity_id,)).fetchone()
         if not row:
@@ -11099,6 +11620,16 @@ def _app_entity_ledger(entity_type, entity_id):
         notes = None  # vendors have no notes column at all — real schema difference, not a bug
         payment_url = f'/payment/vendor/{entity_id}'
         role_label = 'Vendor Ledger'
+        pending_trips_raw = conn.execute("""SELECT t.id, t.date, t.lr_number, t.from_loc, t.to_loc, v.vehicle_no,
+                                        (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END) as billed_amount,
+                                        (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) as pending
+                                        FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.owner_vendor_id=?
+                                        AND (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) > 0.01
+                                        ORDER BY t.date""", (entity_id,)).fetchall()
+        pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
+                           'to_loc': t['to_loc'], 'vehicle_no': t['vehicle_no'], 'billed_amount': t['billed_amount'] or 0,
+                           'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
+    total_pending_trips = sum(t['pending'] for t in pending_trips)
     conn.close()
 
     tab_f = request.args.get('tab', '')
@@ -11144,6 +11675,8 @@ def _app_entity_ledger(entity_type, entity_id):
         'entries': page_entries, 'total_count': total_count, 'show': show, 'has_more': has_more, 'f_tab': tab_f or 'all',
         'detail_url_all': detail_url_all, 'detail_url_receivables': detail_url_receivables,
         'detail_url_payables': detail_url_payables, 'detail_url_load_more': detail_url_load_more,
+        'pending_trips': pending_trips, 'total_pending_trips': total_pending_trips,
+        'opening_balance_date': row['opening_balance_date'],
     }
 
 @app.route('/app/ledger/party/<int:party_id>')
@@ -11167,6 +11700,58 @@ def app_vendor_ledger(vendor_id):
     company_name, user_initials = _app_user_display(_conn)
     _conn.close()
     return render_template('app/ledger_detail.html', company_name=company_name, user_initials=user_initials, active='ledger', notif_count=0, **data)
+
+@app.route('/app/ledger/party/<int:party_id>/payment', methods=['POST'])
+def app_add_party_payment(party_id):
+    """"Payment" mode of the in-app Add Payment modal (ledger_detail.html, party) — posts here
+    via fetch instead of the website's own #paymentModal, same _insert_party_payment_from_form()
+    the website itself uses (same trip-allocation logic, same fields)."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_party_payment_from_form(conn, party_id, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_party_ledger', party_id=party_id)})
+
+@app.route('/app/ledger/vendor/<int:vendor_id>/payment', methods=['POST'])
+def app_add_vendor_payment(vendor_id):
+    """"Payment" mode of the in-app Add Payment modal (ledger_detail.html, vendor) — same
+    _insert_vendor_payment_from_form() the website's own #paymentModal uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _insert_vendor_payment_from_form(conn, vendor_id, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_vendor_ledger', vendor_id=vendor_id)})
+
+@app.route('/app/ledger/<entity_type>/<int:entity_id>/opening-balance', methods=['POST'])
+def app_update_ledger_opening_balance(entity_type, entity_id):
+    """"Opening Balance" mode of the in-app Add Payment modal — same
+    _update_ledger_opening_balance_from_form() the website's own #paymentModal (Opening Balance
+    tab) uses."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, result = _update_ledger_opening_balance_from_form(conn, entity_type, entity_id, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    endpoint = 'app_party_ledger' if entity_type == 'party' else 'app_vendor_ledger'
+    id_kwarg = {'party_id': entity_id} if entity_type == 'party' else {'vendor_id': entity_id}
+    return jsonify({'ok': True, 'redirect': url_for(endpoint, **id_kwarg)})
 
 @app.context_processor
 def _app_header_context():

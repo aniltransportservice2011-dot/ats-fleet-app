@@ -1,0 +1,306 @@
+{% extends "app/base_app.html" %}
+{% block title %}Expenses — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _overhead_list_data() in app.py, shared verbatim with the website's own
+     /overheads. Filters collapsed to a search box + filter icon (same pattern as Vehicles/Trips/
+     Ledger/Maintenance) instead of the reference image's inline filter row; the icon opens a
+     bottom sheet with the real filter set (Category/Vendor/Status/From-To Date), "Apply" reloads
+     the list with them. "Add Expense" is a floating bottom-right button + native modal (same
+     position/style as Add Vehicle/Add Tyre/Add Battery), not the reference image's top-of-list
+     inline button. Recurring/Vendor Summary/Category Summary tabs and the donut/trend charts are
+     left off this pass, same call already made for Tyres/Battery/Service. -->
+<div class="vh-head">
+  <div>
+    <h1>Expenses</h1>
+    <div class="sub">Track office rent, utilities and other overheads.</div>
+  </div>
+</div>
+
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Expenses</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(total_amount) }}</div><div class="mo-kpi-sub">All Time</div></div>
+      <div class="mo-kpi-icon" style="background:#eceff3;color:var(--a-steel);">💼</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">This Month</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(this_month_amount) }}</div><div class="mo-kpi-sub">{{ month_labels_full if month_labels_full else '' }}</div></div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">📈</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Pending Bills</div><div class="mo-kpi-val" style="color:{% if pending_count %}var(--a-red){% endif %};">₹{{ '{:,.0f}'.format(pending_amount) }}</div><div class="mo-kpi-sub">{{ pending_count }} Bill{{ 's' if pending_count != 1 else '' }}</div></div>
+      <div class="mo-kpi-icon" style="background:#fff6e8;color:var(--a-amber);">🧾</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Recurring (Monthly)</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(recurring_monthly_amount) }}</div><div class="mo-kpi-sub">{{ recurring_count }} Expense{{ 's' if recurring_count != 1 else '' }}</div></div>
+      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🔁</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Avg Monthly Expense</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(avg_monthly_expense) }}</div><div class="mo-kpi-sub">Last 6 Months</div></div>
+      <div class="mo-kpi-icon" style="background:#e6f6f4;color:var(--a-teal);">📊</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Categories</div><div class="mo-kpi-val">{{ active_categories }}</div><div class="mo-kpi-sub">Active</div></div>
+      <div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📌</div>
+    </div>
+  </div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="expSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Category, vendor, description…" onchange="this.form.submit()">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_category or f_vendor or f_status or f_date_from or f_date_to }}" onclick="openExpFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Expenses List</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">{{ rows|length }} of {{ total_count_filtered }}</span>
+  </div>
+  <div id="exp-list">
+  {% set icon_emoji = {'building':'🏢','bolt':'⚡','wifi':'📶','box':'📦','monitor':'💻','fuel':'⛽','cup':'☕','bank':'🏦','road':'🛣️','car':'🚗','phone':'📱','receipt':'🧾'} %}
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-date">{{ r.date }}</div>
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ icon_emoji.get(r.icon, '🧾') }} {{ r.category or 'Expense' }}</div>
+        <div class="ms-row-amt">₹{{ '{:,.0f}'.format(r.amount or 0) }}</div>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.vendor or '—' }}</div>
+        <span class="vh-status-badge {{ 'Active' if r.status == 'Paid' else 'InMaintenance' }}">{{ r.status }}</span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No expenses found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="exp-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_expenses', category=f_category, vendor=f_vendor, status=f_status, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count_filtered - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count_filtered }} expense{{ 's' if total_count_filtered != 1 else '' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddExpenseModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Expense
+</button>
+
+<!-- Filter sheet — real filter set (Category/Vendor/Status/From-To Date), same fields the
+     website's own filter bar has, just collapsed behind this icon instead of shown inline. Same
+     pattern as Tyres/Service/Battery's own filter sheets. -->
+<div class="vam-backdrop" id="expFilterBackdrop" onclick="closeExpFilterSheet()"></div>
+<div class="vam-modal" id="expFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeExpFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_expenses') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Category</label>
+      <select name="category"><option value="">All Categories</option>
+        {% for c in categories %}<option value="{{ c }}" {% if f_category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Vendor</label>
+      <select name="vendor"><option value="">All Vendors</option>
+        {% for v in vendors %}<option value="{{ v }}" {% if f_vendor == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Status</label>
+      <select name="status"><option value="">All Status</option>
+        <option value="Paid" {% if f_status == 'Paid' %}selected{% endif %}>Paid</option>
+        <option value="Pending" {% if f_status == 'Pending' %}selected{% endif %}>Pending</option>
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_expenses', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Expense modal — real fields/route, same as the website's own #addModal (see
+     templates/overheads_list.html → add_overhead()/_insert_overhead_from_form()). Status
+     Paid/Pending toggle shows Due Date only when Pending; Recurring checkbox shows Frequency
+     only when checked — same conditional-field behavior as the real modal. -->
+<div class="vam-backdrop" id="aeBackdrop" onclick="closeAddExpenseModal()"></div>
+<div class="vam-modal" id="aeModal" role="dialog" aria-modal="true" aria-label="Add Expense">
+  <div class="vam-head">
+    <h2>Add Expense</h2>
+    <button type="button" class="vam-close" onclick="closeAddExpenseModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form id="aeForm" class="vam-form">
+    <div class="vam-error" id="aeError" style="display:none;"></div>
+
+    <div class="vam-grid">
+      <div class="vam-field"><label>Date <span class="req">*</span></label><input type="date" name="date" value="{{ today_str }}" required></div>
+      <div class="vam-field"><label>Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" required></div>
+      <div class="vam-field vam-field-full"><label>Category <span class="req">*</span></label><input type="text" name="category" list="exp-category-list" required placeholder="e.g. Office Rent"></div>
+      <div class="vam-field vam-field-full"><label>Vendor</label><input type="text" name="vendor" list="exp-vendor-list" placeholder="e.g. ABC Properties"></div>
+      <div class="vam-field"><label>Payment Mode</label>
+        <select name="payment_mode"><option value="">Select Mode</option>
+          {% for m in ['Cash','Bank Transfer','UPI','Online','Credit Card','Cheque'] %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field"><label>Receipt / Invoice No.</label><input type="text" name="receipt_number" placeholder="Optional"></div>
+      <div class="vam-field vam-field-full"><label>Description</label><textarea name="description" rows="2" placeholder="What this expense was for"></textarea></div>
+      <div class="vam-field vam-field-full"><label>Status</label>
+        <select name="status" id="aeStatus" onchange="document.getElementById('aeDueWrap').style.display = this.value === 'Pending' ? '' : 'none';">
+          <option value="Paid">Paid</option>
+          <option value="Pending">Pending</option>
+        </select>
+      </div>
+      <div class="vam-field vam-field-full" id="aeDueWrap" style="display:none;"><label>Due Date</label><input type="date" name="due_date"></div>
+      <div class="vam-field vam-field-full">
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:0;">
+          <input type="checkbox" name="is_recurring" id="aeRecurring" style="width:auto;" onchange="document.getElementById('aeFreqWrap').style.display = this.checked ? '' : 'none';">
+          Recurring expense
+        </label>
+      </div>
+      <div class="vam-field vam-field-full" id="aeFreqWrap" style="display:none;"><label>Frequency</label>
+        <select name="recurring_frequency">
+          {% for f in ['Monthly','Weekly','Quarterly','Yearly'] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Add any notes here..."></textarea></div>
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddExpenseModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="aeSaveBtn">Save Expense</button>
+    </div>
+  </form>
+</div>
+<datalist id="exp-category-list">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
+<datalist id="exp-vendor-list">{% for v in vendors %}<option value="{{ v }}">{% endfor %}</datalist>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('exp-list').innerHTML = doc.getElementById('exp-list').innerHTML;
+      document.getElementById('exp-load-area').innerHTML = doc.getElementById('exp-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet — same open/close/backdrop pattern as every other modal in this app.
+function openExpFilterSheet() {
+  lockPageScroll();
+  document.getElementById('expFilterBackdrop').classList.add('open');
+  document.getElementById('expFilterSheet').classList.add('open');
+}
+function closeExpFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('expFilterBackdrop').classList.remove('open');
+  document.getElementById('expFilterSheet').classList.remove('open');
+}
+
+// Add Expense modal.
+function openAddExpenseModal() {
+  lockPageScroll();
+  document.getElementById('aeBackdrop').classList.add('open');
+  document.getElementById('aeModal').classList.add('open');
+}
+function closeAddExpenseModal() {
+  unlockPageScroll();
+  document.getElementById('aeBackdrop').classList.remove('open');
+  document.getElementById('aeModal').classList.remove('open');
+}
+var aeForm = document.getElementById('aeForm');
+if (aeForm) {
+  aeForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('aeSaveBtn');
+    var errBox = document.getElementById('aeError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_add_overhead') }}", { method: 'POST', body: new FormData(e.target) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_expenses') }}") + '?added=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Save Expense';
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Save Expense';
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Expense added successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's own "Add Expense" quick-add (/app/expenses?add=1),
+// same ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddExpenseModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+</script>
+{% endblock %}
