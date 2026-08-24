@@ -5,7 +5,7 @@
       "name": "fleet-app-preview",
       "runtimeExecutable": "env",
       "runtimeArgs": [
-        "DATABASE_PATH=/private/tmp/claude-501/-Users-beenash-Downloads-fleet-local-app--1-/d8bf0a23-da25-439d-8175-8b6aa478d0c2/scratchpad/test_preview.db",
+        "FLASK_HOST=0.0.0.0",
         "python3",
         "app.py"
       ],

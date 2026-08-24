@@ -1,0 +1,315 @@
+{% extends "app/base_app.html" %}
+{% block title %}Salary — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _employees_salary_data() in app.py, shared verbatim with the website's
+     own /salaries?tab=salary. Only 2 tabs (Salary/Attendance) — Overview is dropped per
+     instruction (not designed at all); Attendance is a real, working tab on the website
+     (_employees_attendance_tab()) but shows a "Coming Soon" placeholder here instead of being
+     rebuilt natively this pass, also per instruction. Filters collapsed to a search box + filter
+     icon (same pattern as Vehicles/Trips/Ledger/Maintenance) instead of the reference image's
+     inline filter row. Tapping a row opens that employee's own native Ledger
+     (app_employee_ledger()) — the real "pay a salary / give or repay an advance" flow lives
+     there, matching the website's own hint text below. -->
+<div class="vh-head">
+  <div>
+    <div class="mt-crumb" style="font-size:0.76rem; color:var(--a-steel); margin-bottom:4px;">Employees <span style="margin:0 4px;">&rsaquo;</span> Salary</div>
+    <h1>Salary</h1>
+    <div class="sub">Manage salary payments and outstanding advances.</div>
+  </div>
+</div>
+
+<div class="mo-tabstrip">
+  <a class="mo-tab {{ 'active' if tab == 'salary' }}" href="{{ url_for('app_salary') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+    <span>Salary</span></a>
+  <a class="mo-tab {{ 'active' if tab == 'attendance' }}" href="{{ url_for('app_salary_attendance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+    <span>Attendance</span></a>
+</div>
+
+{% if tab == 'attendance' %}
+<div class="mo-panel" style="text-align:center; padding:40px 20px;">
+  <div style="font-size:2rem; margin-bottom:10px;">🚧</div>
+  <div style="font-weight:800; font-size:1rem; color:var(--a-ink); margin-bottom:6px;">Coming Soon</div>
+  <div style="color:var(--a-steel); font-size:0.85rem; line-height:1.5;">Attendance tracking isn't available in the app yet.<br>You can still mark and review attendance on the website.</div>
+</div>
+{% endif %}
+
+{% if tab == 'salary' %}
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Payroll</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(total_payroll) }}</div><div class="mo-kpi-sub">Selected Period</div></div>
+      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">₹</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Employees Paid</div><div class="mo-kpi-val">{{ employees_paid }} / {{ total_employees_all }}</div><div class="mo-kpi-sub">Selected Period</div></div>
+      <div class="mo-kpi-icon" style="background:#eceff3;color:var(--a-steel);">👥</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Avg Salary</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(avg_salary) }}</div><div class="mo-kpi-sub">Across paid employees</div></div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">📈</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Outstanding Advance</div><div class="mo-kpi-val" style="color:{% if total_outstanding_advances > 0 %}var(--a-red){% elif total_outstanding_advances < 0 %}var(--a-green){% endif %};">₹{{ '{:,.0f}'.format(total_outstanding_advances) }}</div><div class="mo-kpi-sub">To be recovered</div></div>
+      <div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">💳</div>
+    </div>
+  </div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="salSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Employee name, ID…" onchange="this.form.submit()">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_role or f_date_from or f_date_to }}" onclick="openSalFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mo-panel" style="background:#f1f5fb; border:1px solid var(--a-line); display:flex; gap:10px; align-items:flex-start; padding:12px 14px; font-size:0.78rem; color:var(--a-steel); line-height:1.5;">
+  <span style="flex-shrink:0;">💡</span>
+  <span>To pay a salary, or give/repay an advance, open that employee's Ledger — tap any row below.</span>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Salary Summary</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">{{ rows|length }} of {{ total_count }}</span>
+  </div>
+  {% set avatar_palette = [('#eaf1fb','var(--a-blue)'), ('#fff3e8','var(--a-accent)'), ('#e8f5ee','var(--a-green)'), ('#efeaff','var(--a-purple)'), ('#fdecea','var(--a-red)'), ('#e6f6f4','var(--a-teal)')] %}
+  <div id="sal-list">
+  {% for r in rows %}
+  {% set av = avatar_palette[r.id % avatar_palette|length] %}
+  <a href="{{ url_for('app_employee_ledger', employee=r.name) }}" class="ms-row" style="text-decoration:none; color:inherit;">
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle" style="display:flex; align-items:center; gap:8px; min-width:0; flex:1;">
+          <span style="width:28px; height:28px; border-radius:50%; background:{{ av[0] }}; color:{{ av[1] }}; display:flex; align-items:center; justify-content:center; font-size:0.68rem; font-weight:800; flex-shrink:0;">{{ r.initials }}</span>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">{{ r.name }}</span>
+        </div>
+        <div class="ms-row-amt">₹{{ '{:,.0f}'.format(r.total_paid) }}</div>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.employee_code }} · {{ r.role }} · {{ r.payment_count }} payment{{ 's' if r.payment_count != 1 else '' }}</div>
+        <span style="font-size:0.7rem; font-weight:700; color:{% if r.outstanding %}var(--a-red){% else %}var(--a-green){% endif %};">₹{{ '{:,.0f}'.format(r.outstanding) }} adv</span>
+      </div>
+    </div>
+  </a>
+  {% else %}
+  <div class="vd-empty">No employees match this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="sal-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_salary', role=f_role, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} employee{{ 's' if total_count != 1 else '' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div><!-- clears the floating Add Employee button below -->
+
+<button type="button" class="vh-addbtn" onclick="openAddEmpModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Employee
+</button>
+
+<!-- Add Employee modal — same 14 real fields/columns as the website's own #addEmployeeModal
+     (templates/partials/_employees_modals.html → add_employee()), posted via fetch to
+     app_add_employee() (a thin JSON wrapper around the same _insert_employee_from_form() helper
+     both surfaces share) instead of a full-page navigation. Only Name and Type are actually
+     required, matching the real backend's own validation. -->
+<div class="vam-backdrop" id="empAddBackdrop" onclick="closeAddEmpModal()"></div>
+<div class="vam-modal" id="empAddModal" role="dialog" aria-modal="true" aria-label="Add Employee">
+  <div class="vam-head">
+    <h2>Add Employee</h2>
+    <button type="button" class="vam-close" onclick="closeAddEmpModal()" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <form id="empAddForm" class="vam-form">
+    <div class="vam-error" id="empAddError" style="display:none;"></div>
+
+    <div class="vam-section-title">Basic Information</div>
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full">
+        <label>Employee Name <span class="req">*</span></label>
+        <input type="text" name="name" required autocomplete="off">
+      </div>
+      <div class="vam-field">
+        <label>Employee ID</label>
+        <input type="text" name="employee_code" placeholder="Auto-generated if blank">
+      </div>
+      <div class="vam-field">
+        <label>Type <span class="req">*</span></label>
+        <select name="type" required>
+          <option value="Driver">Driver</option>
+          <option value="Staff">Staff</option>
+        </select>
+      </div>
+      <div class="vam-field">
+        <label>Role</label>
+        <input type="text" name="role" placeholder="e.g. Driver, Accountant, Clerk">
+      </div>
+      <div class="vam-field">
+        <label>Mobile</label>
+        <input type="text" name="mobile">
+      </div>
+      <div class="vam-field">
+        <label>Email</label>
+        <input type="email" name="email">
+      </div>
+      <div class="vam-field vam-field-full">
+        <label>Address</label>
+        <input type="text" name="address">
+      </div>
+    </div>
+
+    <div class="vam-section-title">Employment Information</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>Joining Date</label><input type="date" name="joining_date"></div>
+      <div class="vam-field"><label>Date of Birth</label><input type="date" name="date_of_birth"></div>
+      <div class="vam-field vam-field-full"><label>Emergency Contact</label><input type="text" name="emergency_contact" placeholder="Name and phone number"></div>
+    </div>
+
+    <div class="vam-section-title">Salary Information</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>Monthly Basic Salary</label><input type="number" step="0.01" name="basic_salary"></div>
+      <div class="vam-field"><label>Bank Account</label><input type="text" name="bank_account"></div>
+      <div class="vam-field"><label>IFSC Code</label><input type="text" name="ifsc_code"></div>
+      <div class="vam-field"><label>UPI ID</label><input type="text" name="upi_id"></div>
+    </div>
+
+    <div class="vam-section-title">Documents</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>Aadhaar Number</label><input type="text" name="aadhaar"></div>
+      <div class="vam-field"><label>PAN Number</label><input type="text" name="pan"></div>
+      <div class="vam-field"><label>Driving License</label><input type="text" name="driving_license"></div>
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddEmpModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="empAddSaveBtn">Save Employee</button>
+    </div>
+  </form>
+</div>
+
+<!-- Filter sheet — real filter set (From/To Date, Role), same fields the website's own filter
+     bar has, just collapsed behind this icon instead of shown inline. -->
+<div class="vam-backdrop" id="salFilterBackdrop" onclick="closeSalFilterSheet()"></div>
+<div class="vam-modal" id="salFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeSalFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_salary') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Role</label>
+      <select name="role"><option value="">All Roles</option>
+        {% for rl in roles %}<option value="{{ rl }}" {% if f_role == rl %}selected{% endif %}>{{ rl }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_salary', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+{% if tab == 'salary' %}
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('sal-list').innerHTML = doc.getElementById('sal-list').innerHTML;
+      document.getElementById('sal-load-area').innerHTML = doc.getElementById('sal-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet — same open/close/backdrop pattern as every other modal in this app.
+function openSalFilterSheet() {
+  lockPageScroll();
+  document.getElementById('salFilterBackdrop').classList.add('open');
+  document.getElementById('salFilterSheet').classList.add('open');
+}
+function closeSalFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('salFilterBackdrop').classList.remove('open');
+  document.getElementById('salFilterSheet').classList.remove('open');
+}
+
+// Add Employee modal — same lock/backdrop pattern as the Add Vehicle modal (vehicles.html).
+function openAddEmpModal() {
+  lockPageScroll();
+  document.getElementById('empAddBackdrop').classList.add('open');
+  document.getElementById('empAddModal').classList.add('open');
+}
+function closeAddEmpModal() {
+  unlockPageScroll();
+  document.getElementById('empAddBackdrop').classList.remove('open');
+  document.getElementById('empAddModal').classList.remove('open');
+}
+document.getElementById('empAddForm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var btn = document.getElementById('empAddSaveBtn');
+  var errBox = document.getElementById('empAddError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  fetch("{{ url_for('app_add_employee') }}", { method: 'POST', body: new FormData(e.target) })
+    .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+    .then(function (r) {
+      if (r.data.ok) {
+        window.location.href = (r.data.redirect || "{{ url_for('app_salary') }}") + '?added=1';
+      } else {
+        errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Save Employee';
+      }
+    })
+    .catch(function () {
+      errBox.textContent = 'Network error — please check your connection and try again.';
+      errBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Save Employee';
+    });
+});
+{% endif %}
+</script>
+{% endblock %}

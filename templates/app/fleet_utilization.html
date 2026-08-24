@@ -1,0 +1,169 @@
+{% extends "app/base_app.html" %}
+{% block title %}Fleet Utilization — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _fleet_utilization_data() in app.py, shared verbatim with the website's
+     own /fleet-utilization (Total KM / Total Fuel / Avg Fuel Efficiency are new real sums this
+     pass added to that shared function — see its own docstring for why that's not fabrication).
+     3 real sub-tabs (Overview/Idle Analysis/Empty Run Analysis), same as the website's own.
+     Date range fixed to the same fiscal-year default Route Analytics already uses. -->
+<div class="ra-head">
+  <h1>Business Overview</h1>
+  <div class="sub">Route analytics, fleet utilization, performance &amp; business health.</div>
+</div>
+
+{% include "app/_overview_tabstrip.html" %}
+
+<div class="ra-tabstrip">
+  <a class="ra-tab {{ 'active' if tab == 'overview' }}" href="{{ url_for('app_fleet_utilization', tab='overview') }}">Overview</a>
+  <a class="ra-tab {{ 'active' if tab == 'idle' }}" href="{{ url_for('app_fleet_utilization', tab='idle') }}">Idle Analysis</a>
+  <a class="ra-tab {{ 'active' if tab == 'empty' }}" href="{{ url_for('app_fleet_utilization', tab='empty') }}">Empty Run Analysis</a>
+</div>
+
+<div class="ra-period-bar">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+  {{ d.f_date_from }} – {{ d.f_date_to }} (FY)
+</div>
+
+{% if tab == 'overview' %}
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Vehicles</div><div class="ra-kpi-val">{{ d.total_vehicles }}</div><div class="ra-kpi-sub">All Vehicles</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🚛</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">On Trip</div><div class="ra-kpi-val" style="color:var(--a-green);">{{ d.on_trip_count }}</div><div class="ra-kpi-sub">Running Now</div></div>
+    <div class="ra-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">📍</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Idle</div><div class="ra-kpi-val" style="color:{% if d.vs_idle %}var(--a-amber){% endif %};">{{ d.vs_idle }}</div><div class="ra-kpi-sub">Not in Use</div></div>
+    <div class="ra-kpi-icon" style="background:#fff6e8;color:var(--a-amber);">⏸</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">In Workshop</div><div class="ra-kpi-val" style="color:{% if d.in_workshop %}var(--a-red){% endif %};">{{ d.in_workshop }}</div><div class="ra-kpi-sub">Under Maintenance</div></div>
+    <div class="ra-kpi-icon" style="background:#fdecea;color:var(--a-red);">🔧</div>
+  </div>
+</div>
+
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Fleet Utilization</div><div class="ra-kpi-val">{{ d.active_days_pct }}%</div><div class="ra-kpi-sub">Overall Utilization</div></div>
+    <div class="ra-kpi-icon" style="background:#efeaff;color:var(--a-purple);">%</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total KM</div><div class="ra-kpi-val">{{ '{:,.0f}'.format(d.fleet_total_km) }}</div><div class="ra-kpi-sub">In Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🛣️</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Fuel (Ltr)</div><div class="ra-kpi-val">{{ '{:,.0f}'.format(d.fleet_total_fuel_ltr) }}</div><div class="ra-kpi-sub">In Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">⛽</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Avg Fuel Efficiency</div><div class="ra-kpi-val">{{ d.avg_fuel_efficiency }}</div><div class="ra-kpi-sub">KM per Ltr</div></div>
+    <div class="ra-kpi-icon" style="background:#e6f6f4;color:var(--a-teal);">📈</div>
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Idle Days Trend</h2></div>
+  <div class="ra-panel-note" style="font-size:0.72rem;color:var(--a-steel);margin:-8px 0 10px;">Last 12 weeks, own fleet.</div>
+  <div class="mo-trend-bars">
+    {% for t in d.trend %}
+    <div class="mo-trend-col">
+      <div class="mo-trend-bar" style="height:{{ ((t.idle_days / d.trend_max * 100) if d.trend_max else 0)|round(0) }}%;" title="{{ t.idle_days }} idle days"></div>
+      <div class="mo-trend-label">{{ t.label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Utilization by Vehicle Type</h2></div>
+  {% set donut_colors = ['#2a78d6', '#1a9c5b', '#eda100', '#7a5ad6', '#e34948', '#17a2b8'] %}
+  {% set type_total = d.type_breakdown|sum(attribute=1) or 1 %}
+  <div class="mo-donut-wrap">
+    <svg viewBox="0 0 130 130" width="100" height="100">
+      {% set circ = 326.7 %}
+      {% set offset = namespace(v=0) %}
+      {% for label, count in d.type_breakdown %}
+      {% set seg = circ * count / type_total %}
+      <circle cx="65" cy="65" r="52" fill="none" stroke="{{ donut_colors[loop.index0 % donut_colors|length] }}" stroke-width="20"
+              stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset.v|round(1) }}" transform="rotate(-90 65 65)"/>
+      {% set offset.v = offset.v + seg %}
+      {% endfor %}
+      <text x="65" y="61" font-size="20" font-weight="800" text-anchor="middle" fill="var(--a-ink)">{{ d.total_vehicles }}</text>
+      <text x="65" y="77" font-size="8" text-anchor="middle" fill="var(--a-steel)">Total</text>
+    </svg>
+    <table class="mo-band-table">
+      {% for label, count in d.type_breakdown %}
+      <tr>
+        <td><span class="mo-band-dot" style="background:{{ donut_colors[loop.index0 % donut_colors|length] }};"></span><span class="mo-band-name">{{ label }}</span></td>
+        <td class="mo-band-count">{{ count }} ({{ (count/type_total*100)|round(1) }}%)</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="2" style="color:var(--a-steel);">No vehicles found.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if tab == 'idle' %}
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Most Idle Vehicles</h2></div>
+  {% for r in d.most_idle %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.vehicle_no }}</div>
+      <div class="ra-route-meta">{{ r.active_days }} active / {{ r.total_days }} days · Last trip {{ r.last_trip or '—' }}</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin" style="color:{% if r.status == 'Idle' %}var(--a-red){% else %}var(--a-green){% endif %};">{{ r.idle_pct }}%</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No vehicle idle data for this period.</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if tab == 'empty' %}
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Empty Run Trips</div><div class="ra-kpi-val">{{ d.empty_run_trips }}</div><div class="ra-kpi-sub">{{ d.empty_run_pct_overall }}% of all trips</div></div>
+    <div class="ra-kpi-icon" style="background:#fdecea;color:var(--a-red);">↩️</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Fuel Cost</div><div class="ra-kpi-val">₹{{ '{:,.0f}'.format(d.total_fuel) }}</div><div class="ra-kpi-sub">Empty Runs</div></div>
+    <div class="ra-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">⛽</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Toll</div><div class="ra-kpi-val">₹{{ '{:,.0f}'.format(d.total_toll) }}</div><div class="ra-kpi-sub">Empty Runs</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🛣️</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Empty Cost</div><div class="ra-kpi-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(d.total_empty_cost) }}</div><div class="ra-kpi-sub">Fuel + Toll</div></div>
+    <div class="ra-kpi-icon" style="background:#fdecea;color:var(--a-red);">₹</div>
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Empty Run Trips</h2></div>
+  {% for r in d.empty_rows[:15] %}
+  <div class="ra-route-row">
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.vehicle_no or '—' }} · {{ r.from_loc }} → {{ r.to_loc }}</div>
+      <div class="ra-route-meta">{{ r.date }}</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-revenue">₹{{ '{:,.0f}'.format(r.fuel_amount or 0) }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No empty run trips for this period.</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}

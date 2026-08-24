@@ -4,13 +4,13 @@
 
 <div class="ld-head">
   <div>
+    <div class="mt-crumb" style="font-size:0.76rem; color:var(--a-steel); margin-bottom:4px;">
+      <a href="{{ url_for('app_ledger') }}" style="color:var(--a-steel); text-decoration:none;">Ledger</a>
+      <span style="margin:0 4px;">&rsaquo;</span> {{ name }}
+    </div>
     <h1>{{ name }}</h1>
     <div class="sub">{{ role_label }}{% if category %} · {{ category }}{% endif %}</div>
   </div>
-  <a class="ld-addpay-btn" href="{{ payment_url }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-    Add Payment
-  </a>
 </div>
 
 <div class="ld-card">
@@ -139,6 +139,89 @@
   </div>
 </div>
 
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddPaymentModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Payment
+</button>
+
+<!-- Add Payment modal — same 2 real modes as the website's own #paymentModal (see
+     templates/ledger.html): Payment Details (+ real trip-allocation checklist when there are
+     pending trips, same _insert_party_payment_from_form()/_insert_vendor_payment_from_form()
+     the website itself uses) and Opening Balance
+     (_update_ledger_opening_balance_from_form()). Floating bottom-right button, same position/
+     style as every other native "Add X" modal in this app — replacing the old top-right inline
+     link that bridged straight to the website. -->
+<div class="vam-backdrop" id="apBackdrop" onclick="closeAddPaymentModal()"></div>
+<div class="vam-modal" id="apModal" role="dialog" aria-modal="true" aria-label="Add Payment">
+  <div class="vam-head">
+    <h2>Add Payment — {{ name }}</h2>
+    <button type="button" class="vam-close" onclick="closeAddPaymentModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
+  <div class="aty-modes">
+    <button type="button" class="aty-mode-btn active" id="apModePayBtn" onclick="apSetMode('pay')">Payment Details</button>
+    <button type="button" class="aty-mode-btn" id="apModeObBtn" onclick="apSetMode('ob')">Opening Balance</button>
+  </div>
+
+  <div class="vam-error" id="apError" style="display:none; margin:0 18px 14px;"></div>
+
+  <form id="apPayForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field"><label>Payment Date <span class="req">*</span></label><input type="date" name="date" required></div>
+      <div class="vam-field"><label>Payment Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" id="apAmount" oninput="apRecalc()" required></div>
+      <div class="vam-field"><label>Payment Mode <span class="req">*</span></label>
+        <select name="mode" required>
+          <option value="Cash">Cash</option>
+          <option value="Bank Transfer">Bank Transfer</option>
+          <option value="UPI">UPI</option>
+          <option value="Cheque">Cheque</option>
+        </select>
+      </div>
+      <div class="vam-field"><label>Reference / Transaction ID</label><input type="text" name="reference_id" placeholder="Optional"></div>
+      <div class="vam-field vam-field-full"><label>Remarks</label><textarea name="remarks" rows="2" maxlength="250" placeholder="Optional"></textarea></div>
+    </div>
+
+    {% if pending_trips %}
+    <div class="vam-section-title">Allocate Payment To Trips</div>
+    <div style="font-size:0.76rem;color:var(--a-steel);margin:-6px 0 10px;">Outstanding: <b>₹{{ '{:,.0f}'.format(total_pending_trips) }}</b> · Select one or more pending trips — amount is adjusted automatically.</div>
+    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--a-line);border-radius:10px;">
+      {% for pt in pending_trips %}
+      <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--a-line);font-size:0.78rem;">
+        <input type="checkbox" class="ap-trip-check" name="trip_ids" value="{{ pt.id }}" data-pending="{{ pt.pending }}" onchange="apRecalc()" style="width:auto;flex-shrink:0;">
+        <span style="flex:1;min-width:0;">
+          <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ pt.lr_number or '—' }}{% if pt.vehicle_no %} · {{ pt.vehicle_no }}{% endif %}</div>
+          <div style="color:var(--a-steel);font-size:0.7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ pt.date }} · {{ pt.from_loc }} → {{ pt.to_loc }}</div>
+        </span>
+        <span style="font-weight:800;color:var(--a-red);flex-shrink:0;">₹{{ '{:,.0f}'.format(pt.pending) }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:0.76rem;font-weight:700;margin-top:10px;padding:10px 12px;background:var(--a-paper);border-radius:10px;">
+      <span>Allocated: <b id="apAllocated" style="color:var(--a-green);">₹0</b></span>
+      <span>Unallocated: <b id="apUnallocated" style="color:var(--a-red);">₹0</b></span>
+    </div>
+    {% endif %}
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddPaymentModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Payment</button>
+    </div>
+  </form>
+
+  <form id="apObForm" class="vam-form" style="display:none;">
+    <div style="font-size:0.78rem; color:var(--a-steel); margin:0 0 14px; line-height:1.5;">Set this once to record the balance this {{ role_label.split(' ')[0]|lower }} carried over before you started using the app. Positive = they owe you. Negative = you owe them. Saving again replaces the previous value.</div>
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Opening Balance (₹) <span class="req">*</span></label><input type="number" step="0.01" name="opening_balance" value="{{ opening_balance or 0 }}" required></div>
+      <div class="vam-field vam-field-full"><label>As Of Date</label><input type="date" name="opening_balance_date" value="{{ opening_balance_date or since_date or '' }}"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddPaymentModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Opening Balance</button>
+    </div>
+  </form>
+</div>
+
 <div style="height:16px;"></div>
 
 {% endblock %}
@@ -165,5 +248,95 @@ document.addEventListener('click', function (e) {
       btn.style.pointerEvents = '';
     });
 });
+
+// Add Payment modal — 2 real modes (Payment Details / Opening Balance), same mode-tab mechanism
+// as Tyres/Battery/Employee Ledger's own Add modals.
+var apMode = 'pay';
+function apSetMode(mode) {
+  apMode = mode;
+  document.getElementById('apModePayBtn').classList.toggle('active', mode === 'pay');
+  document.getElementById('apModeObBtn').classList.toggle('active', mode === 'ob');
+  document.getElementById('apPayForm').style.display = (mode === 'pay') ? '' : 'none';
+  document.getElementById('apObForm').style.display = (mode === 'ob') ? '' : 'none';
+  document.getElementById('apError').style.display = 'none';
+}
+function openAddPaymentModal() {
+  lockPageScroll();
+  apSetMode('pay');
+  document.getElementById('apBackdrop').classList.add('open');
+  document.getElementById('apModal').classList.add('open');
+}
+function closeAddPaymentModal() {
+  unlockPageScroll();
+  document.getElementById('apBackdrop').classList.remove('open');
+  document.getElementById('apModal').classList.remove('open');
+}
+// Live allocation recalc — same idea as the website's own pmRecalc(): sum whichever trips are
+// checked, compare against the entered payment amount, show Allocated/Unallocated. Purely a
+// preview for the user; the real allocation (oldest-first, capped at the payment amount) happens
+// server-side in _insert_party_payment_from_form()/_insert_vendor_payment_from_form(), same as
+// the website itself.
+function apRecalc() {
+  var amt = parseFloat(document.getElementById('apAmount').value) || 0;
+  var checks = document.querySelectorAll('.ap-trip-check:checked');
+  var totalPending = 0;
+  checks.forEach(function (c) { totalPending += parseFloat(c.dataset.pending) || 0; });
+  var allocated = Math.min(amt, totalPending);
+  var unallocated = Math.max(amt - totalPending, 0);
+  var allocEl = document.getElementById('apAllocated');
+  var unallocEl = document.getElementById('apUnallocated');
+  if (allocEl) allocEl.textContent = '₹' + allocated.toLocaleString('en-IN', {maximumFractionDigits: 0});
+  if (unallocEl) unallocEl.textContent = '₹' + unallocated.toLocaleString('en-IN', {maximumFractionDigits: 0});
+}
+function apHandleSubmit(e, url) {
+  e.preventDefault();
+  var form = e.target;
+  var btn = form.querySelector('.vam-btn-save');
+  var origText = btn.textContent;
+  var errBox = document.getElementById('apError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  fetch(url, { method: 'POST', body: new FormData(form) })
+    .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+    .then(function (r) {
+      if (r.data.ok) {
+        window.location.href = (r.data.redirect || window.location.pathname) + '?added=1';
+      } else {
+        errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    })
+    .catch(function () {
+      errBox.textContent = 'Network error — please check your connection and try again.';
+      errBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = origText;
+    });
+}
+var apPayForm = document.getElementById('apPayForm');
+if (apPayForm) {
+  apPayForm.addEventListener('submit', function (e) {
+    var url = "{{ url_for('app_add_party_payment', party_id=entity_id) if entity_type == 'party' else url_for('app_add_vendor_payment', vendor_id=entity_id) }}";
+    apHandleSubmit(e, url);
+  });
+}
+var apObForm = document.getElementById('apObForm');
+if (apObForm) {
+  apObForm.addEventListener('submit', function (e) {
+    var url = "{{ url_for('app_update_ledger_opening_balance', entity_type=entity_type, entity_id=entity_id) }}";
+    apHandleSubmit(e, url);
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
 </script>
 {% endblock %}

@@ -3,9 +3,11 @@
 {% block content %}
 
 <div class="ra-head">
-  <h1>Route Analytics</h1>
-  <div class="sub">Analyze performance, rates &amp; profitability</div>
+  <h1>Business Overview</h1>
+  <div class="sub">Route analytics, fleet utilization, performance &amp; business health.</div>
 </div>
+
+{% include "app/_overview_tabstrip.html" %}
 
 <div class="ra-tabstrip">
   <a class="ra-tab active" href="{{ url_for('app_analytics', vehicle_type=f_vehicle_type) }}">Best Routes</a>

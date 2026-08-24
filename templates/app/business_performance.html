@@ -1,0 +1,73 @@
+{% extends "app/base_app.html" %}
+{% block title %}Business Performance — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see app_business_performance() in app.py, built from the exact same
+     _period_financials()/_accounts_rows()/_pct_growth() primitives the website's own (much
+     larger) business_performance() route uses for its headline numbers — see that route's own
+     docstring for why the deeper insights/health-score engine isn't rebuilt here this pass. -->
+<div class="ra-head">
+  <h1>Business Overview</h1>
+  <div class="sub">Route analytics, fleet utilization, performance &amp; business health.</div>
+</div>
+
+{% include "app/_overview_tabstrip.html" %}
+
+<div class="ra-period-bar">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+  {{ period_label }}
+</div>
+
+<div class="ra-kpi-grid">
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Revenue</div><div class="ra-kpi-val">₹{{ '{:,.0f}'.format(total_revenue) }}</div>
+      <div class="ra-kpi-sub" style="color:{% if revenue_growth is not none %}{{ 'var(--a-green)' if revenue_growth >= 0 else 'var(--a-red)' }}{% endif %};">{% if revenue_growth is not none %}{{ '↑' if revenue_growth >= 0 else '↓' }} {{ revenue_growth|abs }}% vs last period{% else %}Selected Period{% endif %}</div></div>
+    <div class="ra-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">₹</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Expenses</div><div class="ra-kpi-val">₹{{ '{:,.0f}'.format(total_expenses) }}</div>
+      <div class="ra-kpi-sub" style="color:{% if expense_growth is not none %}{{ 'var(--a-red)' if expense_growth >= 0 else 'var(--a-green)' }}{% endif %};">{% if expense_growth is not none %}{{ '↑' if expense_growth >= 0 else '↓' }} {{ expense_growth|abs }}% vs last period{% else %}Selected Period{% endif %}</div></div>
+    <div class="ra-kpi-icon" style="background:#fdecea;color:var(--a-red);">₹</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Net Profit</div><div class="ra-kpi-val" style="color:{{ 'var(--a-green)' if net_profit >= 0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(net_profit) }}</div>
+      <div class="ra-kpi-sub" style="color:{% if profit_growth is not none %}{{ 'var(--a-green)' if profit_growth >= 0 else 'var(--a-red)' }}{% endif %};">{% if profit_growth is not none %}{{ '↑' if profit_growth >= 0 else '↓' }} {{ profit_growth|abs }}% vs last period{% else %}{{ margin }}% margin{% endif %}</div></div>
+    <div class="ra-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">📈</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Outstanding Receivable</div><div class="ra-kpi-val">₹{{ '{:,.0f}'.format(total_receivables) }}</div><div class="ra-kpi-sub">All Time</div></div>
+    <div class="ra-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">🧾</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Cash in Hand</div><div class="ra-kpi-val" style="color:{{ 'var(--a-green)' if cash_in_hand >= 0 else 'var(--a-red)' }};">₹{{ '{:,.0f}'.format(cash_in_hand) }}</div><div class="ra-kpi-sub">Collected − Paid, Period</div></div>
+    <div class="ra-kpi-icon" style="background:#e6f6f4;color:var(--a-teal);">💵</div>
+  </div>
+  <div class="ra-kpi-card">
+    <div><div class="ra-kpi-lbl">Total Trips</div><div class="ra-kpi-val">{{ trip_count }}</div><div class="ra-kpi-sub">Selected Period</div></div>
+    <div class="ra-kpi-icon" style="background:#efeaff;color:var(--a-purple);">🚚</div>
+  </div>
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Revenue vs Expenses</h2></div>
+  <div class="ra-panel-note" style="font-size:0.72rem;color:var(--a-steel);margin:-8px 0 10px;">Last 6 months.</div>
+  <div style="display:flex; gap:14px; font-size:0.7rem; font-weight:700; margin-bottom:10px;">
+    <span style="color:var(--a-green);">● Revenue</span>
+    <span style="color:var(--a-red);">● Expenses</span>
+  </div>
+  <div class="mo-trend-bars">
+    {% for m in monthly_rows %}
+    <div class="mo-trend-col">
+      <div style="display:flex; align-items:flex-end; gap:2px; height:100%; width:100%; justify-content:center;">
+        <div class="mo-trend-bar" style="height:{{ ((m.revenue / trend_max * 100) if trend_max else 0)|round(0) }}%; width:40%; background:var(--a-green);" title="₹{{ '{:,.0f}'.format(m.revenue) }} revenue"></div>
+        <div class="mo-trend-bar" style="height:{{ ((m.expenses / trend_max * 100) if trend_max else 0)|round(0) }}%; width:40%; background:var(--a-red);" title="₹{{ '{:,.0f}'.format(m.expenses) }} expenses"></div>
+      </div>
+      <div class="mo-trend-label">{{ m.label }}</div>
+    </div>
+    {% else %}
+    <div class="ra-empty">No trend data for this period.</div>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

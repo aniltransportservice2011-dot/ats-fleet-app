@@ -7,9 +7,14 @@
     <h1>Hi {{ greeting_name }} &#128075;</h1>
     <div class="sub">Here's what's happening with your fleet today.</div>
   </div>
-  <div class="a-date-chip">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
-    {{ today_display }}
+  <div style="display:flex; align-items:center; gap:8px;">
+    <div class="a-date-chip">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+      {{ today_display }}
+    </div>
+    <button type="button" class="a-filter-btn {{ 'active' if is_filtered or f_vehicle }}" onclick="openDashFilterSheet()" aria-label="Filters">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+    </button>
   </div>
 </div>
 
@@ -108,20 +113,20 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.4"/></svg>
       </div>
       <div>
-        <div class="a-bo-label">Total Trips (This Month)</div>
+        <div class="a-bo-label">Total Trips {{ '(Selected Period)' if is_filtered else '(This Month)' }}</div>
         <div class="a-bo-value">{{ bo_trips }}</div>
         {% if bo_trip_growth is not none %}
-        <div class="a-bo-trend {{ 'up' if bo_trip_growth >= 0 else 'down' }}">{{ '▲' if bo_trip_growth >= 0 else '▼' }} {{ bo_trip_growth|abs }}% vs last month</div>
+        <div class="a-bo-trend {{ 'up' if bo_trip_growth >= 0 else 'down' }}">{{ '▲' if bo_trip_growth >= 0 else '▼' }} {{ bo_trip_growth|abs }}% vs {{ 'previous period' if is_filtered else 'last month' }}</div>
         {% endif %}
       </div>
     </div>
     <div class="a-bo-item">
       <div class="a-bo-ic" style="background:#e8f5ee;color:var(--a-green);">&#8377;</div>
       <div>
-        <div class="a-bo-label">Total Revenue (This Month)</div>
+        <div class="a-bo-label">Total Revenue {{ '(Selected Period)' if is_filtered else '(This Month)' }}</div>
         <div class="a-bo-value">&#8377;{{ '{:,.0f}'.format(bo_revenue) }}</div>
         {% if bo_revenue_growth is not none %}
-        <div class="a-bo-trend {{ 'up' if bo_revenue_growth >= 0 else 'down' }}">{{ '▲' if bo_revenue_growth >= 0 else '▼' }} {{ bo_revenue_growth|abs }}% vs last month</div>
+        <div class="a-bo-trend {{ 'up' if bo_revenue_growth >= 0 else 'down' }}">{{ '▲' if bo_revenue_growth >= 0 else '▼' }} {{ bo_revenue_growth|abs }}% vs {{ 'previous period' if is_filtered else 'last month' }}</div>
         {% endif %}
       </div>
     </div>
@@ -130,10 +135,10 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/></svg>
       </div>
       <div>
-        <div class="a-bo-label">Total Expenses (This Month)</div>
+        <div class="a-bo-label">Total Expenses {{ '(Selected Period)' if is_filtered else '(This Month)' }}</div>
         <div class="a-bo-value">&#8377;{{ '{:,.0f}'.format(bo_expenses) }}</div>
         {% if bo_expense_growth is not none %}
-        <div class="a-bo-trend {{ 'down' if bo_expense_growth >= 0 else 'up' }}">{{ '▲' if bo_expense_growth >= 0 else '▼' }} {{ bo_expense_growth|abs }}% vs last month</div>
+        <div class="a-bo-trend {{ 'down' if bo_expense_growth >= 0 else 'up' }}">{{ '▲' if bo_expense_growth >= 0 else '▼' }} {{ bo_expense_growth|abs }}% vs {{ 'previous period' if is_filtered else 'last month' }}</div>
         {% endif %}
       </div>
     </div>
@@ -195,4 +200,58 @@
   {% endfor %}
 </div>
 
+<!-- Filter sheet — same real fields (FY preset / From Date / To Date / Vehicle) as the website's
+     own /dashboard filter_bar (templates/dashboard.html), applied here to the Business Overview
+     card only (the one period-scoped section on this page) via the same _period_financials()
+     helper Business Performance itself uses, now vehicle-filterable too. KPI row/Vehicle
+     Status/Recent Activity below stay real-time "right now" figures regardless of this filter,
+     same as before. -->
+<div class="vam-backdrop" id="dashFilterBackdrop" onclick="closeDashFilterSheet()"></div>
+<div class="vam-modal" id="dashFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeDashFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_dashboard') }}">
+    <div class="vam-field vam-field-full">
+      <label>Financial Year</label>
+      <select name="fy" onchange="if(this.value){document.getElementById('dashDateFrom').value=this.value.split('|')[0];document.getElementById('dashDateTo').value=this.value.split('|')[1];}">
+        <option value="" {% if f_fy=='' %}selected{% endif %}>Custom</option>
+        <option value="2026-04-01|2027-03-31" {% if f_fy=='2026-04-01|2027-03-31' %}selected{% endif %}>FY 2026-27</option>
+        <option value="2025-04-01|2026-03-31" {% if f_fy=='2025-04-01|2026-03-31' %}selected{% endif %}>FY 2025-26</option>
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" id="dashDateFrom" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" id="dashDateTo" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Vehicle</label>
+      <select name="vehicle">
+        <option value="">All Vehicles</option>
+        {% for v in dash_vehicles %}<option value="{{ v['vehicle_no'] }}" {% if f_vehicle == v['vehicle_no'] %}selected{% endif %}>{{ v['vehicle_no'] }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_dashboard') }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// Filter sheet — same open/close/backdrop pattern as every other modal in this app.
+function openDashFilterSheet() {
+  lockPageScroll();
+  document.getElementById('dashFilterBackdrop').classList.add('open');
+  document.getElementById('dashFilterSheet').classList.add('open');
+}
+function closeDashFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('dashFilterBackdrop').classList.remove('open');
+  document.getElementById('dashFilterSheet').classList.remove('open');
+}
+</script>
 {% endblock %}

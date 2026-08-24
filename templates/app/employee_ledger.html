@@ -1,0 +1,274 @@
+{% extends "app/base_app.html" %}
+{% block title %}{{ employee }} — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _employee_ledger_entries() in app.py, shared verbatim with the
+     website's own /employee/<name>. Reuses the same .ld-* component family as the Party/Vendor
+     Ledger detail page (templates/app/ledger_detail.html) for visual consistency — this is the
+     same "one entity's running ledger" shape, just for an employee instead of a party/vendor.
+     Search is new (the website itself has no search box here) — added as a plain substring
+     match over entry type/notes, same "layer a search convenience on top of otherwise-real
+     filters" call already made for Ledger/Expenses/Salary. "Add Payment" opens a native modal
+     with the website's own 2 real modes (Payment / Opening Balance), same fields, same
+     _insert_employee_payment_from_form()/_update_employee_opening_balance_from_form() the
+     website itself uses. -->
+<div class="vh-head">
+  <div>
+    <div class="mt-crumb" style="font-size:0.76rem; color:var(--a-steel); margin-bottom:4px;">
+      <a href="{{ url_for('app_salary') }}" style="color:var(--a-steel); text-decoration:none;">Salary</a>
+      <span style="margin:0 4px;">&rsaquo;</span> {{ employee }}
+    </div>
+    <h1>{{ employee }}</h1>
+    <div class="sub">Salary payments and advances, combined.</div>
+  </div>
+</div>
+
+<div class="ld-kpi-grid">
+  <div class="ld-kpi-card">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Salary Paid</div><div class="ld-kpi-val">₹{{ '{:,.0f}'.format(total_salary_paid) }}</div><div class="ld-kpi-sub">This range</div></div>
+      <div class="ld-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">₹</div>
+    </div>
+  </div>
+  <div class="ld-kpi-card">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Advance Outstanding</div><div class="ld-kpi-val" style="color:{{ 'var(--a-red)' if advance_balance > 0 else 'var(--a-green)' }};">₹{{ '{:,.0f}'.format(advance_balance) }}</div><div class="ld-kpi-sub">{{ 'To recover' if advance_balance > 0 else 'Settled' }}</div></div>
+      <div class="ld-kpi-icon" style="background:#fdecea;color:var(--a-red);">💳</div>
+    </div>
+  </div>
+  {% if opening_balance %}
+  <div class="ld-kpi-card" style="grid-column:1 / -1;">
+    <div class="ld-kpi-top">
+      <div><div class="ld-kpi-lbl">Opening Balance</div><div class="ld-kpi-val">₹{{ '{:,.0f}'.format(opening_balance|abs) }}{% if opening_balance < 0 %} (credit){% endif %}</div><div class="ld-kpi-sub">{% if opening_balance_date %}As of {{ opening_balance_date }}{% endif %}</div></div>
+      <div class="ld-kpi-icon" style="background:var(--a-paper);color:var(--a-steel);">📋</div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="empSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Type or notes…" onchange="this.form.submit()">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_date_from or f_date_to }}" onclick="openEmpFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="ld-txn-head">
+  <h2>Ledger Entries</h2>
+  <span class="ld-txn-count">{{ total_count }}</span>
+</div>
+
+<div id="emp-list">
+{% for e in entries %}
+{% set kind_class = 'k-ob' if e.entry_type == 'Opening Balance' else ('k-exp' if e.entry_type == 'Advance Given' else 'k-pay') %}
+<div class="ld-txn-card">
+  <div class="ld-txn-top">
+    <span class="ld-txn-date">{{ e.date or '—' }}</span>
+    <span class="ld-txn-kind {{ kind_class }}">{{ e.entry_type }}</span>
+  </div>
+  {% if e.notes %}<div class="ld-txn-detail">{{ e.notes }}</div>{% endif %}
+  <div class="ld-txn-bottom">
+    <div class="ld-txn-amts">
+      {% if e.debit %}<span class="ld-txn-debit">+₹{{ '{:,.0f}'.format(e.debit) }}</span>{% endif %}
+      {% if e.credit %}<span class="ld-txn-credit">-₹{{ '{:,.0f}'.format(e.credit) }}</span>{% endif %}
+    </div>
+    {% if e.affects_advance %}<div class="ld-txn-balance {{ 'dr' if e.running_advance_balance > 0 else ('cr' if e.running_advance_balance < 0 else '') }}">₹{{ '{:,.0f}'.format(e.running_advance_balance|abs) }} adv</div>{% endif %}
+  </div>
+</div>
+{% else %}
+<div class="lg-empty">No ledger entries recorded yet.</div>
+{% endfor %}
+</div>
+
+<div id="emp-load-area">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_employee_ledger', employee=employee, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif entries %}
+<div class="vh-listend">You've reached the end · {{ total_count }} entr{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddPaymentModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Payment
+</button>
+
+<!-- Filter sheet — real filter (From/To Date), same fields the website's own filter bar has. -->
+<div class="vam-backdrop" id="empFilterBackdrop" onclick="closeEmpFilterSheet()"></div>
+<div class="vam-modal" id="empFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeEmpFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_employee_ledger', employee=employee) }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_employee_ledger', employee=employee, search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Payment modal — same 2 real modes as the website's own #addModal (see
+     templates/employee_ledger.html): Payment (Salary Paid / Advance Given / Advance Repaid) and
+     Opening Balance. Each mode posts to its own dedicated route (_insert_employee_payment_from_form
+     / _update_employee_opening_balance_from_form — both shared verbatim with the website). -->
+<div class="vam-backdrop" id="apBackdrop" onclick="closeAddPaymentModal()"></div>
+<div class="vam-modal" id="apModal" role="dialog" aria-modal="true" aria-label="Add Payment">
+  <div class="vam-head">
+    <h2>Add Payment — {{ employee }}</h2>
+    <button type="button" class="vam-close" onclick="closeAddPaymentModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
+  <div class="aty-modes">
+    <button type="button" class="aty-mode-btn active" id="apModePayBtn" onclick="apSetMode('pay')">Payment</button>
+    <button type="button" class="aty-mode-btn" id="apModeObBtn" onclick="apSetMode('ob')">Opening Balance</button>
+  </div>
+
+  <div class="vam-error" id="apError" style="display:none; margin:0 18px 14px;"></div>
+
+  <form id="apPayForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Type <span class="req">*</span></label>
+        <select name="entry_kind" required>
+          <option value="salary">Salary Paid</option>
+          <option value="given">Advance Given</option>
+          <option value="repaid">Advance Repaid</option>
+        </select>
+      </div>
+      <div class="vam-field"><label>Date <span class="req">*</span></label><input type="date" name="date" required></div>
+      <div class="vam-field"><label>Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" required></div>
+      <div class="vam-field vam-field-full"><label>Notes</label><input type="text" name="notes" placeholder="Optional"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddPaymentModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save</button>
+    </div>
+  </form>
+
+  <form id="apObForm" class="vam-form" style="display:none;">
+    <div style="font-size:0.78rem; color:var(--a-steel); margin:0 0 14px; line-height:1.5;">Set this once to record the advance balance this employee carried over before you started using the app. Positive = they owe an outstanding advance. Negative = they're in credit. Saving again replaces the previous value.</div>
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Opening Advance Balance (₹) <span class="req">*</span></label><input type="number" step="0.01" name="opening_balance" value="{{ opening_balance or 0 }}" required></div>
+      <div class="vam-field vam-field-full"><label>As Of Date</label><input type="date" name="opening_balance_date" value="{{ opening_balance_date or '' }}"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddPaymentModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Opening Balance</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('emp-list').innerHTML = doc.getElementById('emp-list').innerHTML;
+      document.getElementById('emp-load-area').innerHTML = doc.getElementById('emp-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet.
+function openEmpFilterSheet() {
+  lockPageScroll();
+  document.getElementById('empFilterBackdrop').classList.add('open');
+  document.getElementById('empFilterSheet').classList.add('open');
+}
+function closeEmpFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('empFilterBackdrop').classList.remove('open');
+  document.getElementById('empFilterSheet').classList.remove('open');
+}
+
+// Add Payment modal — 2 real modes (Payment / Opening Balance), same mode-tab mechanism as
+// Tyres/Battery's own Add modals.
+var apMode = 'pay';
+function apSetMode(mode) {
+  apMode = mode;
+  document.getElementById('apModePayBtn').classList.toggle('active', mode === 'pay');
+  document.getElementById('apModeObBtn').classList.toggle('active', mode === 'ob');
+  document.getElementById('apPayForm').style.display = (mode === 'pay') ? '' : 'none';
+  document.getElementById('apObForm').style.display = (mode === 'ob') ? '' : 'none';
+  document.getElementById('apError').style.display = 'none';
+}
+function openAddPaymentModal() {
+  lockPageScroll();
+  apSetMode('pay');
+  document.getElementById('apBackdrop').classList.add('open');
+  document.getElementById('apModal').classList.add('open');
+}
+function closeAddPaymentModal() {
+  unlockPageScroll();
+  document.getElementById('apBackdrop').classList.remove('open');
+  document.getElementById('apModal').classList.remove('open');
+}
+function apHandleSubmit(e, url) {
+  e.preventDefault();
+  var form = e.target;
+  var btn = form.querySelector('.vam-btn-save');
+  var origText = btn.textContent;
+  var errBox = document.getElementById('apError');
+  errBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  fetch(url, { method: 'POST', body: new FormData(form) })
+    .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+    .then(function (r) {
+      if (r.data.ok) {
+        window.location.href = (r.data.redirect || window.location.pathname) + '?added=1';
+      } else {
+        errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    })
+    .catch(function () {
+      errBox.textContent = 'Network error — please check your connection and try again.';
+      errBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = origText;
+    });
+}
+var apPayForm = document.getElementById('apPayForm');
+if (apPayForm) apPayForm.addEventListener('submit', function (e) { apHandleSubmit(e, "{{ url_for('app_add_employee_payment', employee=employee) }}"); });
+var apObForm = document.getElementById('apObForm');
+if (apObForm) apObForm.addEventListener('submit', function (e) { apHandleSubmit(e, "{{ url_for('app_update_employee_opening_balance', employee=employee) }}"); });
+
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+</script>
+{% endblock %}
