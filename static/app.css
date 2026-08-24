@@ -89,40 +89,40 @@ body.a-scroll-lock { overflow: hidden; }
 
 /* ---------- Greeting + date ---------- */
 .a-greet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 18px 0 4px; flex-wrap: wrap; }
-.a-greet-row h1 { font-size: 1.25rem; margin: 0; }
-.a-greet h1 { font-size: 1.25rem; margin: 0; }
-.a-greet .sub { color: var(--a-steel); font-size: 0.85rem; margin-top: 3px; }
+.a-greet-row h1 { font-size: 1.06rem; margin: 0; }
+.a-greet h1 { font-size: 1.06rem; margin: 0; }
+.a-greet .sub { color: var(--a-steel); font-size: 0.78rem; margin-top: 3px; }
 /* Dashboard's own greeting subtitle — now a full-width line below .a-greet-row (which holds just
    the h1 + period pill/filter icon on one row) instead of stacked inside .a-greet, so the filter
    controls sit inline with "Hi {name}" rather than wrapping below it on a phone-width screen. */
-.a-greet-sub { color: var(--a-steel); font-size: 0.85rem; margin: 0 0 16px; }
-.a-date-chip { display: flex; align-items: center; gap: 7px; background: var(--a-white); border: 1px solid var(--a-line); border-radius: 999px; padding: 8px 14px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.a-greet-sub { color: var(--a-steel); font-size: 0.78rem; margin: 0 0 14px; }
+.a-date-chip { display: flex; align-items: center; gap: 6px; background: var(--a-white); border: 1px solid var(--a-line); border-radius: 999px; padding: 7px 12px; font-size: 0.74rem; font-weight: 600; white-space: nowrap; }
 
 /* ---------- KPI cards ---------- */
-.a-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
-.a-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; }
+.a-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.a-kpi-card { background: var(--a-white); border-radius: 14px; padding: 12px; }
 .a-kpi-ic { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; margin-bottom: 10px; }
 /* Smaller variant for the Dashboard's own Today's Fleet row only — a scoped modifier so
    Analytics/Performance/Business Performance/Fleet Utilization's own .a-kpi-ic cards (same base
    class, different pages) are never affected. */
-.a-kpi-ic-sm { width: 28px; height: 28px; border-radius: 9px; font-size: 0.82rem; margin-bottom: 8px; }
-.a-kpi-ic-sm svg { width: 15px; height: 15px; }
-.a-kpi-label { font-size: 0.76rem; color: var(--a-steel); font-weight: 600; }
-.a-kpi-value { font-size: 1.35rem; font-weight: 800; margin-top: 3px; }
-.a-kpi-link { font-size: 0.72rem; color: var(--a-accent); font-weight: 700; margin-top: 6px; display: flex; align-items: center; gap: 2px; text-decoration: none; }
+.a-kpi-ic-sm { width: 26px; height: 26px; border-radius: 8px; font-size: 0.78rem; margin-bottom: 7px; }
+.a-kpi-ic-sm svg { width: 14px; height: 14px; }
+.a-kpi-label { font-size: 0.7rem; color: var(--a-steel); font-weight: 600; }
+.a-kpi-value { font-size: 1.16rem; font-weight: 800; margin-top: 3px; }
+.a-kpi-link { font-size: 0.68rem; color: var(--a-accent); font-weight: 700; margin-top: 6px; display: flex; align-items: center; gap: 2px; text-decoration: none; }
 
 /* ---------- Section card shell (Quick Actions / Business Overview / Vehicle Status / Activity) ---------- */
-.a-card { background: var(--a-white); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
-.a-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-.a-card-head h2 { font-size: 0.98rem; margin: 0; font-weight: 700; }
-.a-card-link { font-size: 0.8rem; color: var(--a-accent); font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 2px; }
+.a-card { background: var(--a-white); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+.a-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.a-card-head h2 { font-size: 0.88rem; margin: 0; font-weight: 700; }
+.a-card-link { font-size: 0.74rem; color: var(--a-accent); font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 2px; }
 
 /* ---------- Quick actions ---------- */
 .a-qa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px; text-align: center; }
-.a-qa-item { display: flex; flex-direction: column; align-items: center; gap: 7px; text-decoration: none; color: var(--a-ink); background: none; border: none; font-family: inherit; cursor: pointer; padding: 4px 0; }
-.a-qa-ic { width: 50px; height: 50px; border-radius: 50%; background: var(--a-paper); display: flex; align-items: center; justify-content: center; color: var(--a-accent); }
-.a-qa-ic svg { width: 21px; height: 21px; }
-.a-qa-label { font-size: 0.68rem; font-weight: 600; line-height: 1.2; }
+.a-qa-item { display: flex; flex-direction: column; align-items: center; gap: 6px; text-decoration: none; color: var(--a-ink); background: none; border: none; font-family: inherit; cursor: pointer; padding: 4px 0; }
+.a-qa-ic { width: 44px; height: 44px; border-radius: 50%; background: var(--a-paper); display: flex; align-items: center; justify-content: center; color: var(--a-accent); }
+.a-qa-ic svg { width: 18px; height: 18px; }
+.a-qa-label { font-size: 0.63rem; font-weight: 600; line-height: 1.2; }
 
 /* ---------- Alert banner ---------- */
 .a-alert { display: flex; align-items: flex-start; gap: 12px; background: #fdf0e8; border: 1px solid rgba(192,86,33,0.25); border-radius: 14px; padding: 14px; margin-bottom: 16px; text-decoration: none; color: var(--a-ink); }
@@ -134,32 +134,32 @@ body.a-scroll-lock { overflow: hidden; }
 .a-alert-chevron { color: var(--a-steel); flex-shrink: 0; margin-top: 3px; }
 
 /* ---------- Business Overview 2x2 ---------- */
-.a-bo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
-.a-bo-item { display: flex; gap: 10px; align-items: flex-start; }
-.a-bo-ic { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; flex-shrink: 0; }
-.a-bo-label { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
-.a-bo-value { font-size: 1.05rem; font-weight: 800; margin-top: 2px; }
-.a-bo-trend { font-size: 0.7rem; font-weight: 700; margin-top: 2px; }
+.a-bo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; }
+.a-bo-item { display: flex; gap: 9px; align-items: flex-start; }
+.a-bo-ic { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 0.82rem; flex-shrink: 0; }
+.a-bo-label { font-size: 0.67rem; color: var(--a-steel); font-weight: 600; }
+.a-bo-value { font-size: 0.94rem; font-weight: 800; margin-top: 2px; }
+.a-bo-trend { font-size: 0.64rem; font-weight: 700; margin-top: 2px; }
 .a-bo-trend.up { color: var(--a-green); }
 .a-bo-trend.down { color: var(--a-red); }
-.a-bo-sub-link { font-size: 0.72rem; color: var(--a-accent); font-weight: 700; margin-top: 2px; text-decoration: none; display: inline-block; }
+.a-bo-sub-link { font-size: 0.67rem; color: var(--a-accent); font-weight: 700; margin-top: 2px; text-decoration: none; display: inline-block; }
 
 /* ---------- Vehicle status chips ---------- */
 .a-vs-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.a-vs-chip { border-radius: 12px; padding: 12px 8px; text-align: center; }
-.a-vs-num { font-size: 1.15rem; font-weight: 800; }
-.a-vs-label { font-size: 0.68rem; font-weight: 600; margin-top: 2px; }
+.a-vs-chip { border-radius: 11px; padding: 10px 6px; text-align: center; }
+.a-vs-num { font-size: 1.02rem; font-weight: 800; }
+.a-vs-label { font-size: 0.63rem; font-weight: 600; margin-top: 2px; }
 
 /* ---------- Recent activity ---------- */
-.a-activity-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--a-line); text-decoration: none; color: var(--a-ink); }
+.a-activity-item { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-bottom: 1px solid var(--a-line); text-decoration: none; color: var(--a-ink); }
 .a-activity-item:last-child { border-bottom: none; }
-.a-activity-ic { width: 36px; height: 36px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; flex-shrink: 0; }
+.a-activity-ic { width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 0.82rem; flex-shrink: 0; }
 .a-activity-body { flex: 1; min-width: 0; }
-.a-activity-title { font-weight: 700; font-size: 0.84rem; }
-.a-activity-sub { font-size: 0.74rem; color: var(--a-steel); margin-top: 1px; }
+.a-activity-title { font-weight: 700; font-size: 0.78rem; }
+.a-activity-sub { font-size: 0.69rem; color: var(--a-steel); margin-top: 1px; }
 .a-activity-right { text-align: right; flex-shrink: 0; }
-.a-activity-time { font-size: 0.7rem; color: var(--a-steel); }
-.a-activity-amt { font-weight: 700; font-size: 0.84rem; margin-top: 2px; }
+.a-activity-time { font-size: 0.65rem; color: var(--a-steel); }
+.a-activity-amt { font-weight: 700; font-size: 0.78rem; margin-top: 2px; }
 .a-activity-chevron { color: var(--a-steel); flex-shrink: 0; }
 
 /* ---------- Bottom nav with elevated center FAB ---------- */
@@ -580,9 +580,9 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 /* Dashboard's period-pill button + its option list — a plain pill styled like .a-date-chip but
    clickable, and a vertical list of preset periods inside its bottom sheet (Custom Range stays
    a normal .vam-form below the list). */
-.a-period-pill { display: flex; align-items: center; gap: 7px; background: var(--a-white); border: 1px solid var(--a-line);
-  border-radius: 999px; padding: 8px 12px 8px 14px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; cursor: pointer; color: var(--a-ink); }
-.a-period-pill svg.chev { width: 14px; height: 14px; color: var(--a-steel); margin-left: 2px; }
+.a-period-pill { display: flex; align-items: center; gap: 6px; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 999px; padding: 7px 10px 7px 12px; font-size: 0.74rem; font-weight: 600; white-space: nowrap; cursor: pointer; color: var(--a-ink); }
+.a-period-pill svg.chev { width: 13px; height: 13px; color: var(--a-steel); margin-left: 2px; }
 .a-period-opt { display: flex; align-items: center; justify-content: space-between; padding: 12px 4px;
   border-bottom: 1px solid var(--a-line); text-decoration: none; color: var(--a-ink); font-size: 0.88rem; font-weight: 600; }
 .a-period-opt:last-child { border-bottom: none; }

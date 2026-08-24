@@ -25,8 +25,12 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 {% block extra_head %}{% endblock %}
 </head>
+
 <body class="app-body">
-{% include "app/_splash.html" %}
+<!-- app/_splash.html (a custom in-app loading overlay showing the badge icon + company name)
+     was included here on top of the native PWA launch splash Android/Chrome already generates
+     from app-manifest.json's icon/name/background_color — the two firing back-to-back read as a
+     double loading screen. Removed per instruction to keep just the one real (native) splash. -->
 
 <header class="a-topbar">
   <div class="a-topbar-left">
