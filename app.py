@@ -594,13 +594,16 @@ def toggle_account_status(role, account_id):
 def home():
     return redirect(url_for('dashboard'))
 
-@app.route('/dashboard')
-def dashboard():
-    conn = get_db()
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
-    vehicle_f = request.args.get('vehicle', '')
-
+def _dashboard_financials_data(conn, date_from, date_to, vehicle_f=''):
+    """Revenue/expense/profit core for the Dashboard — extracted unchanged from dashboard()
+    (website) so app_dashboard() (mobile) can show the exact same Business Overview numbers and
+    the exact same Top Expenses breakdown, never a second hand-written copy that could quietly
+    drift. This is deliberately a DIFFERENT formula from _period_financials() (used by Business
+    Performance/Route Analytics/native Business Overview elsewhere) — dashboard() has always
+    computed its own total_expenses this way (excluding Hired-trip fuel/driver-advance entirely
+    rather than folding them into an owner_cost bucket), and changing that now would be a
+    behavior change to an already-shipped, already-relied-on page, not a bug fix. Returns a dict;
+    does not close conn."""
     trip_query = "SELECT t.*, v.vehicle_no FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.date>=? AND t.date<=?"
     params = [date_from, date_to]
     if vehicle_f:
@@ -660,6 +663,39 @@ def dashboard():
                  ('Other', other_exp_total, '#4a3aa7')]
     exp_max = max([v for _, v, _ in exp_items], default=1) or 1
     exp_breakdown = [{'label': l, 'value': v, 'color': c, 'pct': round((v/exp_max)*100, 1)} for l, v, c in exp_items]
+    # Same items, sorted purely by rupee value descending — for a "Top N expense heads" widget
+    # (native Dashboard) where display order should follow size, not the fixed category order
+    # exp_breakdown keeps for its bar-chart legend.
+    exp_breakdown_ranked = sorted(exp_breakdown, key=lambda e: -e['value'])
+
+    return {
+        'trips': trips, 'total_revenue': total_revenue, 'trip_count': trip_count,
+        'fuel_total': fuel_total, 'driveradv_total': driveradv_total, 'other_charges_total': other_charges_total,
+        'total_charges_paid': total_charges_paid, 'adj_revenue': adj_revenue,
+        'maint_total': maint_total, 'maint_toll_total': maint_toll_total, 'toll_total': toll_total,
+        'maint_other_total': maint_other_total, 'salaries_total': salaries_total, 'overheads_total': overheads_total,
+        'other_exp_total': other_exp_total, 'total_expenses': total_expenses, 'total_profit': total_profit,
+        'running_count': running_count, 'idle_count': idle_count, 'own_vehicle_count': own_vehicle_count,
+        'own_idle_count': own_idle_count, 'exp_breakdown': exp_breakdown, 'exp_breakdown_ranked': exp_breakdown_ranked,
+    }
+
+@app.route('/dashboard')
+def dashboard():
+    conn = get_db()
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2027-03-31')
+    vehicle_f = request.args.get('vehicle', '')
+
+    dfin = _dashboard_financials_data(conn, date_from, date_to, vehicle_f)
+    trips = dfin['trips']
+    total_revenue, trip_count = dfin['total_revenue'], dfin['trip_count']
+    fuel_total, driveradv_total = dfin['fuel_total'], dfin['driveradv_total']
+    total_charges_paid, adj_revenue = dfin['total_charges_paid'], dfin['adj_revenue']
+    maint_total, salaries_total, overheads_total = dfin['maint_total'], dfin['salaries_total'], dfin['overheads_total']
+    total_expenses, total_profit = dfin['total_expenses'], dfin['total_profit']
+    running_count, idle_count = dfin['running_count'], dfin['idle_count']
+    own_vehicle_count, own_idle_count = dfin['own_vehicle_count'], dfin['own_idle_count']
+    toll_total, other_exp_total, exp_breakdown = dfin['toll_total'], dfin['other_exp_total'], dfin['exp_breakdown']
 
     # Vehicle-wise revenue, own vehicles only
     veh_revenue = {}
@@ -8949,12 +8985,16 @@ def export_users():
     return send_file(buf, as_attachment=True, download_name='users.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f):
+def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f, vehicle_no=''):
     """Shared per-route revenue/cost/profit rollup — both the Best Routes and Route Rates tabs
     draw from the `trips` list this returns, so app_route_analytics() (mobile) reads the exact
     same numbers as route_analytics() (website) for the fields both surfaces show. Extracted
     unchanged from route_analytics() below; that route now just calls this and continues with
-    its own Route Rates computation using the returned trips list."""
+    its own Route Rates computation using the returned trips list. vehicle_no is optional
+    (default '' = all vehicles, every existing caller unaffected) — added for the native
+    Dashboard's Top Routes card, which needs the same real per-route numbers filtered to one
+    vehicle when the Dashboard's own vehicle filter is set; the website's Route Analytics page
+    itself has no vehicle filter today, so this stays unused there."""
     # All origins/destinations ever seen (unfiltered), for the From/To dropdowns — independent of
     # the current filters, and independent of each other, so you can filter by From alone, To
     # alone, or both together for one exact route.
@@ -8962,15 +9002,19 @@ def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f):
     all_from_list = sorted(set(_clean_loc(r['from_loc']) for r in all_routes_rows if r['from_loc']))
     all_to_list = sorted(set(_clean_loc(r['to_loc']) for r in all_routes_rows if r['to_loc']))
 
-    trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
-                    toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
-                    puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
-                    other_expense, permit_charges, fixed_rate_amount, owner_rate, owner_rate_type, owner_fixed_amount, quantity
-                    FROM trips WHERE date>=? AND date<=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
+    trip_query = """SELECT t.id, t.from_loc, t.to_loc, t.type, t.rate, t.rate_type, t.billed_amount, t.fuel_amount, t.driver_adv_amount,
+                    t.toll, t.parking, t.agent_commission, t.builty_expense, t.conductor_expense, t.fine, t.labour_charges,
+                    t.puncture, t.urea, t.loading_expense, t.unloading_expense, t.wear_tear, t.weighbridge_charges,
+                    t.other_expense, t.permit_charges, t.fixed_rate_amount, t.owner_rate, t.owner_rate_type, t.owner_fixed_amount, t.quantity
+                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                    WHERE t.date>=? AND t.date<=? AND (t.lr_number IS NULL OR t.lr_number NOT LIKE 'Empty%')"""
     params = [date_from, date_to]
     if type_f:
-        trip_query += " AND type=?"
+        trip_query += " AND t.type=?"
         params.append(type_f)
+    if vehicle_no:
+        trip_query += " AND v.vehicle_no=?"
+        params.append(vehicle_no)
     trips = conn.execute(trip_query, params).fetchall()
     route_toll_map = _toll_by_trip(conn, [t['id'] for t in trips])
 
@@ -9026,38 +9070,16 @@ def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f):
         'top5_by_margin': top5_by_margin, 'top5_by_revenue': top5_by_revenue,
     }
 
-@app.route('/route-analytics')
-def route_analytics():
-    conn = get_db()
-    tab = request.args.get('tab', 'best-routes')
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
-    from_f = request.args.get('from', '')
-    to_f = request.args.get('to', '')
-    type_f = request.args.get('vehicle_type', '')
-
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
-
-    _ra = _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f)
-    trips = _ra['trips']; route_rows = _ra['route_rows']
-    all_from_list = _ra['all_from_list']; all_to_list = _ra['all_to_list']
-    total_routes = _ra['total_routes']; total_trips_sel = _ra['total_trips_sel']
-    total_revenue_sel = _ra['total_revenue_sel']; total_cost_sel = _ra['total_cost_sel']
-    avg_margin = _ra['avg_margin']; avg_rate = _ra['avg_rate']
-    top5_by_margin = _ra['top5_by_margin']; top5_by_revenue = _ra['top5_by_revenue']
-
-    # Route Summary table — same rows, paginated, sorted by revenue.
-    route_rows.sort(key=lambda r: r['revenue'], reverse=True)
-    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_routes,
-                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
-    summary_rows = route_rows[(page - 1) * per_page: page * per_page]
-    page_tokens = _page_tokens(page, total_pages)
-
-    # ---------- Route Rates tab: rate stats grouped by (from, to, vehicle type) ----------
-    # Driver Advance / Fuel Taken are tracked in parallel dicts (same grouping key, same trip set
-    # that contributes the rate stats) rather than folded into rr_groups itself, so every existing
-    # rr_groups reader below keeps working untouched.
+def _route_rates_data(trips, from_f='', to_f=''):
+    """Shared per-(from,to,vehicle-type) PER_MT rate-range rollup — the Route Rates tab's own
+    real numbers, extracted unchanged from route_analytics() below so app_analytics()'s own
+    Route Rates tab (mobile) reads the exact same Highest/Average/Lowest rate, Driver Advance,
+    and Fuel Taken figures the website shows, never a second hand-written copy. Takes the
+    already date-range/vehicle-type-filtered `trips` list _route_analytics_data() returns (not a
+    fresh query) — so the two tabs can never disagree on which trips are 'in scope' before this
+    function's own from_f/to_f narrowing. Does not touch conn; rr_groups is returned too since
+    the website's own Rate Trend chart / Own-vs-Hired donut (mobile doesn't show these — real
+    future scope, not this pass) need the raw per-route rate lists, not just the summarized rows."""
     rr_groups = {}
     rr_driver_adv_groups = {}
     rr_fuel_groups = {}
@@ -9098,15 +9120,6 @@ def route_analytics():
     fuel_average = round(sum(overall_fuel) / len(overall_fuel)) if overall_fuel else 0
     fuel_highest = max(overall_fuel) if overall_fuel else 0
 
-    # Route Rates table — its own page number (rr_page) but shares the same per_page value/param
-    # as the Best Routes summary table above, same two-pagers-one-per_page pattern Performance
-    # already uses for its Driver/Vehicle tabs (d_page/v_page sharing one per_page).
-    rr_total_count = len(rr_rows)
-    rr_page, rr_per_page, rr_total_pages = _paginate(request.args.get('rr_page'), request.args.get('per_page'), rr_total_count,
-                                                       per_page_options=(10, 25, 50, 100), default_per_page=10)
-    rr_rows_page = rr_rows[(rr_page - 1) * rr_per_page: rr_page * rr_per_page]
-    rr_page_tokens = _page_tokens(rr_page, rr_total_pages)
-
     all_rates_flat = [r for rates in rr_groups.values() for r in rates]
     highest_entry = None
     lowest_entry = None
@@ -9119,8 +9132,63 @@ def route_analytics():
     rr_avg_rate_overall = round(sum(all_rates_flat) / len(all_rates_flat), 0) if all_rates_flat else 0
     rr_total_routes = len(rr_groups)
 
+    return {
+        'rr_groups': rr_groups, 'rr_rows': rr_rows, 'rr_total_count': len(rr_rows),
+        'highest_entry': highest_entry, 'lowest_entry': lowest_entry,
+        'rr_avg_rate_overall': rr_avg_rate_overall, 'rr_total_routes': rr_total_routes,
+        'da_lowest': da_lowest, 'da_average': da_average, 'da_highest': da_highest,
+        'fuel_lowest': fuel_lowest, 'fuel_average': fuel_average, 'fuel_highest': fuel_highest,
+    }
+
+@app.route('/route-analytics')
+def route_analytics():
+    conn = get_db()
+    tab = request.args.get('tab', 'best-routes')
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2027-03-31')
+    from_f = request.args.get('from', '')
+    to_f = request.args.get('to', '')
+    type_f = request.args.get('vehicle_type', '')
+
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    _ra = _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f)
+    trips = _ra['trips']; route_rows = _ra['route_rows']
+    all_from_list = _ra['all_from_list']; all_to_list = _ra['all_to_list']
+    total_routes = _ra['total_routes']; total_trips_sel = _ra['total_trips_sel']
+    total_revenue_sel = _ra['total_revenue_sel']; total_cost_sel = _ra['total_cost_sel']
+    avg_margin = _ra['avg_margin']; avg_rate = _ra['avg_rate']
+    top5_by_margin = _ra['top5_by_margin']; top5_by_revenue = _ra['top5_by_revenue']
+
+    # Route Summary table — same rows, paginated, sorted by revenue.
+    route_rows.sort(key=lambda r: r['revenue'], reverse=True)
+    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_routes,
+                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
+    summary_rows = route_rows[(page - 1) * per_page: page * per_page]
+    page_tokens = _page_tokens(page, total_pages)
+
+    # ---------- Route Rates tab: rate stats grouped by (from, to, vehicle type) ----------
+    _rr = _route_rates_data(trips, from_f, to_f)
+    rr_groups = _rr['rr_groups']
+    rr_rows = _rr['rr_rows']
+    da_lowest, da_average, da_highest = _rr['da_lowest'], _rr['da_average'], _rr['da_highest']
+    fuel_lowest, fuel_average, fuel_highest = _rr['fuel_lowest'], _rr['fuel_average'], _rr['fuel_highest']
+    highest_entry, lowest_entry = _rr['highest_entry'], _rr['lowest_entry']
+    rr_avg_rate_overall, rr_total_routes = _rr['rr_avg_rate_overall'], _rr['rr_total_routes']
+
+    # Route Rates table — its own page number (rr_page) but shares the same per_page value/param
+    # as the Best Routes summary table above, same two-pagers-one-per_page pattern Performance
+    # already uses for its Driver/Vehicle tabs (d_page/v_page sharing one per_page).
+    rr_total_count = len(rr_rows)
+    rr_page, rr_per_page, rr_total_pages = _paginate(request.args.get('rr_page'), request.args.get('per_page'), rr_total_count,
+                                                       per_page_options=(10, 25, 50, 100), default_per_page=10)
+    rr_rows_page = rr_rows[(rr_page - 1) * rr_per_page: rr_page * rr_per_page]
+    rr_page_tokens = _page_tokens(rr_page, rr_total_pages)
+
     # Own/Hired rate donut. Vehicle type is a strict 2-way own/hired split now, so unlike the old
     # 3-way Line/Local/Market version this never needs to fold one bucket's remainder into another.
+    all_rates_flat = [r for rates in rr_groups.values() for r in rates]
     own_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == VEHICLE_TYPE_OWN for r in rates]
     hired_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt == VEHICLE_TYPE_HIRED for r in rates]
     other_rates = [r for (cf, ct, tt), rates in rr_groups.items() if tt not in (VEHICLE_TYPE_OWN, VEHICLE_TYPE_HIRED) for r in rates]
@@ -10338,6 +10406,34 @@ def app_login():
         error = 'Invalid username or password.'
     return render_template('app/login.html', error=error, company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
 
+DASHBOARD_PERIODS = ('today', 'week', 'month', 'lastmonth', 'fy2627', 'fy2526', 'custom')
+
+def _resolve_dashboard_period(period, c_from, c_to, today):
+    """Turns the Dashboard's period pill selection into a concrete (date_from, date_to, label) —
+    the ONE global filter that drives Business Overview / Revenue vs Expenses / Top Routes / Top
+    Expenses on the native Dashboard, matching the mockup's own 'Global Period Filter Logic'
+    table. 'custom' falls back to This Month if the two date fields aren't both present, same
+    graceful-default behavior as every other filter sheet in this app."""
+    if period == 'today':
+        d = today.isoformat()
+        return d, d, 'Today'
+    if period == 'week':
+        monday = today - datetime.timedelta(days=today.weekday())
+        sunday = monday + datetime.timedelta(days=6)
+        return monday.isoformat(), sunday.isoformat(), 'This Week'
+    if period == 'lastmonth':
+        last_month_end = today.replace(day=1) - datetime.timedelta(days=1)
+        mf, mt = _month_bounds(last_month_end.year, last_month_end.month)
+        return mf, mt, 'Last Month'
+    if period == 'fy2627':
+        return '2026-04-01', '2027-03-31', 'FY 2026-27'
+    if period == 'fy2526':
+        return '2025-04-01', '2026-03-31', 'FY 2025-26'
+    if period == 'custom' and c_from and c_to:
+        return c_from, c_to, f"{c_from} to {c_to}"
+    mf, mt = _month_bounds(today.year, today.month)
+    return mf, mt, 'This Month'
+
 @app.route('/app/dashboard')
 def app_dashboard():
     conn = get_db()
@@ -10350,91 +10446,116 @@ def app_dashboard():
     greeting_name = username.replace('_', ' ').replace('.', ' ').split()[0].title()
     company_name = get_company_name(session.get('company_id', 1))
 
-    # ---------- KPI row — real, right-now operational numbers, not the period-filtered
-    # financial summary the website's own Dashboard shows (this is a deliberately different,
-    # complementary view: "what's happening today", not "how did this month go"). ----------
+    # ---------- Today's Fleet — real, right-now operational numbers. Always current/live,
+    # deliberately unaffected by the period filter below (same split the mockup's own "Global
+    # Period Filter Logic" table specifies: Today's Fleet / Action Required / Fleet Status /
+    # Recent Activity are all "Always Current"). ----------
     total_vehicles = conn.execute("SELECT COUNT(*) FROM vehicles WHERE vehicle_no IS NOT NULL").fetchone()[0]
     on_trip_count = conn.execute("""SELECT COUNT(DISTINCT vehicle_id) FROM trips
                                     WHERE end_date IS NULL AND date<=? AND vehicle_id IS NOT NULL""", (today_str,)).fetchone()[0]
     today_trips_completed = conn.execute("SELECT COUNT(*) FROM trips WHERE end_date=?", (today_str,)).fetchone()[0]
     today_revenue = conn.execute("SELECT COALESCE(SUM(billed_amount),0) FROM trips WHERE date=?", (today_str,)).fetchone()[0]
 
-    # ---------- Alerts — every item here is a real, derived count. No EMI-due alert: the
-    # compliance_expenses table only records amounts already paid (a `date` of when it was
-    # incurred), there's no future due-date field anywhere in the schema to derive an upcoming
-    # EMI alert from, so it's left out rather than showing a fabricated number. ----------
-    invoiced_trip_ids = {r['trip_id'] for r in conn.execute("SELECT DISTINCT trip_id FROM invoice_batch_trips").fetchall()}
-    completed_trip_ids = {r['id'] for r in conn.execute("SELECT id FROM trips WHERE end_date IS NOT NULL").fetchall()}
-    pending_invoice_count = len(completed_trip_ids - invoiced_trip_ids)
-    insurance_expiring = 0
-    fitness_expiring = 0
-    for r in conn.execute("SELECT insurance_expiry, fitness_expiry FROM vehicles WHERE type='own'").fetchall():
-        if _expiry_bucket(r['insurance_expiry']) in ('expiring', 'expired'):
-            insurance_expiring += 1
-        if _expiry_bucket(r['fitness_expiry']) in ('expiring', 'expired'):
-            fitness_expiring += 1
-    # Same real fields vehicles_list() reads for its own challan alert strip
-    # (vehicles.challan_count/challan_amount, populated by the 15-day auto RC/challan sync) —
-    # zero on every vehicle until that sync has actually run at least once, same as there.
-    challan_rows = conn.execute("SELECT challan_count, challan_amount FROM vehicles WHERE COALESCE(challan_count,0) > 0").fetchall()
-    challan_vehicle_count = len(challan_rows)
-    challan_total_amount = sum(r['challan_amount'] or 0 for r in challan_rows)
+    # ---------- Action Required — 2 real, current tiles, each reusing the app's OWN existing
+    # single source of truth instead of a new one-off query, so this can never show a different
+    # number than what's already shown elsewhere in the app for the same thing. "Invoices
+    # Pending" and "Services Due" were both in the original reference design but are deliberately
+    # left out: Invoices Pending per explicit instruction, and Services Due because
+    # maintenance.next_service_date — the only real column that could back it — is never actually
+    # written by any current form (every one of the 452 real maintenance rows has it empty), so
+    # the tile could only ever show 0. Both can be added back later without touching anything
+    # else here. ----------
+    # Same exact query as inject_challan_alerts() (app.py) — the context processor that powers
+    # the topbar bell + Vehicles nav badge on every page. Counts own-fleet VEHICLES with a
+    # pending challan, not raw challan rows, so this tile always agrees with that badge.
+    challans_pending = conn.execute(
+        "SELECT COUNT(*) FROM vehicles WHERE type IS NOT NULL AND type='own' AND COALESCE(challan_count,0) > 0"
+    ).fetchone()[0]
+    # Same real compliance_service.get_compliance_alerts() the website's own dashboard() already
+    # calls for its own Alerts feed — per-document-type warning windows (Insurance 30d/Fitness
+    # 15d/PUC 7d/Permit 30d), own-fleet vehicles, and prefers a synced vehicle_compliance record's
+    # date over the raw vehicles.* column where one exists. Counts documents, not vehicles, so one
+    # vehicle with 2 expiring documents counts as 2 — matches the tile's own name.
+    documents_expiring = len(cs.get_compliance_alerts(conn))
+    alert_count = (1 if challans_pending else 0) + (1 if documents_expiring else 0)
     alert_bits = []
-    if pending_invoice_count:
-        alert_bits.append(f"{pending_invoice_count} trip{'s' if pending_invoice_count != 1 else ''} pending invoice")
-    if challan_vehicle_count:
-        alert_bits.append(f"{challan_vehicle_count} challan{'s' if challan_vehicle_count != 1 else ''} pending (₹{challan_total_amount:,.0f})")
-    if insurance_expiring:
-        alert_bits.append(f"{insurance_expiring} insurance expiring soon")
-    if fitness_expiring:
-        alert_bits.append(f"{fitness_expiring} fitness expiring soon")
-    alert_count = len(alert_bits)
+    if challans_pending:
+        alert_bits.append(f"{challans_pending} challan{'s' if challans_pending != 1 else ''} pending")
+    if documents_expiring:
+        alert_bits.append(f"{documents_expiring} document{'s' if documents_expiring != 1 else ''} expiring soon")
     alert_summary = ', '.join(alert_bits)
 
-    # ---------- Business Overview — same shared, already-tested source of truth Business
-    # Performance itself uses, so this can never quietly disagree with that page. Filterable by
-    # the same Date From/To/Vehicle fields the website's own dashboard() filter_bar has (fy is a
-    # convenience preset over the same two date fields, exactly like the website's own fy select) —
-    # this is the one section on this page that's genuinely period-scoped, so it's the one the
-    # filter icon drives; the KPI row/Vehicle Status/Recent Activity below stay real-time "right
-    # now" numbers regardless of the filter, same deliberate split as before. Unset (no filter
-    # applied) keeps the original "this month vs last month" default behavior exactly as-is. ----------
-    f_date_from = request.args.get('date_from', '')
-    f_date_to = request.args.get('date_to', '')
+    # ---------- Global Period Filter — the ONE filter that drives Business Overview, Revenue vs
+    # Expenses, Top Routes and Top Expenses below (mockup's own logic table). A separate Vehicle
+    # filter icon narrows all 4 of those same sections further, independent of which period is
+    # selected. ----------
+    period = request.args.get('period', 'month')
+    if period not in DASHBOARD_PERIODS:
+        period = 'month'
+    c_from = request.args.get('date_from', '')
+    c_to = request.args.get('date_to', '')
     f_vehicle = request.args.get('vehicle', '')
-    is_filtered = bool(f_date_from and f_date_to)
-    month_from, month_to = _month_bounds(today.year, today.month)
-    bo_from, bo_to = (f_date_from, f_date_to) if is_filtered else (month_from, month_to)
+    bo_from, bo_to, period_label = _resolve_dashboard_period(period, c_from, c_to, today)
+
+    dfin = _dashboard_financials_data(conn, bo_from, bo_to, f_vehicle)
     prev_from, prev_to = _shift_period_back(bo_from, bo_to)
-    curr_fin = _period_financials(conn, bo_from, bo_to, vehicle_no=f_vehicle)
-    prev_fin = _period_financials(conn, prev_from, prev_to, vehicle_no=f_vehicle)
-    bo_trip_growth = _pct_growth(curr_fin['trip_count'], prev_fin['trip_count'])
-    bo_revenue_growth = _pct_growth(curr_fin['revenue'], prev_fin['revenue'])
-    bo_expense_growth = _pct_growth(curr_fin['total_expenses'], prev_fin['total_expenses'])
+    prev_dfin = _dashboard_financials_data(conn, prev_from, prev_to, f_vehicle)
+    bo_trip_growth = _pct_growth(dfin['trip_count'], prev_dfin['trip_count'])
+    bo_revenue_growth = _pct_growth(dfin['total_revenue'], prev_dfin['total_revenue'])
+    bo_expense_growth = _pct_growth(dfin['total_expenses'], prev_dfin['total_expenses'])
+    # Receivable stays a running, un-dated balance — same as the website's own dashboard(), which
+    # also computes total_receivables from _accounts_rows(conn) with no date filter at all.
     acct_rows = _accounts_rows(conn)
     total_receivables = sum(r['balance'] for r in acct_rows if r['balance'] > 0 and r['role'] == 'Party')
     receivable_party_count = sum(1 for r in acct_rows if r['balance'] > 0.01 and r['role'] == 'Party')
 
-    # Same FY presets as the website's own dashboard() filter_bar, so "FY 2026-27" means the exact
-    # same date range in both places; f_fy only pre-selects the dropdown when date_from/date_to
-    # exactly match one of these presets, same matching logic as the website.
-    fy_map = {'2026-04-01|2027-03-31': ('2026-04-01', '2027-03-31'), '2025-04-01|2026-03-31': ('2025-04-01', '2026-03-31')}
-    f_fy = ''
-    for key, (fy_from, fy_to) in fy_map.items():
-        if f_date_from == fy_from and f_date_to == fy_to:
-            f_fy = key
-            break
     dash_vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
 
-    # ---------- Vehicle status — three real, mutually-exclusive categories that always sum to
-    # total_vehicles. A fourth "Waiting" bucket (as opposed to Idle) isn't something this data
-    # model can honestly distinguish today — no field records "scheduled but not yet started" —
-    # so it's left out rather than inventing a number for it. ----------
+    # ---------- Revenue vs Expenses — trailing 6 calendar months ending at the selected period's
+    # own end month (so picking "Last Month" or a past Custom Range slides the trend window back
+    # with it, not just "always the last 6 months from today"), same vehicle filter, same real
+    # _dashboard_financials_data() totals used above. ----------
+    end_month_anchor = datetime.date.fromisoformat(bo_to).replace(day=1)
+    trend_months = []
+    cur = end_month_anchor
+    for _ in range(6):
+        trend_months.append(cur)
+        cur = (cur - datetime.timedelta(days=1)).replace(day=1)
+    trend_months.reverse()
+    revexp_trend = []
+    for m in trend_months:
+        mf, mt = _month_bounds(m.year, m.month)
+        mfin = _dashboard_financials_data(conn, mf, mt, f_vehicle)
+        revexp_trend.append({'label': m.strftime('%b'), 'revenue': mfin['total_revenue'], 'expenses': mfin['total_expenses']})
+    revexp_max = max([max(m['revenue'], m['expenses']) for m in revexp_trend], default=1) or 1
+    for m in revexp_trend:
+        m['rev_pct'] = round(m['revenue'] / revexp_max * 100, 1) if revexp_max else 0
+        m['exp_pct'] = round(m['expenses'] / revexp_max * 100, 1) if revexp_max else 0
+
+    # ---------- Top Routes — same real per-route rollup Route Analytics uses, extended with an
+    # optional vehicle filter (see _route_analytics_data()) for this page's own Vehicle icon. ----------
+    route_data = _route_analytics_data(conn, bo_from, bo_to, '', '', '', vehicle_no=f_vehicle)
+    top_routes = route_data['top5_by_revenue'][:3]
+    more_routes_count = max(route_data['total_routes'] - len(top_routes), 0)
+
+    # ---------- Top Expenses — same real category breakdown as the website's own dashboard()
+    # Expense Breakdown chart (_dashboard_financials_data() above), just re-sorted by size and
+    # trimmed to the top 5 for this card. ----------
+    top_expenses = [e for e in dfin['exp_breakdown_ranked'] if e['value'] > 0][:5]
+
+    # ---------- Fleet Status — three real, mutually-exclusive categories that always sum to
+    # total_vehicles. Always current/live, same as Today's Fleet above. A fourth "Waiting" bucket
+    # isn't something this data model can honestly distinguish today — no field records
+    # "scheduled but not yet started" — so it's left out rather than inventing a number for it. ----------
     in_workshop = conn.execute("SELECT COUNT(*) FROM vehicles WHERE status='In Maintenance'").fetchone()[0]
     vs_idle = max(total_vehicles - on_trip_count - in_workshop, 0)
+    fleet_status_total = total_vehicles or 1
+    fs_on_trip_pct = round(on_trip_count / fleet_status_total * 100, 1)
+    fs_workshop_pct = round(in_workshop / fleet_status_total * 100, 1)
+    fs_idle_pct = round(vs_idle / fleet_status_total * 100, 1)
 
     # ---------- Recent activity — same real event sources the website's Dashboard draws from,
-    # queried independently here rather than calling into dashboard() itself. ----------
+    # queried independently here rather than calling into dashboard() itself. Always current. ----------
     activities = []
     for r in conn.execute("""SELECT t.lr_number, v.vehicle_no, t.billed_amount, t.updated_at FROM trips t
                              LEFT JOIN vehicles v ON t.vehicle_id=v.id
@@ -10464,7 +10585,6 @@ def app_dashboard():
     activities = [a for a in activities if a['_dt']]
     activities.sort(key=lambda a: a['_dt'], reverse=True)
     activities = activities[:5]
-    now_dt = datetime.datetime.now()
     for a in activities:
         a['time_label'] = 'Today, ' + a['_dt'].strftime('%I:%M %p') if a['_dt'].date() == today else (
             'Yesterday, ' + a['_dt'].strftime('%I:%M %p') if a['_dt'].date() == today - datetime.timedelta(days=1)
@@ -10477,14 +10597,19 @@ def app_dashboard():
         total_vehicles=total_vehicles, on_trip_count=on_trip_count,
         today_trips_completed=today_trips_completed, today_revenue=today_revenue,
         alert_count=alert_count, alert_summary=alert_summary,
-        bo_trips=curr_fin['trip_count'], bo_trip_growth=bo_trip_growth,
-        bo_revenue=curr_fin['revenue'], bo_revenue_growth=bo_revenue_growth,
-        bo_expenses=curr_fin['total_expenses'], bo_expense_growth=bo_expense_growth,
+        challans_pending=challans_pending, documents_expiring=documents_expiring,
+        bo_trips=dfin['trip_count'], bo_trip_growth=bo_trip_growth,
+        bo_revenue=dfin['total_revenue'], bo_revenue_growth=bo_revenue_growth,
+        bo_expenses=dfin['total_expenses'], bo_expense_growth=bo_expense_growth,
         total_receivables=total_receivables, receivable_party_count=receivable_party_count,
+        revexp_trend=revexp_trend, revexp_max=revexp_max,
+        top_routes=top_routes, more_routes_count=more_routes_count,
+        top_expenses=top_expenses,
         vs_on_trip=on_trip_count, vs_workshop=in_workshop, vs_idle=vs_idle,
+        fs_on_trip_pct=fs_on_trip_pct, fs_workshop_pct=fs_workshop_pct, fs_idle_pct=fs_idle_pct,
         activities=activities,
-        is_filtered=is_filtered, f_date_from=f_date_from, f_date_to=f_date_to,
-        f_vehicle=f_vehicle, f_fy=f_fy, dash_vehicles=dash_vehicles)
+        period=period, period_label=period_label, f_date_from=c_from, f_date_to=c_to,
+        f_vehicle=f_vehicle, dash_vehicles=dash_vehicles)
 
 @app.route('/app/trips/add', methods=['GET', 'POST'])
 def app_add_trip():
@@ -11335,28 +11460,37 @@ def app_analytics():
     has exactly 2 real tabs — Best Routes and Route Rates — not 4; there is no separate "Route
     Performance" or "Cost Analysis" tab or route anywhere in this app (checked: no matching
     @app.route exists), so this deliberately does NOT invent two extra tabs to match a 4-tab
-    reference design. Best Routes is built natively here on _route_analytics_data(), the exact
-    same per-route revenue/cost/profit rollup route_analytics() (website) uses, extracted above
-    so the two can never disagree on a route's margin. Route Rates is its own substantial
-    sub-page (rate stats grouped by from/to/vehicle-type, Driver Advance and Fuel Taken ranges,
-    Own vs Hired split) — real future scope to rebuild natively, so that tab links to the real
-    website tab instead (same session, real data, just not yet reskinned for mobile) rather than
-    being faked here.
-    Filters trimmed to Vehicle Type only (All/Own/Hired, real tabs, cheap) — the website's
-    From/To route-pair dropdowns are real too but need a proper searchable picker to be usable
-    on a small screen, which is real future scope rather than something to fake as a plain
-    dropdown here. Date range fixed to the same fiscal-year default the website itself defaults
-    to (2026-04-01 to 2027-03-31) rather than a picker, for the same "keep this tab simple"
-    reason the rest of this app's mobile pages trim filters.
-    """
+    reference design. Both tabs are built natively here, on the exact same
+    _route_analytics_data()/_route_rates_data() the website's own route_analytics() uses, so the
+    two can never disagree on a route's margin or rate. One shared filter (Date From/To, From,
+    To, Vehicle Type — same 5 real fields the website's own filter_bar has) drives both tabs,
+    behind a single filter icon (matching every other native list page's search/filter pattern)
+    instead of the website's own always-visible inline bar. Route Rates' Rate Trend chart and
+    Own-vs-Hired donut are left for the website's bridge (real future scope for a native
+    redesign) — everything the mockup itself asked for (KPI cards, Driver Advance/Fuel Taken
+    ranges, the Route Rates table) is fully native."""
     conn = get_db()
-    date_from, date_to = '2026-04-01', '2027-03-31'
+    tab = request.args.get('tab', 'best')
+    if tab not in ('best', 'rates'):
+        tab = 'best'
+    date_from = request.args.get('date_from', '2026-04-01')
+    date_to = request.args.get('date_to', '2027-03-31')
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    from_f = request.args.get('from', '')
+    to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
 
-    d = _route_analytics_data(conn, date_from, date_to, '', '', type_f)
+    d = _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f)
     route_rows = d['route_rows']
     most_trips_route = max(route_rows, key=lambda r: r['trips']) if route_rows else None
     avg_revenue_per_trip = round(d['total_revenue_sel'] / d['total_trips_sel']) if d['total_trips_sel'] else 0
+
+    rr = None
+    rr_show = 0
+    if tab == 'rates':
+        rr = _route_rates_data(d['trips'], from_f, to_f)
+        rr_show = min(int(request.args.get('show', 10) or 10), rr['rr_total_count']) or rr['rr_total_count']
 
     company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
@@ -11369,12 +11503,25 @@ def app_analytics():
                       (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
     conn.close()
 
-    return render_template('app/analytics.html', company_name=company_name, user_initials=user_initials,
-        active='analytics', notif_count=0, f_vehicle_type=type_f, active_ov='route',
-        date_from=date_from, date_to=date_to,
+    from urllib.parse import urlencode
+    base_qs = urlencode({'date_from': date_from, 'date_to': date_to, 'from': from_f, 'to': to_f, 'vehicle_type': type_f})
+
+    ctx = dict(company_name=company_name, user_initials=user_initials,
+        active='analytics', notif_count=0, tab=tab, active_ov='route', base_qs=base_qs,
+        f_date_from=date_from, f_date_to=date_to, f_from=from_f, f_to=to_f, f_vehicle_type=type_f,
+        all_from_list=d['all_from_list'], all_to_list=d['all_to_list'],
         total_routes=d['total_routes'], total_trips_sel=d['total_trips_sel'], total_revenue_sel=d['total_revenue_sel'],
         avg_margin=d['avg_margin'], top5_by_margin=d['top5_by_margin'], top5_by_revenue=d['top5_by_revenue'],
         most_trips_route=most_trips_route, avg_revenue_per_trip=avg_revenue_per_trip)
+    if rr is not None:
+        rows = rr['rr_rows']
+        ctx.update(rr_rows=rows[:rr_show], rr_total_count=rr['rr_total_count'], rr_show=rr_show,
+            rr_has_more=rr_show < rr['rr_total_count'],
+            highest_entry=rr['highest_entry'], lowest_entry=rr['lowest_entry'],
+            rr_avg_rate_overall=rr['rr_avg_rate_overall'], rr_total_routes=rr['rr_total_routes'],
+            da_lowest=rr['da_lowest'], da_average=rr['da_average'], da_highest=rr['da_highest'],
+            fuel_lowest=rr['fuel_lowest'], fuel_average=rr['fuel_average'], fuel_highest=rr['fuel_highest'])
+    return render_template('app/analytics.html', **ctx)
 
 @app.route('/app/fleet-utilization')
 def app_fleet_utilization():

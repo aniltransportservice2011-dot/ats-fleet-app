@@ -2,54 +2,82 @@
 {% block title %}Dashboard — Anil Transport{% endblock %}
 {% block content %}
 
-<div class="a-greet-row">
-  <div class="a-greet">
-    <h1>Hi {{ greeting_name }} &#128075;</h1>
-    <div class="sub">Here's what's happening with your fleet today.</div>
-  </div>
-  <div style="display:flex; align-items:center; gap:8px;">
-    <div class="a-date-chip">
+<!-- Real data only — see app_dashboard() in app.py. Two independent filters drive this page:
+     the period pill (Today/This Week/This Month/Last Month/FY 2026-27/FY 2025-26/Custom Range)
+     and a separate Vehicle filter icon — both apply to Business Overview, Revenue vs Expenses,
+     Top Routes and Top Expenses only. Today's Fleet, Action Required, Fleet Status and Recent
+     Activity are always current/live, unaffected by either filter — same split the mockup's own
+     "Global Period Filter Logic" table specifies. -->
+<div class="a-greet-row" style="align-items:center; flex-wrap:nowrap;">
+  <h1 style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Hi {{ greeting_name }} &#128075;</h1>
+  <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+    <button type="button" class="a-period-pill" onclick="openPeriodSheet()">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
-      {{ today_display }}
-    </div>
-    <button type="button" class="a-filter-btn {{ 'active' if is_filtered or f_vehicle }}" onclick="openDashFilterSheet()" aria-label="Filters">
+      {{ period_label }}
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <button type="button" class="a-filter-btn {{ 'active' if f_vehicle }}" onclick="openVehSheet()" aria-label="Filter by Vehicle">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
     </button>
   </div>
 </div>
+<div class="a-greet-sub">Here's what's happening with your fleet.</div>
 
+<!-- Today's Fleet (Current) — pure data points, no navigation (per instruction: routing is
+     removed from every card except Action Required and Business Overview, which keep an
+     icon-only route in their own header instead of a text link). -->
 <div class="a-kpi-grid">
-  <a href="/app/vehicles" class="a-kpi-card">
-    <div class="a-kpi-ic" style="background:#eaf1fb;color:var(--a-blue);">
+  <div class="a-kpi-card">
+    <div class="a-kpi-ic a-kpi-ic-sm" style="background:#eaf1fb;color:var(--a-blue);">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg>
     </div>
     <div class="a-kpi-label">Total Vehicles</div>
     <div class="a-kpi-value">{{ total_vehicles }}</div>
-    <div class="a-kpi-link">All Vehicles &rarr;</div>
-  </a>
-  <a href="/app/trips?filter=on_trip" class="a-kpi-card">
-    <div class="a-kpi-ic" style="background:#e8f5ee;color:var(--a-green);">
+  </div>
+  <div class="a-kpi-card">
+    <div class="a-kpi-ic a-kpi-ic-sm" style="background:#e8f5ee;color:var(--a-green);">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.4"/></svg>
     </div>
     <div class="a-kpi-label">On Trip</div>
     <div class="a-kpi-value">{{ on_trip_count }}</div>
-    <div class="a-kpi-link">Running Now &rarr;</div>
-  </a>
-  <a href="/app/trips?filter=today_completed" class="a-kpi-card">
-    <div class="a-kpi-ic" style="background:#fff6e8;color:var(--a-amber);">
+  </div>
+  <div class="a-kpi-card">
+    <div class="a-kpi-ic a-kpi-ic-sm" style="background:#fff6e8;color:var(--a-amber);">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 13l2 2 4-4"/></svg>
     </div>
-    <div class="a-kpi-label">Today Trips</div>
+    <div class="a-kpi-label">Today's Trips</div>
     <div class="a-kpi-value">{{ today_trips_completed }}</div>
-    <div class="a-kpi-link">Completed &rarr;</div>
-  </a>
-  <a href="/app/trips?date={{ today_display }}" class="a-kpi-card">
-    <div class="a-kpi-ic" style="background:#e6f7f5;color:var(--a-teal);">&#8377;</div>
-    <div class="a-kpi-label">Today Revenue</div>
+  </div>
+  <div class="a-kpi-card">
+    <div class="a-kpi-ic a-kpi-ic-sm" style="background:#e6f7f5;color:var(--a-teal);">&#8377;</div>
+    <div class="a-kpi-label">Today's Revenue</div>
     <div class="a-kpi-value">&#8377;{{ '{:,.0f}'.format(today_revenue) }}</div>
-    <div class="a-kpi-link">Total Earnings &rarr;</div>
-  </a>
+  </div>
 </div>
+
+<!-- Action Required (Current) — Challans Pending (real vehicle_challans) + Documents Expiring
+     (real Insurance/Fitness/PUC/Permit expiry, next 15 days). Invoices Pending and Services Due
+     are deliberately left off this pass (see app_dashboard() comment for why). -->
+{% if alert_count %}
+<div class="a-card">
+  <div class="a-card-head">
+    <h2>Action Required</h2>
+    <a href="/app/vehicles" class="a-card-link" aria-label="View Vehicles">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
+  </div>
+  <div class="a-vs-grid" style="grid-template-columns:repeat(2,1fr);">
+    <a href="/app/vehicles" class="a-vs-chip" style="background:#fdecea;color:var(--a-red); text-decoration:none;">
+      <div class="a-vs-num">{{ challans_pending }}</div>
+      <div class="a-vs-label">Challans Pending</div>
+    </a>
+    <a href="/app/vehicles" class="a-vs-chip" style="background:#fff6e8;color:var(--a-amber); text-decoration:none;">
+      <div class="a-vs-num">{{ documents_expiring }}</div>
+      <div class="a-vs-label">Documents Expiring</div>
+    </a>
+  </div>
+</div>
+{% endif %}
 
 <div class="a-card">
   <div class="a-card-head">
@@ -60,25 +88,13 @@
       <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></span>
       <span class="a-qa-label">Add Trip</span>
     </a>
-    <a href="/overheads" class="a-qa-item">
+    <a href="/app/vehicles?add=1" class="a-qa-item">
+      <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg></span>
+      <span class="a-qa-label">Add Vehicle</span>
+    </a>
+    <a href="/app/expenses?add=1" class="a-qa-item">
       <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M3 11h18"/><circle cx="7" cy="15" r="1" fill="currentColor" stroke="none"/></svg></span>
       <span class="a-qa-label">Add Expense</span>
-    </a>
-    <a href="/maintenance?tab=fuel" class="a-qa-item">
-      <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M13 10h2a2 2 0 0 1 2 2v1a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9l-3-3"/><path d="M3 22h12"/></svg></span>
-      <span class="a-qa-label">Fuel Entry</span>
-    </a>
-    <a href="/app/vehicles" class="a-qa-item">
-      <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg></span>
-      <span class="a-qa-label">Vehicles</span>
-    </a>
-    <a href="/app/maintenance" class="a-qa-item">
-      <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
-      <span class="a-qa-label">Maintenance</span>
-    </a>
-    <a href="/app/ledger" class="a-qa-item">
-      <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/></svg></span>
-      <span class="a-qa-label">Ledger</span>
     </a>
     <button type="button" class="a-qa-item" onclick="toggleMoreSheet()">
       <span class="a-qa-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>
@@ -87,46 +103,22 @@
   </div>
 </div>
 
-{% if alert_count %}
-<a href="/app/alerts" class="a-alert">
-  <span class="a-alert-ic">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
-  </span>
-  <span class="a-alert-body">
-    <div class="a-alert-title">{{ alert_count }} item{{ 's' if alert_count != 1 else '' }} need{{ '' if alert_count != 1 else 's' }} your attention</div>
-    <div class="a-alert-sub">{{ alert_summary }}</div>
-  </span>
-  <span class="a-alert-chevron">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-  </span>
-</a>
-{% endif %}
-
+<!-- Business Overview (Selected Period) -->
 <div class="a-card">
   <div class="a-card-head">
     <h2>Business Overview</h2>
-    <a href="/app/analysis" class="a-card-link">View All &rarr;</a>
+    <a href="/app/analysis" class="a-card-link" aria-label="View Business Overview">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
   </div>
   <div class="a-bo-grid">
     <div class="a-bo-item">
-      <div class="a-bo-ic" style="background:#eaf1fb;color:var(--a-blue);">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.4"/></svg>
-      </div>
-      <div>
-        <div class="a-bo-label">Total Trips {{ '(Selected Period)' if is_filtered else '(This Month)' }}</div>
-        <div class="a-bo-value">{{ bo_trips }}</div>
-        {% if bo_trip_growth is not none %}
-        <div class="a-bo-trend {{ 'up' if bo_trip_growth >= 0 else 'down' }}">{{ '▲' if bo_trip_growth >= 0 else '▼' }} {{ bo_trip_growth|abs }}% vs {{ 'previous period' if is_filtered else 'last month' }}</div>
-        {% endif %}
-      </div>
-    </div>
-    <div class="a-bo-item">
       <div class="a-bo-ic" style="background:#e8f5ee;color:var(--a-green);">&#8377;</div>
       <div>
-        <div class="a-bo-label">Total Revenue {{ '(Selected Period)' if is_filtered else '(This Month)' }}</div>
+        <div class="a-bo-label">Revenue ({{ period_label }})</div>
         <div class="a-bo-value">&#8377;{{ '{:,.0f}'.format(bo_revenue) }}</div>
         {% if bo_revenue_growth is not none %}
-        <div class="a-bo-trend {{ 'up' if bo_revenue_growth >= 0 else 'down' }}">{{ '▲' if bo_revenue_growth >= 0 else '▼' }} {{ bo_revenue_growth|abs }}% vs {{ 'previous period' if is_filtered else 'last month' }}</div>
+        <div class="a-bo-trend {{ 'up' if bo_revenue_growth >= 0 else 'down' }}">{{ '▲' if bo_revenue_growth >= 0 else '▼' }} {{ bo_revenue_growth|abs }}% vs last period</div>
         {% endif %}
       </div>
     </div>
@@ -135,51 +127,132 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/></svg>
       </div>
       <div>
-        <div class="a-bo-label">Total Expenses {{ '(Selected Period)' if is_filtered else '(This Month)' }}</div>
+        <div class="a-bo-label">Expenses ({{ period_label }})</div>
         <div class="a-bo-value">&#8377;{{ '{:,.0f}'.format(bo_expenses) }}</div>
         {% if bo_expense_growth is not none %}
-        <div class="a-bo-trend {{ 'down' if bo_expense_growth >= 0 else 'up' }}">{{ '▲' if bo_expense_growth >= 0 else '▼' }} {{ bo_expense_growth|abs }}% vs {{ 'previous period' if is_filtered else 'last month' }}</div>
+        <div class="a-bo-trend {{ 'down' if bo_expense_growth >= 0 else 'up' }}">{{ '▲' if bo_expense_growth >= 0 else '▼' }} {{ bo_expense_growth|abs }}% vs last period</div>
         {% endif %}
       </div>
     </div>
     <div class="a-bo-item">
-      <div class="a-bo-ic" style="background:rgba(122,90,214,0.12);color:var(--a-purple);">
+      <div class="a-bo-ic" style="background:{{ 'rgba(122,90,214,0.12)' if (bo_revenue - bo_expenses) >= 0 else '#fdecea' }};color:{{ 'var(--a-purple)' if (bo_revenue - bo_expenses) >= 0 else 'var(--a-red)' }};">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+      </div>
+      <div>
+        <div class="a-bo-label">Net Profit ({{ period_label }})</div>
+        <div class="a-bo-value" style="color:{{ 'var(--a-ink)' if (bo_revenue - bo_expenses) >= 0 else 'var(--a-red)' }};">&#8377;{{ '{:,.0f}'.format(bo_revenue - bo_expenses) }}</div>
+      </div>
+    </div>
+    <div class="a-bo-item">
+      <div class="a-bo-ic" style="background:#eaf1fb;color:var(--a-blue);">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3Z"/><path d="M9 8h6M9 12h6"/></svg>
       </div>
       <div>
-        <div class="a-bo-label">Outstanding Receivable</div>
+        <div class="a-bo-label">Receivable</div>
         <div class="a-bo-value">&#8377;{{ '{:,.0f}'.format(total_receivables) }}</div>
-        <a href="/app/ledger" class="a-bo-sub-link">{{ receivable_party_count }} Part{{ 'y' if receivable_party_count == 1 else 'ies' }}</a>
+        <div class="a-bo-sub-link">{{ receivable_party_count }} Part{{ 'y' if receivable_party_count == 1 else 'ies' }}</div>
       </div>
     </div>
   </div>
 </div>
 
+<!-- Revenue vs Expenses (Selected Period) — trailing 6 months ending at the selected period's
+     own end month. -->
 <div class="a-card">
-  <div class="a-card-head">
-    <h2>Vehicle Status</h2>
-    <a href="/app/vehicles" class="a-card-link">View All &rarr;</a>
+  <div class="a-card-head"><h2>Revenue vs Expenses</h2></div>
+  <div style="font-size:0.72rem; color:var(--a-steel); margin:-6px 0 10px;">Last 6 months, ending {{ revexp_trend[-1].label if revexp_trend else '' }}.</div>
+  <div style="display:flex; gap:14px; font-size:0.7rem; font-weight:700; margin-bottom:10px;">
+    <span style="color:var(--a-green);">&#9679; Revenue</span>
+    <span style="color:var(--a-red);">&#9679; Expenses</span>
   </div>
-  <div class="a-vs-grid">
-    <div class="a-vs-chip" style="background:#e8f5ee;color:var(--a-green);">
-      <div class="a-vs-num">{{ vs_on_trip }}</div>
-      <div class="a-vs-label">On Trip</div>
+  <div class="mo-trend-bars">
+    {% for m in revexp_trend %}
+    <div class="mo-trend-col">
+      <div style="display:flex; align-items:flex-end; gap:2px; height:100%; width:100%; justify-content:center;">
+        <div class="mo-trend-bar" style="height:{{ m.rev_pct|round(0) }}%; width:40%; background:var(--a-green);" title="₹{{ '{:,.0f}'.format(m.revenue) }} revenue"></div>
+        <div class="mo-trend-bar" style="height:{{ m.exp_pct|round(0) }}%; width:40%; background:var(--a-red);" title="₹{{ '{:,.0f}'.format(m.expenses) }} expenses"></div>
+      </div>
+      <div class="mo-trend-label">{{ m.label }}</div>
     </div>
-    <div class="a-vs-chip" style="background:#fff6e8;color:var(--a-amber);">
-      <div class="a-vs-num">{{ vs_workshop }}</div>
-      <div class="a-vs-label">In Workshop</div>
-    </div>
-    <div class="a-vs-chip" style="background:var(--a-paper);color:var(--a-steel);">
-      <div class="a-vs-num">{{ vs_idle }}</div>
-      <div class="a-vs-label">Idle</div>
-    </div>
+    {% else %}
+    <div class="vd-empty">No trend data.</div>
+    {% endfor %}
   </div>
 </div>
 
+<!-- Fleet Status (Current) — always-live counts + a real 3-segment donut. -->
+<div class="a-card">
+  <div class="a-card-head">
+    <h2>Fleet Status</h2>
+  </div>
+  <div class="mo-donut-wrap">
+    <svg viewBox="0 0 130 130" width="100" height="100">
+      {% set circ = 326.7 %}
+      {% set fs_total = (vs_on_trip + vs_workshop + vs_idle) or 1 %}
+      {% set offset = namespace(v=0) %}
+      {% for count, color in [(vs_on_trip, '#1a9c5b'), (vs_workshop, '#eda100'), (vs_idle, '#c9cfd8')] %}
+      {% set seg = circ * count / fs_total %}
+      <circle cx="65" cy="65" r="52" fill="none" stroke="{{ color }}" stroke-width="20"
+              stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset.v|round(1) }}" transform="rotate(-90 65 65)"/>
+      {% set offset.v = offset.v + seg %}
+      {% endfor %}
+      <text x="65" y="61" font-size="20" font-weight="800" text-anchor="middle" fill="var(--a-ink)">{{ total_vehicles }}</text>
+      <text x="65" y="77" font-size="8" text-anchor="middle" fill="var(--a-steel)">Total</text>
+    </svg>
+    <table class="mo-band-table">
+      <tr><td><span class="mo-band-dot" style="background:#1a9c5b;"></span><span class="mo-band-name">On Trip</span></td><td class="mo-band-count">{{ vs_on_trip }} ({{ fs_on_trip_pct }}%)</td></tr>
+      <tr><td><span class="mo-band-dot" style="background:#eda100;"></span><span class="mo-band-name">In Workshop</span></td><td class="mo-band-count">{{ vs_workshop }} ({{ fs_workshop_pct }}%)</td></tr>
+      <tr><td><span class="mo-band-dot" style="background:#c9cfd8;"></span><span class="mo-band-name">Idle</span></td><td class="mo-band-count">{{ vs_idle }} ({{ fs_idle_pct }}%)</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- Top Routes (Selected Period) — real per-route revenue rollup, same source as Route Analytics. -->
+<div class="a-card">
+  <div class="a-card-head">
+    <h2>Top Routes</h2>
+  </div>
+  {% for r in top_routes %}
+  <div style="margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; gap:8px; font-size:0.8rem; font-weight:700; color:var(--a-ink); margin-bottom:4px;">
+      <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">{{ r.route }}</span>
+      <span style="flex-shrink:0;">&#8377;{{ '{:,.0f}'.format(r.revenue) }}</span>
+    </div>
+    <div style="height:6px; background:var(--a-paper); border-radius:4px; overflow:hidden;">
+      <div style="height:100%; width:{{ r.pct }}%; background:var(--a-green); border-radius:4px;"></div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No routes in this period.</div>
+  {% endfor %}
+  {% if more_routes_count %}
+  <div style="text-align:center; font-size:0.76rem; font-weight:700; color:var(--a-steel); margin-top:2px;">+{{ more_routes_count }} More Route{{ 's' if more_routes_count != 1 else '' }}</div>
+  {% endif %}
+</div>
+
+<!-- Top Expenses (Selected Period) — same real category breakdown as the website's own
+     Expense Breakdown chart, sorted by size. -->
+<div class="a-card">
+  <div class="a-card-head">
+    <h2>Top Expenses</h2>
+  </div>
+  {% for e in top_expenses %}
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--a-line);">
+    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+      <span style="width:8px; height:8px; border-radius:50%; background:{{ e.color }}; flex-shrink:0;"></span>
+      <span style="font-size:0.82rem; font-weight:600; color:var(--a-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ e.label }}</span>
+    </div>
+    <span style="font-size:0.82rem; font-weight:700; color:var(--a-ink); flex-shrink:0;">&#8377;{{ '{:,.0f}'.format(e.value) }}</span>
+  </div>
+  {% else %}
+  <div class="vd-empty">No expenses in this period.</div>
+  {% endfor %}
+</div>
+
+<!-- Recent Activity (Current) -->
 <div class="a-card">
   <div class="a-card-head">
     <h2>Recent Activity</h2>
-    <a href="/app/activity" class="a-card-link">View All &rarr;</a>
   </div>
   {% for a in activities %}
   <div class="a-activity-item">
@@ -200,31 +273,52 @@
   {% endfor %}
 </div>
 
-<!-- Filter sheet — same real fields (FY preset / From Date / To Date / Vehicle) as the website's
-     own /dashboard filter_bar (templates/dashboard.html), applied here to the Business Overview
-     card only (the one period-scoped section on this page) via the same _period_financials()
-     helper Business Performance itself uses, now vehicle-filterable too. KPI row/Vehicle
-     Status/Recent Activity below stay real-time "right now" figures regardless of this filter,
-     same as before. -->
-<div class="vam-backdrop" id="dashFilterBackdrop" onclick="closeDashFilterSheet()"></div>
-<div class="vam-modal" id="dashFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+<!-- Period sheet — Today/This Week/This Month/Last Month/FY 2026-27/FY 2025-26 as one-tap
+     presets, computed server-side by _resolve_dashboard_period(); Custom Range below reveals a
+     real From/To date form. The Vehicle filter (separate icon) is preserved across every preset
+     via the hidden field / query param, so switching period never resets which vehicle you're
+     looking at. -->
+<div class="vam-backdrop" id="periodBackdrop" onclick="closePeriodSheet()"></div>
+<div class="vam-modal" id="periodSheet" role="dialog" aria-modal="true" aria-label="Select Period">
   <div class="vam-head">
-    <h2>Filters</h2>
-    <button type="button" class="vam-close" onclick="closeDashFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <h2>Select Period</h2>
+    <button type="button" class="vam-close" onclick="closePeriodSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div style="padding:0 20px;">
+    {% for pval, plabel in [('today','Today'), ('week','This Week'), ('month','This Month'), ('lastmonth','Last Month'), ('fy2627','FY 2026-27'), ('fy2526','FY 2025-26')] %}
+    <a href="{{ url_for('app_dashboard', period=pval, vehicle=f_vehicle) }}" class="a-period-opt {{ 'active' if period==pval }}">
+      {{ plabel }}
+      <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </a>
+    {% endfor %}
   </div>
   <form class="vam-form" method="GET" action="{{ url_for('app_dashboard') }}">
-    <div class="vam-field vam-field-full">
-      <label>Financial Year</label>
-      <select name="fy" onchange="if(this.value){document.getElementById('dashDateFrom').value=this.value.split('|')[0];document.getElementById('dashDateTo').value=this.value.split('|')[1];}">
-        <option value="" {% if f_fy=='' %}selected{% endif %}>Custom</option>
-        <option value="2026-04-01|2027-03-31" {% if f_fy=='2026-04-01|2027-03-31' %}selected{% endif %}>FY 2026-27</option>
-        <option value="2025-04-01|2026-03-31" {% if f_fy=='2025-04-01|2026-03-31' %}selected{% endif %}>FY 2025-26</option>
-      </select>
-    </div>
+    <input type="hidden" name="period" value="custom">
+    <input type="hidden" name="vehicle" value="{{ f_vehicle }}">
+    <div class="vam-section-title">Custom Range</div>
     <div class="vam-grid">
-      <div class="vam-field"><label>From Date</label><input type="date" id="dashDateFrom" name="date_from" value="{{ f_date_from }}"></div>
-      <div class="vam-field"><label>To Date</label><input type="date" id="dashDateTo" name="date_to" value="{{ f_date_to }}"></div>
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
     </div>
+    <div class="vam-actions">
+      <button type="submit" class="vam-btn-save" style="grid-column:1 / -1;">Apply Custom Range</button>
+    </div>
+  </form>
+</div>
+
+<!-- Vehicle filter sheet — a separate icon from the period pill, per instruction; narrows the
+     same 4 sections (Business Overview/Revenue vs Expenses/Top Routes/Top Expenses) to one
+     vehicle without touching whichever period is currently selected. -->
+<div class="vam-backdrop" id="vehBackdrop" onclick="closeVehSheet()"></div>
+<div class="vam-modal" id="vehSheet" role="dialog" aria-modal="true" aria-label="Filter by Vehicle">
+  <div class="vam-head">
+    <h2>Filter by Vehicle</h2>
+    <button type="button" class="vam-close" onclick="closeVehSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_dashboard') }}">
+    <input type="hidden" name="period" value="{{ period }}">
+    <input type="hidden" name="date_from" value="{{ f_date_from }}">
+    <input type="hidden" name="date_to" value="{{ f_date_to }}">
     <div class="vam-field vam-field-full">
       <label>Vehicle</label>
       <select name="vehicle">
@@ -233,7 +327,7 @@
       </select>
     </div>
     <div class="vam-actions">
-      <a href="{{ url_for('app_dashboard') }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <a href="{{ url_for('app_dashboard', period=period, date_from=f_date_from, date_to=f_date_to) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
       <button type="submit" class="vam-btn-save">Apply</button>
     </div>
   </form>
@@ -242,16 +336,26 @@
 {% endblock %}
 {% block extra_scripts %}
 <script>
-// Filter sheet — same open/close/backdrop pattern as every other modal in this app.
-function openDashFilterSheet() {
+// Period sheet + Vehicle sheet — same open/close/backdrop pattern as every other modal in this app.
+function openPeriodSheet() {
   lockPageScroll();
-  document.getElementById('dashFilterBackdrop').classList.add('open');
-  document.getElementById('dashFilterSheet').classList.add('open');
+  document.getElementById('periodBackdrop').classList.add('open');
+  document.getElementById('periodSheet').classList.add('open');
 }
-function closeDashFilterSheet() {
+function closePeriodSheet() {
   unlockPageScroll();
-  document.getElementById('dashFilterBackdrop').classList.remove('open');
-  document.getElementById('dashFilterSheet').classList.remove('open');
+  document.getElementById('periodBackdrop').classList.remove('open');
+  document.getElementById('periodSheet').classList.remove('open');
+}
+function openVehSheet() {
+  lockPageScroll();
+  document.getElementById('vehBackdrop').classList.add('open');
+  document.getElementById('vehSheet').classList.add('open');
+}
+function closeVehSheet() {
+  unlockPageScroll();
+  document.getElementById('vehBackdrop').classList.remove('open');
+  document.getElementById('vehSheet').classList.remove('open');
 }
 </script>
 {% endblock %}
