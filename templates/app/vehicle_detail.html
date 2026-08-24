@@ -31,15 +31,16 @@
     <div><div class="lbl">Engine No.</div><div class="v">{{ v['engine_number'] or (rc_data.rc_eng_no if rc_data else none) or '—' }}</div></div>
     <div><div class="lbl">Registration Date</div><div class="v">{{ v['registration_date'] or '—' }}</div></div>
   </div>
+  <!-- No "Sync Latest Data" button here, by design — that's a real, on-demand call to the paid
+       eChallan RC+Challan API (vehicle_sync_now() in app.py). The app is deliberately read-only
+       for RC/challan data: it just displays whatever the website's own scheduled/manual sync has
+       already written to vehicles.rc_synced_data / vehicle_challans, same as every other real
+       field on this page — no separate sync trigger, interval, or API config lives here. Only
+       the "Last synced" timestamp is shown, so it's still clear how fresh the data is. -->
   {% if v['type'] == VEHICLE_TYPE_OWN %}
-  <form method="POST" action="{{ url_for('vehicle_sync_now', v_id=v['id']) }}" class="vd-sync-row">
-    <input type="hidden" name="return_to" value="{{ url_for('app_vehicle_detail', v_id=v['id'], tab=tab) }}">
-    <button type="submit" class="vd-sync-btn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-      Sync Latest Data
-    </button>
+  <div class="vd-sync-row">
     <span class="vd-sync-sub">Last synced: {{ v['rc_last_synced'] or 'Never' }}</span>
-  </form>
+  </div>
   {% endif %}
 </div>
 

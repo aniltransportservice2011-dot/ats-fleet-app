@@ -88,15 +88,25 @@ body.a-scroll-lock { overflow: hidden; }
 .acct-menu-logout svg { color: var(--a-red); }
 
 /* ---------- Greeting + date ---------- */
-.a-greet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 18px 0 16px; flex-wrap: wrap; }
+.a-greet-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 18px 0 4px; flex-wrap: wrap; }
+.a-greet-row h1 { font-size: 1.25rem; margin: 0; }
 .a-greet h1 { font-size: 1.25rem; margin: 0; }
 .a-greet .sub { color: var(--a-steel); font-size: 0.85rem; margin-top: 3px; }
+/* Dashboard's own greeting subtitle — now a full-width line below .a-greet-row (which holds just
+   the h1 + period pill/filter icon on one row) instead of stacked inside .a-greet, so the filter
+   controls sit inline with "Hi {name}" rather than wrapping below it on a phone-width screen. */
+.a-greet-sub { color: var(--a-steel); font-size: 0.85rem; margin: 0 0 16px; }
 .a-date-chip { display: flex; align-items: center; gap: 7px; background: var(--a-white); border: 1px solid var(--a-line); border-radius: 999px; padding: 8px 14px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
 
 /* ---------- KPI cards ---------- */
 .a-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
 .a-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; }
 .a-kpi-ic { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; margin-bottom: 10px; }
+/* Smaller variant for the Dashboard's own Today's Fleet row only — a scoped modifier so
+   Analytics/Performance/Business Performance/Fleet Utilization's own .a-kpi-ic cards (same base
+   class, different pages) are never affected. */
+.a-kpi-ic-sm { width: 28px; height: 28px; border-radius: 9px; font-size: 0.82rem; margin-bottom: 8px; }
+.a-kpi-ic-sm svg { width: 15px; height: 15px; }
 .a-kpi-label { font-size: 0.76rem; color: var(--a-steel); font-weight: 600; }
 .a-kpi-value { font-size: 1.35rem; font-weight: 800; margin-top: 3px; }
 .a-kpi-link { font-size: 0.72rem; color: var(--a-accent); font-weight: 700; margin-top: 6px; display: flex; align-items: center; gap: 2px; text-decoration: none; }
@@ -350,7 +360,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .tw-section-toggle { font-size: 0.76rem; color: var(--a-accent); font-weight: 700; display: flex; align-items: center; gap: 3px; }
 .tw-section-toggle svg { width: 13px; height: 13px; transition: transform 0.15s; }
 .tw-section.collapsed .tw-section-toggle svg { transform: rotate(-90deg); }
-.tw-section-body { padding: 4px 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+.tw-section-body { padding: 4px 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px 16px; }
 .tw-section.collapsed .tw-section-body { display: none; }
 /* Single column on narrow phones — same reasoning as .vam-grid (Add Vehicle modal): a fixed
    2-column split can get visually cramped with native date-picker/select rendering on a small
@@ -375,21 +385,24 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    half-width column, on any device, without needing extra column space. Paired with min-width:0
    above (a grid item otherwise refuses to shrink below its content's own intrinsic width, which
    is what let the icon force the cell wider than its track and bleed into the field next to it). */
-.tw-field input[type="date"] { padding-left: 9px; padding-right: 6px; font-size: 0.8rem; }
+.tw-field input[type="date"] { padding-left: 7px; padding-right: 4px; font-size: 0.8rem; }
 /* iOS Safari specifically — see the matching comment on .vam-field input[type="date"] above for
    why the rule above alone isn't enough there: these WebKit-only pseudo-elements reach into the
    date input's actual internal rendering (day/month/year segments + calendar icon), which is
-   what really controls its minimum width on a real iPhone. */
+   what really controls its minimum width on a real iPhone. Tightened further (was 0.74rem/14px)
+   after a real-device report of two side-by-side date fields still crowding on iOS — same
+   2-column grid layout as before, this just squeezes more real safety margin out of the date
+   control itself. */
 .tw-field input[type="date"]::-webkit-datetime-edit,
 .tw-field input[type="date"]::-webkit-datetime-edit-fields-wrapper,
 .tw-field input[type="date"]::-webkit-datetime-edit-text,
 .tw-field input[type="date"]::-webkit-datetime-edit-month-field,
 .tw-field input[type="date"]::-webkit-datetime-edit-day-field,
 .tw-field input[type="date"]::-webkit-datetime-edit-year-field {
-  font-size: 0.74rem; padding: 0;
+  font-size: 0.68rem; padding: 0;
 }
 .tw-field input[type="date"]::-webkit-calendar-picker-indicator {
-  padding: 0; margin-left: 2px; width: 14px; height: 14px;
+  padding: 0; margin-left: 1px; width: 12px; height: 12px;
 }
 .tw-field input:focus, .tw-field select:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
 .tw-field input:disabled { color: var(--a-steel); }
@@ -563,6 +576,19 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
   background: var(--a-white); color: var(--a-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .a-filter-btn svg { width: 18px; height: 18px; }
 .a-filter-btn.active { border-color: var(--a-accent); background: #fff3e8; color: var(--a-accent); }
+
+/* Dashboard's period-pill button + its option list — a plain pill styled like .a-date-chip but
+   clickable, and a vertical list of preset periods inside its bottom sheet (Custom Range stays
+   a normal .vam-form below the list). */
+.a-period-pill { display: flex; align-items: center; gap: 7px; background: var(--a-white); border: 1px solid var(--a-line);
+  border-radius: 999px; padding: 8px 12px 8px 14px; font-size: 0.8rem; font-weight: 600; white-space: nowrap; cursor: pointer; color: var(--a-ink); }
+.a-period-pill svg.chev { width: 14px; height: 14px; color: var(--a-steel); margin-left: 2px; }
+.a-period-opt { display: flex; align-items: center; justify-content: space-between; padding: 12px 4px;
+  border-bottom: 1px solid var(--a-line); text-decoration: none; color: var(--a-ink); font-size: 0.88rem; font-weight: 600; }
+.a-period-opt:last-child { border-bottom: none; }
+.a-period-opt.active { color: var(--a-accent); }
+.a-period-opt .check { width: 18px; height: 18px; color: var(--a-accent); visibility: hidden; }
+.a-period-opt.active .check { visibility: visible; }
 
 .ms-row { display: flex; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--a-line); }
 .ms-row:last-child { border-bottom: none; }
@@ -755,7 +781,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .vam-section-title { font-size: 0.7rem; font-weight: 800; color: var(--a-steel); text-transform: uppercase;
   letter-spacing: 0.04em; margin: 18px 0 10px; }
 .vam-section-title:first-child { margin-top: 0; }
-.vam-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; }
+.vam-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 16px; }
 /* Single column on narrow phones — native date-picker rendering (calendar icon width especially)
    varies enough across devices/browsers that a fixed 2-column split can crowd on a small screen;
    stacking removes any chance of that regardless of the device. */
@@ -781,23 +807,26 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    calendar-icon real breathing room inside a half-width column on any device, and this is now
    the shared field style for every Add/Filter modal in the app (Vehicle, Trip's End/Edit,
    Service, and every filter sheet), so fixing it here covers all of them at once. */
-.vam-field input[type="date"] { padding-left: 9px; padding-right: 6px; font-size: 0.8rem; }
+.vam-field input[type="date"] { padding-left: 7px; padding-right: 4px; font-size: 0.8rem; }
 /* iOS Safari specifically: a date input's visible text/icon isn't regular text, it's drawn by an
    internal system component that font-size on the <input> itself doesn't reliably reach — that's
    why the rule above (which works fine in Chrome) can still overflow on a real iPhone. These
    WebKit-only pseudo-elements reach into that internal rendering directly: shrink the actual
    day/month/year segments and separators, and pull the calendar-icon button's own padding in, so
-   the whole control's real minimum width comes down instead of just the outer box's CSS width. */
+   the whole control's real minimum width comes down instead of just the outer box's CSS width.
+   Tightened further (was 0.74rem/14px) after a real-device report of two side-by-side date
+   fields still crowding on iOS — layout stays the same 2-column grid as every other paired
+   field, this just squeezes more real safety margin out of the date control itself. */
 .vam-field input[type="date"]::-webkit-datetime-edit,
 .vam-field input[type="date"]::-webkit-datetime-edit-fields-wrapper,
 .vam-field input[type="date"]::-webkit-datetime-edit-text,
 .vam-field input[type="date"]::-webkit-datetime-edit-month-field,
 .vam-field input[type="date"]::-webkit-datetime-edit-day-field,
 .vam-field input[type="date"]::-webkit-datetime-edit-year-field {
-  font-size: 0.74rem; padding: 0;
+  font-size: 0.68rem; padding: 0;
 }
 .vam-field input[type="date"]::-webkit-calendar-picker-indicator {
-  padding: 0; margin-left: 2px; width: 14px; height: 14px;
+  padding: 0; margin-left: 1px; width: 12px; height: 12px;
 }
 .vam-field input:focus, .vam-field select:focus, .vam-field textarea:focus { outline: none; border-color: var(--a-accent); }
 .vam-field textarea { resize: vertical; }
@@ -989,6 +1018,35 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .ra-stat-lbl svg { width: 13px; height: 13px; flex-shrink: 0; }
 .ra-stat-val { font-size: 0.86rem; font-weight: 800; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ra-stat-sub { font-size: 0.78rem; font-weight: 700; color: var(--a-green); margin-top: 2px; }
+
+/* Route Rates — Driver Advance / Fuel Taken range rows (shared by the overall KPI panels and
+   each row's own expandable detail), and the Route Rates list itself. */
+.rr-range-row { display: flex; justify-content: space-between; gap: 8px; }
+.rr-range-item { flex: 1; min-width: 0; text-align: center; }
+.rr-range-lbl { font-size: 0.68rem; color: var(--a-steel); font-weight: 600; }
+.rr-range-val { font-size: 0.86rem; font-weight: 800; margin-top: 3px; color: var(--a-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rr-row { border-bottom: 1px solid var(--a-line); }
+.rr-row:last-child { border-bottom: none; }
+.rr-row-main { display: block; width: 100%; text-align: left; background: none; border: none; font-family: inherit;
+  padding: 12px 16px; cursor: pointer; }
+.rr-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.rr-row-route { font-size: 0.82rem; font-weight: 700; color: var(--a-ink); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; min-width: 0; }
+.rr-row-type { flex-shrink: 0; font-size: 0.66rem; font-weight: 700; color: var(--a-steel); background: var(--a-paper);
+  border-radius: 999px; padding: 2px 9px; }
+.rr-row-stats { display: flex; align-items: center; gap: 14px; }
+.rr-row-stats > div { flex: 1; min-width: 0; }
+.rr-row-stat-lbl { font-size: 0.64rem; color: var(--a-steel); font-weight: 600; }
+.rr-row-stat-val { font-size: 0.78rem; font-weight: 700; color: var(--a-ink); margin-top: 2px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.rr-row-chev { flex-shrink: 0; color: var(--a-steel); transition: transform 0.15s; }
+.rr-row.open .rr-row-chev { transform: rotate(90deg); color: var(--a-accent); }
+.rr-row-detail { display: none; padding: 0 16px 14px; }
+.rr-row-detail.open { display: block; }
+.rr-detail-block { background: var(--a-paper); border-radius: 10px; padding: 10px 12px; }
+.rr-detail-block + .rr-detail-block { margin-top: 8px; }
+.rr-detail-title { font-size: 0.7rem; font-weight: 700; color: var(--a-steel); margin-bottom: 8px; }
 .ra-empty { text-align: center; color: var(--a-steel); font-size: 0.84rem; padding: 24px 0; }
 
 /* ==========================================================================
