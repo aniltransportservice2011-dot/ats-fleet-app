@@ -12128,4 +12128,10 @@ if __name__ == '__main__':
     # to also accept connections from other devices on the same LAN/Wi-Fi (e.g. testing the /app/
     # mobile section on an actual phone during local development). Never do this on a real
     # deployment; that's what a real WSGI server + reverse proxy is for.
-    app.run(debug=debug_mode, port=5050, host=os.environ.get('FLASK_HOST', '127.0.0.1'))
+    # threaded=True — the dev server otherwise handles exactly one request at a time; with a phone
+    # and a couple of browser tabs all hitting it, one slow/open request blocks every other tab
+    # until it finishes, which reads as "the app froze". Purely a concurrency fix, no behavior
+    # change for a single request. Still not a substitute for a real WSGI server in production —
+    # this dev server also restarts itself on every file change (debug=True's reloader) and only
+    # exists while this laptop is awake and running it, neither of which threaded=True changes.
+    app.run(debug=debug_mode, port=5050, host=os.environ.get('FLASK_HOST', '127.0.0.1'), threaded=True)

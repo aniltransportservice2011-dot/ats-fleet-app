@@ -83,40 +83,20 @@
     flex: 0 0 auto;
     height: 42dvh;
     min-height: 269px;
-    overflow: hidden;
+    background-image: url("{{ url_for('static', filename='img/login-hero.jpg') }}");
+    background-size: cover;
+    background-position: center 58%;
+    background-repeat: no-repeat;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: max(16px, env(safe-area-inset-top)) 24px 0;
   }
-  /* The photo itself is a separate absolutely-positioned layer (not .lg-hero's own
-     background-image) so it can be sized larger than the box and slowly panned across it — a
-     Ken Burns effect. There's no way to animate just the truck in isolation (it's baked into one
-     flat photo, not a separate layer — that would need real photo editing/inpainting), but
-     panning the whole scene gives a real sense of motion, like the camera is tracking alongside
-     the truck as it drives, without needing to touch the image file itself. 130% background-size
-     gives enough overscan that the pan never reveals an edge. */
-  .lg-hero-photo {
-    position: absolute; inset: -6% -8%; z-index: 0;
-    background-image: url("{{ url_for('static', filename='img/login-hero.jpg') }}");
-    background-size: cover;
-    background-position: center 58%;
-    background-repeat: no-repeat;
-    animation: lgHeroPan 22s ease-in-out infinite alternate;
-  }
-  @keyframes lgHeroPan {
-    0%   { transform: scale(1.12) translate(1.5%, 0.5%); }
-    100% { transform: scale(1.12) translate(-1.5%, -0.5%); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .lg-hero-photo { animation: none; }
-  }
   .lg-hero::before {
     content: '';
     position: absolute;
     inset: 0;
-    z-index: 1;
     background: linear-gradient(180deg, rgba(8,22,41,0.5) 0%, rgba(8,22,41,0.14) 32%, rgba(8,22,41,0) 55%);
   }
   .lg-hero::after {
@@ -124,7 +104,6 @@
     position: absolute;
     left: 0; right: 0; bottom: 0;
     height: 90px;
-    z-index: 1;
     background: linear-gradient(180deg, rgba(10,14,22,0) 0%, rgba(10,14,22,0.4) 100%);
   }
   .lg-badge {
@@ -293,7 +272,6 @@
 {% include "app/_page_loader.html" %}
 
 <div class="lg-hero">
-  <div class="lg-hero-photo"></div>
   <div class="lg-badge">
     <!-- Same real truck icon used everywhere else in this app (Total Vehicles KPI, Vehicles nav
          icon, Add Vehicle) so the login badge matches the app's own icon language. -->
