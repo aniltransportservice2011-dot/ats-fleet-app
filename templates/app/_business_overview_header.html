@@ -1,0 +1,46 @@
+<!-- Shared "Business Overview" section header — title + ONE compact period filter (readonly
+     label + a single small icon), sitting on the SAME line as the title, top-right — + the
+     4-page tab strip. Built once and included by all 4 Business Overview analysis pages (Route
+     Analytics/Fleet Utilization/Performance/Business Performance) so there's exactly one period
+     control per page, always in the same spot, instead of each page growing its own. Uses a
+     calendar icon (not the funnel/lines icon) specifically so it reads as distinct from Route
+     Analytics' own separate Filters icon further down the same page — two identical-looking
+     icons on one screen was confusing. No subtitle line here (dropped per instruction — was just
+     repeating what the tab strip below it already shows) so this header takes as little vertical
+     space as possible.
+     Expects: period, period_label, f_date_from, f_date_to, period_presets, period_endpoint
+     (route function name as a string), period_extra (dict of extra query args to preserve, e.g.
+     {'tab': tab}). Also expects active_ov (used by _overview_tabstrip.html itself). -->
+<div class="ra-head" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+  <h1 style="margin:0; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Business Overview</h1>
+  <div class="ra-period-ctl" style="flex-shrink:0;">
+    <span class="ra-period-label">{{ period_label }}</span>
+    <button type="button" class="a-filter-btn {{ 'active' if period and period != 'fy' }}" onclick="openPeriodSheet()" aria-label="Select Period">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+    </button>
+  </div>
+</div>
+
+{% include "app/_overview_tabstrip.html" %}
+
+{% import "app/_period_macros.html" as pm %}
+<div class="vam-backdrop" id="periodBackdrop" onclick="closePeriodSheet()"></div>
+<div class="vam-modal" id="periodSheet" role="dialog" aria-modal="true" aria-label="Select Period">
+  <div class="vam-head">
+    <h2>Select Period</h2>
+    <button type="button" class="vam-close" onclick="closePeriodSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  {{ pm.period_preset_links(period, period_presets, period_endpoint, period_extra) }}
+  <form class="vam-form" method="GET" action="{{ url_for(period_endpoint) }}">
+    <input type="hidden" name="period" id="periodHiddenField" value="{{ period }}">
+    {% for k, v in period_extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <div class="vam-section-title">Custom Range</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}" onchange="document.getElementById('periodHiddenField').value='custom';"></div>
+      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}" onchange="document.getElementById('periodHiddenField').value='custom';"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="submit" class="vam-btn-save" style="grid-column:1 / -1;">Apply Custom Range</button>
+    </div>
+  </form>
+</div>

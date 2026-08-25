@@ -287,10 +287,12 @@
 </style>
 </head>
 <body class="app-login-body">
-<!-- app/_splash.html removed — see the matching comment in base_app.html. Kept just the one
-     native PWA launch splash (Android/Chrome, from app-manifest.json) instead of that plus this
-     custom overlay firing right after it. -->
-{% include "app/_page_loader.html" %}
+<!-- Shadowing company_name to this page's own hardcoded brand (see the note above on why this
+     page hardcodes "ATS Fleet Management") purely so _splash.html — which normally shows the
+     real dynamic company name, correctly, everywhere else — doesn't flash a different name here
+     right before revealing this page's own hardcoded one underneath it. -->
+{% set company_name = "ATS Fleet Management" %}
+{% include "app/_splash.html" %}
 
 <div class="lg-hero">
   <div class="lg-hero-photo"></div>

@@ -23,24 +23,13 @@
 </div>
 <div class="a-greet-sub">Here's what's happening with your fleet.</div>
 
-<!-- Today's Fleet (Current) — pure data points, no navigation (per instruction: routing is
+<!-- Today's Trips row (Current) — pure data points, no navigation (per instruction: routing is
      removed from every card except Action Required and Business Overview, which keep an
-     icon-only route in their own header instead of a text link). -->
+     icon-only route in their own header instead of a text link). Total Vehicles and On Trip
+     dropped from here per instruction — On Trip's own count still shows in Fleet Status below,
+     Total Vehicles still shows as the donut's center total there too, so neither number is lost,
+     just not duplicated up here anymore. -->
 <div class="a-kpi-grid">
-  <div class="a-kpi-card">
-    <div class="a-kpi-ic a-kpi-ic-sm" style="background:#eaf1fb;color:var(--a-blue);">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.3"/><circle cx="16.5" cy="16" r="1.3"/></svg>
-    </div>
-    <div class="a-kpi-label">Total Vehicles</div>
-    <div class="a-kpi-value">{{ total_vehicles }}</div>
-  </div>
-  <div class="a-kpi-card">
-    <div class="a-kpi-ic a-kpi-ic-sm" style="background:#e8f5ee;color:var(--a-green);">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.4"/></svg>
-    </div>
-    <div class="a-kpi-label">On Trip</div>
-    <div class="a-kpi-value">{{ on_trip_count }}</div>
-  </div>
   <div class="a-kpi-card">
     <div class="a-kpi-ic a-kpi-ic-sm" style="background:#fff6e8;color:var(--a-amber);">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 13l2 2 4-4"/></svg>
@@ -52,6 +41,33 @@
     <div class="a-kpi-ic a-kpi-ic-sm" style="background:#e6f7f5;color:var(--a-teal);">&#8377;</div>
     <div class="a-kpi-label">Today's Revenue</div>
     <div class="a-kpi-value">&#8377;{{ '{:,.0f}'.format(today_revenue) }}</div>
+  </div>
+</div>
+
+<!-- Fleet Status (Current) — always-live counts + a real 3-segment donut. -->
+<div class="a-card">
+  <div class="a-card-head">
+    <h2>Fleet Status</h2>
+  </div>
+  <div class="mo-donut-wrap">
+    <svg viewBox="0 0 130 130" width="100" height="100">
+      {% set circ = 326.7 %}
+      {% set fs_total = (vs_on_trip + vs_workshop + vs_idle) or 1 %}
+      {% set offset = namespace(v=0) %}
+      {% for count, color in [(vs_on_trip, '#1a9c5b'), (vs_workshop, '#eda100'), (vs_idle, '#c9cfd8')] %}
+      {% set seg = circ * count / fs_total %}
+      <circle cx="65" cy="65" r="52" fill="none" stroke="{{ color }}" stroke-width="20"
+              stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset.v|round(1) }}" transform="rotate(-90 65 65)"/>
+      {% set offset.v = offset.v + seg %}
+      {% endfor %}
+      <text x="65" y="61" font-size="20" font-weight="800" text-anchor="middle" fill="var(--a-ink)">{{ total_vehicles }}</text>
+      <text x="65" y="77" font-size="8" text-anchor="middle" fill="var(--a-steel)">Total</text>
+    </svg>
+    <table class="mo-band-table">
+      <tr><td><span class="mo-band-dot" style="background:#1a9c5b;"></span><span class="mo-band-name">On Trip</span></td><td class="mo-band-count">{{ vs_on_trip }} ({{ fs_on_trip_pct }}%)</td></tr>
+      <tr><td><span class="mo-band-dot" style="background:#eda100;"></span><span class="mo-band-name">In Workshop</span></td><td class="mo-band-count">{{ vs_workshop }} ({{ fs_workshop_pct }}%)</td></tr>
+      <tr><td><span class="mo-band-dot" style="background:#c9cfd8;"></span><span class="mo-band-name">Idle</span></td><td class="mo-band-count">{{ vs_idle }} ({{ fs_idle_pct }}%)</td></tr>
+    </table>
   </div>
 </div>
 
@@ -103,11 +119,30 @@
   </div>
 </div>
 
+<!-- Top Expenses (Selected Period) — same real category breakdown as the website's own
+     Expense Breakdown chart, sorted by size. -->
+<div class="a-card">
+  <div class="a-card-head">
+    <h2>Top Expenses</h2>
+  </div>
+  {% for e in top_expenses %}
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--a-line);">
+    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+      <span style="width:8px; height:8px; border-radius:50%; background:{{ e.color }}; flex-shrink:0;"></span>
+      <span style="font-size:0.82rem; font-weight:600; color:var(--a-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ e.label }}</span>
+    </div>
+    <span style="font-size:0.82rem; font-weight:700; color:var(--a-ink); flex-shrink:0;">&#8377;{{ '{:,.0f}'.format(e.value) }}</span>
+  </div>
+  {% else %}
+  <div class="vd-empty">No expenses in this period.</div>
+  {% endfor %}
+</div>
+
 <!-- Business Overview (Selected Period) -->
 <div class="a-card">
   <div class="a-card-head">
     <h2>Business Overview</h2>
-    <a href="/app/analysis" class="a-card-link" aria-label="View Business Overview">
+    <a href="{{ url_for('app_business_performance') }}" class="a-card-link" aria-label="View Business Overview">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </a>
   </div>
@@ -180,33 +215,6 @@
   </div>
 </div>
 
-<!-- Fleet Status (Current) — always-live counts + a real 3-segment donut. -->
-<div class="a-card">
-  <div class="a-card-head">
-    <h2>Fleet Status</h2>
-  </div>
-  <div class="mo-donut-wrap">
-    <svg viewBox="0 0 130 130" width="100" height="100">
-      {% set circ = 326.7 %}
-      {% set fs_total = (vs_on_trip + vs_workshop + vs_idle) or 1 %}
-      {% set offset = namespace(v=0) %}
-      {% for count, color in [(vs_on_trip, '#1a9c5b'), (vs_workshop, '#eda100'), (vs_idle, '#c9cfd8')] %}
-      {% set seg = circ * count / fs_total %}
-      <circle cx="65" cy="65" r="52" fill="none" stroke="{{ color }}" stroke-width="20"
-              stroke-dasharray="{{ seg|round(1) }} {{ (circ-seg)|round(1) }}" stroke-dashoffset="{{ -offset.v|round(1) }}" transform="rotate(-90 65 65)"/>
-      {% set offset.v = offset.v + seg %}
-      {% endfor %}
-      <text x="65" y="61" font-size="20" font-weight="800" text-anchor="middle" fill="var(--a-ink)">{{ total_vehicles }}</text>
-      <text x="65" y="77" font-size="8" text-anchor="middle" fill="var(--a-steel)">Total</text>
-    </svg>
-    <table class="mo-band-table">
-      <tr><td><span class="mo-band-dot" style="background:#1a9c5b;"></span><span class="mo-band-name">On Trip</span></td><td class="mo-band-count">{{ vs_on_trip }} ({{ fs_on_trip_pct }}%)</td></tr>
-      <tr><td><span class="mo-band-dot" style="background:#eda100;"></span><span class="mo-band-name">In Workshop</span></td><td class="mo-band-count">{{ vs_workshop }} ({{ fs_workshop_pct }}%)</td></tr>
-      <tr><td><span class="mo-band-dot" style="background:#c9cfd8;"></span><span class="mo-band-name">Idle</span></td><td class="mo-band-count">{{ vs_idle }} ({{ fs_idle_pct }}%)</td></tr>
-    </table>
-  </div>
-</div>
-
 <!-- Top Routes (Selected Period) — real per-route revenue rollup, same source as Route Analytics. -->
 <div class="a-card">
   <div class="a-card-head">
@@ -228,25 +236,6 @@
   {% if more_routes_count %}
   <div style="text-align:center; font-size:0.76rem; font-weight:700; color:var(--a-steel); margin-top:2px;">+{{ more_routes_count }} More Route{{ 's' if more_routes_count != 1 else '' }}</div>
   {% endif %}
-</div>
-
-<!-- Top Expenses (Selected Period) — same real category breakdown as the website's own
-     Expense Breakdown chart, sorted by size. -->
-<div class="a-card">
-  <div class="a-card-head">
-    <h2>Top Expenses</h2>
-  </div>
-  {% for e in top_expenses %}
-  <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--a-line);">
-    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-      <span style="width:8px; height:8px; border-radius:50%; background:{{ e.color }}; flex-shrink:0;"></span>
-      <span style="font-size:0.82rem; font-weight:600; color:var(--a-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ e.label }}</span>
-    </div>
-    <span style="font-size:0.82rem; font-weight:700; color:var(--a-ink); flex-shrink:0;">&#8377;{{ '{:,.0f}'.format(e.value) }}</span>
-  </div>
-  {% else %}
-  <div class="vd-empty">No expenses in this period.</div>
-  {% endfor %}
 </div>
 
 <!-- Recent Activity (Current) -->

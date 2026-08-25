@@ -5,18 +5,12 @@
 <!-- Real data only — see app_business_performance() in app.py, built from the exact same
      _period_financials()/_accounts_rows()/_pct_growth() primitives the website's own (much
      larger) business_performance() route uses for its headline numbers — see that route's own
-     docstring for why the deeper insights/health-score engine isn't rebuilt here this pass. -->
-<div class="ra-head">
-  <h1>Business Overview</h1>
-  <div class="sub">Route analytics, fleet utilization, performance &amp; business health.</div>
-</div>
-
-{% include "app/_overview_tabstrip.html" %}
-
-<div class="ra-period-bar">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
-  {{ period_label }}
-</div>
+     docstring for why the deeper insights/health-score engine isn't rebuilt here this pass. Date
+     range owned by the ONE shared period control up in _business_overview_header.html (defaults
+     to current FY). -->
+{% set period_endpoint = 'app_business_performance' %}
+{% set period_extra = {} %}
+{% include "app/_business_overview_header.html" %}
 
 <div class="ra-kpi-grid">
   <div class="ra-kpi-card">
@@ -70,4 +64,20 @@
   </div>
 </div>
 
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// Select Period sheet — see app/_business_overview_header.html, shared with the other 3
+// Business Overview analysis pages.
+function openPeriodSheet() {
+  lockPageScroll();
+  document.getElementById('periodBackdrop').classList.add('open');
+  document.getElementById('periodSheet').classList.add('open');
+}
+function closePeriodSheet() {
+  unlockPageScroll();
+  document.getElementById('periodBackdrop').classList.remove('open');
+  document.getElementById('periodSheet').classList.remove('open');
+}
+</script>
 {% endblock %}

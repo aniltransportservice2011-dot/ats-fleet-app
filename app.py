@@ -546,14 +546,15 @@ def export_accounts():
     return send_file(buf, as_attachment=True, download_name='ledger_export.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-@app.route('/accounts/add', methods=['POST'])
-def add_account():
-    conn = get_db()
-    f = request.form
+def _create_account_from_form(conn, f):
+    """Shared by add_account() (website, /accounts/add) and app_add_account() (mobile,
+    /app/accounts/add) — the exact same Party/Vendor creation logic, not two hand-written copies
+    that could quietly drift apart. Returns True if a row was actually inserted, False if the
+    name field was blank (nothing to do) or a duplicate name hit the table's UNIQUE constraint —
+    either way the caller just redirects back to its own list, same as this always did."""
     name = (f.get('name') or '').strip()
     if not name:
-        conn.close()
-        return redirect(url_for('accounts'))
+        return False
     role = f.get('role', 'Party')
     contact = f.get('contact') or None
     email = f.get('email') or None
@@ -573,8 +574,14 @@ def add_account():
                             VALUES (?,?,?,?,?,?,?,?,?,?)""",
                          (name, contact, email, address, credit_limit, opening_balance, category, gstin, session.get('user_id'), now))
         conn.commit()
+        return True
     except sqlite3.IntegrityError:
-        pass
+        return False
+
+@app.route('/accounts/add', methods=['POST'])
+def add_account():
+    conn = get_db()
+    _create_account_from_form(conn, request.form)
     conn.close()
     return redirect(url_for('accounts'))
 
@@ -10464,6 +10471,61 @@ def app_signup():
     return render_template('app/signup.html', error=error, form_values=form_values,
                             company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
 
+def _current_fy_bounds(today):
+    """(date_from, date_to, label) for the financial year (April-start) containing `today`,
+    computed from `today` rather than a hardcoded literal — so a "current FY" default keeps
+    tracking the real current FY across year boundaries instead of going stale the way the old
+    literal '2026-04-01'/'2027-03-31' defaults on Fleet Utilization/Performance/Route Analytics
+    would have once FY 2027-28 arrived."""
+    fy_start_year = today.year if today.month >= 4 else today.year - 1
+    return (f"{fy_start_year}-04-01", f"{fy_start_year + 1}-03-31",
+            f"FY {fy_start_year}-{(fy_start_year + 1) % 100:02d}")
+
+def _resolve_analysis_period(period, c_from, c_to, today):
+    """Period vocabulary for the 4 Business Overview analysis pages (Route Analytics/Fleet
+    Utilization/Performance/Business Performance) — Today/This Week/This Month/Last Month/
+    current FY/previous FY/Custom Range. Unlike the Dashboard's own _resolve_dashboard_period
+    (which defaults to This Month), this defaults to the CURRENT FINANCIAL YEAR when no period
+    is selected — these are longer-horizon analysis pages, not the daily-ops Dashboard, so a
+    full-year default is more useful than a single month, per instruction."""
+    cur_from, cur_to, cur_label = _current_fy_bounds(today)
+    if period == 'fyprev':
+        prev_start = int(cur_from[:4]) - 1
+        return (f"{prev_start}-04-01", f"{prev_start + 1}-03-31",
+                f"FY {prev_start}-{(prev_start + 1) % 100:02d}")
+    if period == 'today':
+        d = today.isoformat()
+        return d, d, 'Today'
+    if period == 'week':
+        monday = today - datetime.timedelta(days=today.weekday())
+        sunday = monday + datetime.timedelta(days=6)
+        return monday.isoformat(), sunday.isoformat(), 'This Week'
+    if period == 'month':
+        mf, mt = _month_bounds(today.year, today.month)
+        return mf, mt, 'This Month'
+    if period == 'lastmonth':
+        last_month_end = today.replace(day=1) - datetime.timedelta(days=1)
+        mf, mt = _month_bounds(last_month_end.year, last_month_end.month)
+        return mf, mt, 'Last Month'
+    if period == 'custom' and c_from and c_to:
+        try:
+            lbl = (datetime.datetime.strptime(c_from, '%Y-%m-%d').strftime('%d %b') + ' – ' +
+                   datetime.datetime.strptime(c_to, '%Y-%m-%d').strftime('%d %b %Y'))
+        except ValueError:
+            lbl = f"{c_from} to {c_to}"
+        return c_from, c_to, lbl
+    # '' (no selection yet), 'fy', or anything unrecognized -> current FY, the default.
+    return cur_from, cur_to, cur_label
+
+def _analysis_period_presets(today):
+    """(key, label) pairs for the Select Period sheet shared by the 4 Business Overview analysis
+    pages — same 6 presets everywhere, FY labels computed from `today` so they're never stale."""
+    cur_from, cur_to, cur_label = _current_fy_bounds(today)
+    prev_start = int(cur_from[:4]) - 1
+    prev_label = f"FY {prev_start}-{(prev_start + 1) % 100:02d}"
+    return [('fy', cur_label), ('fyprev', prev_label), ('today', 'Today'), ('week', 'This Week'),
+            ('month', 'This Month'), ('lastmonth', 'Last Month')]
+
 DASHBOARD_PERIODS = ('today', 'week', 'month', 'lastmonth', 'fy2627', 'fy2526', 'custom')
 
 def _resolve_dashboard_period(period, c_from, c_to, today):
@@ -11504,13 +11566,15 @@ def app_add_vehicle():
 
 @app.route('/app/analysis')
 def app_analysis():
-    """Mobile Analysis hub — now just an alias straight to Route Analytics (app_analytics()),
-    the first of the 4 real tabs the website's own sidebar groups under "Analysis"
-    (templates/base.html): Route Analytics, Fleet Utilization, Performance, Business Performance.
-    All 4 are native now (see app_analytics()/app_fleet_utilization()/app_performance()/
-    app_business_performance()), each showing the same real top tab strip so switching between
-    them never leaves this "Business Overview" section."""
-    return redirect(url_for('app_analytics'))
+    """Mobile Analysis hub — now just an alias straight to Business Performance
+    (app_business_performance()), the first of the 4 real tabs in the "Business Overview" strip
+    (_overview_tabstrip.html): Business Performance, Fleet Utilization, Performance, Route
+    Analytics — order per instruction (was originally Route Analytics first; this alias has to
+    match whatever tab is actually first, or opening "Business Overview" would land on the wrong
+    tab). All 4 are native (see app_business_performance()/app_fleet_utilization()/
+    app_performance()/app_analytics()), each showing the same real top tab strip so switching
+    between them never leaves this section."""
+    return redirect(url_for('app_business_performance'))
 
 @app.route('/app/analytics')
 def app_analytics():
@@ -11531,10 +11595,11 @@ def app_analytics():
     tab = request.args.get('tab', 'best')
     if tab not in ('best', 'rates'):
         tab = 'best'
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
+    today = datetime.date.today()
+    period = request.args.get('period', '')
+    c_from = request.args.get('date_from', '')
+    c_to = request.args.get('date_to', '')
+    date_from, date_to, period_label = _resolve_analysis_period(period, c_from, c_to, today)
     from_f = request.args.get('from', '')
     to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
@@ -11562,10 +11627,12 @@ def app_analytics():
     conn.close()
 
     from urllib.parse import urlencode
-    base_qs = urlencode({'date_from': date_from, 'date_to': date_to, 'from': from_f, 'to': to_f, 'vehicle_type': type_f})
+    base_qs = urlencode({'period': period, 'date_from': date_from, 'date_to': date_to,
+                          'from': from_f, 'to': to_f, 'vehicle_type': type_f})
 
     ctx = dict(company_name=company_name, user_initials=user_initials,
         active='analytics', notif_count=0, tab=tab, active_ov='route', base_qs=base_qs,
+        period=period, period_label=period_label, period_presets=_analysis_period_presets(today),
         f_date_from=date_from, f_date_to=date_to, f_from=from_f, f_to=to_f, f_vehicle_type=type_f,
         all_from_list=d['all_from_list'], all_to_list=d['all_to_list'],
         total_routes=d['total_routes'], total_trips_sel=d['total_trips_sel'], total_revenue_sel=d['total_revenue_sel'],
@@ -11585,20 +11652,27 @@ def app_analytics():
 def app_fleet_utilization():
     """Mobile Fleet Utilization — real numbers straight from _fleet_utilization_data() (shared
     with the website's own /fleet-utilization). 3 real tabs (Overview/Idle Analysis/Empty Run
-    Analysis, same as the website's own). Date range fixed to the same fiscal-year default
-    app_analytics() already uses, for the same "keep this tab simple" reason; Vehicle filter
-    trimmed off this pass (Route Analytics' own Vehicle Type toggle stays, this page's per-
-    vehicle filter is real future scope)."""
+    Analysis, same as the website's own). Date range now driven by the same compact period
+    control (defaulting to current FY) shared with the other 3 Business Overview analysis pages,
+    replacing the old fixed '2026-04-01'/'2027-03-31' literal. Vehicle filter trimmed off this
+    pass (Route Analytics' own Vehicle Type toggle stays, this page's per-vehicle filter is real
+    future scope)."""
     conn = get_db()
     company_name, user_initials = _app_user_display(conn)
-    date_from, date_to = '2026-04-01', '2027-03-31'
+    today = datetime.date.today()
+    period = request.args.get('period', '')
+    c_from = request.args.get('date_from', '')
+    c_to = request.args.get('date_to', '')
+    date_from, date_to, period_label = _resolve_analysis_period(period, c_from, c_to, today)
     d = _fleet_utilization_data(conn, date_from, date_to)
     conn.close()
     tab = request.args.get('tab', 'overview')
     if tab not in ('overview', 'idle', 'empty'):
         tab = 'overview'
     return render_template('app/fleet_utilization.html', company_name=company_name, user_initials=user_initials,
-        active='analytics', notif_count=0, tab=tab, d=d, active_ov='fleet')
+        active='analytics', notif_count=0, tab=tab, d=d, active_ov='fleet',
+        period=period, period_label=period_label, period_presets=_analysis_period_presets(today),
+        f_date_from=date_from, f_date_to=date_to)
 
 @app.route('/app/performance')
 def app_performance():
@@ -11607,17 +11681,25 @@ def app_performance():
     website's own). Top 5 tables show real columns only (Trips/Total Billed/Profit) — the
     reference design's "Avg Rating"/"On Time %"/"Safety Score" have no backing column anywhere in
     this data model (checked: no rating/attendance-timeliness/safety field exists on trips,
-    drivers, or vehicles), so they're deliberately not invented here."""
+    drivers, or vehicles), so they're deliberately not invented here. Date range driven by the
+    same compact period control (defaulting to current FY) shared with the other 3 Business
+    Overview analysis pages, replacing the old fixed '2026-04-01'/'2027-03-31' literal."""
     conn = get_db()
     company_name, user_initials = _app_user_display(conn)
-    date_from, date_to = '2026-04-01', '2027-03-31'
+    today = datetime.date.today()
+    period = request.args.get('period', '')
+    c_from = request.args.get('date_from', '')
+    c_to = request.args.get('date_to', '')
+    date_from, date_to, period_label = _resolve_analysis_period(period, c_from, c_to, today)
     d = _performance_data(conn, date_from, date_to)
     conn.close()
     tab = request.args.get('tab', 'driver')
     if tab not in ('driver', 'vehicle'):
         tab = 'driver'
     return render_template('app/performance.html', company_name=company_name, user_initials=user_initials,
-        active='analytics', notif_count=0, tab=tab, d=d, active_ov='performance')
+        active='analytics', notif_count=0, tab=tab, d=d, active_ov='performance',
+        period=period, period_label=period_label, period_presets=_analysis_period_presets(today),
+        f_date_from=date_from, f_date_to=date_to)
 
 @app.route('/app/business-performance')
 def app_business_performance():
@@ -11629,11 +11711,17 @@ def app_business_performance():
     engine that's real future scope for mobile, not rebuilt this pass (same "trim to what's
     really needed" call already made for Tyres/Battery/Service's own charts). Cash in Hand here
     is cash_collected minus cash_paid for the period — a real derived figure from the same real
-    payments the website's own page already sums, just not previously named as one metric there."""
+    payments the website's own page already sums, just not previously named as one metric there.
+    Date range driven by the same compact period control (defaulting to current FY) shared with
+    the other 3 Business Overview analysis pages — replacing the old fixed "always Last Month"
+    default, which didn't match what any of the other 3 pages defaulted to."""
     conn = get_db()
     company_name, user_initials = _app_user_display(conn)
-    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
-    date_from, date_to = _month_bounds(last_month_end.year, last_month_end.month)
+    today = datetime.date.today()
+    period = request.args.get('period', '')
+    c_from = request.args.get('date_from', '')
+    c_to = request.args.get('date_to', '')
+    date_from, date_to, period_label = _resolve_analysis_period(period, c_from, c_to, today)
     curr = _period_financials(conn, date_from, date_to)
     prev_from, prev_to = _shift_period_back(date_from, date_to)
     prev = _period_financials(conn, prev_from, prev_to)
@@ -11675,7 +11763,8 @@ def app_business_performance():
         margin=curr['margin'], trip_count=curr['trip_count'], total_receivables=total_receivables,
         cash_in_hand=cash_in_hand, revenue_growth=revenue_growth, expense_growth=expense_growth,
         profit_growth=profit_growth, monthly_rows=monthly_rows, trend_max=trend_max,
-        period_label=datetime.datetime.strptime(date_from, '%Y-%m-%d').strftime('%b %Y'), active_ov='business')
+        period=period, period_label=period_label, period_presets=_analysis_period_presets(today),
+        f_date_from=date_from, f_date_to=date_to, active_ov='business')
 
 @app.route('/app/ledger')
 def app_ledger():
@@ -11761,6 +11850,18 @@ def app_ledger():
         total_vendors=total_vendors, active_vendors=active_vendors,
         total_receivable=total_receivable, receivable_from=receivable_from,
         total_payable=total_payable, payable_to=payable_to, net_balance=net_balance)
+
+@app.route('/app/ledger/add', methods=['POST'])
+def app_add_account():
+    """Mobile Add Party/Vendor — shares _create_account_from_form() with the website's own
+    /accounts/add (add_account()) so this is the exact same field set and insert logic, not a
+    second hand-written copy; only the redirect target differs (back to the mobile Ledger list,
+    preserving whatever role/search/group/status filter was active)."""
+    conn = get_db()
+    _create_account_from_form(conn, request.form)
+    conn.close()
+    return redirect(url_for('app_ledger', role=request.form.get('return_role', ''),
+                             search=request.form.get('return_search', '')))
 
 def _app_user_display(conn):
     """company_name + avatar initials for the logged-in user — the same few lines every /app/

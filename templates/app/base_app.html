@@ -27,10 +27,7 @@
 </head>
 
 <body class="app-body">
-<!-- app/_splash.html (a custom in-app loading overlay showing the badge icon + company name)
-     was included here on top of the native PWA launch splash Android/Chrome already generates
-     from app-manifest.json's icon/name/background_color — the two firing back-to-back read as a
-     double loading screen. Removed per instruction to keep just the one real (native) splash. -->
+{% include "app/_splash.html" %}
 {% include "app/_page_loader.html" %}
 
 <header class="a-topbar">

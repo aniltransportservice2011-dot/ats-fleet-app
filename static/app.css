@@ -964,6 +964,13 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .ra-period-bar { display: flex; align-items: center; gap: 7px; padding: 0 0 12px; color: var(--a-steel); font-size: 0.78rem; font-weight: 600; }
 .ra-period-bar svg { width: 15px; height: 15px; flex-shrink: 0; }
 
+/* Compact period selector (readonly label + one .a-filter-btn icon) — the ONE period control
+   shared by all 4 Business Overview analysis pages, see _business_overview_header.html. Reuses
+   the same .a-filter-btn every other native list page already uses for its own filter icon, so
+   this never needs its own bespoke button size/spacing. */
+.ra-period-ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-width: 0; }
+.ra-period-label { color: var(--a-steel); font-size: 0.78rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+
 .ra-vtype-row { display: flex; gap: 8px; margin-bottom: 14px; }
 .ra-vtype-pill { flex: 1; text-align: center; padding: 8px; border-radius: 10px; background: var(--a-white);
   border: 1px solid var(--a-line); font-size: 0.78rem; font-weight: 700; color: var(--a-steel); }
@@ -1151,6 +1158,17 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .lg-row-status.Active { background: #e8f5ee; color: var(--a-green); }
 .lg-row-status.Inactive { background: #eef0f4; color: var(--a-steel); }
 .lg-empty { text-align: center; color: var(--a-steel); font-size: 0.86rem; padding: 30px 0; }
+
+/* Same fixed bottom-right pill as .tr-addbtn/.vh-addbtn — opens the Add Party/Vendor modal
+   (shares the .vam-modal component and app_add_account() route with the rest of the app, see
+   ledger.html). */
+.lg-addbtn { position: fixed; right: 16px; bottom: calc(78px + env(safe-area-inset-bottom, 0px)); z-index: 45;
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--a-white); color: var(--a-accent); border: 1.5px solid var(--a-accent);
+  border-radius: 999px; padding: 12px 20px; font-size: 0.86rem; font-weight: 700; letter-spacing: 0.01em;
+  text-decoration: none; box-shadow: 0 3px 10px rgba(20,24,40,.12); font-family: inherit; cursor: pointer; }
+.lg-addbtn:active { background: var(--a-accent); color: #fff; }
+.lg-addbtn svg { width: 17px; height: 17px; }
 
 /* ==========================================================================
    Party/Vendor Ledger detail (templates/app/ledger_detail.html) — own

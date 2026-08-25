@@ -9,6 +9,72 @@
   </div>
 </div>
 
+<!-- Add Party/Vendor — same real fields/route as the website's own "+ Add Party / Vendor"
+     modal (templates/home.html), sharing _create_account_from_form() via app_add_account()
+     rather than a second hand-written copy of the insert logic. Built with this app's own
+     .vam-modal component (same one Add Vehicle/the Filters sheet above already use), not the
+     website's desktop modal markup. -->
+<button type="button" class="lg-addbtn" onclick="openLgAddSheet()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+  Add Party
+</button>
+<div class="vam-backdrop" id="lgAddBackdrop" onclick="closeLgAddSheet()"></div>
+<div class="vam-modal" id="lgAddSheet" role="dialog" aria-modal="true" aria-label="Add Party or Vendor">
+  <div class="vam-head">
+    <h2>Add Party / Vendor</h2>
+    <button type="button" class="vam-close" onclick="closeLgAddSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="POST" action="{{ url_for('app_add_account') }}">
+    <input type="hidden" name="return_role" value="{{ f_role }}">
+    <input type="hidden" name="return_search" value="{{ f_search }}">
+    <div class="vam-grid">
+      <div class="vam-field">
+        <label>Type</label>
+        <select name="role">
+          <option value="Party">Party</option>
+          <option value="Vendor">Vendor</option>
+        </select>
+      </div>
+      <div class="vam-field">
+        <label>Group / Category</label>
+        <input type="text" name="category" placeholder="e.g. Steel Supplier">
+      </div>
+      <div class="vam-field vam-field-full">
+        <label>Name <span class="req">*</span></label>
+        <input type="text" name="name" required>
+      </div>
+      <div class="vam-field">
+        <label>Phone</label>
+        <input type="text" name="contact" inputmode="tel">
+      </div>
+      <div class="vam-field">
+        <label>Email</label>
+        <input type="email" name="email">
+      </div>
+      <div class="vam-field">
+        <label>Address</label>
+        <input type="text" name="address">
+      </div>
+      <div class="vam-field">
+        <label>GSTIN</label>
+        <input type="text" name="gstin" placeholder="e.g. 21ABCDE1234F1Z5">
+      </div>
+      <div class="vam-field">
+        <label>Credit Limit</label>
+        <input type="number" step="0.01" name="credit_limit" inputmode="decimal">
+      </div>
+      <div class="vam-field">
+        <label>Opening Balance</label>
+        <input type="number" step="0.01" name="opening_balance" inputmode="decimal">
+      </div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeLgAddSheet()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save</button>
+    </div>
+  </form>
+</div>
+
 <div class="a-search-row">
   <form method="get" class="a-search-box" id="lgSearchForm">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -171,6 +237,19 @@ function closeLgFilterSheet() {
   unlockPageScroll();
   document.getElementById('lgFilterBackdrop').classList.remove('open');
   document.getElementById('lgFilterSheet').classList.remove('open');
+}
+
+// Add Party/Vendor sheet — same open/close pattern as the Filters sheet above and every other
+// .vam-modal in the app (Add Vehicle, Add Trip's End Trip step, etc.).
+function openLgAddSheet() {
+  lockPageScroll();
+  document.getElementById('lgAddBackdrop').classList.add('open');
+  document.getElementById('lgAddSheet').classList.add('open');
+}
+function closeLgAddSheet() {
+  unlockPageScroll();
+  document.getElementById('lgAddBackdrop').classList.remove('open');
+  document.getElementById('lgAddSheet').classList.remove('open');
 }
 </script>
 {% endblock %}
