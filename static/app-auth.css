@@ -4,11 +4,25 @@
    but never linked from any authenticated page, so nothing here can ever
    affect the rest of the app.
    ========================================================================== */
+/* Scoped to just this body class (used only by login_otp.html/verify_otp.html, never an
+   authenticated .app-body page) — redeclaring these custom-property NAMES here overrides them
+   for every descendant of this body via normal CSS cascade/inheritance, without ever touching
+   the real :root definitions in app.css that every other /app/ page still relies on. Matches the
+   "ATS Fleet Management – Login Screen Design Specification" tokens used on login.html/
+   signup.html, so all the auth screens share one palette. */
+body.app-login-body {
+  --a-ink: #0D1B2A;
+  --a-steel: #6B7280;
+  --a-accent: #F97316;
+  --a-accent-dark: #EA580C;
+  --a-line: #E5E7EB;
+  --a-white: #FFFFFF;
+}
 body.app-login-body {
   background: var(--a-paper); min-height: 100vh;
   padding: env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);
   display: flex; align-items: center; justify-content: center;
-  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: var(--a-ink);
+  font-family: 'Poppins', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: var(--a-ink);
   position: relative; overflow-x: hidden;
 }
 .au-wrap { width: 100%; max-width: 380px; padding: 40px 20px 110px; position: relative; z-index: 1; }
@@ -88,12 +102,12 @@ body.app-login-body {
 .au-info-box .d { color: var(--a-steel); font-size: 0.76rem; margin-top: 2px; line-height: 1.4; }
 
 /* ---------- OTP digit boxes ---------- */
-.au-otp-row { display: flex; gap: 9px; justify-content: center; margin: 22px 0 18px; }
+.au-otp-row { display: flex; gap: 9px; justify-content: center; margin: 14px 0 12px; }
 .au-otp-box { width: 46px; height: 54px; border: 1.5px solid var(--a-line); border-radius: 12px; text-align: center;
   font-size: 1.3rem; font-weight: 800; font-family: inherit; color: var(--a-ink); background: var(--a-paper); }
 .au-otp-box:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
 .au-otp-box.filled { border-color: var(--a-accent); background: var(--a-white); }
 
-.au-resend { text-align: center; font-size: 0.82rem; color: var(--a-steel); margin-bottom: 22px; }
+.au-resend { text-align: center; font-size: 0.82rem; color: var(--a-steel); margin-bottom: 14px; }
 .au-resend a, .au-resend button { color: var(--a-accent); font-weight: 700; background: none; border: none; font-family: inherit; font-size: inherit; padding: 0; }
 .au-resend button:disabled { color: var(--a-steel); }

@@ -1,0 +1,101 @@
+<!-- Shown only when a real page navigation (a link, a normal form submit, back/forward) is
+     actually taking a while — not on every navigation, and never for a fetch()/AJAX call that
+     stays on the page (filter sheets, Add Vehicle/Trip modals, etc.). Hooked entirely off the
+     browser's own 'beforeunload' event: it fires the instant real navigation begins, before the
+     network request even starts, and it simply never fires for anything that doesn't actually
+     leave the page — so this needs no per-link/per-form wiring anywhere else in the app, and
+     can't misfire on an AJAX-driven form. A short delay before it's shown (see the script below)
+     means a normal, fast navigation — the overwhelming majority — never displays this at all.
+     One honest limitation: this can only appear on navigation FROM an already-loaded /app/ page.
+     The very first tap on the installed app icon has no prior page to attach this to, so that
+     one moment still shows only the native OS/PWA launch screen, same as before. -->
+<div id="aplOverlay" class="apl-overlay" role="status" aria-live="polite" aria-hidden="true">
+  <div class="apl-badge">
+    <svg class="apl-ring" viewBox="0 0 100 100" aria-hidden="true">
+      <circle class="apl-ring-bg" cx="50" cy="50" r="44"/>
+      <circle class="apl-ring-fg" cx="50" cy="50" r="44"/>
+    </svg>
+    <span class="apl-sl apl-sl1"></span>
+    <span class="apl-sl apl-sl2"></span>
+    <span class="apl-sl apl-sl3"></span>
+    <svg class="apl-truck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M4 16V11l2-5h12l2 5v5"/>
+      <path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/>
+      <circle cx="7.5" cy="16" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="16.5" cy="16" r="1.4" fill="currentColor" stroke="none"/>
+    </svg>
+  </div>
+  <p class="apl-title">Almost there&hellip;</p>
+  <div class="apl-dots">
+    <span class="apl-dot"></span>
+    <span class="apl-dot"></span>
+    <span class="apl-dot"></span>
+    <span class="apl-dot"></span>
+  </div>
+</div>
+<style>
+  .apl-overlay {
+    position: fixed; inset: 0; z-index: 999;
+    background: var(--a-white, #fff);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s;
+  }
+  .apl-overlay.apl-show { opacity: 1; visibility: visible; pointer-events: auto; }
+
+  .apl-badge { position: relative; width: 108px; height: 108px; display: flex; align-items: center; justify-content: center; margin-bottom: 22px; }
+  .apl-ring { position: absolute; inset: 0; width: 100%; height: 100%; animation: aplSpin 1.6s linear infinite; }
+  .apl-ring-bg { fill: none; stroke: rgba(192,86,33,0.14); stroke-width: 7; }
+  .apl-ring-fg { fill: none; stroke: var(--a-accent, #c05621); stroke-width: 7; stroke-linecap: round;
+    stroke-dasharray: 276; stroke-dashoffset: 205; transform-origin: 50px 50px; }
+
+  .apl-truck { position: relative; z-index: 1; width: 40px; height: 40px; color: var(--a-accent, #c05621); animation: aplTruckBob 1.2s ease-in-out infinite; }
+  .apl-sl { position: absolute; top: 50%; left: 18px; height: 2.5px; border-radius: 2px; background: var(--a-accent, #c05621); opacity: 0; transform: translateY(-50%); }
+  .apl-sl1 { width: 12px; animation: aplSpeedLine 1.2s ease-in-out infinite; }
+  .apl-sl2 { width: 8px; top: calc(50% - 7px); animation: aplSpeedLine 1.2s ease-in-out 0.12s infinite; }
+  .apl-sl3 { width: 8px; top: calc(50% + 7px); animation: aplSpeedLine 1.2s ease-in-out 0.24s infinite; }
+
+  .apl-title { font-family: 'Sora', -apple-system, 'Segoe UI', sans-serif; font-size: 1.15rem; font-weight: 800; color: var(--a-ink, #14213d); margin: 0; }
+  .apl-sub { font-size: 0.86rem; color: var(--a-steel, #5a6b8c); margin: 5px 0 0; }
+
+  .apl-dots { display: flex; gap: 7px; margin-top: 22px; }
+  .apl-dot { width: 20px; height: 5px; border-radius: 999px; background: var(--a-line, #e6e9f0); animation: aplDotPulse 1.4s ease-in-out infinite; }
+  .apl-dot:nth-child(1) { animation-delay: 0s; }
+  .apl-dot:nth-child(2) { animation-delay: 0.18s; }
+  .apl-dot:nth-child(3) { animation-delay: 0.36s; }
+  .apl-dot:nth-child(4) { animation-delay: 0.54s; }
+
+  @keyframes aplSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes aplTruckBob { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(3px); } }
+  @keyframes aplSpeedLine { 0%, 100% { opacity: 0; transform: translateY(-50%) translateX(4px); } 40% { opacity: 1; transform: translateY(-50%) translateX(-3px); } 70% { opacity: 0; transform: translateY(-50%) translateX(-8px); } }
+  @keyframes aplDotPulse { 0%, 100% { background: var(--a-line, #e6e9f0); transform: scaleX(1); } 35% { background: var(--a-accent, #c05621); transform: scaleX(1.15); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .apl-ring, .apl-truck, .apl-sl, .apl-dot { animation: none !important; }
+  }
+</style>
+<script>
+(function () {
+  var OVERLAY_DELAY_MS = 400; // fast navigations — the overwhelming majority — never see this at
+    // all; only a wait longer than this actually shows it.
+  var overlay = document.getElementById('aplOverlay');
+  var timer = null;
+  function showOverlay() { overlay.classList.add('apl-show'); overlay.setAttribute('aria-hidden', 'false'); }
+  window.addEventListener('beforeunload', function () {
+    // Fires only for a genuine navigation away from this page (link click, a form submit that
+    // isn't preventDefault()-ed, back/forward, address-bar entry) — never for a fetch()/AJAX call
+    // or a form a page handles entirely in place, so this can't misfire on e.g. a filter sheet's
+    // own fetch-and-redraw. The old page stays fully on-screen (and this timer keeps running) for
+    // exactly as long as the next page takes to arrive — a slow load is exactly when this fires.
+    timer = setTimeout(showOverlay, OVERLAY_DELAY_MS);
+  });
+  // Defensive reset if the page is restored from the back/forward cache instead of a fresh load
+  // (some browsers do this on Back) — without this, a page a user backed into could still be
+  // showing "loading" left over from when they originally navigated away from it.
+  window.addEventListener('pageshow', function () {
+    if (timer) { clearTimeout(timer); timer = null; }
+    overlay.classList.remove('apl-show');
+    overlay.setAttribute('aria-hidden', 'true');
+  });
+})();
+</script>
