@@ -510,7 +510,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .mo-kpi-top > div:first-child { min-width: 0; flex: 1; }
 .mo-kpi-icon { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; flex-shrink: 0; }
 .mo-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; margin-top: 8px; }
-.mo-kpi-val { font-size: 1.3rem; font-weight: 800; margin-top: 2px; overflow-wrap: break-word; }
+.mo-kpi-val { font-size: 1.16rem; font-weight: 800; margin-top: 2px; overflow-wrap: break-word; }
 .mo-kpi-sub { font-size: 0.68rem; color: var(--a-steel); margin-top: 2px; }
 
 .mo-panel { background: var(--a-white); border-radius: 16px; padding: 16px; margin: 0 0 14px; }
@@ -610,7 +610,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    as the mo- rules above.
    ========================================================================== */
 .tr-head { padding: 16px 0 4px; }
-.tr-head h1 { font-size: 1.35rem; margin: 0; }
+.tr-head h1 { font-size: 1.1rem; margin: 0; }
 .tr-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
 
 .tr-tabstrip { display: flex; gap: 0; margin: 14px 0 12px; border-bottom: 1px solid var(--a-line); }
@@ -627,7 +627,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .tr-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
 .tr-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; }
 .tr-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
-.tr-kpi-val { font-size: 1.25rem; font-weight: 800; margin-top: 3px; }
+.tr-kpi-val { font-size: 1.16rem; font-weight: 800; margin-top: 3px; }
 .tr-kpi-sub { font-size: 0.66rem; color: var(--a-steel); margin-top: 2px; }
 .tr-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
@@ -675,13 +675,13 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    the mo-/tr- rules above.
    ========================================================================== */
 .vh-head { padding: 16px 0 4px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.vh-head h1 { font-size: 1.35rem; margin: 0; }
+.vh-head h1 { font-size: 1.1rem; margin: 0; }
 .vh-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
 
 .vh-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
 .vh-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; }
 .vh-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
-.vh-kpi-val { font-size: 1.25rem; font-weight: 800; margin-top: 3px; }
+.vh-kpi-val { font-size: 1.16rem; font-weight: 800; margin-top: 3px; }
 .vh-kpi-sub { font-size: 0.66rem; color: var(--a-steel); margin-top: 2px; }
 .vh-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.9rem; }
 
@@ -852,7 +852,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .vd-photo { width: 52px; height: 52px; border-radius: 12px; background: var(--a-paper);
   display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
 .vd-head-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.vd-head-title h1 { font-size: 1.15rem; margin: 0; }
+.vd-head-title h1 { font-size: 1.1rem; margin: 0; }
 .vd-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; padding-top: 12px; border-top: 1px solid var(--a-line); }
 .vd-info-grid .lbl { font-size: 0.68rem; color: var(--a-steel); text-transform: uppercase; letter-spacing: 0.02em; }
 .vd-info-grid .v { font-size: 0.84rem; font-weight: 700; margin-top: 2px; word-break: break-word; }
@@ -878,7 +878,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .vd-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
 .vd-kpi-card { background: var(--a-white); border-radius: 14px; padding: 13px; }
 .vd-kpi-card .lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
-.vd-kpi-card .big { font-size: 1.25rem; font-weight: 800; margin-top: 3px; }
+.vd-kpi-card .big { font-size: 1.16rem; font-weight: 800; margin-top: 3px; }
 .vd-kpi-card .sub { font-size: 0.7rem; color: var(--a-steel); }
 
 .vd-chl-row { background: var(--a-white); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
@@ -952,7 +952,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    every other app page).
    ========================================================================== */
 .ra-head { padding: 16px 0 4px; }
-.ra-head h1 { font-size: 1.35rem; margin: 0; }
+.ra-head h1 { font-size: 1.1rem; margin: 0; }
 .ra-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
 
 .ra-tabstrip { display: flex; gap: 0; margin: 14px 0 12px; border-bottom: 1px solid var(--a-line); overflow-x: auto; }
@@ -976,7 +976,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .ra-kpi-card { background: var(--a-white); border-radius: 16px; padding: 14px; display: flex; align-items: flex-start; justify-content: space-between; min-width: 0; }
 .ra-kpi-card > div:first-child { min-width: 0; flex: 1; }
 .ra-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; }
-.ra-kpi-val { font-size: 1.2rem; font-weight: 800; margin-top: 3px; overflow-wrap: break-word; }
+.ra-kpi-val { font-size: 1.16rem; font-weight: 800; margin-top: 3px; overflow-wrap: break-word; }
 .ra-kpi-sub { font-size: 0.64rem; color: var(--a-steel); margin-top: 2px; }
 .ra-kpi-icon { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 0.9rem; }
 
@@ -1053,7 +1053,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    Analysis hub (templates/app/analysis.html) — own prefix (an-).
    ========================================================================== */
 .an-head { padding: 16px 0 4px; }
-.an-head h1 { font-size: 1.35rem; margin: 0; }
+.an-head h1 { font-size: 1.1rem; margin: 0; }
 .an-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
 .an-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
 .an-card { display: flex; align-items: center; gap: 14px; background: var(--a-white); border-radius: 16px; padding: 16px;
@@ -1096,7 +1096,7 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    padding (relies on .a-wrap's 16px, same as every other app page).
    ========================================================================== */
 .lg-head { padding: 16px 0 4px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.lg-head h1 { font-size: 1.35rem; margin: 0; }
+.lg-head h1 { font-size: 1.1rem; margin: 0; }
 .lg-head .sub { color: var(--a-steel); font-size: 0.82rem; margin-top: 2px; }
 .lg-head-actions { display: flex; gap: 8px; flex-shrink: 0; margin-top: 4px; }
 .lg-head-btn { width: 36px; height: 36px; border-radius: 10px; background: var(--a-white); border: 1px solid var(--a-line);

@@ -8626,7 +8626,7 @@ IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero reques
 
 @app.before_request
 def require_login():
-    exempt = ['login', 'app_login', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick',
+    exempt = ['login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick',
               'app_login_otp', 'app_verify_login_otp']
     if request.endpoint in exempt:
         return
@@ -10405,6 +10405,64 @@ def app_login():
         conn.close()
         error = 'Invalid username or password.'
     return render_template('app/login.html', error=error, company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
+
+@app.route('/app/signup', methods=['GET', 'POST'])
+def app_signup():
+    """Self-service account creation for the native app's login screen. New accounts are created
+    least-privilege by design (role='Staff', access_level='Read Only', is_admin=0) — same safe
+    default an admin gets by leaving "Access Level" unset on Settings > Users' add-user form
+    (see add_user() above). There's no approval-queue status anywhere else in this app (the login
+    route only ever blocks 'Inactive'), so a self-signup account can sign in immediately, same as
+    one an admin creates; an admin can promote access_level/role or deactivate it afterward from
+    Settings > Users like any other account."""
+    from werkzeug.security import generate_password_hash
+    import sqlite3
+    error = None
+    form_values = {}
+    if request.method == 'POST':
+        f = request.form
+        full_name = (f.get('full_name') or '').strip()
+        username = (f.get('username') or '').strip()
+        phone = (f.get('phone') or '').strip()
+        password = f.get('password') or ''
+        confirm = f.get('confirm_password') or ''
+        form_values = {'full_name': full_name, 'username': username, 'phone': phone}
+        if not full_name or not username or not password:
+            error = 'Please fill in your name, username and password.'
+        elif len(password) < 6:
+            error = 'Password must be at least 6 characters.'
+        elif password != confirm:
+            error = 'Passwords do not match.'
+        else:
+            conn = get_db()
+            existing = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+            if existing:
+                conn.close()
+                error = f'Username "{username}" is already taken.'
+            else:
+                now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    cur = conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone,
+                                    full_name, access_level, status, created_at)
+                                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                                 (username, generate_password_hash(password), 'Staff', 0, phone or None,
+                                  full_name, 'Read Only', 'Active', now))
+                    user_id = cur.lastrowid
+                    session.permanent = False
+                    session['user_id'] = user_id
+                    session['username'] = username
+                    session['is_admin'] = 0
+                    session['login_at'] = now
+                    session['show_zoom_tip'] = True
+                    conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user_id, 'Signup', now))
+                    conn.commit()
+                    conn.close()
+                    return redirect(url_for('app_dashboard'))
+                except sqlite3.IntegrityError:
+                    conn.close()
+                    error = f'Username "{username}" is already taken.'
+    return render_template('app/signup.html', error=error, form_values=form_values,
+                            company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
 
 DASHBOARD_PERIODS = ('today', 'week', 'month', 'lastmonth', 'fy2627', 'fy2526', 'custom')
 

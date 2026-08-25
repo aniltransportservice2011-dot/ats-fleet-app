@@ -65,7 +65,7 @@ body.app-login-body {
 .au-back-btn { width: 38px; height: 38px; border-radius: 11px; background: var(--a-white); border: 1px solid var(--a-line);
   display: flex; align-items: center; justify-content: center; color: var(--a-ink); flex-shrink: 0; }
 .au-back-btn svg { width: 18px; height: 18px; }
-.au-subhead-title { font-size: 1.15rem; font-weight: 800; margin: 6px 0 3px; }
+.au-subhead-title { font-size: 1.1rem; font-weight: 800; margin: 6px 0 3px; }
 .au-subhead-sub { color: var(--a-steel); font-size: 0.82rem; }
 
 .au-icon-circle { width: 92px; height: 92px; border-radius: 50%; background: #fdf0e8;
