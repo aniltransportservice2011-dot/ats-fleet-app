@@ -90,7 +90,9 @@
 <div id="ld-list">
 {% for e in entries %}
 {% set kind_class = 'k-bill' if e.kind=='Trip Bill' else ('k-pay' if e.kind in ['Payment In','Payment Out'] else ('k-ob' if e.kind=='Opening Balance' else 'k-exp')) %}
-{% if e.link %}<a href="{{ e.link }}" class="ld-txn-card">{% else %}<div class="ld-txn-card">{% endif %}
+<!-- Plain, non-clickable card — deliberately no navigation anywhere (not to the website's own
+     record page, not to any in-app popup). Just displays the entry's real fields. -->
+<div class="ld-txn-card">
   <div class="ld-txn-top">
     <span class="ld-txn-date">{{ e.date or '—' }}</span>
     <span class="ld-txn-kind {{ kind_class }}">{{ e.kind }}</span>
@@ -104,7 +106,7 @@
     </div>
     <div class="ld-txn-balance {{ 'dr' if e.balance > 0 else ('cr' if e.balance < 0 else '') }}">₹{{ '{:,.0f}'.format(e.balance|abs) }}{% if e.balance > 0 %} Dr{% elif e.balance < 0 %} Cr{% endif %}</div>
   </div>
-{% if e.link %}</a>{% else %}</div>{% endif %}
+</div>
 {% else %}
 <div class="lg-empty">No transactions in this view.</div>
 {% endfor %}

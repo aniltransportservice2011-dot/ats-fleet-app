@@ -1,0 +1,15 @@
+<!-- Shared period-preset-links markup, rendered inside the ONE "Select Period" sheet that
+     _business_overview_header.html builds for all 4 Business Overview analysis pages (Route
+     Analytics/Fleet Utilization/Performance/Business Performance). Kept as a macro rather than a
+     plain include so the same markup can be dropped into that one shared sheet's <form> alongside
+     the Custom Range fields, sharing one Apply flow instead of needing a second form. -->
+{% macro period_preset_links(period, period_presets, period_endpoint, period_extra) %}
+<div style="padding:0 20px;">
+  {% for pval, plabel in period_presets %}
+  <a href="{{ url_for(period_endpoint, period=pval, **period_extra) }}" class="a-period-opt {{ 'active' if period==pval or (not period and pval=='fy') }}">
+    {{ plabel }}
+    <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+  </a>
+  {% endfor %}
+</div>
+{% endmacro %}

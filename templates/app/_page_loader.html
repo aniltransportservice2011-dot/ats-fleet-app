@@ -1,14 +1,14 @@
-<!-- Shown only when a real page navigation (a link, a normal form submit, back/forward) is
-     actually taking a while — not on every navigation, and never for a fetch()/AJAX call that
-     stays on the page (filter sheets, Add Vehicle/Trip modals, etc.). Hooked entirely off the
-     browser's own 'beforeunload' event: it fires the instant real navigation begins, before the
-     network request even starts, and it simply never fires for anything that doesn't actually
-     leave the page — so this needs no per-link/per-form wiring anywhere else in the app, and
-     can't misfire on an AJAX-driven form. A short delay before it's shown (see the script below)
-     means a normal, fast navigation — the overwhelming majority — never displays this at all.
-     One honest limitation: this can only appear on navigation FROM an already-loaded /app/ page.
-     The very first tap on the installed app icon has no prior page to attach this to, so that
-     one moment still shows only the native OS/PWA launch screen, same as before. -->
+<!-- Shown ONLY when a real page navigation (a link, a normal form submit, back/forward) inside
+     the already-authenticated app is actually taking a while to respond — never on every switch,
+     only past a standard delay threshold (see OVERLAY_DELAY_MS below). Included only in
+     base_app.html — deliberately NOT on the pre-auth pages (login/signup/OTP) and NOT on cold
+     app open; this is purely an "in-app, switching between screens" indicator. Hooked entirely
+     off the browser's own 'beforeunload' event: it fires the instant real navigation begins,
+     before the network request even starts, and it simply never fires for a fetch()/AJAX call
+     that stays on the page (filter sheets, Add Vehicle/Trip modals, etc.) — so this needs no
+     per-link/per-form wiring anywhere else in the app, and can't misfire on an in-place update.
+     Background is intentionally translucent (not solid white) — the screen underneath stays
+     dimly visible through it rather than being fully hidden. -->
 <div id="aplOverlay" class="apl-overlay" role="status" aria-live="polite" aria-hidden="true">
   <div class="apl-badge">
     <svg class="apl-ring" viewBox="0 0 100 100" aria-hidden="true">
@@ -36,7 +36,11 @@
 <style>
   .apl-overlay {
     position: fixed; inset: 0; z-index: 999;
-    background: var(--a-white, #fff);
+    /* Translucent + blurred, not solid — the page being left (or arrived at) stays faintly
+       visible underneath instead of getting fully hidden by a flat white screen. */
+    background: rgba(255,255,255,0.72);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     opacity: 0; visibility: hidden; pointer-events: none;
     transition: opacity 0.2s ease, visibility 0.2s;
@@ -55,8 +59,8 @@
   .apl-sl2 { width: 8px; top: calc(50% - 7px); animation: aplSpeedLine 1.2s ease-in-out 0.12s infinite; }
   .apl-sl3 { width: 8px; top: calc(50% + 7px); animation: aplSpeedLine 1.2s ease-in-out 0.24s infinite; }
 
-  .apl-title { font-family: 'Sora', -apple-system, 'Segoe UI', sans-serif; font-size: 1.15rem; font-weight: 800; color: var(--a-ink, #14213d); margin: 0; }
-  .apl-sub { font-size: 0.86rem; color: var(--a-steel, #5a6b8c); margin: 5px 0 0; }
+  .apl-title { font-family: 'Sora', -apple-system, 'Segoe UI', sans-serif; font-size: 1.15rem; font-weight: 800; color: var(--a-ink, #14213d); margin: 0;
+    text-shadow: 0 1px 4px rgba(255,255,255,0.6); }
 
   .apl-dots { display: flex; gap: 7px; margin-top: 22px; }
   .apl-dot { width: 20px; height: 5px; border-radius: 999px; background: var(--a-line, #e6e9f0); animation: aplDotPulse 1.4s ease-in-out infinite; }
@@ -76,16 +80,16 @@
 </style>
 <script>
 (function () {
-  var OVERLAY_DELAY_MS = 400; // fast navigations — the overwhelming majority — never see this at
-    // all; only a wait longer than this actually shows it.
+  var OVERLAY_DELAY_MS = 400; // standard threshold — a normal, fast in-app switch (the
+    // overwhelming majority) never shows this at all; only a wait longer than this does.
   var overlay = document.getElementById('aplOverlay');
   var timer = null;
   function showOverlay() { overlay.classList.add('apl-show'); overlay.setAttribute('aria-hidden', 'false'); }
   window.addEventListener('beforeunload', function () {
     // Fires only for a genuine navigation away from this page (link click, a form submit that
-    // isn't preventDefault()-ed, back/forward, address-bar entry) — never for a fetch()/AJAX call
-    // or a form a page handles entirely in place, so this can't misfire on e.g. a filter sheet's
-    // own fetch-and-redraw. The old page stays fully on-screen (and this timer keeps running) for
+    // isn't preventDefault()-ed, back/forward) — never for a fetch()/AJAX call or a form a page
+    // handles entirely in place, so this can't misfire on e.g. a filter sheet's own
+    // fetch-and-redraw. The old page stays fully on-screen (and this timer keeps running) for
     // exactly as long as the next page takes to arrive — a slow load is exactly when this fires.
     timer = setTimeout(showOverlay, OVERLAY_DELAY_MS);
   });

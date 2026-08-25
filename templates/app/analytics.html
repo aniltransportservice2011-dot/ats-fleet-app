@@ -4,24 +4,21 @@
 
 <!-- Real data only — see app_analytics() in app.py. Best Routes uses _route_analytics_data(),
      Route Rates uses _route_rates_data() — the exact same two helpers route_analytics()
-     (website) uses, so this can never disagree with it. One shared filter (Date From/To, From,
-     To, Vehicle Type — same 5 real fields as the website's own filter_bar) drives both tabs,
-     behind a single filter icon matching every other native list page, instead of the website's
-     always-visible inline bar. Rate Trend chart and Own-vs-Hired donut stay website-only (real
+     (website) uses, so this can never disagree with it. Date range owned by the ONE shared
+     period control up in _business_overview_header.html (defaults to current FY) — this page's
+     own Filters icon (below, in the tab row) keeps just its own From/To location + Vehicle Type,
+     not a second date range. Rate Trend chart and Own-vs-Hired donut stay website-only (real
      future scope for a native chart) — everything else Route Rates shows here is real. -->
-<div class="ra-head">
-  <h1>Business Overview</h1>
-  <div class="sub">Route analytics, fleet utilization, performance &amp; business health.</div>
-</div>
-
-{% include "app/_overview_tabstrip.html" %}
+{% set period_endpoint = 'app_analytics' %}
+{% set period_extra = {'tab': tab, 'from': f_from, 'to': f_to, 'vehicle_type': f_vehicle_type} %}
+{% include "app/_business_overview_header.html" %}
 
 <div style="display:flex; align-items:flex-end; gap:8px; margin:14px 0 12px;">
   <div class="ra-tabstrip" style="flex:1; min-width:0; margin:0; border-bottom:1px solid var(--a-line);">
     <a class="ra-tab {{ 'active' if tab=='best' }}" href="{{ url_for('app_analytics') }}?tab=best&{{ base_qs }}">Best Routes</a>
     <a class="ra-tab {{ 'active' if tab=='rates' }}" href="{{ url_for('app_analytics') }}?tab=rates&{{ base_qs }}">Route Rates</a>
   </div>
-  <button type="button" class="a-filter-btn {{ 'active' if f_from or f_to or f_vehicle_type or f_date_from != '2026-04-01' or f_date_to != '2027-03-31' }}" style="flex-shrink:0; margin-bottom:10px;" onclick="openRaFilterSheet()" aria-label="Filters">
+  <button type="button" class="a-filter-btn {{ 'active' if f_from or f_to or f_vehicle_type }}" style="flex-shrink:0; margin-bottom:10px;" onclick="openRaFilterSheet()" aria-label="Filters">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
   </button>
 </div>
@@ -150,24 +147,6 @@
   </div>
 </div>
 
-<div class="ra-panel">
-  <div class="ra-panel-head"><h2>Driver Advances (₹)</h2></div>
-  <div class="rr-range-row">
-    <div class="rr-range-item"><div class="rr-range-lbl">Lowest</div><div class="rr-range-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(da_lowest) }}</div></div>
-    <div class="rr-range-item"><div class="rr-range-lbl">Average</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(da_average) }}</div></div>
-    <div class="rr-range-item"><div class="rr-range-lbl">Highest</div><div class="rr-range-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(da_highest) }}</div></div>
-  </div>
-</div>
-
-<div class="ra-panel">
-  <div class="ra-panel-head"><h2>Fuel Taken (₹)</h2></div>
-  <div class="rr-range-row">
-    <div class="rr-range-item"><div class="rr-range-lbl">Lowest</div><div class="rr-range-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(fuel_lowest) }}</div></div>
-    <div class="rr-range-item"><div class="rr-range-lbl">Average</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(fuel_average) }}</div></div>
-    <div class="rr-range-item"><div class="rr-range-lbl">Highest</div><div class="rr-range-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(fuel_highest) }}</div></div>
-  </div>
-</div>
-
 <div class="ra-panel" style="padding:0; overflow:hidden;">
   <div class="ra-panel-head" style="padding:14px 16px 10px;">
     <h2>Route Rates</h2>
@@ -227,8 +206,9 @@
 
 <div style="height:6px;"></div>
 
-<!-- Filter sheet — same 5 real fields (Date From/To, From, To, Vehicle Type) as the website's
-     own /route-analytics filter_bar, shared by both tabs. -->
+<!-- Filter sheet — From/To location + Vehicle Type, same 3 fields as the website's own
+     /route-analytics filter_bar minus the date range (Date From/To now lives in the period
+     control above and is preserved here via hidden fields, not re-editable in two places). -->
 <div class="vam-backdrop" id="raFilterBackdrop" onclick="closeRaFilterSheet()"></div>
 <div class="vam-modal" id="raFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
   <div class="vam-head">
@@ -237,10 +217,9 @@
   </div>
   <form class="vam-form" method="GET" action="{{ url_for('app_analytics') }}">
     <input type="hidden" name="tab" value="{{ tab }}">
-    <div class="vam-grid">
-      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
-    </div>
+    <input type="hidden" name="period" value="{{ period }}">
+    <input type="hidden" name="date_from" value="{{ f_date_from }}">
+    <input type="hidden" name="date_to" value="{{ f_date_to }}">
     <div class="vam-grid">
       <div class="vam-field">
         <label>From</label>
@@ -266,7 +245,7 @@
       </select>
     </div>
     <div class="vam-actions">
-      <a href="{{ url_for('app_analytics') }}?tab={{ tab }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <a href="{{ url_for('app_analytics', tab=tab, period=period, date_from=f_date_from, date_to=f_date_to) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
       <button type="submit" class="vam-btn-save">Apply</button>
     </div>
   </form>
@@ -284,6 +263,18 @@ function closeRaFilterSheet() {
   unlockPageScroll();
   document.getElementById('raFilterBackdrop').classList.remove('open');
   document.getElementById('raFilterSheet').classList.remove('open');
+}
+// Select Period sheet — see app/_business_overview_header.html, shared with the other 3
+// Business Overview analysis pages.
+function openPeriodSheet() {
+  lockPageScroll();
+  document.getElementById('periodBackdrop').classList.add('open');
+  document.getElementById('periodSheet').classList.add('open');
+}
+function closePeriodSheet() {
+  unlockPageScroll();
+  document.getElementById('periodBackdrop').classList.remove('open');
+  document.getElementById('periodSheet').classList.remove('open');
 }
 {% if tab == 'rates' %}
 // Tap a Route Rates row to reveal its own Driver Advance / Fuel Taken ranges — real per-row data
