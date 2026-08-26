@@ -83,7 +83,7 @@
   </div>
 </header>
 
-<main class="a-wrap">
+<main class="a-wrap" id="appMain">
   {% block content %}{% endblock %}
 </main>
 
@@ -326,6 +326,115 @@
     else openMoreSheet();
   }
 </script>
-{% block extra_scripts %}{% endblock %}
+<div id="appExtraScripts">{% block extra_scripts %}{% endblock %}</div>
+
+<!-- Persistent-shell router — makes the bottom nav (Home/Trips/Ledger + the FAB and More
+     speed-dial's own /app/ links, everything living inside .a-bottom-nav) navigate WITHOUT a
+     real page reload, so it never visibly re-renders/flashes; only #appMain's content and
+     #appExtraScripts' scripts get swapped underneath it. A real <a href> click still works
+     normally as a fallback for anything this script can't handle (JS disabled, a non-GET target,
+     a link outside .a-bottom-nav, or any link that isn't under /app/ — those still do a genuine
+     full navigation, e.g. the "Urea ↗"/"Toll ↗" links that intentionally leave this app section
+     for the website's own pages). Deliberately scoped to just .a-bottom-nav, not every link on
+     every page — a much smaller, safer surface than rewriting the whole app into an SPA. -->
+<script>
+(function () {
+  var mainEl = document.getElementById('appMain');
+  var scriptsEl = document.getElementById('appExtraScripts');
+  var overlay = document.getElementById('aplOverlay');
+  var overlayTimer = null;
+  var navToken = 0; // bumped on every navigate() call; a stale in-flight fetch that resolves
+                     // after a newer one started checks this and no-ops instead of clobbering
+                     // whatever the newer navigation already rendered (fast double-taps).
+
+  function showOverlay() { overlay.classList.add('apl-show'); overlay.setAttribute('aria-hidden', 'false'); }
+  function hideOverlay() {
+    if (overlayTimer) { clearTimeout(overlayTimer); overlayTimer = null; }
+    overlay.classList.remove('apl-show'); overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  // Per-page cleanup registry — a page's own extra_scripts can call __onDocClick(fn) instead of
+  // document.addEventListener('click', fn) directly; the router removes every one of them right
+  // before the NEXT swap. Without this, a document-level listener a page adds (e.g. "close this
+  // dropdown on an outside click") would silently pile up one more copy every time you navigate
+  // back to that same page type in one session, since #appMain being replaced does NOT clean up
+  // listeners attached to `document` itself (only ones on elements actually inside #appMain).
+  var pageCleanupFns = [];
+  window.__onDocClick = function (fn) {
+    document.addEventListener('click', fn);
+    pageCleanupFns.push(function () { document.removeEventListener('click', fn); });
+  };
+  function runPageCleanup() {
+    pageCleanupFns.forEach(function (fn) { fn(); });
+    pageCleanupFns = [];
+  }
+
+  // Re-syncs the persistent nav's own .active state from the freshly fetched page's copy of the
+  // SAME nav bar, matched by href — avoids re-implementing app.py's own active-tab logic here.
+  function syncActiveNav(newDoc) {
+    var newItems = newDoc.querySelectorAll('.a-bottom-nav > a.a-bn-item, .a-bottom-nav .fab-option, .a-bottom-nav .more-option');
+    var curItems = document.querySelectorAll('.a-bottom-nav > a.a-bn-item');
+    var activeHref = null;
+    newItems.forEach(function (el) { if (el.classList.contains('active') && el.tagName === 'A') activeHref = el.getAttribute('href'); });
+    curItems.forEach(function (el) { el.classList.toggle('active', el.getAttribute('href') === activeHref); });
+  }
+
+  function runScripts(container) {
+    var scripts = container.querySelectorAll('script');
+    scripts.forEach(function (old) {
+      var fresh = document.createElement('script');
+      for (var i = 0; i < old.attributes.length; i++) fresh.setAttribute(old.attributes[i].name, old.attributes[i].value);
+      fresh.textContent = old.textContent;
+      old.parentNode.replaceChild(fresh, old);
+    });
+  }
+
+  function navigate(url, isPopState) {
+    var myToken = ++navToken;
+    closeFabMenu(); closeAcctMenu(); closeMoreSheet();
+    overlayTimer = setTimeout(showOverlay, 400); // same standard threshold _page_loader.html uses
+
+    fetch(url, { credentials: 'same-origin' }).then(function (res) {
+      if (myToken !== navToken) return null; // a newer navigate() already started; drop this one
+      if (!res.ok) { window.location.href = url; return null; } // e.g. session expired -> login
+      return res.text();
+    }).then(function (html) {
+      if (html == null || myToken !== navToken) return;
+      var newDoc = new DOMParser().parseFromString(html, 'text/html');
+      var newMain = newDoc.getElementById('appMain');
+      var newScripts = newDoc.getElementById('appExtraScripts');
+      if (!newMain) { window.location.href = url; return; } // unrecognized response shape -> real nav, never show a broken half-page
+
+      runPageCleanup();
+      document.title = newDoc.title;
+      mainEl.innerHTML = newMain.innerHTML;
+      scriptsEl.innerHTML = newScripts ? newScripts.innerHTML : '';
+      runScripts(scriptsEl);
+      syncActiveNav(newDoc);
+      if (!isPopState) history.pushState({ appNav: true }, '', url);
+      window.scrollTo(0, 0);
+      hideOverlay();
+    }).catch(function () {
+      // A real network failure — fall back to a normal navigation rather than leaving the user
+      // stuck on stale content with no way forward.
+      window.location.href = url;
+    });
+  }
+
+  document.querySelector('.a-bottom-nav').addEventListener('click', function (e) {
+    var link = e.target.closest('a[href]');
+    if (!link) return; // buttons (FAB/More toggle, maintenance-fan trigger) aren't <a> — untouched
+    var href = link.getAttribute('href');
+    if (href.indexOf('/app/') !== 0) return; // leaves this app section (e.g. "Urea ↗") — real nav
+    e.preventDefault();
+    navigate(href, false);
+  });
+
+  window.addEventListener('popstate', function (e) {
+    if (e.state && e.state.appNav) navigate(location.pathname + location.search, true);
+    else window.location.reload(); // landed here via history from before this router existed
+  });
+})();
+</script>
 </body>
 </html>

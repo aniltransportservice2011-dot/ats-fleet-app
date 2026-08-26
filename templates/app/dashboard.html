@@ -262,8 +262,8 @@
     <input type="hidden" name="vehicle" value="{{ f_vehicle }}">
     <div class="vam-section-title">Custom Range</div>
     <div class="vam-grid">
-      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
     </div>
     <div class="vam-actions">
       <button type="submit" class="vam-btn-save" style="grid-column:1 / -1;">Apply Custom Range</button>

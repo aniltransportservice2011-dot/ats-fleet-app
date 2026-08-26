@@ -176,8 +176,8 @@
       </select>
     </div>
     <div class="vam-grid">
-      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
     </div>
     <div class="vam-actions">
       <a href="{{ url_for('app_battery', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
@@ -222,7 +222,7 @@
       <div class="vam-field"><label>Capacity (AH) <span class="req">*</span></label><input type="number" step="1" name="capacity_ah" required placeholder="e.g. 180"></div>
       <div class="vam-field vam-field-full"><label>Battery Type <span class="req">*</span></label><input type="text" name="battery_type" list="bat-type-list" required placeholder="e.g. Tubular"></div>
       <div class="vam-field" id="abVehicleFld"><label>Install in Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="bat-vehicle-list"></div>
-      <div class="vam-field" id="abInstallDateFld"><label>Installation Date <span class="req">*</span></label><input type="date" name="install_date"></div>
+      <div class="vam-field" id="abInstallDateFld"><label>Installation Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="install_date"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field vam-field-full" id="abLocationFld"><label>Installed Location</label>
         <select name="installed_location">
           <option value="Engine Compartment">Engine Compartment</option>
@@ -233,7 +233,7 @@
       </div>
       <div class="vam-field"><label>Serial / Code</label><input type="text" name="serial_no"></div>
       <div class="vam-field"><label>Warranty (Months) <span class="req">*</span></label><input type="number" step="1" name="warranty_months" required placeholder="e.g. 15"></div>
-      <div class="vam-field"><label>Purchase Date <span class="req">*</span></label><input type="date" name="purchase_date" required></div>
+      <div class="vam-field"><label>Purchase Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="purchase_date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field"><label>Purchase Price (₹) <span class="req">*</span></label><input type="number" step="0.01" name="purchase_price" required></div>
       <div class="vam-field vam-field-full"><label>Vendor / Dealer <span class="req">*</span></label><input type="text" name="vendor_name" list="bat-vendor-list" required></div>
       <div class="vam-field vam-field-full"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid"></div>
@@ -259,7 +259,7 @@
         </select>
       </div>
       <div class="vam-field vam-field-full"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="bat-vehicle-list" required></div>
-      <div class="vam-field vam-field-full"><label>Install Date <span class="req">*</span></label><input type="date" name="install_date" required></div>
+      <div class="vam-field vam-field-full"><label>Install Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="install_date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field vam-field-full"><label>Installed Location</label>
         <select name="installed_location">
           <option value="Engine Compartment">Engine Compartment</option>
@@ -304,7 +304,7 @@ function toggleMoMoreSheet() {
 }
 
 // "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
-document.addEventListener('click', function (e) {
+__onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;
   e.preventDefault();

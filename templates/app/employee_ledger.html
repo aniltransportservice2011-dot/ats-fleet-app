@@ -109,8 +109,8 @@
   <form class="vam-form" method="GET" action="{{ url_for('app_employee_ledger', employee=employee) }}">
     <input type="hidden" name="search" value="{{ f_search }}">
     <div class="vam-grid">
-      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
     </div>
     <div class="vam-actions">
       <a href="{{ url_for('app_employee_ledger', employee=employee, search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
@@ -146,7 +146,7 @@
           <option value="repaid">Advance Repaid</option>
         </select>
       </div>
-      <div class="vam-field"><label>Date <span class="req">*</span></label><input type="date" name="date" required></div>
+      <div class="vam-field"><label>Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field"><label>Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" required></div>
       <div class="vam-field vam-field-full"><label>Notes</label><input type="text" name="notes" placeholder="Optional"></div>
     </div>
@@ -160,7 +160,7 @@
     <div style="font-size:0.78rem; color:var(--a-steel); margin:0 0 14px; line-height:1.5;">Set this once to record the advance balance this employee carried over before you started using the app. Positive = they owe an outstanding advance. Negative = they're in credit. Saving again replaces the previous value.</div>
     <div class="vam-grid">
       <div class="vam-field vam-field-full"><label>Opening Advance Balance (₹) <span class="req">*</span></label><input type="number" step="0.01" name="opening_balance" value="{{ opening_balance or 0 }}" required></div>
-      <div class="vam-field vam-field-full"><label>As Of Date</label><input type="date" name="opening_balance_date" value="{{ opening_balance_date or '' }}"></div>
+      <div class="vam-field vam-field-full"><label>As Of Date</label><div class="vam-date-wrap"><input type="date" name="opening_balance_date" value="{{ opening_balance_date or '' }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
     </div>
     <div class="vam-actions">
       <button type="button" class="vam-btn-cancel" onclick="closeAddPaymentModal()">Cancel</button>
@@ -173,7 +173,7 @@
 {% block extra_scripts %}
 <script>
 // "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
-document.addEventListener('click', function (e) {
+__onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;
   e.preventDefault();

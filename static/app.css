@@ -5,6 +5,17 @@
    affect this. Same brand tokens (orange accent, ink/steel/line/paper) so it
    still reads as the same company, just a different, mobile-first surface.
    ========================================================================== */
+
+/* Smooths the blank-white flash on every /app/ page navigation (tapping a bottom-nav button,
+   any link) — this app is still a real server-rendered multi-page app underneath (every nav is a
+   genuine full page load, nothing about that changed), this just asks a supporting browser to
+   crossfade the old page into the new one instead of hard-cutting through blank white. Pure CSS,
+   no JS, no per-page wiring: a browser that doesn't support it yet (older Android WebView, etc.)
+   just ignores this at-rule entirely and behaves exactly as before — no fallback code needed. */
+@view-transition {
+  navigation: auto;
+}
+
 :root {
   --a-ink: #14213d;
   --a-steel: #5a6b8c;
@@ -384,8 +395,36 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    order — smaller font/padding gives a native calendar-icon real breathing room inside the same
    half-width column, on any device, without needing extra column space. Paired with min-width:0
    above (a grid item otherwise refuses to shrink below its content's own intrinsic width, which
-   is what let the icon force the cell wider than its track and bleed into the field next to it). */
+   is what let the icon force the cell wider than its track and bleed into the field next to it).
+   Back to the exact original padding/font-size — a CSS background-image on the input itself was
+   tried here and reported still invisible on a real Android device (the native form-control
+   rendering on some WebView versions paints over an author background-image), so the icon is now
+   a real floating DOM overlay instead — see .tw-date-wrap/.tw-date-icon below, which can't be
+   painted over by anything since it's a genuine sibling element, not part of the input's own
+   internal rendering. */
 .tw-field input[type="date"] { padding-left: 7px; padding-right: 4px; font-size: 0.8rem; }
+
+/* Floating calendar icon overlay for date fields — a real SVG element positioned on top of the
+   input (not a CSS background-image, which a native Android date-input's own rendering can paint
+   over and hide). pointer-events:none lets every tap pass straight through to the input beneath,
+   landing on its own native picker-icon hit area, so tapping still opens the real date picker.
+   right:2px matches where the native icon already sits internally, so there's no overlap with
+   the day/month/year digits and no extra padding is needed on the input (box size unchanged).
+   "Floating" on purpose (percentage-based right edge + vertical centering via transform) so it
+   stays correctly placed at any box width, not pinned to one fixed layout. */
+.tw-date-wrap { position: relative; display: block; }
+.tw-date-wrap input[type="date"] { width: 100%; }
+.tw-date-icon { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--a-steel); pointer-events: none; }
+
+/* Same floating-overlay technique, same reasoning, for every OTHER date field in the app — every
+   Add/Filter modal (Vehicle, Trip's End/Edit, Service, Maintenance, Tyres, Battery, Salary,
+   Employee Ledger, every filter sheet, the period sheets) shares .vam-field, so this one pair of
+   rules covers all of them at once, confirmed working on Add/Edit Trip's .tw-date-* first. */
+.vam-date-wrap { position: relative; display: block; }
+.vam-date-wrap input[type="date"] { width: 100%; }
+.vam-date-icon { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--a-steel); pointer-events: none; }
 
 /* Custom tap-to-show suggestion list (Vehicle/Party/Driver in Add/Edit Trip) — replaces the
    browser's native list="..." datalist for just these 3 fields, which was unreliable on Android.
@@ -415,7 +454,11 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
   font-size: 0.68rem; padding: 0;
 }
 .tw-field input[type="date"]::-webkit-calendar-picker-indicator {
-  padding: 0; margin-left: 1px; width: 12px; height: 12px;
+  /* Paint suppressed (not display:none) — the real, explicitly-colored icon is now the
+     background-image on the input itself, above. This keeps the native picker's own tap target
+     exactly where it's always been (still opens the real date picker), it just doesn't draw its
+     own possibly-invisible icon on top of ours. */
+  padding: 0; margin-left: 1px; width: 12px; height: 12px; opacity: 0;
 }
 .tw-field input:focus, .tw-field select:focus { outline: none; border-color: var(--a-accent); background: var(--a-white); }
 .tw-field input:disabled { color: var(--a-steel); }
@@ -819,7 +862,11 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    order — same reasoning as .tw-field input[type="date"]: smaller font/padding gives a native
    calendar-icon real breathing room inside a half-width column on any device, and this is now
    the shared field style for every Add/Filter modal in the app (Vehicle, Trip's End/Edit,
-   Service, and every filter sheet), so fixing it here covers all of them at once. */
+   Service, and every filter sheet), so fixing it here covers all of them at once.
+   Back to the exact original padding/font-size — see the matching comment on
+   .tw-field input[type="date"] above for why (a background-image was tried and reported still
+   invisible on a real Android device; the real fix is a floating DOM overlay icon, being rolled
+   out to this shared class next once confirmed working on Add/Edit Trip). */
 .vam-field input[type="date"] { padding-left: 7px; padding-right: 4px; font-size: 0.8rem; }
 /* iOS Safari specifically: a date input's visible text/icon isn't regular text, it's drawn by an
    internal system component that font-size on the <input> itself doesn't reliably reach — that's
@@ -839,7 +886,11 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
   font-size: 0.68rem; padding: 0;
 }
 .vam-field input[type="date"]::-webkit-calendar-picker-indicator {
-  padding: 0; margin-left: 1px; width: 12px; height: 12px;
+  /* Paint suppressed (not display:none) — the real, explicitly-colored icon is now the
+     background-image on the input itself, above. This keeps the native picker's own tap target
+     exactly where it's always been (still opens the real date picker), it just doesn't draw its
+     own possibly-invisible icon on top of ours. */
+  padding: 0; margin-left: 1px; width: 12px; height: 12px; opacity: 0;
 }
 .vam-field input:focus, .vam-field select:focus, .vam-field textarea:focus { outline: none; border-color: var(--a-accent); }
 .vam-field textarea { resize: vertical; }

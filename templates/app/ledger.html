@@ -204,7 +204,7 @@
 {% block extra_scripts %}
 <script>
 // Same in-place "Load More" as templates/app/vehicles.html / trips.html.
-document.addEventListener('click', function (e) {
+__onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;
   e.preventDefault();

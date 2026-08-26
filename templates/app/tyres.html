@@ -206,8 +206,8 @@
       </select>
     </div>
     <div class="vam-grid">
-      <div class="vam-field"><label>From Date</label><input type="date" name="date_from" value="{{ f_date_from }}"></div>
-      <div class="vam-field"><label>To Date</label><input type="date" name="date_to" value="{{ f_date_to }}"></div>
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
     </div>
     <div class="vam-actions">
       <a href="{{ url_for('app_tyres', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
@@ -255,7 +255,7 @@
           {% for p in tyre_positions %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
         </select>
       </div>
-      <div class="vam-field"><label>Date <span class="req">*</span></label><input type="date" name="date" required></div>
+      <div class="vam-field"><label>Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
       <div class="vam-field"><label>Tyre ID</label><input type="text" name="tyre_id"></div>
       <div class="vam-field vam-field-full"><label>Brand</label><input type="text" name="tyre_brand" list="ty-brand-list"></div>
@@ -278,7 +278,7 @@
       <div class="vam-field"><label>Type</label>
         <select name="tyre_type"><option value="New">New</option><option value="Resole">Resole / Reshuttered</option></select>
       </div>
-      <div class="vam-field"><label>Purchase Date <span class="req">*</span></label><input type="date" name="purchase_date" required></div>
+      <div class="vam-field"><label>Purchase Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="purchase_date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field vam-field-full"><label>Supplier / Vendor <span class="req">*</span></label><input type="text" name="vendor_name" list="ty-vendor-list" required></div>
       <div class="vam-field"><label>Purchase Cost (₹) <span class="req">*</span></label><input type="number" step="0.01" name="purchase_cost" required></div>
       <div class="vam-field"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid"></div>
@@ -308,7 +308,7 @@
           {% for p in tyre_positions %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
         </select>
       </div>
-      <div class="vam-field"><label>Install Date <span class="req">*</span></label><input type="date" name="install_date" required></div>
+      <div class="vam-field"><label>Install Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="install_date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field vam-field-full"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
     </div>
     <div class="vam-actions">
@@ -347,7 +347,7 @@ function toggleMoMoreSheet() {
 
 // "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list in
 // this app, so the scroll position never jumps back to the top the way a plain <a href> would.
-document.addEventListener('click', function (e) {
+__onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;
   e.preventDefault();

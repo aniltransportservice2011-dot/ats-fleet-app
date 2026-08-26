@@ -218,7 +218,7 @@
       </div>
       <div class="vam-field">
         <label>Registration Date</label>
-        <input type="date" name="registration_date">
+        <div class="vam-date-wrap"><input type="date" name="registration_date"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div>
       </div>
       <div class="vam-field">
         <label>Capacity (MT)</label>
@@ -236,10 +236,10 @@
 
     <div class="vam-section-title">Validity Details</div>
     <div class="vam-grid">
-      <div class="vam-field"><label>Insurance Expiry</label><input type="date" name="insurance_expiry"></div>
-      <div class="vam-field"><label>Fitness Expiry</label><input type="date" name="fitness_expiry"></div>
-      <div class="vam-field"><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto"></div>
-      <div class="vam-field"><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto"></div>
+      <div class="vam-field"><label>Insurance Expiry</label><div class="vam-date-wrap"><input type="date" name="insurance_expiry"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Fitness Expiry</label><div class="vam-date-wrap"><input type="date" name="fitness_expiry"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>PUC Valid Upto</label><div class="vam-date-wrap"><input type="date" name="puc_valid_upto"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Permit Valid Upto</label><div class="vam-date-wrap"><input type="date" name="permit_valid_upto"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
     </div>
 
     <div class="vam-section-title">Additional Information</div>
@@ -263,7 +263,7 @@
 // way a plain <a href> page load would. Event delegation on the whole document means a
 // Load-More link injected by a *previous* fetch (same markup, same data-loadmore attribute)
 // is handled automatically too, with nothing to re-bind.
-document.addEventListener('click', function (e) {
+__onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;
   e.preventDefault();
