@@ -82,10 +82,17 @@
                changeable on edit, same server-side rule edit_trip() enforces (see
                _update_trip_from_form()'s comment); wanting a different vehicle means deleting
                this trip and creating a fresh one, not editing this row out from under whatever
-               ledger/invoice entries already reference it by vehicle_id. -->
-          <input type="text" name="vehicle_no" id="twVehicleNo" list="vehicle-list" value="{{ t.get('vehicle_no','') or '' }}"
-                 placeholder="Select Vehicle" oninput="twSyncVehicleType()" required
-                 {% if mode == 'edit' %}readonly style="background:var(--a-paper);color:var(--a-steel);"{% endif %}></div>
+               ledger/invoice entries already reference it by vehicle_id.
+               Custom tap-to-show suggestion list (twInitAutocomplete, see extra_scripts) instead
+               of the browser's native list="..." datalist — native datalist dropdowns are
+               notoriously unreliable on Android Chrome/WebView (often show nothing at all on
+               tap), which is what made this field look like it "wasn't populating". -->
+          <div class="tw-ac-wrap">
+            <input type="text" name="vehicle_no" id="twVehicleNo" value="{{ t.get('vehicle_no','') or '' }}"
+                   placeholder="Select Vehicle" oninput="twSyncVehicleType()" required autocomplete="off"
+                   {% if mode == 'edit' %}readonly style="background:var(--a-paper);color:var(--a-steel);"{% endif %}>
+            <div class="tw-ac-list" id="twVehicleAcList"></div>
+          </div></div>
         <div class="tw-field"><label>Type <span class="req">*</span></label>
           <select id="twTypeSelect" onchange="document.getElementById('twTypeHidden').value=this.value" disabled>
             <option value="own">Own</option>
@@ -94,10 +101,16 @@
           <input type="hidden" name="type" id="twTypeHidden" value="{{ t.get('type','') or '' }}"></div>
 
         <div class="tw-field twcargo"><label>Party / Customer <span class="req">*</span></label>
-          <input type="text" name="party_name" id="twParty" list="combined-list" value="{{ t.get('party_name','') or '' }}"
-                 placeholder="Select Party / Customer"></div>
+          <div class="tw-ac-wrap">
+            <input type="text" name="party_name" id="twParty" value="{{ t.get('party_name','') or '' }}"
+                   placeholder="Select Party / Customer" autocomplete="off">
+            <div class="tw-ac-list" id="twPartyAcList"></div>
+          </div></div>
         <div class="tw-field"><label>Driver</label>
-          <input type="text" name="driver_name" list="employee-list" value="{{ t.get('driver_name','') or '' }}" placeholder="Select Driver"></div>
+          <div class="tw-ac-wrap">
+            <input type="text" name="driver_name" id="twDriver" value="{{ t.get('driver_name','') or '' }}" placeholder="Select Driver" autocomplete="off">
+            <div class="tw-ac-list" id="twDriverAcList"></div>
+          </div></div>
 
         <div class="tw-field twcargo"><label>Material</label>
           <input type="text" name="material" value="{{ t.get('material','') or '' }}" placeholder="e.g. Steel, Cement"></div>
@@ -112,8 +125,12 @@
         <div class="tw-field"><label>To</label>
           <input type="text" name="to_loc" value="{{ t.get('to_loc','') or '' }}" placeholder="Unloading location"></div>
 
-        <div class="tw-field twcargo" id="twQtyFld"><label>Quantity (MT)</label>
-          <input type="number" step="0.01" class="tw-calc" name="quantity" id="twQuantity" value="{{ t.get('quantity',0) or 0 }}"></div>
+        <!-- Quantity (Weight) stays visible & required for BOTH Freight Types, matching the
+             website's own Add/Edit Trip (trip_form.html) — Fixed freight just doesn't use it to
+             calculate billed_amount (see twToggleRateType() below), it's still tracked as real
+             trip weight either way, so it's never hidden the way Rate/Fixed Amount are. -->
+        <div class="tw-field twcargo" id="twQtyFld"><label>Quantity (MT) <span class="req">*</span></label>
+          <input type="number" step="0.01" class="tw-calc" name="quantity" id="twQuantity" value="{{ t.get('quantity',0) or 0 }}" required></div>
         <div class="tw-field twcargo" id="twRateFld"><label>Rate (per unit)</label>
           <input type="number" step="0.01" class="tw-calc" name="rate" id="twRate" value="{{ t.get('rate',0) or 0 }}"></div>
         <div class="tw-field twcargo" id="twFixedFld" style="display:none;"><label>Fixed Freight Amount</label>
@@ -273,6 +290,9 @@
 
 <script>
 var VEHICLE_TYPE_MAP = {{ vehicle_type_map|tojson }};
+var VEHICLE_OPTIONS = {{ vehicles|tojson }};
+var PARTY_OPTIONS = {{ combined_names|tojson }};
+var DRIVER_OPTIONS = {{ employees|tojson }};
 var TW_MODE = {{ mode|tojson }};
 var TW_CANCEL_URL = {{ (url_for('app_trip_detail', trip_id=trip_id) if mode == 'edit' else url_for('app_dashboard'))|tojson }};
 var TW_EXISTING_ITEMS = {{ custom_items|tojson }};
@@ -314,7 +334,10 @@ function twToggleOwnerSection() {
 
 function twToggleRateType() {
   var fixed = document.getElementById('twRateType').value === 'FIXED';
-  document.getElementById('twQtyFld').style.display = fixed ? 'none' : '';
+  // Quantity (Weight) stays visible for BOTH Freight Types, matching the website's own Add/Edit
+  // Trip — Fixed just doesn't use it to calculate billed_amount, it's still real trip weight to
+  // track either way. Only Rate/Fixed Amount actually toggle, since exactly one of those two is
+  // what freight is calculated from.
   document.getElementById('twRateFld').style.display = fixed ? 'none' : '';
   document.getElementById('twFixedFld').style.display = fixed ? '' : 'none';
 }
@@ -383,6 +406,19 @@ function twValidateStep1() {
     document.getElementById('twParty').focus();
     alert('Party / Customer is required unless this is an Empty Trip.');
     return false;
+  }
+  // Quantity (Weight) is mandatory even for Fixed Freight Type — it's just not used to
+  // calculate billed_amount there (see twToggleRateType()), it's still tracked as real trip
+  // weight, matching the website's own Add/Edit Trip. Same Empty Trip exemption as Party above
+  // — no cargo means no real weight to record either.
+  if (!document.getElementById('twIsEmpty').checked) {
+    var qtyEl = document.getElementById('twQuantity');
+    var qtyVal = parseFloat(qtyEl.value);
+    if (!qtyVal || qtyVal <= 0) {
+      qtyEl.focus();
+      alert('Quantity (Weight) is required.');
+      return false;
+    }
   }
   return true;
 }
@@ -492,6 +528,60 @@ twToggleOwnerRateType();
 // would silently wipe them, since the server always replaces a trip's items from whatever the
 // submitted form actually contains (see _save_trip_custom_items() in app.py).
 TW_EXISTING_ITEMS.forEach(function (item) { twAddItemRow(item); });
+
+// Custom tap-to-show suggestion list for Vehicle/Party/Driver — replaces the browser's native
+// list="..." datalist for just these 3 fields (see the HTML comment on the Vehicle field for
+// why: native datalist dropdowns are unreliable on Android). Fuel Vendor/Owner Name/etc. still
+// use the plain datalist elsewhere in this form, untouched.
+function twInitAutocomplete(inputId, listId, options) {
+  var input = document.getElementById(inputId);
+  var list = document.getElementById(listId);
+  if (!input || !list) return;
+  // Selecting an item sets input.value then dispatches a real 'input' event purely so any
+  // existing oninput="..." handler (twSyncVehicleType on the Vehicle field) still runs — but
+  // that same dispatched event would otherwise also hit OUR OWN input listener below and
+  // immediately re-render/reopen the list right after we just closed it. This flag skips that
+  // one self-triggered render without skipping any handler the input HTML attribute already has.
+  var suppressNextRender = false;
+  function render(query) {
+    var q = (query || '').trim().toLowerCase();
+    var matches = q ? options.filter(function (o) { return o.toLowerCase().indexOf(q) !== -1; }) : options;
+    if (!matches.length) {
+      list.innerHTML = '<div class="tw-ac-empty">No matches</div>';
+    } else {
+      list.innerHTML = matches.slice(0, 50).map(function (o) {
+        return '<div class="tw-ac-item">' + o.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
+      }).join('');
+    }
+    list.classList.add('open');
+  }
+  input.addEventListener('focus', function () {
+    if (input.readOnly) return;
+    render(input.value);
+  });
+  input.addEventListener('input', function () {
+    if (suppressNextRender) { suppressNextRender = false; return; }
+    render(input.value);
+  });
+  input.addEventListener('keydown', function (e) { if (e.key === 'Escape') list.classList.remove('open'); });
+  // mousedown (not click) fires before the input's own blur, so tapping an option isn't lost to
+  // the list closing first.
+  list.addEventListener('mousedown', function (e) {
+    var item = e.target.closest('.tw-ac-item');
+    if (!item) return;
+    e.preventDefault();
+    suppressNextRender = true;
+    input.value = item.textContent;
+    list.classList.remove('open');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  document.addEventListener('click', function (e) {
+    if (e.target !== input && !list.contains(e.target)) list.classList.remove('open');
+  });
+}
+twInitAutocomplete('twVehicleNo', 'twVehicleAcList', VEHICLE_OPTIONS);
+twInitAutocomplete('twParty', 'twPartyAcList', PARTY_OPTIONS);
+twInitAutocomplete('twDriver', 'twDriverAcList', DRIVER_OPTIONS);
 </script>
 </body>
 </html>
