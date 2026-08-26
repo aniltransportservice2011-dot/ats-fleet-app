@@ -386,6 +386,19 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    above (a grid item otherwise refuses to shrink below its content's own intrinsic width, which
    is what let the icon force the cell wider than its track and bleed into the field next to it). */
 .tw-field input[type="date"] { padding-left: 7px; padding-right: 4px; font-size: 0.8rem; }
+
+/* Custom tap-to-show suggestion list (Vehicle/Party/Driver in Add/Edit Trip) — replaces the
+   browser's native list="..." datalist for just these 3 fields, which was unreliable on Android.
+   See twInitAutocomplete() in trip_add.html. */
+.tw-ac-wrap { position: relative; }
+.tw-ac-list { display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  background: var(--a-white); border: 1px solid var(--a-line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20,33,61,0.14); max-height: 220px; overflow-y: auto; }
+.tw-ac-list.open { display: block; }
+.tw-ac-item { padding: 10px 12px; font-size: 0.84rem; color: var(--a-ink); border-bottom: 1px solid var(--a-line); }
+.tw-ac-item:last-child { border-bottom: none; }
+.tw-ac-item:active { background: var(--a-paper); }
+.tw-ac-empty { padding: 10px 12px; font-size: 0.8rem; color: var(--a-steel); }
 /* iOS Safari specifically — see the matching comment on .vam-field input[type="date"] above for
    why the rule above alone isn't enough there: these WebKit-only pseudo-elements reach into the
    date input's actual internal rendering (day/month/year segments + calendar icon), which is
