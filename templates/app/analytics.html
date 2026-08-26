@@ -286,7 +286,7 @@ function rrToggle(idx) {
   row.classList.toggle('open', open);
 }
 // "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
-document.addEventListener('click', function (e) {
+__onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;
   e.preventDefault();

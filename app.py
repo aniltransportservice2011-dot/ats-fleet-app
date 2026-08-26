@@ -12232,7 +12232,15 @@ if __name__ == '__main__':
     # threaded=True — the dev server otherwise handles exactly one request at a time; with a phone
     # and a couple of browser tabs all hitting it, one slow/open request blocks every other tab
     # until it finishes, which reads as "the app froze". Purely a concurrency fix, no behavior
-    # change for a single request. Still not a substitute for a real WSGI server in production —
-    # this dev server also restarts itself on every file change (debug=True's reloader) and only
-    # exists while this laptop is awake and running it, neither of which threaded=True changes.
-    app.run(debug=debug_mode, port=5050, host=os.environ.get('FLASK_HOST', '127.0.0.1'), threaded=True)
+    # change for a single request. Still not a substitute for a real WSGI server in production.
+    # use_reloader=False by default — debug=True's own auto-reloader restarts the ENTIRE server
+    # process on every .py file save, and while that's restarting (a real second or two), any
+    # request from a phone actively testing the app — including a plain button tap's navigation —
+    # just hangs or gets refused, which reads exactly like "the button didn't respond, I have to
+    # tap it again". Real, reported symptom during a live editing session, not a bug in any page's
+    # own code. debug=True's other benefit (a full interactive traceback on an unhandled error)
+    # is unaffected — only the auto-restart-on-save behavior is off; code changes now take effect
+    # on the next manual restart instead of automatically. Set FLASK_USE_RELOADER=1 to opt back
+    # into the old auto-reload-on-save behavior if ever wanted for a different workflow.
+    app.run(debug=debug_mode, port=5050, host=os.environ.get('FLASK_HOST', '127.0.0.1'), threaded=True,
+            use_reloader=os.environ.get('FLASK_USE_RELOADER') == '1')
