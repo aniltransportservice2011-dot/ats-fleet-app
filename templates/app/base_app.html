@@ -11,26 +11,34 @@
 <title>{% block title %}Anil Transport{% endblock %}</title>
 
 <!-- Reported: the fixed bottom nav sits at a visibly different height depending on which page/tab
-     you're on (Idle Analysis, Route Rates, Empty Run Analysis, etc.). Root cause: on a page with
-     little content, there's nothing to scroll, so the phone's own browser keeps its address bar
-     expanded there — while a taller page (once scrolled) has already let it collapse. That
-     difference in how much of the screen the browser's own chrome is using is what makes
-     position:fixed .a-bottom-nav land at a different spot from page to page, even though its own
-     CSS never changes. A CSS-only min-height:100svh floor was tried first and reportedly wasn't
-     enough (svh has patchy real-world support on some Android WebView versions, silently falling
-     back to plain vh's own long-documented mobile miscalculation bug) — this replaces it with the
-     one technique that's reliable everywhere regardless of viewport-unit support:
-     window.visualViewport (or window.innerHeight where that API doesn't exist) is the browser's
-     own live, authoritative "how tall is the actually-visible area right now" value, independent
-     of whatever CSS unit support the device has. Set as a real pixel value on <html> BEFORE the
-     stylesheet below is even requested, so body's min-height (app.css) has a real number to floor
-     against from this page's very first paint — no flash of the wrong height, no dependency on a
-     scroll event ever happening. Updates live on resize too, so a genuine mid-page keyboard-open/
-     orientation-change doesn't leave a stale value behind either. -->
+     you're on, and on real-device testing (iPhone, installed to the home screen, standalone
+     display mode) it can float above a visible gap specifically on short/empty pages — confirmed
+     iOS-only (Android renders correctly with none of this). Root-caused via a live on-device
+     diagnostic (not guessable from here — this app isn't installable/standalone in any dev
+     environment that can reproduce it): on iOS standalone specifically, window.innerHeight and
+     window.visualViewport.height are NOT reliable on first paint — they can report a shrunk,
+     wrong height for the first render (e.g. 797 on an iPhone 14, whose real screen.height is 844),
+     apparently correcting themselves at some later, unpredictable point with no event firing to
+     know it happened (a document.documentElement.clientHeight-based attempt at fixing this made
+     it worse — clientHeight matched that same wrong 797 consistently, not the real 844).
+     window.screen.height, confirmed against a real iPhone 14 (844 — the device's own documented,
+     fixed screen size, see https://useyourloaf.com/blog/iphone-14-screen-sizes/), is the one
+     value that's never subject to any of this — it describes the physical device, not the current
+     page's viewport, so it can't be wrong or transitional the way the others are. Scoped to iOS
+     standalone only (window.navigator.standalone is a real, iOS-only API — undefined everywhere
+     else, including Android and desktop) specifically because Android was already rendering
+     correctly on its own before any of this file's changes — this only overrides the measurement
+     on the one platform+mode combination confirmed broken, leaving Android's (and iOS Safari-tab
+     mode's, untested but different dynamics) existing behavior untouched. Set as a real pixel
+     value on <html> BEFORE the stylesheet below is even requested, so body's min-height (app.css)
+     has a real number to floor against from this page's very first paint. Updates live on resize
+     too, so a genuine mid-page keyboard-open/orientation-change doesn't leave a stale value behind
+     either. -->
 <script>
 (function () {
   function setAppVh() {
-    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    var h = (window.navigator.standalone === true && window.screen && window.screen.height) ||
+      (window.visualViewport && window.visualViewport.height) || window.innerHeight;
     document.documentElement.style.setProperty('--app-vh', h + 'px');
   }
   setAppVh();
@@ -72,43 +80,14 @@
       {% if notif_count %}<span class="a-badge">{{ notif_count }}</span>{% endif %}
     </a>
     <div class="a-avatar-wrap">
-      <button type="button" class="a-avatar" id="acctToggle" onclick="toggleAcctMenu()" aria-label="Account menu" aria-expanded="false">{{ user_initials }}</button>
-      <div class="acct-menu" id="acctMenu">
-        <div class="acct-menu-head">
-          <div class="a-avatar acct-menu-avatar">{{ user_initials }}</div>
-          <div class="acct-menu-who">
-            <div class="acct-menu-name">{{ app_user_name }}</div>
-            <div class="acct-menu-role">{{ app_user_role }}</div>
-            {% if app_user_email %}<div class="acct-menu-email">{{ app_user_email }}</div>{% endif %}
-          </div>
-        </div>
-        <a href="/app/profile" class="acct-menu-item">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profile
-        </a>
-        <a href="/settings?tab=company" class="acct-menu-item">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Company Settings <span class="acct-menu-ext">↗</span>
-        </a>
-        {% if app_is_admin %}
-        <a href="/settings?tab=users" class="acct-menu-item">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          User Management <span class="acct-menu-ext">↗</span>
-        </a>
-        {% endif %}
-        <div class="acct-menu-sep"></div>
-        <a href="/logout" class="acct-menu-item acct-menu-logout">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
-          Logout
-        </a>
-      </div>
+      <!-- Goes straight to /app/profile now, not the small dropdown — that page now has
+           everything the dropdown used to (Profile info, Company Settings/User Management for
+           admins, Logout) plus real Edit Profile/Change Password, so the dropdown became a
+           redundant extra tap in front of the real destination. Plain <a>, not the persistent
+           router (this lives in <header>, not .a-bottom-nav, so it was never router-scoped to
+           begin with — same real full navigation "Profile" inside the old dropdown always did). -->
+      <a href="{{ url_for('app_profile') }}" class="a-avatar" aria-label="Profile">{{ user_initials }}</a>
     </div>
-    <!-- Nested inside <header>, not a sibling after it — .a-topbar is its own stacking context
-         (position:sticky + z-index), so a backdrop placed *outside* it would paint over the
-         whole header as one unit (including .acct-menu nested inside), dimming the dropdown
-         itself and swallowing clicks meant for its links. Same fix as the working FAB pattern:
-         .fab-backdrop lives inside .a-bottom-nav alongside .fab-menu, not after it. -->
-    <div class="acct-backdrop" id="acctBackdrop" onclick="closeAcctMenu()"></div>
   </div>
 </header>
 
@@ -271,6 +250,370 @@
   }
 </script>
 
+<!-- Custom calendar popup — replaces the OS-native date picker everywhere in the app (per
+     instruction: the native picker can't be recolored or resized on iOS at all, a hard platform
+     wall; this is a real from-scratch replacement, not a CSS tweak). ONE shared instance here
+     (not one per field) reused by every date input in the app — see __calEnhanceAll() below for
+     how a real <input type="date"> becomes a trigger for this without any per-page template
+     changes anywhere. Same open/close/backdrop pattern every other sheet in this app already
+     uses. Small + rounded per instruction (270px, 22px corners) rather than a full-width sheet. -->
+<div class="cal-backdrop" id="calBackdrop" onclick="closeCalPicker()"></div>
+<div class="cal-popup" id="calPopup" role="dialog" aria-modal="true" aria-label="Select date">
+  <div class="cal-head">
+    <button type="button" class="cal-nav-btn" id="calPrevBtn" aria-label="Previous">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <!-- Tapping the label switches to a 12-month grid for the current year (prev/next now step
+         by YEAR instead of month while that grid is showing) — the real "pick a year and month
+         manually" affordance, instead of only ever being able to click month-by-month. Tapping a
+         month in that grid returns to the normal day grid on that month. -->
+    <button type="button" class="cal-month-label" id="calMonthLabel" aria-label="Select month and year"></button>
+    <button type="button" class="cal-nav-btn" id="calNextBtn" aria-label="Next">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+  </div>
+  <div class="cal-weekdays" id="calWeekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+  <div class="cal-grid" id="calGrid"></div>
+  <div class="cal-actions">
+    <button type="button" class="cal-today-btn" id="calTodayBtn">Today</button>
+    <div style="flex:1;"></div>
+    <button type="button" class="cal-cancel-btn" onclick="closeCalPicker()">Cancel</button>
+    <button type="button" class="cal-confirm-btn" id="calConfirmBtn" onclick="confirmCalPicker()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+  </div>
+</div>
+<script>
+(function () {
+  var MONTHS_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var MONTHS_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var cal = { trigger: null, input: null, viewYear: 0, viewMonth: 0, selected: null, min: null, max: null, mode: 'days' };
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+  function iso(y, m, d) { return y + '-' + pad2(m + 1) + '-' + pad2(d); }
+  function pretty(isoStr) {
+    if (!isoStr) return '';
+    var p = isoStr.split('-');
+    var y = parseInt(p[0], 10), m = parseInt(p[1], 10) - 1, d = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return isoStr;
+    return d + ' ' + MONTHS_ABBR[m] + ' ' + y;
+  }
+
+  function renderCal() {
+    if (cal.mode === 'years') { renderYearList(); return; }
+    if (cal.mode === 'months') { renderMonthGrid(); return; }
+    document.getElementById('calPrevBtn').style.visibility = 'visible';
+    document.getElementById('calNextBtn').style.visibility = 'visible';
+    var y = cal.viewYear, m = cal.viewMonth;
+    document.getElementById('calMonthLabel').textContent = MONTHS_FULL[m] + ' ' + y;
+    document.getElementById('calWeekdays').style.display = '';
+    var grid = document.getElementById('calGrid');
+    grid.className = 'cal-grid';
+    grid.innerHTML = '';
+    var firstDow = new Date(y, m, 1).getDay();
+    var daysInMonth = new Date(y, m + 1, 0).getDate();
+    var daysInPrev = new Date(y, m, 0).getDate();
+    var now = new Date();
+    var todayIso = iso(now.getFullYear(), now.getMonth(), now.getDate());
+    var totalCells = Math.ceil((firstDow + daysInMonth) / 7) * 7;
+    for (var i = 0; i < totalCells; i++) {
+      var dayNum, cellYear = y, cellMonth = m, other = false;
+      if (i < firstDow) { dayNum = daysInPrev - firstDow + 1 + i; cellMonth = m - 1; other = true; }
+      else if (i >= firstDow + daysInMonth) { dayNum = i - firstDow - daysInMonth + 1; cellMonth = m + 1; other = true; }
+      else { dayNum = i - firstDow + 1; }
+      if (cellMonth < 0) { cellMonth = 11; cellYear = y - 1; }
+      if (cellMonth > 11) { cellMonth = 0; cellYear = y + 1; }
+      var cellIso = iso(cellYear, cellMonth, dayNum);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-day' + (other ? ' other-month' : '');
+      btn.textContent = dayNum;
+      if (cellIso === todayIso) btn.classList.add('today');
+      if (cellIso === cal.selected) btn.classList.add('selected');
+      if ((cal.min && cellIso < cal.min) || (cal.max && cellIso > cal.max)) btn.disabled = true;
+      (function (targetIso) {
+        btn.addEventListener('click', function () { cal.selected = targetIso; renderCal(); });
+      })(cellIso);
+      grid.appendChild(btn);
+    }
+  }
+
+  // Month/year quick-select — tapping the month label gets here instead of the day grid. Prev/
+  // next (see their own listeners below) step by YEAR while this is showing, so jumping a long
+  // way (a birth year, a registration date years back) doesn't mean clicking month-by-month
+  // dozens of times. Tapping a month cell picks that month and drops back to the day grid.
+  function renderMonthGrid() {
+    document.getElementById('calMonthLabel').textContent = String(cal.viewYear);
+    document.getElementById('calWeekdays').style.display = 'none';
+    var grid = document.getElementById('calGrid');
+    grid.className = 'cal-grid cal-month-grid';
+    grid.innerHTML = '';
+    var now = new Date();
+    for (var mm = 0; mm < 12; mm++) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-month-cell';
+      btn.textContent = MONTHS_ABBR[mm];
+      if (cal.viewYear === now.getFullYear() && mm === now.getMonth()) btn.classList.add('today');
+      if (cal.viewMonth === mm && cal.mode === 'months') btn.classList.add('selected');
+      (function (targetMonth) {
+        btn.addEventListener('click', function () {
+          cal.viewMonth = targetMonth;
+          cal.mode = 'days';
+          renderCal();
+        });
+      })(mm);
+      grid.appendChild(btn);
+    }
+  }
+
+  // Full scrollable year list — tapping the YEAR (shown as the label while the month grid above
+  // is open) gets here, the real "pick a year from a list" instead of only ever stepping one
+  // year per tap on prev/next. Range respects the real input's own min/max when it has one
+  // (unusual in this app so far, but honored if a field ever sets it); otherwise a generous
+  // 100-years-back / 10-years-forward span, wide enough for anything from a trip date to a
+  // decades-old registration date. Picking a year drops back to the month grid for that year (not
+  // straight to a day), since "which year" rarely also means "which month" in the same tap.
+  function renderYearList() {
+    document.getElementById('calPrevBtn').style.visibility = 'hidden';
+    document.getElementById('calNextBtn').style.visibility = 'hidden';
+    document.getElementById('calMonthLabel').textContent = 'Select Year';
+    document.getElementById('calWeekdays').style.display = 'none';
+    var grid = document.getElementById('calGrid');
+    grid.className = 'cal-grid cal-year-list';
+    grid.innerHTML = '';
+    var thisYear = new Date().getFullYear();
+    var minYear = cal.min ? parseInt(cal.min.slice(0, 4), 10) : thisYear - 100;
+    var maxYear = cal.max ? parseInt(cal.max.slice(0, 4), 10) : thisYear + 10;
+    for (var yy = maxYear; yy >= minYear; yy--) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-year-cell';
+      btn.textContent = yy;
+      if (yy === thisYear) btn.classList.add('today');
+      if (yy === cal.viewYear) btn.classList.add('selected');
+      (function (targetYear) {
+        btn.addEventListener('click', function () {
+          cal.viewYear = targetYear;
+          cal.mode = 'months';
+          renderCal();
+        });
+      })(yy);
+      grid.appendChild(btn);
+    }
+    requestAnimationFrame(function () {
+      var sel = grid.querySelector('.selected');
+      if (sel) sel.scrollIntoView({ block: 'center' });
+    });
+  }
+
+  function openCalPicker(trigger, input) {
+    cal.trigger = trigger;
+    cal.input = input;
+    var base = input.value ? new Date(input.value + 'T00:00:00') : new Date();
+    if (isNaN(base.getTime())) base = new Date();
+    cal.viewYear = base.getFullYear();
+    cal.viewMonth = base.getMonth();
+    cal.selected = input.value || null;
+    cal.min = input.getAttribute('min') || null;
+    cal.max = input.getAttribute('max') || null;
+    cal.mode = 'days';
+    renderCal();
+    lockPageScroll();
+    document.getElementById('calBackdrop').classList.add('open');
+    document.getElementById('calPopup').classList.add('open');
+  }
+  function closeCalPicker() {
+    unlockPageScroll();
+    document.getElementById('calBackdrop').classList.remove('open');
+    document.getElementById('calPopup').classList.remove('open');
+  }
+  function confirmCalPicker() {
+    if (cal.selected && cal.input) {
+      cal.input.value = cal.selected;
+      if (cal.trigger) {
+        cal.trigger.textContent = pretty(cal.selected);
+        cal.trigger.classList.remove('cal-placeholder');
+      }
+      cal.input.dispatchEvent(new Event('input', { bubbles: true }));
+      cal.input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    closeCalPicker();
+  }
+  window.closeCalPicker = closeCalPicker;
+  window.confirmCalPicker = confirmCalPicker;
+
+  document.getElementById('calPrevBtn').addEventListener('click', function () {
+    if (cal.mode === 'years') return; // the list scrolls instead — no single "previous" page to step to
+    if (cal.mode === 'months') { cal.viewYear--; renderCal(); return; }
+    cal.viewMonth--; if (cal.viewMonth < 0) { cal.viewMonth = 11; cal.viewYear--; } renderCal();
+  });
+  document.getElementById('calNextBtn').addEventListener('click', function () {
+    if (cal.mode === 'years') return;
+    if (cal.mode === 'months') { cal.viewYear++; renderCal(); return; }
+    cal.viewMonth++; if (cal.viewMonth > 11) { cal.viewMonth = 0; cal.viewYear++; } renderCal();
+  });
+  // Tapping the label cycles days -> months -> years -> back to days — each level is a real
+  // "pick from a list" step (month grid, then a full scrollable year list), not just a faster way
+  // to step the same one-unit-per-tap arrows.
+  document.getElementById('calMonthLabel').addEventListener('click', function () {
+    cal.mode = cal.mode === 'days' ? 'months' : (cal.mode === 'months' ? 'years' : 'days');
+    renderCal();
+  });
+  document.getElementById('calTodayBtn').addEventListener('click', function () {
+    var now = new Date();
+    cal.viewYear = now.getFullYear(); cal.viewMonth = now.getMonth();
+    cal.selected = iso(now.getFullYear(), now.getMonth(), now.getDate());
+    cal.mode = 'days';
+    renderCal();
+  });
+
+  // Turns a real <input type="date"> into a trigger for the popup above — copies the input's own
+  // rendered style (border/radius/padding/font/background) onto the new trigger button so it's
+  // pixel-identical to whatever that field already looked like in its own page, with zero
+  // per-page CSS needed. The real input stays in the DOM completely unchanged (same name/id/
+  // required/value) — just visually hidden and non-interactive — so form submission, `required`
+  // validation, and any existing onchange handler on that field keep working exactly as before;
+  // only how the user picks a date changes. data-cal-enhanced guards against double-wrapping the
+  // same input if this runs again after a router swap that didn't actually replace it.
+  // Finds a normal sibling field (text/number/time input or select) in the same form to copy
+  // sizing from, instead of the date input's own computed style — the native date input had its
+  // OWN deliberately-shrunk padding/font-size (.vam-field/.tw-field input[type="date"], see
+  // app.css) purely to make room for the native browser's own calendar-icon rendering, which no
+  // longer exists now that this input is hidden behind a custom trigger. Copying the date input's
+  // own style would just carry that old, now-pointless size mismatch into the new trigger,
+  // leaving it visibly smaller/misaligned next to every other field in the same form (e.g. Date
+  // next to Time in Toll's Add modal) — copying a normal sibling's style instead guarantees the
+  // trigger matches whatever sizing convention that specific page/form actually uses, with no
+  // hardcoded assumptions about which CSS class is in play. Falls back to the date input's own
+  // style only if truly no other field exists in the same form (better than nothing).
+  function findSizeReference(input) {
+    var form = input.closest('form') || input.closest('.vam-form, .tw-field, body');
+    if (form) {
+      var candidates = form.querySelectorAll('input[type="text"], input[type="number"], input[type="time"], input[type="tel"], select');
+      for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i] !== input) return candidates[i];
+      }
+    }
+    return input;
+  }
+  function enhanceDateInput(input) {
+    if (input.dataset.calEnhanced) return;
+    input.dataset.calEnhanced = '1';
+    var cs = getComputedStyle(findSizeReference(input));
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'cal-trigger';
+    trigger.style.border = cs.border;
+    trigger.style.borderRadius = cs.borderRadius;
+    trigger.style.padding = cs.padding;
+    trigger.style.fontSize = cs.fontSize;
+    trigger.style.fontFamily = cs.fontFamily;
+    trigger.style.background = cs.backgroundColor;
+    trigger.style.height = cs.height;
+    trigger.style.boxSizing = cs.boxSizing;
+    var hasValue = !!input.value;
+    trigger.textContent = hasValue ? pretty(input.value) : 'Select date';
+    if (!hasValue) trigger.classList.add('cal-placeholder');
+    if (input.disabled) { trigger.disabled = true; trigger.classList.add('cal-trigger-disabled'); }
+    input.style.position = 'absolute';
+    input.style.opacity = '0';
+    input.style.width = '1px';
+    input.style.height = '1px';
+    input.style.pointerEvents = 'none';
+    input.tabIndex = -1;
+    input.parentNode.insertBefore(trigger, input.nextSibling);
+    trigger.addEventListener('click', function () {
+      if (input.disabled) return;
+      openCalPicker(trigger, input);
+    });
+  }
+  function enhanceAllDateInputs(root) {
+    (root || document).querySelectorAll('input[type="date"]:not([data-cal-enhanced])').forEach(enhanceDateInput);
+  }
+  window.__enhanceAllDateInputs = enhanceAllDateInputs;
+
+  // Every OTHER native list="..." datalist field across the app (Battery/Tyres/Urea/Toll/
+  // Maintenance/Expenses' own Vehicle/Vendor/Supplier/Category fields, etc.) gets the exact same
+  // tap-reliable suggestion widget trip_add.html's Vehicle/Party/Driver fields already use
+  // (twInitAutocomplete there) — native datalist dropdowns are a known, real bug on Android
+  // Chrome/WebView (silently show nothing at all on tap), which is what was making these fields
+  // look like they "weren't auto-populating" everywhere except the one page that had already
+  // worked around it. Reads real options straight out of that field's own existing <datalist> (no
+  // backend/template change needed anywhere — the real data was already there, just rendered
+  // through a control that doesn't reliably work), and doesn't touch trip_add.html's own fields at
+  // all (input[list] only matches datalist-based fields; that page's Vehicle/Party/Driver never
+  // used list= to begin with, see its own comment on why). .tw-ac-wrap/.tw-ac-list/.tw-ac-item are
+  // shared app.css classes, not scoped to trip_add.html, so this reuses them directly.
+  function enhanceDatalistInput(input) {
+    if (input.dataset.acEnhanced) return;
+    var listId = input.getAttribute('list');
+    if (!listId) return;
+    var datalist = document.getElementById(listId);
+    if (!datalist) return;
+    input.dataset.acEnhanced = '1';
+    input.removeAttribute('list'); // stop the OS from also trying (and failing) to show its own native popup
+    input.setAttribute('autocomplete', 'off');
+
+    var wrap = document.createElement('div');
+    wrap.className = 'tw-ac-wrap';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var list = document.createElement('div');
+    list.className = 'tw-ac-list';
+    wrap.appendChild(list);
+
+    function currentOptions() {
+      // Read live, not once at enhance-time — a couple of these datalists (e.g. Toll's own
+      // toll-plaza-list) are re-populated from real rows on the page itself, not just server data.
+      return Array.from(datalist.querySelectorAll('option')).map(function (o) { return o.value; }).filter(Boolean);
+    }
+    var suppressNextRender = false;
+    function render(query) {
+      var q = (query || '').trim().toLowerCase();
+      var options = currentOptions();
+      var matches = q ? options.filter(function (o) { return o.toLowerCase().indexOf(q) !== -1; }) : options;
+      if (!matches.length) {
+        list.innerHTML = '<div class="tw-ac-empty">No matches — you can type a new one</div>';
+      } else {
+        list.innerHTML = matches.slice(0, 50).map(function (o) {
+          return '<div class="tw-ac-item">' + o.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
+        }).join('');
+      }
+      list.classList.add('open');
+    }
+    input.addEventListener('focus', function () {
+      if (input.readOnly || input.disabled) return;
+      render(input.value);
+    });
+    input.addEventListener('input', function () {
+      if (suppressNextRender) { suppressNextRender = false; return; }
+      render(input.value);
+    });
+    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') list.classList.remove('open'); });
+    list.addEventListener('mousedown', function (e) {
+      var item = e.target.closest('.tw-ac-item');
+      if (!item) return;
+      e.preventDefault();
+      suppressNextRender = true;
+      input.value = item.textContent;
+      list.classList.remove('open');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    document.addEventListener('click', function (e) {
+      if (e.target !== input && !list.contains(e.target)) list.classList.remove('open');
+    });
+  }
+  function enhanceAllDatalistInputs(root) {
+    (root || document).querySelectorAll('input[list]:not([data-ac-enhanced])').forEach(enhanceDatalistInput);
+  }
+  window.__enhanceAllDatalistInputs = enhanceAllDatalistInputs;
+  enhanceAllDateInputs(document);
+  enhanceAllDatalistInputs(document);
+})();
+</script>
+
 <script>
   // Registered with an explicit scope of /app/ — this service worker can only ever control pages
   // under /app/, never the website's own pages, even though it's served from the shared /static/.
@@ -298,7 +641,7 @@
   function unlockPageScroll() { document.body.classList.remove('a-scroll-lock'); }
 
   function openFabMenu() {
-    closeAcctMenu(); closeMoreSheet(); lockPageScroll();
+    closeMoreSheet(); lockPageScroll();
     document.getElementById('fabMenu').classList.add('open');
     document.getElementById('fabBackdrop').classList.add('open');
     document.getElementById('fabToggle').classList.add('open');
@@ -326,31 +669,12 @@
     document.getElementById('maintFanMenu').classList.add('open');
   }
 
-  // Avatar → account dropdown. Same open/close/backdrop pattern as the FAB speed-dial above,
-  // just anchored under the topbar avatar instead of fanned out from the bottom-nav FAB.
-  function openAcctMenu() {
-    closeFabMenu(); closeMoreSheet(); lockPageScroll();
-    document.getElementById('acctMenu').classList.add('open');
-    document.getElementById('acctBackdrop').classList.add('open');
-    document.getElementById('acctToggle').setAttribute('aria-expanded', 'true');
-  }
-  function closeAcctMenu() {
-    unlockPageScroll();
-    document.getElementById('acctMenu').classList.remove('open');
-    document.getElementById('acctBackdrop').classList.remove('open');
-    document.getElementById('acctToggle').setAttribute('aria-expanded', 'false');
-  }
-  function toggleAcctMenu() {
-    if (document.getElementById('acctMenu').classList.contains('open')) closeAcctMenu();
-    else openAcctMenu();
-  }
-
   // "More" speed-dial — same mechanism as the FAB (+) above, just anchored bottom-right and
   // stacking straight up in a vertical line instead of the FAB's left/right arc (no room to fan
-  // sideways at the edge of the nav). Replaces the old dead /app/more link. Closes the other
-  // two overlays (and is closed by them) so only one is ever open at a time.
+  // sideways at the edge of the nav). Replaces the old dead /app/more link. Closes the FAB menu
+  // (and is closed by it) so only one is ever open at a time.
   function openMoreSheet() {
-    closeFabMenu(); closeAcctMenu(); lockPageScroll();
+    closeFabMenu(); lockPageScroll();
     document.getElementById('moreMenu').classList.add('open');
     document.getElementById('moreBackdrop').classList.add('open');
     document.getElementById('moreToggle').classList.add('active');
@@ -444,7 +768,7 @@
 
   function navigate(url, isPopState) {
     var myToken = ++navToken;
-    closeFabMenu(); closeAcctMenu(); closeMoreSheet();
+    closeFabMenu(); closeMoreSheet();
     overlayTimer = setTimeout(showOverlay, 400); // same standard threshold _page_loader.html uses
 
     fetch(url, { credentials: 'same-origin' }).then(function (res) {
@@ -468,6 +792,14 @@
       // links all go through this router since they live inside .a-bottom-nav.
       if (!isPopState) history.pushState({ appNav: true }, '', url);
       mainEl.innerHTML = newMain.innerHTML;
+      // Re-enhance any real <input type="date"> the swapped-in page brought with it — the calendar
+      // popup itself lives outside #appMain (untouched by this swap), but its trigger buttons are
+      // created per-input, so a freshly-swapped page's own date fields need this run again. See
+      // enhanceAllDateInputs()'s own comment, defined earlier, before #appExtraScripts.
+      if (window.__enhanceAllDateInputs) window.__enhanceAllDateInputs(mainEl);
+      // Same reasoning, for every native list="..." datalist field the swapped-in page brought
+      // with it — see enhanceAllDatalistInputs()'s own comment, defined earlier.
+      if (window.__enhanceAllDatalistInputs) window.__enhanceAllDatalistInputs(mainEl);
       scriptsEl.innerHTML = newScripts ? newScripts.innerHTML : '';
       runScripts(scriptsEl);
       syncActiveNav(newDoc);

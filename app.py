@@ -2656,6 +2656,23 @@ def _get_autocomplete_lists():
     conn.close()
     return vehicles, parties, vendors, combined_names
 
+def _get_route_locations(conn):
+    """Real, deduplicated From/To location suggestions for the Trip form — every distinct
+    non-blank value already sitting in trips.from_loc and trips.to_loc, combined into one list
+    (a location that was once a "From" is exactly as valid a "To" suggestion and vice versa, same
+    reasoning _get_autocomplete_lists() already applies to parties+vendors sharing one combined
+    list). No new table or column: from_loc/to_loc already exist on trips and already hold every
+    real location anyone has ever typed, so this is genuinely just a query over data that's
+    already there — a location typed once (no matter how it was entered) is available as a
+    suggestion on every trip added after it, with nothing new to maintain or keep in sync."""
+    rows = conn.execute("""
+        SELECT from_loc AS loc FROM trips WHERE from_loc IS NOT NULL AND TRIM(from_loc) != ''
+        UNION
+        SELECT to_loc AS loc FROM trips WHERE to_loc IS NOT NULL AND TRIM(to_loc) != ''
+        ORDER BY loc COLLATE NOCASE
+    """).fetchall()
+    return [r['loc'] for r in rows]
+
 def _vehicle_type_map(conn):
     """vehicle_no -> own/hired type code, for the Trip form's JS: selecting a vehicle that
     already exists auto-fills and locks the Type field from here instead of leaving it an
@@ -10866,12 +10883,14 @@ def app_add_trip():
             conn2 = get_db()
             employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
             vehicle_type_map = _vehicle_type_map(conn2)
+            location_options = _get_route_locations(conn2)
             conn2.close()
             error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
                      f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
             return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles],
                                     combined_names=combined_names, employees=[e['name'] for e in employees],
-                                    vehicle_type_map=vehicle_type_map, error=error, company_name=company_name,
+                                    vehicle_type_map=vehicle_type_map, location_options=location_options,
+                                    error=error, company_name=company_name,
                                     mode='add', custom_items=[])
         _insert_trip_from_form(conn, f)
         conn.commit()
@@ -10882,10 +10901,12 @@ def app_add_trip():
     conn2 = get_db()
     employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
     vehicle_type_map = _vehicle_type_map(conn2)
+    location_options = _get_route_locations(conn2)
     conn2.close()
     return render_template('app/trip_add.html', t={}, vehicles=[v['vehicle_no'] for v in vehicles],
                             combined_names=combined_names, employees=[e['name'] for e in employees],
-                            vehicle_type_map=vehicle_type_map, error=None, company_name=company_name,
+                            vehicle_type_map=vehicle_type_map, location_options=location_options,
+                            error=None, company_name=company_name,
                             mode='add', custom_items=[])
 
 @app.route('/app/trips/<int:trip_id>/edit', methods=['GET', 'POST'])
@@ -10907,8 +10928,10 @@ def app_edit_trip(trip_id):
         conn2 = get_db()
         employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
         vehicle_type_map = _vehicle_type_map(conn2)
+        location_options = _get_route_locations(conn2)
         conn2.close()
-        return ([v['vehicle_no'] for v in vehicles], combined_names, [e['name'] for e in employees], vehicle_type_map)
+        return ([v['vehicle_no'] for v in vehicles], combined_names, [e['name'] for e in employees],
+                vehicle_type_map, location_options)
 
     if request.method == 'POST':
         f = request.form
@@ -10920,11 +10943,12 @@ def app_edit_trip(trip_id):
             custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
                               'vendor_name': r['vendor_name'] or ''} for r in custom_item_rows]
             conn.close()
-            vehicles, combined_names, employees, vehicle_type_map = _load_form_context()
+            vehicles, combined_names, employees, vehicle_type_map, location_options = _load_form_context()
             error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
                      f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
             return render_template('app/trip_add.html', t=f, vehicles=vehicles, combined_names=combined_names,
-                                    employees=employees, vehicle_type_map=vehicle_type_map, error=error,
+                                    employees=employees, vehicle_type_map=vehicle_type_map,
+                                    location_options=location_options, error=error,
                                     company_name=company_name, mode='edit', trip_id=trip_id, custom_items=custom_items)
         ok, error = _update_trip_from_form(conn, trip_id, f)
         if not ok:
@@ -10952,9 +10976,10 @@ def app_edit_trip(trip_id):
     custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
                       'vendor_name': r['vendor_name'] or ''} for r in custom_item_rows]
     conn.close()
-    vehicles, combined_names, employees, vehicle_type_map = _load_form_context()
+    vehicles, combined_names, employees, vehicle_type_map, location_options = _load_form_context()
     return render_template('app/trip_add.html', t=dict(trip), vehicles=vehicles, combined_names=combined_names,
-                            employees=employees, vehicle_type_map=vehicle_type_map, error=None,
+                            employees=employees, vehicle_type_map=vehicle_type_map,
+                            location_options=location_options, error=None,
                             company_name=company_name, mode='edit', trip_id=trip_id, custom_items=custom_items)
 
 @app.route('/app/maintenance')
@@ -12375,6 +12400,67 @@ def app_profile():
         email=u['email'] or '', role_label='Administrator' if session.get('is_admin') else (u['role'] or 'Staff'),
         access_level=u['access_level'] or '', status=u['status'] or 'Active', member_since=member_since,
         is_admin=bool(session.get('is_admin')))
+
+@app.route('/app/profile/update', methods=['POST'])
+def app_update_profile():
+    """Real self-service "Edit Profile" — a logged-in user updating their OWN full_name/email/
+    phone, nothing else. Deliberately narrower than edit_user() (the admin-only User Management
+    route, /settings/users/<id>/edit): that one can also change someone's role/access_level/
+    status/password, which a user editing their own profile has no business touching (role and
+    access level are permissions an admin assigns, not something to self-service; password has
+    its own dedicated, current-password-verified flow below). username is real but intentionally
+    not editable here — it's the login identity, changing it is a bigger, riskier action than a
+    profile edit, and nothing elsewhere in the app has a "rename my username" flow either."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    f = request.form
+    full_name = (f.get('full_name') or '').strip()
+    email = (f.get('email') or '').strip()
+    phone = (f.get('phone') or '').strip()
+    if not full_name:
+        return jsonify({'ok': False, 'error': 'Full Name is required.'}), 400
+    conn = get_db()
+    conn.execute("""UPDATE users SET full_name=?, email=?, phone=?, updated_by=?, updated_at=? WHERE id=?""",
+                 (full_name, email or None, phone or None, session['user_id'],
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), session['user_id']))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_profile')})
+
+@app.route('/app/profile/change-password', methods=['POST'])
+def app_change_password():
+    """Real self-service "Change Password" — verifies the real current password (same
+    check_password_hash pattern login()/app_login() already use) before allowing a new one, same
+    baseline safeguard any password-change flow needs. No length/complexity rule enforced beyond
+    "non-empty" — nothing else in this codebase enforces one either (add_user()'s own password
+    field is optional with zero validation), so this doesn't invent a stricter bar than the rest
+    of the app already holds itself to."""
+    from flask import jsonify
+    from werkzeug.security import check_password_hash, generate_password_hash
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    f = request.form
+    current_pw = f.get('current_password') or ''
+    new_pw = f.get('new_password') or ''
+    confirm_pw = f.get('confirm_password') or ''
+    if not current_pw or not new_pw:
+        return jsonify({'ok': False, 'error': 'All fields are required.'}), 400
+    if new_pw != confirm_pw:
+        return jsonify({'ok': False, 'error': 'New password and confirmation do not match.'}), 400
+    if len(new_pw) < 6:
+        return jsonify({'ok': False, 'error': 'New password must be at least 6 characters.'}), 400
+    conn = get_db()
+    user = conn.execute("SELECT password_hash FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    if not user or not check_password_hash(user['password_hash'], current_pw):
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Current password is incorrect.'}), 400
+    conn.execute("UPDATE users SET password_hash=?, updated_by=?, updated_at=? WHERE id=?",
+                 (generate_password_hash(new_pw), session['user_id'],
+                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), session['user_id']))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 @app.route('/app/login/otp', methods=['GET', 'POST'])
 def app_login_otp():

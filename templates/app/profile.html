@@ -2,14 +2,36 @@
 {% block title %}Profile — {{ company_name }}{% endblock %}
 {% block content %}
 
-<!-- No camera/edit-photo control on the avatar — there's no real avatar-upload column or route
-     anywhere in the schema, so this stays a plain initials circle like everywhere else in the
-     app rather than a fake "tap to change photo" affordance. -->
-<div class="pr-hero">
-  <div class="a-avatar pr-hero-avatar">{{ user_initials }}</div>
-  <div class="pr-hero-name">{{ full_name }}</div>
-  <div class="pr-hero-role">{{ role_label }}</div>
+<!-- Dark hero card + Edit Profile / Change Password action cards, per the reference design.
+     Both actions are real now (app_update_profile()/app_change_password() in app.py) — see each
+     modal below. No camera/edit-photo control on the avatar — there's no real avatar-upload
+     column or route anywhere in the schema, so that stays a plain (ringed) initials circle
+     rather than a fake "tap to change photo" affordance. -->
+<div class="pr-hero-card">
+  <div class="pr-hero-row">
+    <div class="pr-hero-avatar-ring"><div class="a-avatar pr-hero-avatar">{{ user_initials }}</div></div>
+    <div class="pr-hero-who">
+      <div class="pr-hero-name">{{ full_name }}</div>
+      <div class="pr-hero-meta">
+        <span class="pr-hero-role">{{ role_label }}</span>
+        <span class="pr-hero-status {{ status }}">{{ status }}</span>
+      </div>
+    </div>
+  </div>
   {% if email %}<div class="pr-hero-email">{{ email }}</div>{% endif %}
+</div>
+
+<div class="pr-action-grid">
+  <button type="button" class="pr-action-card" onclick="openEditProfileModal()">
+    <span class="pr-action-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
+    <span class="pr-action-body"><div class="pr-action-title">Edit Profile</div><div class="pr-action-sub">Update your info</div></span>
+    <span class="pr-action-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+  </button>
+  <button type="button" class="pr-action-card" onclick="openChangePasswordModal()">
+    <span class="pr-action-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+    <span class="pr-action-body"><div class="pr-action-title">Change Password</div><div class="pr-action-sub">Update your password</div></span>
+    <span class="pr-action-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+  </button>
 </div>
 
 <div class="ld-card">
@@ -44,28 +66,183 @@
   </div>
 </div>
 
+<!-- Company Settings and User Management are both admin-only now (Company Settings wasn't
+     gated before — per instruction, it should be, same as User Management already was). A
+     non-admin sees just Logout here; nothing fake shown and then blocked, the row simply isn't
+     there for them. -->
+{% if is_admin %}
 <div class="ld-card">
   <div class="ld-card-head"><h2>Account</h2></div>
   <a href="/settings?tab=company" class="acct-menu-item pr-linkrow">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     Company Settings <span class="acct-menu-ext">↗</span>
   </a>
-  {% if is_admin %}
   <a href="/settings?tab=users" class="acct-menu-item pr-linkrow">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
     User Management <span class="acct-menu-ext">↗</span>
   </a>
-  {% endif %}
   <a href="/logout" class="acct-menu-item acct-menu-logout pr-linkrow">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
     Logout
   </a>
 </div>
+{% else %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Account</h2></div>
+  <a href="/logout" class="acct-menu-item acct-menu-logout pr-linkrow">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+    Logout
+  </a>
+</div>
+{% endif %}
 
-<!-- Deliberately no Change Password / Notification Preferences / Language / Theme rows and no
-     "About — Version …" footer: there's no self-service password-change route, no per-user
-     preferences table, and no version number tracked anywhere in this codebase to back them
-     with real data (verified: change_password/old_password/current_password and
-     1.2.0/APP_VERSION/__version__ both zero-match across app.py and static/*.json). Same reasoning
-     already applied to dropping Create Account / Forgot Password on login.html. -->
+<!-- Edit Profile modal — Full Name/Email/Phone only, posts to app_update_profile(). Role/Access
+     Level/Status are deliberately not here: those are admin-assigned permissions (User
+     Management's job), not something to self-service from your own profile. -->
+<div class="vam-backdrop" id="epBackdrop" onclick="closeEditProfileModal()"></div>
+<div class="vam-modal" id="epModal" role="dialog" aria-modal="true" aria-label="Edit Profile">
+  <div class="vam-head">
+    <h2>Edit Profile</h2>
+    <button type="button" class="vam-close" onclick="closeEditProfileModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="epError" style="display:none; margin:0 18px 14px;"></div>
+  <form id="epForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Full Name <span class="req">*</span></label><input type="text" name="full_name" value="{{ full_name }}" required></div>
+      <div class="vam-field"><label>Email</label><input type="email" name="email" value="{{ email }}"></div>
+      <div class="vam-field"><label>Phone</label><input type="tel" name="phone" value="{{ phone }}"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeEditProfileModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Changes</button>
+    </div>
+  </form>
+</div>
+
+<!-- Change Password modal — real current-password verification (app_change_password() in
+     app.py), same check_password_hash safeguard login() itself uses. -->
+<div class="vam-backdrop" id="cpBackdrop" onclick="closeChangePasswordModal()"></div>
+<div class="vam-modal" id="cpModal" role="dialog" aria-modal="true" aria-label="Change Password">
+  <div class="vam-head">
+    <h2>Change Password</h2>
+    <button type="button" class="vam-close" onclick="closeChangePasswordModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="cpError" style="display:none; margin:0 18px 14px;"></div>
+  <form id="cpForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Current Password <span class="req">*</span></label><input type="password" name="current_password" autocomplete="current-password" required></div>
+      <div class="vam-field vam-field-full"><label>New Password <span class="req">*</span></label><input type="password" name="new_password" autocomplete="new-password" minlength="6" required></div>
+      <div class="vam-field vam-field-full"><label>Confirm New Password <span class="req">*</span></label><input type="password" name="confirm_password" autocomplete="new-password" minlength="6" required></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeChangePasswordModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Update Password</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+function openEditProfileModal() {
+  lockPageScroll();
+  document.getElementById('epError').style.display = 'none';
+  document.getElementById('epBackdrop').classList.add('open');
+  document.getElementById('epModal').classList.add('open');
+}
+function closeEditProfileModal() {
+  unlockPageScroll();
+  document.getElementById('epBackdrop').classList.remove('open');
+  document.getElementById('epModal').classList.remove('open');
+}
+var epForm = document.getElementById('epForm');
+if (epForm) {
+  epForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = epForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('epError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_update_profile') }}", { method: 'POST', body: new FormData(epForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_profile') }}") + '?updated=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+
+function openChangePasswordModal() {
+  lockPageScroll();
+  document.getElementById('cpError').style.display = 'none';
+  document.getElementById('cpForm').reset();
+  document.getElementById('cpBackdrop').classList.add('open');
+  document.getElementById('cpModal').classList.add('open');
+}
+function closeChangePasswordModal() {
+  unlockPageScroll();
+  document.getElementById('cpBackdrop').classList.remove('open');
+  document.getElementById('cpModal').classList.remove('open');
+}
+var cpForm = document.getElementById('cpForm');
+if (cpForm) {
+  cpForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = cpForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('cpError');
+    errBox.style.display = 'none';
+    var newPw = cpForm.querySelector('[name="new_password"]').value;
+    var confirmPw = cpForm.querySelector('[name="confirm_password"]').value;
+    if (newPw !== confirmPw) {
+      errBox.textContent = 'New password and confirmation do not match.';
+      errBox.style.display = 'block';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Updating…';
+    fetch("{{ url_for('app_change_password') }}", { method: 'POST', body: new FormData(cpForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          closeChangePasswordModal();
+          showToast('Password updated successfully');
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('updated') === '1') {
+    showToast('Profile updated successfully');
+    params.delete('updated');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+</script>
 {% endblock %}
