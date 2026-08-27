@@ -9442,7 +9442,7 @@ def _fleet_utilization_data(conn, date_from, date_to, vehicle_f=''):
     most_idle = sorted(rows, key=lambda r: r['idle_days'], reverse=True)[:5]
 
     # ---------- Empty runs (same formulas as the old Empty Runs page — LR number starting with "Empty") ----------
-    eq = """SELECT t.id, t.date, v.vehicle_no, t.from_loc, t.to_loc, t.fuel_amount, t.toll
+    eq = """SELECT t.id, t.date, v.vehicle_no, v.type as vehicle_type, t.from_loc, t.to_loc, t.fuel_amount, t.toll
             FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
             WHERE t.lr_number LIKE 'Empty%'"""
     eparams = []
@@ -9459,6 +9459,29 @@ def _fleet_utilization_data(conn, date_from, date_to, vehicle_f=''):
     total_toll = sum(_trip_toll(r, empty_toll_map) for r in empty_rows)
     total_empty_cost = total_fuel + total_toll
     empty_run_trips = len(empty_rows)
+
+    # ---------- Empty Runs by Vehicle & by Route (own fleet only) — ranked most-frequent-first,
+    # replacing the old flat per-trip list per instruction ("bring those data points with total
+    # cost" instead). Own fleet only, not hired — a hired vehicle's empty-run fuel/toll isn't
+    # really "your" cost the same way an own vehicle's is. Route grouping reuses _clean_loc(), the
+    # same normalization Route Analytics already uses, so "Mumbai"/"MUMBAI"/"Mumbai " don't count
+    # as 3 different routes here either. ----------
+    empty_by_vehicle_map = {}
+    empty_by_route_map = {}
+    for r in empty_rows:
+        if r['vehicle_type'] != 'own' or not r['vehicle_no']:
+            continue
+        cost = (r['fuel_amount'] or 0) + _trip_toll(r, empty_toll_map)
+        vm = empty_by_vehicle_map.setdefault(r['vehicle_no'], {'vehicle_no': r['vehicle_no'], 'count': 0, 'cost': 0})
+        vm['count'] += 1
+        vm['cost'] += cost
+        cf, ct = _clean_loc(r['from_loc']), _clean_loc(r['to_loc'])
+        rk = (cf, ct)
+        rm = empty_by_route_map.setdefault(rk, {'from_loc': cf or '—', 'to_loc': ct or '—', 'count': 0, 'cost': 0})
+        rm['count'] += 1
+        rm['cost'] += cost
+    empty_by_vehicle = sorted(empty_by_vehicle_map.values(), key=lambda x: (-x['count'], -x['cost']))
+    empty_by_route = sorted(empty_by_route_map.values(), key=lambda x: (-x['count'], -x['cost']))
 
     total_trips_period = conn.execute("SELECT COUNT(*) FROM trips WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     empty_run_pct_overall = round(empty_run_trips / total_trips_period * 100, 1) if total_trips_period else 0
@@ -9527,6 +9550,7 @@ def _fleet_utilization_data(conn, date_from, date_to, vehicle_f=''):
         'avg_idle_days': avg_idle_days, 'avg_active_days': avg_active_days,
         'empty_run_trips': empty_run_trips, 'empty_run_pct_overall': empty_run_pct_overall,
         'total_fuel': total_fuel, 'total_toll': total_toll, 'total_empty_cost': total_empty_cost,
+        'empty_by_vehicle': empty_by_vehicle, 'empty_by_route': empty_by_route,
         'f_date_from': date_from, 'f_date_to': date_to, 'f_vehicle': vehicle_f, 'vehicles': all_vehicles_list,
         'fleet_total_km': fleet_total_km, 'on_trip_count': on_trip_count, 'in_workshop': in_workshop, 'vs_idle': vs_idle,
         'type_breakdown': type_breakdown, 'fleet_total_fuel_ltr': fleet_total_fuel_ltr, 'avg_fuel_efficiency': avg_fuel_efficiency}

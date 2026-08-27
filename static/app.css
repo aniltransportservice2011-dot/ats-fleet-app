@@ -40,15 +40,24 @@ body.app-body {
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden; /* safety net — a native form element (date-picker icon etc.) rendering
     wider than its box on some device clips here instead of pushing the whole screen sideways */
-  /* Floor the page height to the screen even on short-content pages (e.g. Business Overview's
-     4-card list) — without this, a short page never becomes scrollable, so mobile browsers keep
-     their own address bar expanded there while a taller page (that the user has scrolled) has
-     already auto-collapsed it; that difference in browser chrome height is what was making
-     .a-bottom-nav (position:fixed) visibly sit at a different height from one screen to the
-     next. min-height, not height, so it's a floor only — never shrinks pages that are already
-     taller than the screen. */
+  /* Floor the page height to the screen even on short-content pages (e.g. Route Rates or Empty
+     Run Analysis with only a handful of rows) — without this, a short page never becomes
+     scrollable, so mobile browsers keep their own address bar expanded there while a taller page
+     (that the user has scrolled) has already auto-collapsed it; that difference in browser chrome
+     height is what was making .a-bottom-nav (position:fixed) visibly sit at a different height
+     from one screen to the next — reported as the nav "coming up a little" on some tabs.
+     min-height, not height, so it's a floor only — never shrinks pages already taller than the
+     screen.
+     Three fallbacks, weakest to strongest: 100vh (works everywhere, but has a long-documented
+     mobile miscalculation bug this whole problem stems from) -> 100svh (fixes that on browsers
+     that support the unit) -> var(--app-vh) (base_app.html's own inline <head> script, setting a
+     real pixel value from window.visualViewport/innerHeight before first paint — works on every
+     browser regardless of viewport-unit support at all, so this is the one that actually has to
+     hold even where svh doesn't). Each line only takes effect if the browser understands it, so
+     this always degrades to the best one actually available, never breaks outright. */
   min-height: 100vh;
-  min-height: 100dvh;
+  min-height: 100svh;
+  min-height: var(--app-vh, 100vh);
 }
 a { color: inherit; text-decoration: none; }
 /* Applied while the FAB / account dropdown / More speed-dial is open — see lockPageScroll() in
