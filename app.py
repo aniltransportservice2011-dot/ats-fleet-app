@@ -2898,21 +2898,15 @@ UREA_LOW_STOCK_THRESHOLD_L = 200  # default reorder point per location — no Se
                                    # this yet, so it's a documented constant rather than a
                                    # silently-invented one; easy to move into Settings later.
 
-def _maintenance_urea_tab(conn):
-    """Urea (AdBlue/DEF) stock ledger — every row is a real transaction (a purchase into stock,
-    or a consumption out of it), with a running balance computed live from the ledger, not a
+def _urea_management_data(conn, location_f='', supplier_f='', type_f='', search_f='', date_from='', date_to=''):
+    """Real Urea (AdBlue/DEF) stock ledger data — extracted out of _maintenance_urea_tab() (website)
+    so the mobile app_urea() can share the exact same numbers, same reasoning already applied to
+    Battery/Tyres this pass. Every row is a real transaction (a purchase into stock, or a
+    consumption out of it), with a running balance computed live from the ledger, not a
     separately-maintained counter that could drift. Cost only enters the maintenance table (and
     therefore the Overview 'Urea' card) at the moment stock is purchased or a direct/off-stock
-    top-up happens — using stock you already paid for isn't a second expense."""
-    location_f = request.args.get('location', '')
-    supplier_f = request.args.get('supplier', '')
-    type_f = request.args.get('type', '')
-    search_f = request.args.get('search', '')
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-    stock_error = request.args.get('error', '')
-    stock_error_available = request.args.get('available', '')
-
+    top-up happens — using stock you already paid for isn't a second expense. Does not close conn
+    or handle pagination — callers own both, same split _fleet_utilization_data() etc. use."""
     # paid_amount only ever lives on the linked maintenance row (a stock_out row has none --
     # consuming already-paid-for stock is never a new cost) -- joined in here so the list can
     # show a real pending Balance per entry instead of just the total.
@@ -2990,12 +2984,12 @@ def _maintenance_urea_tab(conn):
             running -= t['quantity_l']
         if t['date'] >= trend_cutoff:
             trend_rows.append({'date': t['date'], 'balance': running})
+    trend_max = max([t['balance'] for t in trend_rows], default=1) or 1
 
     # Top vehicles by usage (last 30 days, stock_out only).
     usage_by_vehicle = {}
     for t in full_ledger:
         if t['txn_type'] == 'stock_out' and t['date'] >= trend_cutoff and t['vehicle_id']:
-            vno = next((r['vehicle_no'] for r in all_rows if r['id'] == t['id']), None)
             usage_by_vehicle.setdefault(t['vehicle_id'], [None, 0.0])
             usage_by_vehicle[t['vehicle_id']][1] += t['quantity_l']
     vname_lookup = {r['vehicle_id']: r['vehicle_no'] for r in all_rows if r['vehicle_id']}
@@ -3006,6 +3000,120 @@ def _maintenance_urea_tab(conn):
     top_vehicles = sorted([{'vehicle_no': vname_lookup.get(vid, '—'), 'qty': q[1],
                              'est_value': round(q[1] * avg_unit_cost, 2)}
                             for vid, q in usage_by_vehicle.items()], key=lambda x: -x['qty'])[:5]
+
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    suppliers = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
+
+    return {
+        'all_rows': all_rows, 'current_stock': current_stock, 'total_value': total_value,
+        'avg_unit_cost': avg_unit_cost, 'today_usage': today_usage, 'month_usage': month_usage,
+        'avg_consumption': avg_consumption, 'low_stock_alerts': low_stock_alerts, 'locations': locations,
+        'trend_rows': trend_rows, 'trend_max': trend_max, 'top_vehicles': top_vehicles,
+        'vehicles': vehicles, 'suppliers': suppliers, 'combined_names': combined_names,
+    }
+
+def _insert_urea_from_form(conn, f):
+    """Builds and inserts one Urea transaction — 'stock_in' (pure stock purchase, a real cost
+    event), 'stock_out' (consume already-paid-for stock for a vehicle, no new cost), or 'direct'
+    (buy and use in the same moment, bypassing tracked stock — its own real cost event, like
+    Tyre's 'New Tyre' mode) — from a submitted form. Same 3 modes, same stock-can-never-go-
+    negative check, used by both add_urea() (website) and app_add_urea() (mobile) so the two can
+    never quietly accept a different set of fields or disagree on the stock math. Returns
+    (True, None) on success, or (False, (kind, detail)) on failure — kind is 'insufficient_stock'
+    (detail = the real quantity actually available) or 'validation' (detail = a message) — does
+    not commit or close conn."""
+    def get_or_create_vehicle(vno):
+        if not vno or not vno.strip():
+            return None
+        vno = vno.strip()
+        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+        if row:
+            return row[0]
+        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        return cur.lastrowid
+
+    mode = f.get('mode')
+    if mode not in ('stock_in', 'stock_out', 'direct'):
+        return False, ('validation', 'Mode is required.')
+    date = f.get('date') or datetime.date.today().isoformat()
+    location = f.get('location') or None
+    notes = f.get('notes') or None
+    qty = float(f.get('quantity_l') or 0)
+    if qty <= 0:
+        return False, ('validation', 'Quantity (L) is required.')
+    # Quantity and Price are independent, deliberately not multiplied together — the form's
+    # "Price" field (still the unit_price column/param for schema compatibility) is the real
+    # total amount paid, typed directly off the invoice. Multiplying by Quantity used to mean a
+    # slightly-off or missing Quantity silently corrupted the real total (even zeroed it out if
+    # Quantity was left blank), when the actual paid amount was never in question.
+    unit_price = float(f.get('unit_price') or 0)
+    total_value = round(unit_price, 2)
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    if mode == 'stock_in':
+        supplier_id = get_or_create_vendor(conn, f.get('supplier_name'))
+        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
+                                vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                              (date, None, 'Urea', total_value, float(f.get('paid_amount') or 0),
+                               supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
+        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, supplier_id,
+                        invoice_no, quantity_l, unit_price, total_value, location, notes, maintenance_id, created_at,
+                        created_by)
+                        VALUES (?, 'stock_in', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (date, f.get('batch_no'), supplier_id, f.get('invoice_no'), qty, unit_price,
+                      total_value, location, notes, cur_m.lastrowid, now, session.get('user_id')))
+    elif mode == 'stock_out':
+        # Using stock that's already been paid for is never a new cost — no Price field on this
+        # mode's form, no maintenance row created here (matching stock_in/direct, which do both).
+        # Stock can never go negative: block the entry outright if it would draw more than what's
+        # actually on hand, same running-balance formula the Current Stock KPI itself uses.
+        full_ledger_check = conn.execute("SELECT txn_type, source, quantity_l FROM urea_transactions").fetchall()
+        current_stock = 0.0
+        for t in full_ledger_check:
+            if t['txn_type'] == 'stock_in':
+                current_stock += t['quantity_l']
+            elif t['source'] == 'stock':
+                current_stock -= t['quantity_l']
+        if qty > current_stock:
+            return False, ('insufficient_stock', round(current_stock, 2))
+        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
+                        quantity_l, unit_price, total_value, location, odometer_km, notes, created_at, created_by)
+                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)""",
+                     (date, f.get('batch_no'), vehicle_id, qty, location,
+                      float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now, session.get('user_id')))
+    elif mode == 'direct':
+        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        supplier_id = get_or_create_vendor(conn, f.get('supplier_name')) if f.get('supplier_name') else None
+        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
+                                vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                              (date, vehicle_id, 'Urea', total_value, float(f.get('paid_amount') or 0),
+                               supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
+        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, supplier_id, invoice_no,
+                        vehicle_id, quantity_l, unit_price, total_value, location, odometer_km, notes,
+                        maintenance_id, created_at, created_by)
+                        VALUES (?, 'stock_out', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (date, supplier_id, f.get('invoice_no'), vehicle_id, qty, unit_price, total_value,
+                      location, float(f.get('odometer_km')) if f.get('odometer_km') else None, notes,
+                      cur_m.lastrowid, now, session.get('user_id')))
+    return True, None
+
+def _maintenance_urea_tab(conn):
+    """Urea (AdBlue/DEF) stock ledger tab — real numbers from _urea_management_data() (shared
+    with the mobile app_urea()), this function just owns the website's own query-param reading,
+    pagination and template rendering on top of it."""
+    location_f = request.args.get('location', '')
+    supplier_f = request.args.get('supplier', '')
+    type_f = request.args.get('type', '')
+    search_f = request.args.get('search', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    stock_error = request.args.get('error', '')
+    stock_error_available = request.args.get('available', '')
+
+    d = _urea_management_data(conn, location_f, supplier_f, type_f, search_f, date_from, date_to)
+    all_rows = d['all_rows']
 
     total_count = len(all_rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
@@ -3018,16 +3126,14 @@ def _maintenance_urea_tab(conn):
     base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-    suppliers = conn.execute("SELECT DISTINCT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
     conn.close()
     return render_template('maintenance.html', tab='urea',
-        rows=page_rows, total_count=total_count, current_stock=current_stock, total_value=total_value,
-        avg_unit_cost=avg_unit_cost, today_usage=today_usage, month_usage=month_usage,
-        avg_consumption=avg_consumption, low_stock_alerts=low_stock_alerts, locations=locations,
-        trend_rows=trend_rows, top_vehicles=top_vehicles,
+        rows=page_rows, total_count=total_count, current_stock=d['current_stock'], total_value=d['total_value'],
+        avg_unit_cost=d['avg_unit_cost'], today_usage=d['today_usage'], month_usage=d['month_usage'],
+        avg_consumption=d['avg_consumption'], low_stock_alerts=d['low_stock_alerts'], locations=d['locations'],
+        trend_rows=d['trend_rows'], top_vehicles=d['top_vehicles'],
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
-        vehicles=vehicles, suppliers=suppliers, combined_names=combined_names,
+        vehicles=d['vehicles'], suppliers=d['suppliers'], combined_names=d['combined_names'],
         f_location=location_f, f_supplier=supplier_f, f_type=type_f, f_search=search_f,
         f_date_from=date_from, f_date_to=date_to, stock_error=stock_error,
         stock_error_available=stock_error_available, active='maintenance')
@@ -4489,82 +4595,17 @@ def add_urea():
     """One endpoint for all 3 Add Urea modes (mirrors the Tyre/Battery unified-modal pattern):
     'stock_in' (pure stock purchase — the real cost event), 'stock_out' (consume already-paid-for
     stock for a vehicle — no new cost), 'direct' (buy and use in the same moment, bypassing
-    tracked stock — its own real cost event, like Tyre's 'New Tyre' mode)."""
+    tracked stock — its own real cost event, like Tyre's 'New Tyre' mode). Insert logic lives in
+    _insert_urea_from_form(), shared with the mobile app_add_urea(), same reasoning already
+    applied to Tyres/Battery this pass."""
     conn = get_db()
-    f = request.form
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    mode = f.get('mode')
-    date = f.get('date') or datetime.date.today().isoformat()
-    location = f.get('location') or None
-    notes = f.get('notes') or None
-    qty = float(f.get('quantity_l') or 0)
-    # Quantity and Price are independent, deliberately not multiplied together — the form's
-    # "Price" field (still the unit_price column/param for schema compatibility) is the real
-    # total amount paid, typed directly off the invoice. Multiplying by Quantity used to mean a
-    # slightly-off or missing Quantity silently corrupted the real total (even zeroed it out if
-    # Quantity was left blank), when the actual paid amount was never in question.
-    unit_price = float(f.get('unit_price') or 0)
-    total_value = round(unit_price, 2)
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-    if mode == 'stock_in':
-        supplier_id = get_or_create_vendor(conn, f.get('supplier_name'))
-        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
-                                vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                              (date, None, 'Urea', total_value, float(f.get('paid_amount') or 0),
-                               supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
-        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, supplier_id,
-                        invoice_no, quantity_l, unit_price, total_value, location, notes, maintenance_id, created_at,
-                        created_by)
-                        VALUES (?, 'stock_in', 'stock', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (date, f.get('batch_no'), supplier_id, f.get('invoice_no'), qty, unit_price,
-                      total_value, location, notes, cur_m.lastrowid, now, session.get('user_id')))
-    elif mode == 'stock_out':
-        # Using stock that's already been paid for is never a new cost — no Price field on this
-        # mode's form, no maintenance row created here (matching stock_in/direct, which do both).
-        # Stock can never go negative: block the entry outright if it would draw more than what's
-        # actually on hand, same running-balance formula the Current Stock KPI itself uses.
-        full_ledger_check = conn.execute("SELECT txn_type, source, quantity_l FROM urea_transactions").fetchall()
-        current_stock = 0.0
-        for t in full_ledger_check:
-            if t['txn_type'] == 'stock_in':
-                current_stock += t['quantity_l']
-            elif t['source'] == 'stock':
-                current_stock -= t['quantity_l']
-        if qty > current_stock:
-            conn.close()
-            return redirect(url_for('maintenance_list', tab='urea', error='insufficient_stock',
-                                     available=round(current_stock, 2)))
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
-        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
-                        quantity_l, unit_price, total_value, location, odometer_km, notes, created_at, created_by)
-                        VALUES (?, 'stock_out', 'stock', ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)""",
-                     (date, f.get('batch_no'), vehicle_id, qty, location,
-                      float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now, session.get('user_id')))
-    elif mode == 'direct':
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
-        supplier_id = get_or_create_vendor(conn, f.get('supplier_name')) if f.get('supplier_name') else None
-        cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
-                                vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                              (date, vehicle_id, 'Urea', total_value, float(f.get('paid_amount') or 0),
-                               supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
-        conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, supplier_id, invoice_no,
-                        vehicle_id, quantity_l, unit_price, total_value, location, odometer_km, notes,
-                        maintenance_id, created_at, created_by)
-                        VALUES (?, 'stock_out', 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (date, supplier_id, f.get('invoice_no'), vehicle_id, qty, unit_price, total_value,
-                      location, float(f.get('odometer_km')) if f.get('odometer_km') else None, notes,
-                      cur_m.lastrowid, now, session.get('user_id')))
+    ok, err = _insert_urea_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        kind, detail = err
+        if kind == 'insufficient_stock':
+            return redirect(url_for('maintenance_list', tab='urea', error='insufficient_stock', available=detail))
+        return redirect(url_for('maintenance_list', tab='urea'))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='urea'))
@@ -11104,6 +11145,66 @@ def app_install_battery(battery_id):
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_battery')})
+
+@app.route('/app/urea')
+def app_urea():
+    """Mobile Urea (AdBlue/DEF) Management — its own top-level page (not a Maintenance sub-tab),
+    reached from the bottom nav's FAB/More sheet and the Maintenance tab strip, same pattern as
+    Tyres/Battery — was a website-bridge (↗) link before this pass. Real numbers straight from
+    _urea_management_data() (shared with the website's own Maintenance > Urea tab) — KPIs
+    (Current Stock/Total Value/Today's Usage/This Month Usage/Avg Consumption/Low Stock Alerts),
+    the real filtered transaction list, the 30-day stock trend, and Top Vehicles by usage (last
+    30 days). "Load More" (growing show count) instead of the website's numbered pager, same
+    convention every list in this app already uses."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    location_f = request.args.get('location', '')
+    supplier_f = request.args.get('supplier', '')
+    type_f = request.args.get('type', '')
+    search_f = request.args.get('search', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    d = _urea_management_data(conn, location_f, supplier_f, type_f, search_f, date_from, date_to)
+    all_rows = d['all_rows']
+    total_count = len(all_rows)
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_rows = all_rows[:show]
+    conn.close()
+    return render_template('app/urea.html', company_name=company_name, user_initials=user_initials,
+        active='maintenance', notif_count=0,
+        rows=page_rows, total_count=total_count, show=show, has_more=has_more,
+        current_stock=d['current_stock'], total_value=d['total_value'], avg_unit_cost=d['avg_unit_cost'],
+        today_usage=d['today_usage'], month_usage=d['month_usage'], avg_consumption=d['avg_consumption'],
+        low_stock_alerts=d['low_stock_alerts'], locations=d['locations'],
+        trend_rows=d['trend_rows'], trend_max=d['trend_max'], top_vehicles=d['top_vehicles'],
+        vehicles=[v['vehicle_no'] for v in d['vehicles']], suppliers=[s['name'] for s in d['suppliers']],
+        combined_names=d['combined_names'],
+        f_location=location_f, f_supplier=supplier_f, f_type=type_f, f_search=search_f,
+        f_date_from=date_from, f_date_to=date_to)
+
+@app.route('/app/urea/add', methods=['POST'])
+def app_add_urea():
+    """All 3 Add Urea modes (Stock In/Stock Out/Direct) — posts here via fetch instead of the
+    website's own modal, same _insert_urea_from_form() the website's own add_urea() uses, so the
+    two can never disagree on the stock math or accept a different set of fields."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, err = _insert_urea_from_form(conn, request.form)
+    if not ok:
+        conn.close()
+        kind, detail = err
+        msg = f'Insufficient stock — only {detail} L available.' if kind == 'insufficient_stock' else detail
+        return jsonify({'ok': False, 'error': msg}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_urea')})
 
 @app.route('/app/expenses')
 def app_expenses():
