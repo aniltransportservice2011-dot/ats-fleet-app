@@ -1,0 +1,417 @@
+{% extends "app/base_app.html" %}
+{% block title %}Urea — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _urea_management_data() in app.py, shared verbatim with the website's
+     own Maintenance > Urea tab. Its own top-level page (not a Maintenance sub-tab), reached from
+     the bottom nav's FAB/More sheet and this Maintenance tab strip, same pattern as Tyres/
+     Battery — was a website-bridge (↗) link before this pass. Filters collapsed to a search box
+     + filter icon instead of showing all fields inline, same convention as Tyres/Battery. "Add
+     Urea" is a floating bottom-right button + native modal (same position/style as Add Vehicle/
+     Add Tyre/Add Battery), not the website's top-right inline button + inline filter row. -->
+<div class="vh-head">
+  <div>
+    <h1>Urea Management</h1>
+    <div class="sub">Track AdBlue/DEF stock and usage across your fleet.</div>
+  </div>
+</div>
+
+<!-- Same Maintenance tab strip as maintenance.html/tyres.html/battery.html — this page IS one of
+     those real tabs (Urea), just promoted to its own top-level route/URL instead of a ?tab=
+     query param on /app/maintenance. See the same comment on tyres.html for why this repeats
+     here. -->
+<div class="mo-tabstrip">
+  <a class="mo-tab" href="{{ url_for('app_maintenance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+    <span>Overview</span></a>
+  <a class="mo-tab" href="{{ url_for('app_maintenance', tab='service') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    <span>Service</span></a>
+  <a class="mo-tab" href="{{ url_for('app_tyres') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
+    <span>Tyres</span></a>
+  <a class="mo-tab" href="{{ url_for('app_battery') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
+    <span>Battery</span></a>
+  <a class="mo-tab active" href="{{ url_for('app_urea') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
+    <span>Urea</span></a>
+  <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>More</span></button>
+</div>
+
+<div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
+<div class="mo-more-sheet" id="moMoreSheet">
+  <div class="mo-more-handle"></div>
+  <div class="mo-more-title">All Tabs</div>
+  <div class="mo-more-grid">
+    <a href="/maintenance?tab=toll" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+      <span>Toll</span>
+    </a>
+    <a href="/maintenance?tab=compliance-expenses" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/></svg></span>
+      <span>Compliance</span>
+    </a>
+  </div>
+</div>
+
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Current Stock</div><div class="mo-kpi-val">{{ '{:,.0f}'.format(current_stock) }} L</div><div class="mo-kpi-sub">In Stock</div></div>
+      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🧴</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Value</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(total_value) }}</div><div class="mo-kpi-sub">At avg. cost</div></div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">₹</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Today's Usage</div><div class="mo-kpi-val">{{ '{:,.0f}'.format(today_usage) }} L</div><div class="mo-kpi-sub">Consumed today</div></div>
+      <div class="mo-kpi-icon" style="background:#fff6e8;color:var(--a-amber);">💧</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">This Month Usage</div><div class="mo-kpi-val">{{ '{:,.0f}'.format(month_usage) }} L</div><div class="mo-kpi-sub">Since 1st</div></div>
+      <div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📈</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Avg Consumption</div><div class="mo-kpi-val">{% if avg_consumption is not none %}{{ avg_consumption }} L/100km{% else %}—{% endif %}</div><div class="mo-kpi-sub">{% if avg_consumption is none %}Needs trip KM data{% else %}This month{% endif %}</div></div>
+      <div class="mo-kpi-icon" style="background:#e6f6f4;color:var(--a-teal);">🛣️</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Low Stock Alerts</div><div class="mo-kpi-val" style="color:{% if low_stock_alerts %}var(--a-red){% endif %};">{{ low_stock_alerts }}</div><div class="mo-kpi-sub">Below {{ 200 }} L/location</div></div>
+      <div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">⚠️</div>
+    </div>
+  </div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="ureaSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Batch no., invoice no., vehicle…" onchange="this.form.submit()">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_location or f_supplier or f_type or f_date_from or f_date_to }}" onclick="openUreaFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Urea Entries</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">Showing {{ rows|length }} of {{ total_count }}</span>
+  </div>
+  <div id="urea-list">
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ r.vehicle_no or r.batch_no or ('Batch #' ~ r.id) }}</div>
+        <span class="vh-status-badge {{ 'Active' if r.txn_type == 'stock_in' else ('InStock' if r.source == 'stock' else 'InMaintenance') }}">{{ 'Stock In' if r.txn_type == 'stock_in' else ('Stock Out' if r.source == 'stock' else 'Direct') }}</span>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.date }} · {{ r.quantity_l|round(0)|int }} L{% if r.supplier_name %} · {{ r.supplier_name }}{% endif %}{% if r.location %} · {{ r.location }}{% endif %}</div>
+        <div class="ms-row-sub" style="font-weight:700; color:var(--a-ink);">{% if r.total_value %}₹{{ '{:,.0f}'.format(r.total_value) }}{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No urea entries found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="urea-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_urea', location=f_location, supplier=f_supplier, type=f_type, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} entr{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<!-- Stock Trend (Last 30 Days) — same real bar-trend style Fleet Utilization's Idle Days Trend
+     already uses, not the website's own line/area chart — this is what "same design as other
+     tabs" means for a native chart here. -->
+<div class="mo-panel" style="margin-top:14px;">
+  <div class="mo-panel-head"><h2>Stock Trend (Last 30 Days)</h2></div>
+  <div class="mo-trend-bars">
+    {% for t in trend_rows[-12:] %}
+    <div class="mo-trend-col">
+      <div class="mo-trend-bar" style="height:{{ ((t.balance / trend_max * 100) if trend_max else 0)|round(0) }}%;" title="{{ t.balance|round(0)|int }} L on {{ t.date }}"></div>
+      <div class="mo-trend-label">{{ t.date[5:] }}</div>
+    </div>
+    {% else %}
+    <div class="vd-empty">No stock movement in the last 30 days.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Top Vehicles by Urea Usage (30d) — same ranked-list style Empty Run Analysis's "Vehicles
+     Running Empty Most" already uses. -->
+<div class="mo-panel">
+  <div class="mo-panel-head"><h2>Top Vehicles by Usage (30d)</h2></div>
+  {% for v in top_vehicles %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ v.vehicle_no }}</div>
+      <div class="ra-route-meta">{{ v.qty|round(0)|int }} L used</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin">{% if v.est_value %}₹{{ '{:,.0f}'.format(v.est_value) }}{% else %}—{% endif %}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No usage in the last 30 days.</div>
+  {% endfor %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddUreaModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Urea
+</button>
+
+<!-- Filter sheet — Location/Supplier/Type/From-To Date, same real fields the website's own
+     filter bar has, just collapsed behind this icon instead of shown inline. Same pattern as
+     Tyres/Battery. -->
+<div class="vam-backdrop" id="ureaFilterBackdrop" onclick="closeUreaFilterSheet()"></div>
+<div class="vam-modal" id="ureaFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeUreaFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_urea') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Location</label>
+      <select name="location"><option value="">All Locations</option>
+        {% for l in locations %}<option value="{{ l }}" {% if f_location == l %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Supplier</label>
+      <select name="supplier"><option value="">All Suppliers</option>
+        {% for s in suppliers %}<option value="{{ s }}" {% if f_supplier == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Type</label>
+      <select name="type"><option value="">All Types</option>
+        <option value="stock_in" {% if f_type == 'stock_in' %}selected{% endif %}>Stock In</option>
+        <option value="stock_out" {% if f_type == 'stock_out' %}selected{% endif %}>Stock Out / Direct</option>
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_urea', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Urea modal — same 3 real modes as the website's own Add Urea modal: Stock In (pure stock
+     purchase, a real cost event), Stock Out (consume already-paid-for stock for a vehicle, no
+     new cost), Direct (buy and use in the same moment, bypassing tracked stock — its own real
+     cost event). Each mode posts through _insert_urea_from_form() via app_add_urea(), shared
+     verbatim with the website. Floating bottom-right button, same position/style as Add Vehicle/
+     Add Tyre/Add Battery's .vh-addbtn. -->
+<div class="vam-backdrop" id="auBackdrop" onclick="closeAddUreaModal()"></div>
+<div class="vam-modal" id="auModal" role="dialog" aria-modal="true" aria-label="Add Urea">
+  <div class="vam-head">
+    <h2 id="auTitle">Add Urea</h2>
+    <button type="button" class="vam-close" onclick="closeAddUreaModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
+  <div class="aty-modes">
+    <button type="button" class="aty-mode-btn active" id="auModeStockInBtn" onclick="auSetMode('stock_in')">Stock In</button>
+    <button type="button" class="aty-mode-btn" id="auModeStockOutBtn" onclick="auSetMode('stock_out')">Stock Out</button>
+    <button type="button" class="aty-mode-btn" id="auModeDirectBtn" onclick="auSetMode('direct')">Direct</button>
+  </div>
+
+  <div class="vam-error" id="auError" style="display:none; margin:0 18px 14px;"></div>
+
+  <form id="auForm" class="vam-form">
+    <input type="hidden" name="mode" id="auModeField" value="stock_in">
+    <div class="vam-grid">
+      <div class="vam-field"><label>Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Quantity (L) <span class="req">*</span></label><input type="number" step="0.01" name="quantity_l" required></div>
+      <div class="vam-field" id="auVehicleFld" style="display:none;"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="urea-vehicle-list"></div>
+      <div class="vam-field" id="auSupplierFld"><label>Supplier <span class="req">*</span></label><input type="text" name="supplier_name" list="urea-supplier-list"></div>
+      <div class="vam-field" id="auPriceFld"><label>Price (₹) <span class="req">*</span></label><input type="number" step="0.01" name="unit_price"></div>
+      <div class="vam-field"><label>Location</label><input type="text" name="location" placeholder="e.g. Rourkela"></div>
+      <div class="vam-field" id="auBatchFld"><label>Batch No.</label><input type="text" name="batch_no"></div>
+      <div class="vam-field" id="auInvoiceFld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
+      <div class="vam-field" id="auOdoFld" style="display:none;"><label>Odometer (km)</label><input type="number" step="1" name="odometer_km"></div>
+      <div class="vam-field" id="auPaidFld"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid"></div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Optional notes..."></textarea></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddUreaModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Entry</button>
+    </div>
+  </form>
+</div>
+<datalist id="urea-vehicle-list">{% for v in vehicles %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="urea-supplier-list">{% for s in suppliers %}<option value="{{ s }}">{% endfor %}</datalist>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "More" tabs sheet — same as maintenance.html/tyres.html/battery.html's own.
+function openMoMoreSheet() {
+  lockPageScroll();
+  document.getElementById('moMoreSheet').classList.add('open');
+  document.getElementById('moMoreBackdrop').classList.add('open');
+  document.getElementById('moMoreTabBtn').classList.add('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'true');
+}
+function closeMoMoreSheet() {
+  unlockPageScroll();
+  document.getElementById('moMoreSheet').classList.remove('open');
+  document.getElementById('moMoreBackdrop').classList.remove('open');
+  document.getElementById('moMoreTabBtn').classList.remove('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'false');
+}
+function toggleMoMoreSheet() {
+  if (document.getElementById('moMoreSheet').classList.contains('open')) closeMoMoreSheet();
+  else openMoMoreSheet();
+}
+
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+__onDocClick(function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('urea-list').innerHTML = doc.getElementById('urea-list').innerHTML;
+      document.getElementById('urea-load-area').innerHTML = doc.getElementById('urea-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Filter sheet — same open/close/backdrop pattern as every other modal.
+function openUreaFilterSheet() {
+  lockPageScroll();
+  document.getElementById('ureaFilterBackdrop').classList.add('open');
+  document.getElementById('ureaFilterSheet').classList.add('open');
+}
+function closeUreaFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('ureaFilterBackdrop').classList.remove('open');
+  document.getElementById('ureaFilterSheet').classList.remove('open');
+}
+
+// Add Urea modal — 3 real modes (Stock In / Stock Out / Direct), same as the website's own Add
+// Urea modal. Stock In: Supplier/Price required, no Vehicle/Odometer. Stock Out: Vehicle
+// required, no Supplier/Price (using already-paid-for stock is never a new cost). Direct:
+// Vehicle + Supplier/Price required (buy and use in the same moment).
+var auMode = 'stock_in';
+function auSetMode(mode) {
+  auMode = mode;
+  document.getElementById('auModeField').value = mode;
+  document.getElementById('auModeStockInBtn').classList.toggle('active', mode === 'stock_in');
+  document.getElementById('auModeStockOutBtn').classList.toggle('active', mode === 'stock_out');
+  document.getElementById('auModeDirectBtn').classList.toggle('active', mode === 'direct');
+  var showVehicle = (mode === 'stock_out' || mode === 'direct');
+  var showSupplierPrice = (mode === 'stock_in' || mode === 'direct');
+  document.getElementById('auVehicleFld').style.display = showVehicle ? '' : 'none';
+  document.getElementById('auOdoFld').style.display = showVehicle ? '' : 'none';
+  document.getElementById('auSupplierFld').style.display = showSupplierPrice ? '' : 'none';
+  document.getElementById('auPriceFld').style.display = showSupplierPrice ? '' : 'none';
+  document.getElementById('auPaidFld').style.display = showSupplierPrice ? '' : 'none';
+  document.querySelector('#auVehicleFld input').required = (mode === 'stock_out');
+  document.querySelector('#auSupplierFld input').required = showSupplierPrice;
+  document.querySelector('#auPriceFld input').required = showSupplierPrice;
+  var titles = {stock_in: 'Add Urea — Stock In', stock_out: 'Add Urea — Stock Out', direct: 'Add Urea — Direct'};
+  document.getElementById('auTitle').textContent = titles[mode];
+  document.getElementById('auError').style.display = 'none';
+}
+function openAddUreaModal() {
+  lockPageScroll();
+  auSetMode('stock_in');
+  document.getElementById('auBackdrop').classList.add('open');
+  document.getElementById('auModal').classList.add('open');
+}
+function closeAddUreaModal() {
+  unlockPageScroll();
+  document.getElementById('auBackdrop').classList.remove('open');
+  document.getElementById('auModal').classList.remove('open');
+}
+var auForm = document.getElementById('auForm');
+if (auForm) {
+  auForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = auForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('auError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_add_urea') }}", { method: 'POST', body: new FormData(auForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_urea') }}") + '?added=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's "Add Maintenance" picker (/app/urea?add=1), same
+// ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddUreaModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+</script>
+{% endblock %}

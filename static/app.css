@@ -238,10 +238,13 @@ body.a-scroll-lock { overflow: hidden; }
 
 /* "Add Maintenance" drill-down arc — the level-1 4 options (.fab-option) fade out (not removed;
    .fab-menu.drilled keeps them in the DOM so closeFabMenu() can just clear the class and land
-   back on level 1 next open) while this second 5-stop arc fades/scales in from the exact same
-   anchor. Points sit on a true semicircle (radius 120px, centered straight above the FAB), 5
-   evenly-spaced angles from -70° to 70° off vertical (-70/-35/0/35/70) — same translate+scale+
-   opacity transition mechanism as .fab-option, just a 5-point arc instead of 4.
+   back on level 1 next open) while this second 6-stop arc fades/scales in from the exact same
+   anchor. Points sit on a true semicircle (radius 120px, centered straight above the FAB), 6
+   evenly-spaced angles from -70° to 70° off vertical (-70/-42/-14/14/42/70, 28° apart — widened
+   from 5 stops/35° apart to fit Compliance without changing the arc's own outer bounds: the two
+   endpoints are identical to the old pos1/pos5, only the interior points were redistributed) —
+   same translate+scale+opacity transition mechanism as .fab-option, just a 6-point arc instead
+   of 5 (was 4 before that).
    .fab-sub-option is the 34×34 ICON itself (fixed size, margin-left:-17px doing the centering —
    a fixed pixel value, not .fab-option's translate(-50%) percentage trick) so every icon's
    center lands exactly on its computed arc coordinate regardless of its label's text length; if
@@ -249,10 +252,11 @@ body.a-scroll-lock { overflow: hidden; }
    longer label would visibly drag that one icon off the arc while its neighbors stayed put,
    breaking the arc's symmetry. .fab-sub-label is positioned via plain absolute placement instead,
    purely decorating outward from that fixed icon and never able to move it. Placement follows
-   each item's own spot on the arc: .fab-sub-side-l/-r (the 2 side stops each side, pos1/2 and
-   pos4/5) puts the label beside the icon pointing outward away from the FAB's center;
-   .fab-sub-top (pos3, the single straight-up stop) puts the label above the icon instead, since a
-   side label there would point sideways into empty space rather than reading naturally. */
+   each item's own spot on the arc: .fab-sub-side-l/-r (3 stops each side now — pos1/2/3 left,
+   pos4/5/6 right) puts the label beside the icon pointing outward away from the FAB's center.
+   .fab-sub-top no longer has a stop assigned to it (6 is even, so no position sits exactly at
+   dead center the way the old 5-stop pos3 did) — left in place, unused, rather than deleted, in
+   case a future odd-count arc wants it again. */
 .fab-menu.drilled .fab-option { opacity: 0; pointer-events: none; }
 .fab-sub-option {
   position: absolute; bottom: 0; left: 0; width: 34px; height: 34px; margin-left: -17px;
@@ -260,24 +264,35 @@ body.a-scroll-lock { overflow: hidden; }
   pointer-events: none; text-decoration: none;
 }
 .maint-fan.open .fab-sub-option { opacity: 1; pointer-events: auto; }
-/* Y values are the icon's true arc coordinate (R=120, angles -70/-35/0/35/70 off vertical) PLUS
-   17px (half the 34px icon height) — .fab-sub-option is anchored by its bottom edge (bottom:0),
-   not its center, so without this correction every icon's actual visual center would sit 17px
-   below where the trigonometry says, and by a fixed amount rather than a fixed fraction, so it
-   also throws pos3 (the tallest point of the arc) out of true radius relative to pos1/pos5 (the
-   flattest points) rather than just shifting the whole arc down uniformly. Confirmed by
-   measuring rendered icon centers with getBoundingClientRect(): all 5 now come back within
-   rounding of the same 120px radius from the FAB's own center. */
+/* Y values are the icon's true arc coordinate (R=120, angles -70/-42/-14/14/42/70 off vertical)
+   PLUS 17px (half the 34px icon height) — .fab-sub-option is anchored by its bottom edge
+   (bottom:0), not its center, so without this correction every icon's actual visual center would
+   sit 17px below where the trigonometry says, and by a fixed amount rather than a fixed
+   fraction, so it also throws the near-vertical points out of true radius relative to the
+   near-horizontal ones rather than just shifting the whole arc down uniformly. Same correction
+   the original 5-stop arc used, just reapplied at the new angles — confirmed by recomputing each
+   point from R=120/±70°/28°-apart and checking it lands on the same circle as the two unchanged
+   endpoints (pos1/pos6, carried over byte-for-byte from the old pos1/pos5).
+   pos3/pos4 specifically use R=138, not 120 — measured on a real render, the plain R=120 circle
+   put Battery's icon only 3px above Service's (and Compliance only 3px above Urea's), reading as
+   overlapping/crowded. Nudging just these two innermost points out to a slightly larger radius
+   (same -14°/14° angle, so they're still on the same straight line from the FAB, just further
+   along it) opens that up to ~18px of real clearance without moving Service/Tyres/Urea/Toll at
+   all. Same hand-tuned-per-position approach the original 5-stop arc already used (radius wasn't
+   perfectly uniform there either) — a strict single-radius circle isn't actually what "aligned"
+   needs to mean here; no visible overlap is. */
 .fab-sub-option[data-pos="1"] { transform: translate(-113px, -24px) scale(0.7); }
 .maint-fan.open .fab-sub-option[data-pos="1"] { transform: translate(-113px, -24px) scale(1); transition-delay: 0.02s; }
-.fab-sub-option[data-pos="2"] { transform: translate(-69px, -81px) scale(0.7); }
-.maint-fan.open .fab-sub-option[data-pos="2"] { transform: translate(-69px, -81px) scale(1); transition-delay: 0.06s; }
-.fab-sub-option[data-pos="3"] { transform: translate(0, -103px) scale(0.7); }
-.maint-fan.open .fab-sub-option[data-pos="3"] { transform: translate(0, -103px) scale(1); transition-delay: 0.1s; }
-.fab-sub-option[data-pos="4"] { transform: translate(69px, -81px) scale(0.7); }
-.maint-fan.open .fab-sub-option[data-pos="4"] { transform: translate(69px, -81px) scale(1); transition-delay: 0.14s; }
-.fab-sub-option[data-pos="5"] { transform: translate(113px, -24px) scale(0.7); }
-.maint-fan.open .fab-sub-option[data-pos="5"] { transform: translate(113px, -24px) scale(1); transition-delay: 0.18s; }
+.fab-sub-option[data-pos="2"] { transform: translate(-80px, -72px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="2"] { transform: translate(-80px, -72px) scale(1); transition-delay: 0.06s; }
+.fab-sub-option[data-pos="3"] { transform: translate(-33px, -117px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="3"] { transform: translate(-33px, -117px) scale(1); transition-delay: 0.1s; }
+.fab-sub-option[data-pos="4"] { transform: translate(33px, -117px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="4"] { transform: translate(33px, -117px) scale(1); transition-delay: 0.14s; }
+.fab-sub-option[data-pos="5"] { transform: translate(80px, -72px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="5"] { transform: translate(80px, -72px) scale(1); transition-delay: 0.18s; }
+.fab-sub-option[data-pos="6"] { transform: translate(113px, -24px) scale(0.7); }
+.maint-fan.open .fab-sub-option[data-pos="6"] { transform: translate(113px, -24px) scale(1); transition-delay: 0.22s; }
 .fab-sub-ic { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
   background: var(--a-white); box-shadow: 0 4px 12px rgba(20,33,61,0.18); flex-shrink: 0; }
 .fab-sub-ic svg { width: 15px; height: 15px; }

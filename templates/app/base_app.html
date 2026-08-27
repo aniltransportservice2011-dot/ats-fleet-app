@@ -150,39 +150,51 @@
 
     <!-- "Add Maintenance" drills into a SECOND arc from the same FAB anchor point, replacing the
          4-option arc above rather than opening a separate sheet — same fan mechanism (position +
-         opacity + scale transition off .open), just 5 stops instead of 4 and compact icon+label
-         items sized to stay on-screen on a narrow phone without overlapping their neighbors. Real
-         5 add-types Maintenance actually has (see MAINTENANCE_TAB_LABELS / maintenance_list() in
-         app.py) minus the old free-text "Other" category (dropped per instruction, not offered
-         for now) — Service/Tyres/Battery are native, so each jumps straight to that page and
-         auto-opens its own real Add modal via the same ?add=1 convention /app/vehicles?add=1
-         already uses; Urea/Toll aren't native yet, so those 2 land on the website's own page for
-         it (marked ↗, same convention as the More speed-dial). Label placement follows each
-         item's own spot on the arc rather than one fixed layout for all 5: the 2 side stops on
-         each side (pos1/2 left, pos4/5 right) get the label beside the icon, pointing outward
-         away from the FAB (.fab-sub-side-l/-r); the single top-most stop (pos3, straight up) gets
-         the label above the icon instead (.fab-sub-top) — a side label there would just point
-         sideways into empty space instead of reading naturally. closeFabMenu() always resets back
-         to this being hidden and the level-1 .fab-menu showing again, so the FAB starts fresh at
-         level 1 every time it's reopened. -->
+         opacity + scale transition off .open), now 6 stops (was 5, was 4 before that) and compact
+         icon+label items sized to stay on-screen on a narrow phone without overlapping their
+         neighbors. Real 6 add-types Maintenance actually has (see MAINTENANCE_TAB_LABELS /
+         maintenance_list() in app.py) minus the old free-text "Other" category (dropped per
+         instruction, not offered for now) — Service/Tyres/Battery/Urea are native, so each jumps
+         straight to that page and auto-opens its own real Add modal via the same ?add=1
+         convention /app/vehicles?add=1 already uses; Toll/Compliance aren't native yet, so those
+         2 land on the website's own page for it (marked ↗, same convention as the More
+         speed-dial) — Compliance specifically goes to the real Compliance Expenses tab
+         (add_compliance_expense() in app.py), same tab maintenance.html's own "More" list already
+         links to. Label placement follows each item's own spot on the arc rather than one fixed
+         layout for all 6: with 6 stops (an even count) there's no single dead-center position the
+         way the old 5-stop arc had, so all 6 now use the side-label treatment — pos1/2/3 (left
+         half) get the label beside the icon pointing outward-left, pos4/5/6 (right half) point
+         outward-right (.fab-sub-side-l/-r). closeFabMenu() always resets back to this being
+         hidden and the level-1 .fab-menu showing again, so the FAB starts fresh at level 1 every
+         time it's reopened. -->
     <div class="fab-menu maint-fan" id="maintFanMenu">
-      <a href="/app/maintenance?tab=service&add=1" class="fab-sub-option fab-sub-side-l" data-pos="1">
-        <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
-        <span class="fab-sub-label">Service</span>
-      </a>
-      <a href="/app/tyres?add=1" class="fab-sub-option fab-sub-side-l" data-pos="2">
+      <!-- Ordered by label length, shortest at the outermost positions (pos1/pos6) and longest
+           toward the inner ones (pos3/pos4) — "Compliance ↗" is by far the longest label here,
+           and the outermost stops sit closest to the screen edge, so it needed the position with
+           the most real horizontal room to not clip off-screen. Native (Service/Tyres/Battery)
+           still groups on the left, bridge-to-website (Urea/Toll/Compliance) still groups on the
+           right, same as before — only which position WITHIN each side's group changed. -->
+      <a href="/app/tyres?add=1" class="fab-sub-option fab-sub-side-l" data-pos="1">
         <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg></span>
         <span class="fab-sub-label">Tyres</span>
       </a>
-      <a href="/app/battery?add=1" class="fab-sub-option fab-sub-top" data-pos="3">
+      <a href="/app/maintenance?tab=service&add=1" class="fab-sub-option fab-sub-side-l" data-pos="2">
+        <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+        <span class="fab-sub-label">Service</span>
+      </a>
+      <a href="/app/battery?add=1" class="fab-sub-option fab-sub-side-l" data-pos="3">
         <span class="fab-sub-ic" style="background:#fff6e8;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg></span>
         <span class="fab-sub-label">Battery</span>
       </a>
-      <a href="/maintenance?tab=urea" class="fab-sub-option fab-sub-side-r" data-pos="4">
-        <span class="fab-sub-ic" style="background:#e6f6f4;color:var(--a-teal);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
-        <span class="fab-sub-label">Urea ↗</span>
+      <a href="/maintenance?tab=compliance-expenses" class="fab-sub-option fab-sub-side-r" data-pos="4">
+        <span class="fab-sub-ic" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <span class="fab-sub-label">Compliance ↗</span>
       </a>
-      <a href="/maintenance?tab=toll" class="fab-sub-option fab-sub-side-r" data-pos="5">
+      <a href="/app/urea?add=1" class="fab-sub-option fab-sub-side-r" data-pos="5">
+        <span class="fab-sub-ic" style="background:#e6f6f4;color:var(--a-teal);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
+        <span class="fab-sub-label">Urea</span>
+      </a>
+      <a href="/maintenance?tab=toll" class="fab-sub-option fab-sub-side-r" data-pos="6">
         <span class="fab-sub-ic" style="background:#fdf3e0;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
         <span class="fab-sub-label">Toll ↗</span>
       </a>
@@ -354,6 +366,21 @@
     if (document.getElementById('moreMenu').classList.contains('open')) closeMoreSheet();
     else openMoreSheet();
   }
+
+  // Per-page cleanup registry for the persistent-shell router (full router further down, after
+  // #appExtraScripts) — defined up HERE, before #appExtraScripts, specifically so it's available
+  // the instant a page's OWN inline script runs, even on a fresh/direct page load (a bookmark, a
+  // typed URL, a refresh) and not just after a router-driven swap. Without this split, any page
+  // calling __onDocClick(fn) in its own extra_scripts would hit "__onDocClick is not defined" on
+  // every direct load, since script tags run in document order and the div holding this block's
+  // content sits BEFORE where the rest of the router (which needs #appExtraScripts/#appMain to
+  // already exist) can be defined. window.__pageCleanupFns, not a local var, so the later half of
+  // the router (defined after #appExtraScripts) can still register cleanups against it.
+  window.__pageCleanupFns = [];
+  window.__onDocClick = function (fn) {
+    document.addEventListener('click', fn);
+    window.__pageCleanupFns.push(function () { document.removeEventListener('click', fn); });
+  };
 </script>
 <div id="appExtraScripts">{% block extra_scripts %}{% endblock %}</div>
 
@@ -382,20 +409,16 @@
     overlay.classList.remove('apl-show'); overlay.setAttribute('aria-hidden', 'true');
   }
 
-  // Per-page cleanup registry — a page's own extra_scripts can call __onDocClick(fn) instead of
-  // document.addEventListener('click', fn) directly; the router removes every one of them right
-  // before the NEXT swap. Without this, a document-level listener a page adds (e.g. "close this
-  // dropdown on an outside click") would silently pile up one more copy every time you navigate
-  // back to that same page type in one session, since #appMain being replaced does NOT clean up
-  // listeners attached to `document` itself (only ones on elements actually inside #appMain).
-  var pageCleanupFns = [];
-  window.__onDocClick = function (fn) {
-    document.addEventListener('click', fn);
-    pageCleanupFns.push(function () { document.removeEventListener('click', fn); });
-  };
+  // Per-page cleanup registry — window.__onDocClick itself is defined earlier, before
+  // #appExtraScripts (see that block's own comment for why); this just drains the registry it
+  // built up, right before the NEXT swap replaces #appMain — a document-level listener a page
+  // adds (e.g. "close this dropdown on an outside click") would otherwise silently pile up one
+  // more copy every time you navigate back to that same page type in one session, since
+  // #appMain being replaced does NOT clean up listeners attached to `document` itself (only ones
+  // on elements actually inside #appMain).
   function runPageCleanup() {
-    pageCleanupFns.forEach(function (fn) { fn(); });
-    pageCleanupFns = [];
+    window.__pageCleanupFns.forEach(function (fn) { fn(); });
+    window.__pageCleanupFns = [];
   }
 
   // Re-syncs the persistent nav's own .active state from the freshly fetched page's copy of the
