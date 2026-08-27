@@ -154,26 +154,27 @@
          icon+label items sized to stay on-screen on a narrow phone without overlapping their
          neighbors. Real 6 add-types Maintenance actually has (see MAINTENANCE_TAB_LABELS /
          maintenance_list() in app.py) minus the old free-text "Other" category (dropped per
-         instruction, not offered for now) — Service/Tyres/Battery/Urea are native, so each jumps
-         straight to that page and auto-opens its own real Add modal via the same ?add=1
-         convention /app/vehicles?add=1 already uses; Toll/Compliance aren't native yet, so those
-         2 land on the website's own page for it (marked ↗, same convention as the More
-         speed-dial) — Compliance specifically goes to the real Compliance Expenses tab
-         (add_compliance_expense() in app.py), same tab maintenance.html's own "More" list already
-         links to. Label placement follows each item's own spot on the arc rather than one fixed
-         layout for all 6: with 6 stops (an even count) there's no single dead-center position the
-         way the old 5-stop arc had, so all 6 now use the side-label treatment — pos1/2/3 (left
-         half) get the label beside the icon pointing outward-left, pos4/5/6 (right half) point
-         outward-right (.fab-sub-side-l/-r). closeFabMenu() always resets back to this being
-         hidden and the level-1 .fab-menu showing again, so the FAB starts fresh at level 1 every
-         time it's reopened. -->
+         instruction, not offered for now) — Service/Tyres/Battery/Urea/Toll are native, so each
+         jumps straight to that page and auto-opens its own real Add modal via the same ?add=1
+         convention /app/vehicles?add=1 already uses; Compliance is the only one not native yet,
+         so it lands on the website's own page for it (marked ↗, same convention as the More
+         speed-dial) — specifically the real Compliance Expenses tab (add_compliance_expense() in
+         app.py), same tab maintenance.html's own "More" list already links to. Label placement
+         follows each item's own spot on the arc rather than one fixed layout for all 6: with 6
+         stops (an even count) there's no single dead-center position the way the old 5-stop arc
+         had, so all 6 now use the side-label treatment — pos1/2/3 (left half) get the label
+         beside the icon pointing outward-left, pos4/5/6 (right half) point outward-right
+         (.fab-sub-side-l/-r). closeFabMenu() always resets back to this being hidden and the
+         level-1 .fab-menu showing again, so the FAB starts fresh at level 1 every time it's
+         reopened. -->
     <div class="fab-menu maint-fan" id="maintFanMenu">
       <!-- Ordered by label length, shortest at the outermost positions (pos1/pos6) and longest
            toward the inner ones (pos3/pos4) — "Compliance ↗" is by far the longest label here,
            and the outermost stops sit closest to the screen edge, so it needed the position with
-           the most real horizontal room to not clip off-screen. Native (Service/Tyres/Battery)
-           still groups on the left, bridge-to-website (Urea/Toll/Compliance) still groups on the
-           right, same as before — only which position WITHIN each side's group changed. -->
+           the most real horizontal room to not clip off-screen. Native (Service/Tyres/Battery/
+           Urea/Toll) still groups left-then-right by original slot, bridge-to-website
+           (Compliance, now the only one) keeps its own slot too — only which position WITHIN
+           each side's group changed, not which side. -->
       <a href="/app/tyres?add=1" class="fab-sub-option fab-sub-side-l" data-pos="1">
         <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg></span>
         <span class="fab-sub-label">Tyres</span>
@@ -194,9 +195,9 @@
         <span class="fab-sub-ic" style="background:#e6f6f4;color:var(--a-teal);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
         <span class="fab-sub-label">Urea</span>
       </a>
-      <a href="/maintenance?tab=toll" class="fab-sub-option fab-sub-side-r" data-pos="6">
+      <a href="/app/toll?add=1" class="fab-sub-option fab-sub-side-r" data-pos="6">
         <span class="fab-sub-ic" style="background:#fdf3e0;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
-        <span class="fab-sub-label">Toll ↗</span>
+        <span class="fab-sub-label">Toll</span>
       </a>
     </div>
   </div>
@@ -390,8 +391,8 @@
      #appExtraScripts' scripts get swapped underneath it. A real <a href> click still works
      normally as a fallback for anything this script can't handle (JS disabled, a non-GET target,
      a link outside .a-bottom-nav, or any link that isn't under /app/ — those still do a genuine
-     full navigation, e.g. the "Urea ↗"/"Toll ↗" links that intentionally leave this app section
-     for the website's own pages). Deliberately scoped to just .a-bottom-nav, not every link on
+     full navigation, e.g. the "Compliance ↗" link that intentionally leaves this app section for
+     the website's own pages). Deliberately scoped to just .a-bottom-nav, not every link on
      every page — a much smaller, safer surface than rewriting the whole app into an SPA. -->
 <script>
 (function () {
@@ -459,11 +460,17 @@
 
       runPageCleanup();
       document.title = newDoc.title;
+      // pushState BEFORE runScripts (not after) — a landing page's own extra_scripts often read
+      // window.location.search synchronously on execute (e.g. every "?add=1 -> auto-open the Add
+      // modal" IIFE: Battery/Tyres/Urea/Service all use this convention). If the URL bar were
+      // updated only after runScripts, those scripts would see the PREVIOUS page's URL (no add=1)
+      // and silently never open the modal — reproduced via the FAB's "Add Maintenance" arc, whose
+      // links all go through this router since they live inside .a-bottom-nav.
+      if (!isPopState) history.pushState({ appNav: true }, '', url);
       mainEl.innerHTML = newMain.innerHTML;
       scriptsEl.innerHTML = newScripts ? newScripts.innerHTML : '';
       runScripts(scriptsEl);
       syncActiveNav(newDoc);
-      if (!isPopState) history.pushState({ appNav: true }, '', url);
       window.scrollTo(0, 0);
       hideOverlay();
     }).catch(function () {
