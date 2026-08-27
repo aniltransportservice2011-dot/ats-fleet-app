@@ -1,0 +1,451 @@
+{% extends "app/base_app.html" %}
+{% block title %}Toll — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _toll_tab_base_context() in app.py, shared verbatim with the website's
+     own Maintenance > Toll tab (now takes optional date_from/date_to overrides so this page's own
+     period preset can drive it — see that function's docstring). Its own top-level page (not a
+     Maintenance sub-tab), reached from the bottom nav's FAB fan and each native Maintenance page's
+     own "More" sheet (not a box in the tab strip itself — 7-across read as too tight/cramped on a
+     real phone, so Toll sits in More instead, same as Compliance) — was a website-bridge (↗) link
+     before this pass, now a real native page either way.
+     "Add Toll Entry" is Manual Entry only (floating bottom-right button + native modal, same
+     position/style as Add Vehicle/Add Tyre/Add Battery/Add Urea) — the website's own Excel/FASTag
+     bulk-import wizard stays website-only, per instruction. -->
+<div class="vh-head">
+  <div>
+    <h1>Toll</h1>
+    <div class="sub">Track toll payments and usage.</div>
+  </div>
+  <div class="ra-period-ctl">
+    <span class="ra-period-label">{{ period_label }}</span>
+    <button type="button" class="a-filter-btn {{ 'active' if period != 'this_month' }}" onclick="openTollPeriodSheet()" aria-label="Select Period">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- Same Maintenance tab strip as maintenance.html/tyres.html/battery.html/urea.html — Toll isn't
+     one of the 5 boxes here (see the More sheet below instead), but the strip itself still
+     repeats on this page so the way back to Overview/Service/Tyres/Battery/Urea is never lost.
+     See the same comment on tyres.html for why this strip repeats on every native Maintenance
+     page. -->
+<div class="mo-tabstrip">
+  <a class="mo-tab" href="{{ url_for('app_maintenance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+    <span>Overview</span></a>
+  <a class="mo-tab" href="{{ url_for('app_maintenance', tab='service') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    <span>Service</span></a>
+  <a class="mo-tab" href="{{ url_for('app_tyres') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
+    <span>Tyres</span></a>
+  <a class="mo-tab" href="{{ url_for('app_battery') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
+    <span>Battery</span></a>
+  <a class="mo-tab" href="{{ url_for('app_urea') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
+    <span>Urea</span></a>
+  <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>More</span></button>
+</div>
+
+<!-- Toll moved back into the "More" sheet — 7-across the strip read as too tight/cramped on a
+     real phone, so this page is reached from More (or the FAB's "Add Maintenance" arc/More
+     speed-dial) rather than getting its own box in the row above, same as Compliance. Its own
+     native page and ?add=1 auto-open are unaffected by where the link to it lives. -->
+<div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
+<div class="mo-more-sheet" id="moMoreSheet">
+  <div class="mo-more-handle"></div>
+  <div class="mo-more-title">All Tabs</div>
+  <div class="mo-more-grid">
+    <a href="{{ url_for('app_toll') }}" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+      <span>Toll</span>
+    </a>
+    <a href="/maintenance?tab=compliance-expenses" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/></svg></span>
+      <span>Compliance</span>
+    </a>
+  </div>
+</div>
+
+{% macro trend_badge(pct) %}{% if pct is not none %}<span class="mo-kpi-trend {{ 'up' if pct >= 0 else 'down' }}">{{ '↑' if pct >= 0 else '↓' }} {{ pct|abs }}% vs last month</span>{% endif %}{% endmacro %}
+
+<!-- 3-across (not the usual 2-column .mo-kpi-grid) — Toll only has 3 real headline numbers for a
+     period, same card styling as every other native KPI grid either way. All 3 are always scoped
+     to the real current calendar month (see month_total/month_count/month_avg_per_trip in
+     _toll_tab_base_context) regardless of the period filter below, which only narrows the Toll
+     Entries list — same "KPIs come from the unfiltered ledger" rule the website's own Toll tab
+     already follows. -->
+<div class="mo-kpi-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+  <div class="mo-kpi-card" style="padding:12px 10px;">
+    <div><div class="mo-kpi-lbl">Total Toll</div><div class="mo-kpi-val" style="font-size:1.02rem;">₹{{ '{:,.0f}'.format(month_total) }}</div><div class="mo-kpi-sub">This Month</div>{{ trend_badge(month_total_pct) }}</div>
+  </div>
+  <div class="mo-kpi-card" style="padding:12px 10px;">
+    <div><div class="mo-kpi-lbl">Transactions</div><div class="mo-kpi-val" style="font-size:1.02rem;">{{ month_count }}</div><div class="mo-kpi-sub">This Month</div>{{ trend_badge(month_count_pct) }}</div>
+  </div>
+  <div class="mo-kpi-card" style="padding:12px 10px;">
+    <div><div class="mo-kpi-lbl">Avg Toll / Trip</div><div class="mo-kpi-val" style="font-size:1.02rem;">₹{{ '{:,.0f}'.format(month_avg_per_trip) }}</div><div class="mo-kpi-sub">This Month</div>{{ trend_badge(month_avg_pct) }}</div>
+  </div>
+</div>
+
+<!-- Search + Filters — same collapsed-behind-one-icon convention as Urea/Tyres/Battery (Vehicle +
+     Status here, since Source and the date range are covered by the period control above). -->
+<div class="a-search-row">
+  <form class="a-search-box" id="tollSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Toll plaza, highway, vehicle…" onchange="this.form.submit()">
+    <input type="hidden" name="period" value="{{ period }}">
+    <input type="hidden" name="date_from" value="{{ f_date_from }}">
+    <input type="hidden" name="date_to" value="{{ f_date_to }}">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_vehicle or f_status }}" onclick="openTollFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+{% set toll_status_style = {
+  'synced':   ('#e8f5ee', 'var(--a-green)'),
+  'approved': ('#eaf1fb', 'var(--a-blue)'),
+  'pending':  ('#fff6e8', 'var(--a-amber)'),
+  'rejected': ('#fdecea', 'var(--a-red)'),
+} %}
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Toll Entries</h2>
+    <span style="color:var(--a-steel); font-size:0.76rem;">Showing {{ rows|length }} of {{ total_count }}</span>
+  </div>
+  <div id="toll-list">
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ r.vehicle_no }}{% if r.lr_number %} <span style="color:var(--a-steel); font-weight:500;">· {{ r.lr_number }}</span>{% endif %}</div>
+        {% set sc = toll_status_style.get(r.status, ('#eef0f4', 'var(--a-steel)')) %}
+        <span class="vh-status-badge" style="background:{{ sc[0] }}; color:{{ sc[1] }};">{{ r.status|capitalize }}</span>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.date }}{% if r.time %} {{ r.time }}{% endif %} · {{ r.toll_plaza }}{% if r.highway %} · {{ r.highway }}{% endif %}</div>
+        <div class="ms-row-sub" style="font-weight:700; color:var(--a-ink); flex-shrink:0;">₹{{ '{:,.0f}'.format(r.amount or 0) }} <span style="font-weight:500; color:var(--a-steel);">{{ 'FASTag' if r.source=='fastag' else (r.payment_mode or 'Manual') }}</span></div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No toll entries found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="toll-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_toll', period=period, date_from=f_date_from, date_to=f_date_to, vehicle=f_vehicle, status=f_status, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} entr{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<!-- Toll Summary (Last 6 Months) — real dual-bar month-by-month chart, same markup pattern
+     Business Performance's own "Revenue vs Expenses" trend already uses (2 .mo-trend-bar per
+     .mo-trend-col, each independently scaled to its own series' max since ₹ amount and a raw
+     transaction count are different units — this is what "same design as other tabs" means for a
+     native two-series chart here, not the website's own single-line trend). -->
+<div class="mo-panel" style="margin-top:14px;">
+  <div class="mo-panel-head"><h2>Toll Summary (Last 6 Months)</h2></div>
+  <div style="display:flex; gap:16px; font-size:0.7rem; font-weight:700; margin-bottom:10px;">
+    <span style="color:var(--a-green);">● Total Toll</span>
+    <span style="color:var(--a-blue);">● Transactions</span>
+  </div>
+  <div class="mo-trend-bars">
+    {% for t in trend %}
+    <div class="mo-trend-col">
+      <div style="display:flex; align-items:flex-end; gap:2px; height:100%; width:100%; justify-content:center;">
+        <div class="mo-trend-bar" style="height:{{ ((t.amount / trend_max * 100) if trend_max else 0)|round(0) }}%; width:40%; background:var(--a-green);" title="₹{{ '{:,.0f}'.format(t.amount) }} total toll"></div>
+        <div class="mo-trend-bar" style="height:{{ ((t.count / trend_count_max * 100) if trend_count_max else 0)|round(0) }}%; width:40%; background:var(--a-blue);" title="{{ t.count }} transaction{{ 's' if t.count != 1 }}"></div>
+      </div>
+      <div class="mo-trend-label">{{ t.label }}</div>
+    </div>
+    {% else %}
+    <div class="vd-empty">No toll history yet.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Top Toll Plazas (own fleet, all time) — same ranked-list style Urea's "Top Vehicles by
+     Usage" / Empty Run Analysis's own ranked list already use. -->
+<div class="mo-panel">
+  <div class="mo-panel-head"><h2>Top Toll Plazas</h2></div>
+  {% for p in top_plazas %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ p.plaza }}</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin" style="color:var(--a-ink);">₹{{ '{:,.0f}'.format(p.amount) }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No toll plazas recorded yet.</div>
+  {% endfor %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddTollModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Toll Entry
+</button>
+
+<!-- Select Period sheet — This Month/Last Month/Last 3 Months/All Time presets + a Custom Range
+     fallback, same "readonly label + one .a-filter-btn icon -> a sheet of .a-period-opt links"
+     pattern the 4 Business Overview analysis pages already use (see _business_overview_header.html
+     / _period_macros.html) — built inline here rather than sharing that exact partial since it's
+     tightly coupled to those 4 pages' own FY-scale period vocabulary and tab strip. -->
+<div class="vam-backdrop" id="tollPeriodBackdrop" onclick="closeTollPeriodSheet()"></div>
+<div class="vam-modal" id="tollPeriodSheet" role="dialog" aria-modal="true" aria-label="Select Period">
+  <div class="vam-head">
+    <h2>Select Period</h2>
+    <button type="button" class="vam-close" onclick="closeTollPeriodSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div style="padding:0 20px;">
+    {% for pval, plabel in period_presets %}
+    <a href="{{ url_for('app_toll', period=pval, vehicle=f_vehicle, status=f_status, search=f_search) }}" class="a-period-opt {{ 'active' if period==pval }}">
+      {{ plabel }}
+      <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </a>
+    {% endfor %}
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_toll') }}">
+    <input type="hidden" name="period" id="tollPeriodHiddenField" value="{{ period }}">
+    <input type="hidden" name="vehicle" value="{{ f_vehicle }}">
+    <input type="hidden" name="status" value="{{ f_status }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-section-title">Custom Range</div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}" onchange="document.getElementById('tollPeriodHiddenField').value='custom';"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}" onchange="document.getElementById('tollPeriodHiddenField').value='custom';"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+    </div>
+    <div class="vam-actions">
+      <button type="submit" class="vam-btn-save" style="grid-column:1 / -1;">Apply Custom Range</button>
+    </div>
+  </form>
+</div>
+
+<!-- Filters sheet — Vehicle + Status, the 2 real fields _toll_tab_base_context() still reads
+     straight off request.args (Source/date range are covered elsewhere: Source isn't surfaced
+     here since Manual Entry is this app's only add path so far, and the date range lives in the
+     period control above). Same vam-modal pattern as every other filter sheet. -->
+<div class="vam-backdrop" id="tollFilterBackdrop" onclick="closeTollFilterSheet()"></div>
+<div class="vam-modal" id="tollFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeTollFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_toll') }}">
+    <input type="hidden" name="period" value="{{ period }}">
+    <input type="hidden" name="date_from" value="{{ f_date_from }}">
+    <input type="hidden" name="date_to" value="{{ f_date_to }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v.vehicle_no }}" {% if f_vehicle == v.vehicle_no %}selected{% endif %}>{{ v.vehicle_no }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Status</label>
+      <select name="status"><option value="">All Status</option>
+        <option value="synced" {% if f_status=='synced' %}selected{% endif %}>Synced</option>
+        <option value="approved" {% if f_status=='approved' %}selected{% endif %}>Approved</option>
+        <option value="pending" {% if f_status=='pending' %}selected{% endif %}>Pending</option>
+        <option value="rejected" {% if f_status=='rejected' %}selected{% endif %}>Rejected</option>
+      </select>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_toll', period=period, date_from=f_date_from, date_to=f_date_to, search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<!-- Add Toll Entry modal — Manual Entry only (the website's own Excel/FASTag bulk-import wizard
+     stays website-only, per instruction). Same real fields as the website's own manual-entry
+     form, posts through _insert_toll_from_form() via app_add_toll(), shared verbatim with the
+     website so the two can never accept a different set of fields. Floating bottom-right button,
+     same position/style as Add Vehicle/Add Tyre/Add Battery/Add Urea's .vh-addbtn. -->
+<div class="vam-backdrop" id="atBackdrop" onclick="closeAddTollModal()"></div>
+<div class="vam-modal" id="atModal" role="dialog" aria-modal="true" aria-label="Add Toll Entry">
+  <div class="vam-head">
+    <h2>Add Toll Entry</h2>
+    <button type="button" class="vam-close" onclick="closeAddTollModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="atError" style="display:none; margin:0 18px 14px;"></div>
+  <form id="atForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="toll-vehicle-list" required></div>
+      <div class="vam-field"><label>Trip (Optional)</label><input type="text" name="trip_lr" list="toll-trip-list" placeholder="LR number…"></div>
+      <div class="vam-field"><label>Toll Plaza <span class="req">*</span></label><input type="text" name="toll_plaza" list="toll-plaza-list" required></div>
+      <div class="vam-field"><label>Highway <span class="req">*</span></label><input type="text" name="highway" list="toll-highway-list" required></div>
+      <div class="vam-field"><label>State</label><input type="text" name="state" placeholder="e.g. Odisha"></div>
+      <div class="vam-field"><label>Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" id="atDate" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Time <span class="req">*</span></label><input type="time" name="time" required></div>
+      <div class="vam-field"><label>Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" min="0" name="amount" required></div>
+      <div class="vam-field" id="atPaymentModeFld"><label>Payment Mode</label>
+        <select name="payment_mode">
+          <option value="">-- Select --</option>
+          <option value="Cash">Cash</option>
+          <option value="UPI">UPI</option>
+          <option value="Bank">Bank Transfer</option>
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Optional notes..."></textarea></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddTollModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Entry</button>
+    </div>
+  </form>
+</div>
+<datalist id="toll-vehicle-list">{% for v in vehicles %}<option value="{{ v.vehicle_no }}">{% endfor %}</datalist>
+<datalist id="toll-plaza-list">{% for p in top_plazas %}<option value="{{ p.plaza }}">{% endfor %}</datalist>
+<datalist id="toll-highway-list"><option value="NH-16"><option value="NH-53"><option value="NH-49"><option value="NH-520"><option value="NH-163"></datalist>
+<datalist id="toll-trip-list"></datalist>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "More" tabs sheet — same as maintenance.html/tyres.html/battery.html/urea.html's own.
+function openMoMoreSheet() {
+  lockPageScroll();
+  document.getElementById('moMoreSheet').classList.add('open');
+  document.getElementById('moMoreBackdrop').classList.add('open');
+  document.getElementById('moMoreTabBtn').classList.add('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'true');
+}
+function closeMoMoreSheet() {
+  unlockPageScroll();
+  document.getElementById('moMoreSheet').classList.remove('open');
+  document.getElementById('moMoreBackdrop').classList.remove('open');
+  document.getElementById('moMoreTabBtn').classList.remove('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'false');
+}
+function toggleMoMoreSheet() {
+  if (document.getElementById('moMoreSheet').classList.contains('open')) closeMoMoreSheet();
+  else openMoMoreSheet();
+}
+
+// Select Period sheet — same open/close/backdrop pattern as every other modal.
+function openTollPeriodSheet() {
+  lockPageScroll();
+  document.getElementById('tollPeriodBackdrop').classList.add('open');
+  document.getElementById('tollPeriodSheet').classList.add('open');
+}
+function closeTollPeriodSheet() {
+  unlockPageScroll();
+  document.getElementById('tollPeriodBackdrop').classList.remove('open');
+  document.getElementById('tollPeriodSheet').classList.remove('open');
+}
+
+// Filters sheet — same open/close/backdrop pattern as every other modal.
+function openTollFilterSheet() {
+  lockPageScroll();
+  document.getElementById('tollFilterBackdrop').classList.add('open');
+  document.getElementById('tollFilterSheet').classList.add('open');
+}
+function closeTollFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('tollFilterBackdrop').classList.remove('open');
+  document.getElementById('tollFilterSheet').classList.remove('open');
+}
+
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+__onDocClick(function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('toll-list').innerHTML = doc.getElementById('toll-list').innerHTML;
+      document.getElementById('toll-load-area').innerHTML = doc.getElementById('toll-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Add Toll Entry modal — Manual Entry only, same real fields as the website's own manual form.
+function openAddTollModal() {
+  lockPageScroll();
+  document.getElementById('atError').style.display = 'none';
+  var d = document.getElementById('atDate');
+  if (d && !d.value) { d.valueAsDate = new Date(); }
+  document.getElementById('atBackdrop').classList.add('open');
+  document.getElementById('atModal').classList.add('open');
+}
+function closeAddTollModal() {
+  unlockPageScroll();
+  document.getElementById('atBackdrop').classList.remove('open');
+  document.getElementById('atModal').classList.remove('open');
+}
+var atForm = document.getElementById('atForm');
+if (atForm) {
+  atForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = atForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('atError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_add_toll') }}", { method: 'POST', body: new FormData(atForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_toll') }}") + '?added=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's "Add Maintenance" picker (/app/toll?add=1), same
+// ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddTollModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+</script>
+{% endblock %}

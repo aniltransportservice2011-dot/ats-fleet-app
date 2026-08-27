@@ -592,6 +592,12 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .mo-kpi-lbl { font-size: 0.72rem; color: var(--a-steel); font-weight: 600; margin-top: 8px; }
 .mo-kpi-val { font-size: 1.16rem; font-weight: 800; margin-top: 2px; overflow-wrap: break-word; }
 .mo-kpi-sub { font-size: 0.68rem; color: var(--a-steel); margin-top: 2px; }
+/* "vs last month" trend arrow — Toll's own KPI cards (This Month vs Last Month), same up=green/
+   down=red convention as .ra-stat-sub elsewhere. Omitted entirely (not rendered as 0%) when
+   there's no real last-month figure to compare against — see _pct_change() in app.py. */
+.mo-kpi-trend { font-size: 0.66rem; font-weight: 700; margin-top: 4px; display: inline-flex; align-items: center; gap: 2px; }
+.mo-kpi-trend.up { color: var(--a-green); }
+.mo-kpi-trend.down { color: var(--a-red); }
 
 .mo-panel { background: var(--a-white); border-radius: 16px; padding: 16px; margin: 0 0 14px; }
 .mo-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }

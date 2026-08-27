@@ -3180,17 +3180,22 @@ def _save_toll_receipt(file_storage, company_id=1):
     file_storage.save(os.path.join(company_dir, unique))
     return f"uploads/toll_receipts/{company_id}/{unique}"
 
-def _toll_tab_base_context(conn):
+def _toll_tab_base_context(conn, date_from=None, date_to=None):
     """Everything the Toll tab needs to render — factored out from _maintenance_toll_tab so the
     Excel preview/import routes (which also re-render this same tab, with extra wizard state
     layered on top) build it identically instead of duplicating the query/KPI logic. Caller owns
-    the connection (opens and closes it) since the excel routes need it open a bit longer."""
+    the connection (opens and closes it) since the excel routes need it open a bit longer.
+    date_from/date_to default to reading straight from request.args (the website's own filter
+    bar posts them there) — the mobile app_toll() route passes them in explicitly instead, computed
+    from its own "This Month/Last Month/..." period preset, same override pattern
+    _urea_management_data() already uses so one shared function serves a raw date range either
+    way without the website's own behavior changing at all."""
     vehicle_f = request.args.get('vehicle', '')
     source_f = request.args.get('source', '')
     status_f = request.args.get('status', '')
     search_f = request.args.get('search', '')
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
+    date_from = date_from if date_from is not None else request.args.get('date_from', '')
+    date_to = date_to if date_to is not None else request.args.get('date_to', '')
 
     # Toll Management is own-fleet only (Line/Local) — same scope as Compliance and Urea — a
     # hired vehicle's toll isn't this company's cost to track.
@@ -3238,6 +3243,32 @@ def _toll_tab_base_context(conn):
     denom = trips_with_toll or len(full_ledger)
     avg_per_trip = round(grand_total / denom, 2) if denom else 0
 
+    # This-month-vs-last-month comparison — for the mobile app's KPI trend arrows only (the
+    # website's own Toll tab doesn't show these). Same "unique trip if this row has one, else
+    # just count the row" denominator as avg_per_trip above, just scoped to one calendar month at
+    # a time instead of the whole own-fleet ledger.
+    last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
+    prev_month_from, prev_month_to = _month_bounds(last_month_end.year, last_month_end.month)
+    prev_month_rows = [r for r in full_ledger if prev_month_from <= r['date'] <= prev_month_to]
+    prev_month_total = sum(r['amount'] or 0 for r in prev_month_rows)
+    prev_month_count = len(prev_month_rows)
+    month_trips = len(set(r['trip_id'] for r in month_rows if r['trip_id']))
+    month_denom = month_trips or len(month_rows)
+    month_avg_per_trip = round(month_total / month_denom, 2) if month_denom else 0
+    prev_month_trips = len(set(r['trip_id'] for r in prev_month_rows if r['trip_id']))
+    prev_month_denom = prev_month_trips or len(prev_month_rows)
+    prev_month_avg_per_trip = round(prev_month_total / prev_month_denom, 2) if prev_month_denom else 0
+
+    def _pct_change(cur, prev):
+        """None when there's no real previous-month figure to compare against (never fabricate a
+        0% or 100% swing out of a missing baseline) — the template shows no arrow in that case."""
+        if not prev:
+            return None
+        return round((cur - prev) / prev * 100, 1)
+    month_total_pct = _pct_change(month_total, prev_month_total)
+    month_count_pct = _pct_change(len(month_rows), prev_month_count)
+    month_avg_pct = _pct_change(month_avg_per_trip, prev_month_avg_per_trip)
+
     plaza_totals = {}
     for r in full_ledger:
         plaza_totals[r['toll_plaza']] = plaza_totals.get(r['toll_plaza'], 0) + (r['amount'] or 0)
@@ -3246,6 +3277,8 @@ def _toll_tab_base_context(conn):
     plaza_max = max([p['amount'] for p in top_plazas], default=1) or 1
 
     # Monthly trend, last 6 months — same month-bucket pattern as the Overview tab's cost trend.
+    # 'count' (transactions that month) is additive — only the mobile app's dual-bar trend chart
+    # uses it, the website's own single-line trend chart still just reads .amount/.label.
     trend = []
     end_d = datetime.date.today()
     y_, m_ = end_d.year, end_d.month
@@ -3254,9 +3287,11 @@ def _toll_tab_base_context(conn):
         while mm <= 0:
             mm += 12; yy -= 1
         mf, mt = _month_bounds(yy, mm)
-        cost = sum(r['amount'] or 0 for r in full_ledger if mf <= r['date'] <= mt)
-        trend.append({'label': calendar.month_abbr[mm], 'amount': cost})
+        month_bucket = [r for r in full_ledger if mf <= r['date'] <= mt]
+        cost = sum(r['amount'] or 0 for r in month_bucket)
+        trend.append({'label': calendar.month_abbr[mm], 'amount': cost, 'count': len(month_bucket)})
     trend_max = max([t['amount'] for t in trend], default=1) or 1
+    trend_count_max = max([t['count'] for t in trend], default=1) or 1
 
     hwy_totals = {}
     for r in full_ledger:
@@ -3285,13 +3320,17 @@ def _toll_tab_base_context(conn):
     last_sync_row = conn.execute("SELECT value FROM settings WHERE key='toll_fastag_last_sync'").fetchone()
 
     return dict(
-        rows=page_rows, total_count=total_count,
+        rows=page_rows, all_rows=all_rows, total_count=total_count,
         today_total=today_total, today_count=len(today_rows), month_total=month_total, month_count=len(month_rows),
         fastag_total=fastag_total, fastag_count=len(fastag_rows), fastag_pct=fastag_pct,
         manual_total=manual_total, manual_count=len(manual_rows), manual_pct=manual_pct,
         avg_per_trip=avg_per_trip, highest_plaza=highest_plaza, highest_plaza_amt=highest_plaza_amt,
-        trend=trend, trend_max=trend_max, top_plazas=top_plazas, plaza_max=plaza_max, hwy_dist=hwy_dist,
+        trend=trend, trend_max=trend_max, trend_count_max=trend_count_max, top_plazas=top_plazas,
+        plaza_max=plaza_max, hwy_dist=hwy_dist,
         top_vehicles=top_vehicles, veh_max=veh_max, grand_total=grand_total,
+        prev_month_total=prev_month_total, prev_month_count=prev_month_count,
+        month_avg_per_trip=month_avg_per_trip, prev_month_avg_per_trip=prev_month_avg_per_trip,
+        month_total_pct=month_total_pct, month_count_pct=month_count_pct, month_avg_pct=month_avg_pct,
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         vehicles=own_vehicles, last_sync_at=(last_sync_row['value'] if last_sync_row else None),
         f_vehicle=vehicle_f, f_source=source_f, f_status=status_f, f_search=search_f,
@@ -4649,18 +4688,18 @@ def delete_urea(txn_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='urea'))
 
-@app.route('/maintenance/toll/add', methods=['POST'])
-def add_toll():
-    conn = get_db()
-    f = request.form
+def _insert_toll_from_form(conn, f, receipt_file, company_id=1):
+    """Shared by the website's add_toll() and the mobile app_add_toll() — same real insert either
+    way: a manual toll entry always also lands in the shared `maintenance` table (category='Toll')
+    so it flows into Maintenance Overview's cost rollup, exactly like it already did before this
+    was extracted. Returns (True, None) on success, or (False, error_message) if the vehicle
+    number given isn't a real own-fleet vehicle — Toll Management is own-fleet only (unlike Urea/
+    Battery), so this never silently creates a new vehicle record from a typo'd or hired number."""
     row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type = 'own'",
                         ((f.get('vehicle_no') or '').strip(),)).fetchone()
     vehicle_id = row['id'] if row else None
     if not vehicle_id:
-        # Toll Management is own-fleet only — unlike Urea/Battery, this never silently creates a
-        # new vehicle record from a typo'd or hired vehicle number.
-        conn.close()
-        return redirect(url_for('maintenance_list', tab='toll'))
+        return False, 'No own-fleet vehicle found with that number.'
 
     trip_id = None
     lr = (f.get('trip_lr') or '').strip()
@@ -4676,7 +4715,7 @@ def add_toll():
     payment_mode = f.get('payment_mode') or None
     status = 'synced' if source == 'fastag' else 'pending'
     notes = f.get('notes') or None
-    receipt_path = _save_toll_receipt(request.files.get('receipt'), session.get('company_id', 1))
+    receipt_path = _save_toll_receipt(receipt_file, company_id)
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, notes, created_by, created_at)
@@ -4690,6 +4729,12 @@ def add_toll():
                   f.get('state') or None, amount, source, payment_mode, status, receipt_path, notes,
                   cur_m.lastrowid, now, session.get('user_id')))
     conn.commit()
+    return True, None
+
+@app.route('/maintenance/toll/add', methods=['POST'])
+def add_toll():
+    conn = get_db()
+    _insert_toll_from_form(conn, request.form, request.files.get('receipt'), session.get('company_id', 1))
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
 
@@ -11205,6 +11250,102 @@ def app_add_urea():
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_urea')})
+
+def _resolve_toll_period(period, c_from, c_to, today):
+    """Turns the mobile Toll page's period preset into a concrete (date_from, date_to, label) —
+    same (key -> date range) shape as _resolve_analysis_period/_resolve_dashboard_period, just a
+    shorter, Toll-specific vocabulary (This Month/Last Month/Last 3 Months/All Time/Custom) since
+    a toll ledger is a shorter-horizon thing to filter than the Business Overview pages' own
+    FY-scale periods."""
+    if period == 'last_month':
+        lm_end = today.replace(day=1) - datetime.timedelta(days=1)
+        mf, mt = _month_bounds(lm_end.year, lm_end.month)
+        return mf, mt, 'Last Month'
+    if period == 'last_3_months':
+        sm, sy = today.month - 2, today.year
+        while sm <= 0:
+            sm += 12; sy -= 1
+        date_from, _unused = _month_bounds(sy, sm)
+        _unused2, date_to = _month_bounds(today.year, today.month)
+        return date_from, date_to, 'Last 3 Months'
+    if period == 'all_time':
+        return '', '', 'All Time'
+    if period == 'custom' and c_from and c_to:
+        try:
+            lbl = (datetime.datetime.strptime(c_from, '%Y-%m-%d').strftime('%d %b') + ' – ' +
+                   datetime.datetime.strptime(c_to, '%Y-%m-%d').strftime('%d %b %Y'))
+        except ValueError:
+            lbl = f"{c_from} to {c_to}"
+        return c_from, c_to, lbl
+    # '' (no selection yet), 'this_month', or anything unrecognized -> This Month, the default.
+    mf, mt = _month_bounds(today.year, today.month)
+    return mf, mt, 'This Month'
+
+def _toll_period_presets():
+    """(key, label) pairs for the mobile Toll page's own Select Period sheet."""
+    return [('this_month', 'This Month'), ('last_month', 'Last Month'),
+            ('last_3_months', 'Last 3 Months'), ('all_time', 'All Time')]
+
+@app.route('/app/toll')
+def app_toll():
+    """Mobile Toll — its own top-level page (not a Maintenance sub-tab), reached from the bottom
+    nav's FAB/More sheet and the Maintenance tab strip, same pattern as Urea/Tyres/Battery — was a
+    website-bridge (↗) link before this pass. Real numbers straight from _toll_tab_base_context()
+    (shared with the website's own Maintenance > Toll tab): the real filtered toll-entry list,
+    This Month's KPIs with a real vs-last-month comparison, and the 6-month trend. "This
+    Month/Last Month/Last 3 Months/All Time" is a period preset instead of the website's raw
+    from/to date fields — computed here into the same date_from/date_to _toll_tab_base_context()
+    already accepts (now optional overrides — see its own docstring), so this is a genuinely
+    filtered own-fleet ledger, not a fabricated stat. "Load More" (growing show count) instead of
+    the website's numbered pager, same convention every list in this app already uses."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    period = request.args.get('period', 'this_month')
+    c_from = request.args.get('date_from', '')
+    c_to = request.args.get('date_to', '')
+    today = datetime.date.today()
+    date_from, date_to, period_label = _resolve_toll_period(period, c_from, c_to, today)
+    if period == 'custom' and not (c_from and c_to):
+        period = 'this_month'  # same graceful-default-to-This-Month behavior as the Dashboard's own period filter
+
+    d = _toll_tab_base_context(conn, date_from=date_from, date_to=date_to)
+    all_rows = d.pop('all_rows')
+    total_count = len(all_rows)
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_rows = all_rows[:show]
+    conn.close()
+    # d still carries _toll_tab_base_context()'s own page/per_page pager fields (rows/total_count/
+    # page/per_page/total_pages/page_tokens/base_qs) — the website's numbered-pager convention.
+    # This route uses the "Load More" growing-window convention instead (rows/total_count/show/
+    # has_more, set explicitly below), so those page-pager keys are dropped rather than passed
+    # through, to avoid a duplicate-keyword clash with the ones set here.
+    for k in ('rows', 'total_count', 'page', 'per_page', 'total_pages', 'page_tokens', 'base_qs'):
+        d.pop(k, None)
+    return render_template('app/toll.html', company_name=company_name, user_initials=user_initials,
+        active='maintenance', notif_count=0, period=period, period_label=period_label,
+        period_presets=_toll_period_presets(), rows=page_rows, total_count=total_count,
+        show=show, has_more=has_more, **d)
+
+@app.route('/app/toll/add', methods=['POST'])
+def app_add_toll():
+    """Manual Toll Entry — posts here via fetch instead of the website's own modal, same
+    _insert_toll_from_form() the website's own add_toll() uses, so the two can never disagree on
+    what makes a valid entry. Excel/FASTag bulk import stays website-only for now, same call
+    already made for Urea's stock-in/out modes vs. the website's own bulk tools."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, err = _insert_toll_from_form(conn, request.form, request.files.get('receipt'), session.get('company_id', 1))
+    conn.close()
+    if not ok:
+        return jsonify({'ok': False, 'error': err}), 400
+    return jsonify({'ok': True, 'redirect': url_for('app_toll')})
 
 @app.route('/app/expenses')
 def app_expenses():

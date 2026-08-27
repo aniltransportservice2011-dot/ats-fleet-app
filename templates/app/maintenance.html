@@ -9,15 +9,18 @@
   </div>
 </div>
 
-<!-- 5 real tabs shown as boxes (Overview/Service/Tyres/Battery/Urea) + a "More" box for the
-     remaining 2 real tabs (Toll, Compliance) — same 7 real tabs as templates/maintenance.html's
-     own tab_titles, just split across a visible row + an overflow sheet instead of either
-     scrolling sideways or squeezing 7 into one line. No fabricated tabs (Fuel/Documents/Drivers/
-     Reports/Settings aren't real maintenance sub-tabs anywhere in this codebase — see
-     MAINTENANCE_TAB_LABELS / maintenance_list() in app.py). Overview and Service are both native
-     now; Tyres, Battery and Urea are their own native top-level pages (see app_tyres()/
-     app_battery()/app_urea()), not sub-tabs here — the boxes below link straight to them; Toll/
-     Compliance still bridge to the real website. -->
+<!-- 5 real tabs shown as boxes (Overview/Service/Tyres/Battery/Urea) + a "More" box for the 2
+     remaining real tabs (Toll, Compliance) — same 7 real tabs as templates/maintenance.html's own
+     tab_titles, just split across a visible row + an overflow sheet instead of either scrolling
+     sideways or squeezing 7 into one line (Toll was briefly promoted into the row itself, same as
+     Urea before it, but 7-across read as too tight/cramped on a real phone — moved back into
+     More, keeping its own native page and ?add=1 auto-open unaffected). No fabricated tabs (Fuel/
+     Documents/Drivers/Reports/Settings aren't real maintenance sub-tabs anywhere in this codebase
+     — see MAINTENANCE_TAB_LABELS / maintenance_list() in app.py). Overview and Service are both
+     native now; Tyres, Battery, Urea and Toll are their own native top-level pages (see
+     app_tyres()/app_battery()/app_urea()/app_toll()), not sub-tabs here — Tyres/Battery/Urea link
+     straight to their page from the row, Toll links straight to its page from the More sheet;
+     Compliance still bridges to the real website. -->
 <div class="mo-tabstrip">
   <a class="mo-tab {{ 'active' if tab == 'overview' }}" href="{{ url_for('app_maintenance') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
@@ -39,15 +42,16 @@
     <span>More</span></button>
 </div>
 
-<!-- More sheet — Toll and Compliance, the 2 real tabs that don't fit the row above. Bottom
-     sheet (slides up, items listed top-to-bottom) rather than the bottom-nav's own diagonal
-     speed-dial, since this is a page-local grid of tab destinations, not app-wide quick links. -->
+<!-- More sheet — Toll (native, its own real page) and Compliance (still bridges to the website),
+     the 2 real tabs that don't fit the row above. Bottom sheet (slides up) rather than the
+     bottom-nav's own diagonal speed-dial, since this is a page-local grid of tab destinations,
+     not app-wide quick links. -->
 <div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
 <div class="mo-more-sheet" id="moMoreSheet">
   <div class="mo-more-handle"></div>
   <div class="mo-more-title">All Tabs</div>
   <div class="mo-more-grid">
-    <a href="/maintenance?tab=toll" class="mo-more-item">
+    <a href="{{ url_for('app_toll') }}" class="mo-more-item">
       <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
       <span>Toll</span>
     </a>
