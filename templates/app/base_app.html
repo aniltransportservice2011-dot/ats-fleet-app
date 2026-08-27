@@ -10,6 +10,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>{% block title %}Anil Transport{% endblock %}</title>
 
+<!-- Reported: the fixed bottom nav sits at a visibly different height depending on which page/tab
+     you're on (Idle Analysis, Route Rates, Empty Run Analysis, etc.). Root cause: on a page with
+     little content, there's nothing to scroll, so the phone's own browser keeps its address bar
+     expanded there — while a taller page (once scrolled) has already let it collapse. That
+     difference in how much of the screen the browser's own chrome is using is what makes
+     position:fixed .a-bottom-nav land at a different spot from page to page, even though its own
+     CSS never changes. A CSS-only min-height:100svh floor was tried first and reportedly wasn't
+     enough (svh has patchy real-world support on some Android WebView versions, silently falling
+     back to plain vh's own long-documented mobile miscalculation bug) — this replaces it with the
+     one technique that's reliable everywhere regardless of viewport-unit support:
+     window.visualViewport (or window.innerHeight where that API doesn't exist) is the browser's
+     own live, authoritative "how tall is the actually-visible area right now" value, independent
+     of whatever CSS unit support the device has. Set as a real pixel value on <html> BEFORE the
+     stylesheet below is even requested, so body's min-height (app.css) has a real number to floor
+     against from this page's very first paint — no flash of the wrong height, no dependency on a
+     scroll event ever happening. Updates live on resize too, so a genuine mid-page keyboard-open/
+     orientation-change doesn't leave a stale value behind either. -->
+<script>
+(function () {
+  function setAppVh() {
+    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.documentElement.style.setProperty('--app-vh', h + 'px');
+  }
+  setAppVh();
+  window.addEventListener('resize', setAppVh);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', setAppVh);
+})();
+</script>
+
 <!-- Installable app manifest — scoped to /app/ only. The website's own pages (base.html) never
      link this, so only this section ever offers "Add to Home Screen" / "Install app", and only
      this section is what launches full-screen with no browser chrome once installed. -->
@@ -426,6 +455,25 @@
     if (!link) return; // buttons (FAB/More toggle, maintenance-fan trigger) aren't <a> — untouched
     var href = link.getAttribute('href');
     if (href.indexOf('/app/') !== 0) return; // leaves this app section (e.g. "Urea ↗") — real nav
+    e.preventDefault();
+    navigate(href, false);
+  });
+
+  // Same router, extended to the in-page tab strips (.ra-tab: Best Routes/Route Rates, Overview/
+  // Idle Analysis/Empty Run Analysis, Driver/Vehicle Performance — .mo-tab: the outer Business
+  // Overview 4-tab strip, Maintenance/Tyres/Battery/Salary/Trip Detail's own sub-tabs). These
+  // were still doing a real full page reload even after the bottom nav stopped — every one of
+  // them lives inside #appMain, which is exactly what gets swapped, so listening here (not on
+  // .a-bottom-nav) and matching on the tab classes specifically (not just any link) keeps this
+  // scoped to tab switches, not every link on every page (a Trip Detail row, a Ledger party row,
+  // etc. still do a normal navigation, unchanged). Attached to mainEl itself, not the tabs
+  // directly, so it keeps working after a swap replaces them with a freshly fetched copy —
+  // event delegation resolves e.target at click time, not at listener-attachment time.
+  mainEl.addEventListener('click', function (e) {
+    var link = e.target.closest('a.ra-tab[href], a.mo-tab[href]');
+    if (!link) return;
+    var href = link.getAttribute('href');
+    if (href.indexOf('/app/') !== 0) return; // real nav for anything outside this app section
     e.preventDefault();
     navigate(href, false);
   });

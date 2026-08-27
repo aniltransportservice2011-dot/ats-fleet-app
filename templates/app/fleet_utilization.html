@@ -141,20 +141,44 @@
   </div>
 </div>
 
+<!-- Own vehicles ranked by how often they run empty, most to least — replaces the old flat
+     per-trip list per instruction. Own fleet only (not hired): a hired vehicle's empty-run
+     fuel/toll cost isn't really "your" cost the same way. -->
 <div class="ra-panel">
-  <div class="ra-panel-head"><h2>Empty Run Trips</h2></div>
-  {% for r in d.empty_rows[:15] %}
+  <div class="ra-panel-head"><h2>Vehicles Running Empty Most</h2></div>
+  {% for v in d.empty_by_vehicle[:15] %}
   <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
     <div class="ra-route-body">
-      <div class="ra-route-name">{{ r.vehicle_no or '—' }} · {{ r.from_loc }} → {{ r.to_loc }}</div>
-      <div class="ra-route-meta">{{ r.date }}</div>
+      <div class="ra-route-name">{{ v.vehicle_no }}</div>
+      <div class="ra-route-meta">{{ v.count }} empty run{{ 's' if v.count != 1 else '' }}</div>
     </div>
     <div class="ra-route-right">
-      <div class="ra-route-revenue">₹{{ '{:,.0f}'.format(r.fuel_amount or 0) }}</div>
+      <div class="ra-route-margin" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(v.cost) }}</div>
     </div>
   </div>
   {% else %}
-  <div class="ra-empty">No empty run trips for this period.</div>
+  <div class="ra-empty">No empty runs for own vehicles this period.</div>
+  {% endfor %}
+</div>
+
+<!-- Routes that see empty runs, ranked the same way, with the same real total cost (fuel + toll)
+     per route. -->
+<div class="ra-panel">
+  <div class="ra-panel-head"><h2>Routes Running Empty Most</h2></div>
+  {% for r in d.empty_by_route[:15] %}
+  <div class="ra-route-row">
+    <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.from_loc }} → {{ r.to_loc }}</div>
+      <div class="ra-route-meta">{{ r.count }} empty run{{ 's' if r.count != 1 else '' }}</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(r.cost) }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No empty run routes this period.</div>
   {% endfor %}
 </div>
 {% endif %}
