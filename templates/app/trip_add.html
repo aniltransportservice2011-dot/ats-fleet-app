@@ -127,10 +127,23 @@
             <option value="FIXED" {% if t.get('rate_type')=='FIXED' %}selected{% endif %}>Fixed</option>
           </select></div>
 
+        <!-- Real, deduplicated suggestions from every from_loc/to_loc a trip has ever actually
+             used (_get_route_locations() in app.py — a query over trips itself, no new table or
+             column) — same twInitAutocomplete() widget Vehicle/Party/Driver above already use
+             (see that field's own comment for why: native list="..." datalist is unreliable on
+             Android). Free typing still saves exactly what's typed either way — this only ever
+             suggests, never restricts, so a genuinely new location is never blocked, just no
+             longer needs re-typing from scratch once it's been used once. -->
         <div class="tw-field"><label>From</label>
-          <input type="text" name="from_loc" value="{{ t.get('from_loc','') or '' }}" placeholder="Loading location"></div>
+          <div class="tw-ac-wrap">
+            <input type="text" name="from_loc" id="twFromLoc" value="{{ t.get('from_loc','') or '' }}" placeholder="Loading location" autocomplete="off">
+            <div class="tw-ac-list" id="twFromLocAcList"></div>
+          </div></div>
         <div class="tw-field"><label>To</label>
-          <input type="text" name="to_loc" value="{{ t.get('to_loc','') or '' }}" placeholder="Unloading location"></div>
+          <div class="tw-ac-wrap">
+            <input type="text" name="to_loc" id="twToLoc" value="{{ t.get('to_loc','') or '' }}" placeholder="Unloading location" autocomplete="off">
+            <div class="tw-ac-list" id="twToLocAcList"></div>
+          </div></div>
 
         <!-- Quantity (Weight) stays visible & required for BOTH Freight Types, matching the
              website's own Add/Edit Trip (trip_form.html) — Fixed freight just doesn't use it to
@@ -300,6 +313,7 @@ var VEHICLE_TYPE_MAP = {{ vehicle_type_map|tojson }};
 var VEHICLE_OPTIONS = {{ vehicles|tojson }};
 var PARTY_OPTIONS = {{ combined_names|tojson }};
 var DRIVER_OPTIONS = {{ employees|tojson }};
+var LOCATION_OPTIONS = {{ location_options|tojson }};
 var TW_MODE = {{ mode|tojson }};
 var TW_CANCEL_URL = {{ (url_for('app_trip_detail', trip_id=trip_id) if mode == 'edit' else url_for('app_dashboard'))|tojson }};
 var TW_EXISTING_ITEMS = {{ custom_items|tojson }};
@@ -589,6 +603,255 @@ function twInitAutocomplete(inputId, listId, options) {
 twInitAutocomplete('twVehicleNo', 'twVehicleAcList', VEHICLE_OPTIONS);
 twInitAutocomplete('twParty', 'twPartyAcList', PARTY_OPTIONS);
 twInitAutocomplete('twDriver', 'twDriverAcList', DRIVER_OPTIONS);
+twInitAutocomplete('twFromLoc', 'twFromLocAcList', LOCATION_OPTIONS);
+twInitAutocomplete('twToLoc', 'twToLocAcList', LOCATION_OPTIONS);
+</script>
+
+<!-- Same custom calendar popup as every other /app/ page (base_app.html) — this page doesn't
+     extend base_app.html (its own standalone wizard flow, see the top of this file), so it needs
+     its own copy of the same markup/JS/lockPageScroll rather than inheriting it. Kept byte-for-
+     byte identical to base_app.html's version (bar lockPageScroll/unlockPageScroll, defined
+     inline here since this page has no other reason to define them) specifically so behavior
+     never drifts between the two copies — if one changes, the other should too. -->
+<div class="cal-backdrop" id="calBackdrop" onclick="closeCalPicker()"></div>
+<div class="cal-popup" id="calPopup" role="dialog" aria-modal="true" aria-label="Select date">
+  <div class="cal-head">
+    <button type="button" class="cal-nav-btn" id="calPrevBtn" aria-label="Previous">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <button type="button" class="cal-month-label" id="calMonthLabel" aria-label="Select month and year"></button>
+    <button type="button" class="cal-nav-btn" id="calNextBtn" aria-label="Next">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+  </div>
+  <div class="cal-weekdays" id="calWeekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+  <div class="cal-grid" id="calGrid"></div>
+  <div class="cal-actions">
+    <button type="button" class="cal-today-btn" id="calTodayBtn">Today</button>
+    <div style="flex:1;"></div>
+    <button type="button" class="cal-cancel-btn" onclick="closeCalPicker()">Cancel</button>
+    <button type="button" class="cal-confirm-btn" id="calConfirmBtn" onclick="confirmCalPicker()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+  </div>
+</div>
+<script>
+(function () {
+  function lockPageScroll() { document.body.classList.add('a-scroll-lock'); }
+  function unlockPageScroll() { document.body.classList.remove('a-scroll-lock'); }
+
+  var MONTHS_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var MONTHS_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var cal = { trigger: null, input: null, viewYear: 0, viewMonth: 0, selected: null, min: null, max: null, mode: 'days' };
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+  function iso(y, m, d) { return y + '-' + pad2(m + 1) + '-' + pad2(d); }
+  function pretty(isoStr) {
+    if (!isoStr) return '';
+    var p = isoStr.split('-');
+    var y = parseInt(p[0], 10), m = parseInt(p[1], 10) - 1, d = parseInt(p[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return isoStr;
+    return d + ' ' + MONTHS_ABBR[m] + ' ' + y;
+  }
+
+  function renderCal() {
+    if (cal.mode === 'years') { renderYearList(); return; }
+    if (cal.mode === 'months') { renderMonthGrid(); return; }
+    document.getElementById('calPrevBtn').style.visibility = 'visible';
+    document.getElementById('calNextBtn').style.visibility = 'visible';
+    var y = cal.viewYear, m = cal.viewMonth;
+    document.getElementById('calMonthLabel').textContent = MONTHS_FULL[m] + ' ' + y;
+    document.getElementById('calWeekdays').style.display = '';
+    var grid = document.getElementById('calGrid');
+    grid.className = 'cal-grid';
+    grid.innerHTML = '';
+    var firstDow = new Date(y, m, 1).getDay();
+    var daysInMonth = new Date(y, m + 1, 0).getDate();
+    var daysInPrev = new Date(y, m, 0).getDate();
+    var now = new Date();
+    var todayIso = iso(now.getFullYear(), now.getMonth(), now.getDate());
+    var totalCells = Math.ceil((firstDow + daysInMonth) / 7) * 7;
+    for (var i = 0; i < totalCells; i++) {
+      var dayNum, cellYear = y, cellMonth = m, other = false;
+      if (i < firstDow) { dayNum = daysInPrev - firstDow + 1 + i; cellMonth = m - 1; other = true; }
+      else if (i >= firstDow + daysInMonth) { dayNum = i - firstDow - daysInMonth + 1; cellMonth = m + 1; other = true; }
+      else { dayNum = i - firstDow + 1; }
+      if (cellMonth < 0) { cellMonth = 11; cellYear = y - 1; }
+      if (cellMonth > 11) { cellMonth = 0; cellYear = y + 1; }
+      var cellIso = iso(cellYear, cellMonth, dayNum);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-day' + (other ? ' other-month' : '');
+      btn.textContent = dayNum;
+      if (cellIso === todayIso) btn.classList.add('today');
+      if (cellIso === cal.selected) btn.classList.add('selected');
+      if ((cal.min && cellIso < cal.min) || (cal.max && cellIso > cal.max)) btn.disabled = true;
+      (function (targetIso) {
+        btn.addEventListener('click', function () { cal.selected = targetIso; renderCal(); });
+      })(cellIso);
+      grid.appendChild(btn);
+    }
+  }
+
+  function renderMonthGrid() {
+    document.getElementById('calMonthLabel').textContent = String(cal.viewYear);
+    document.getElementById('calWeekdays').style.display = 'none';
+    var grid = document.getElementById('calGrid');
+    grid.className = 'cal-grid cal-month-grid';
+    grid.innerHTML = '';
+    var now = new Date();
+    for (var mm = 0; mm < 12; mm++) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-month-cell';
+      btn.textContent = MONTHS_ABBR[mm];
+      if (cal.viewYear === now.getFullYear() && mm === now.getMonth()) btn.classList.add('today');
+      if (cal.viewMonth === mm && cal.mode === 'months') btn.classList.add('selected');
+      (function (targetMonth) {
+        btn.addEventListener('click', function () {
+          cal.viewMonth = targetMonth;
+          cal.mode = 'days';
+          renderCal();
+        });
+      })(mm);
+      grid.appendChild(btn);
+    }
+  }
+
+  function renderYearList() {
+    document.getElementById('calPrevBtn').style.visibility = 'hidden';
+    document.getElementById('calNextBtn').style.visibility = 'hidden';
+    document.getElementById('calMonthLabel').textContent = 'Select Year';
+    document.getElementById('calWeekdays').style.display = 'none';
+    var grid = document.getElementById('calGrid');
+    grid.className = 'cal-grid cal-year-list';
+    grid.innerHTML = '';
+    var thisYear = new Date().getFullYear();
+    var minYear = cal.min ? parseInt(cal.min.slice(0, 4), 10) : thisYear - 100;
+    var maxYear = cal.max ? parseInt(cal.max.slice(0, 4), 10) : thisYear + 10;
+    for (var yy = maxYear; yy >= minYear; yy--) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cal-year-cell';
+      btn.textContent = yy;
+      if (yy === thisYear) btn.classList.add('today');
+      if (yy === cal.viewYear) btn.classList.add('selected');
+      (function (targetYear) {
+        btn.addEventListener('click', function () {
+          cal.viewYear = targetYear;
+          cal.mode = 'months';
+          renderCal();
+        });
+      })(yy);
+      grid.appendChild(btn);
+    }
+    requestAnimationFrame(function () {
+      var sel = grid.querySelector('.selected');
+      if (sel) sel.scrollIntoView({ block: 'center' });
+    });
+  }
+
+  function openCalPicker(trigger, input) {
+    cal.trigger = trigger;
+    cal.input = input;
+    var base = input.value ? new Date(input.value + 'T00:00:00') : new Date();
+    if (isNaN(base.getTime())) base = new Date();
+    cal.viewYear = base.getFullYear();
+    cal.viewMonth = base.getMonth();
+    cal.selected = input.value || null;
+    cal.min = input.getAttribute('min') || null;
+    cal.max = input.getAttribute('max') || null;
+    cal.mode = 'days';
+    renderCal();
+    lockPageScroll();
+    document.getElementById('calBackdrop').classList.add('open');
+    document.getElementById('calPopup').classList.add('open');
+  }
+  function closeCalPicker() {
+    unlockPageScroll();
+    document.getElementById('calBackdrop').classList.remove('open');
+    document.getElementById('calPopup').classList.remove('open');
+  }
+  function confirmCalPicker() {
+    if (cal.selected && cal.input) {
+      cal.input.value = cal.selected;
+      if (cal.trigger) {
+        cal.trigger.textContent = pretty(cal.selected);
+        cal.trigger.classList.remove('cal-placeholder');
+      }
+      cal.input.dispatchEvent(new Event('input', { bubbles: true }));
+      cal.input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    closeCalPicker();
+  }
+  window.closeCalPicker = closeCalPicker;
+  window.confirmCalPicker = confirmCalPicker;
+
+  document.getElementById('calPrevBtn').addEventListener('click', function () {
+    if (cal.mode === 'years') return;
+    if (cal.mode === 'months') { cal.viewYear--; renderCal(); return; }
+    cal.viewMonth--; if (cal.viewMonth < 0) { cal.viewMonth = 11; cal.viewYear--; } renderCal();
+  });
+  document.getElementById('calNextBtn').addEventListener('click', function () {
+    if (cal.mode === 'years') return;
+    if (cal.mode === 'months') { cal.viewYear++; renderCal(); return; }
+    cal.viewMonth++; if (cal.viewMonth > 11) { cal.viewMonth = 0; cal.viewYear++; } renderCal();
+  });
+  document.getElementById('calMonthLabel').addEventListener('click', function () {
+    cal.mode = cal.mode === 'days' ? 'months' : (cal.mode === 'months' ? 'years' : 'days');
+    renderCal();
+  });
+  document.getElementById('calTodayBtn').addEventListener('click', function () {
+    var now = new Date();
+    cal.viewYear = now.getFullYear(); cal.viewMonth = now.getMonth();
+    cal.selected = iso(now.getFullYear(), now.getMonth(), now.getDate());
+    cal.mode = 'days';
+    renderCal();
+  });
+
+  function findSizeReference(input) {
+    var form = input.closest('form') || input.closest('.vam-form, .tw-field, body');
+    if (form) {
+      var candidates = form.querySelectorAll('input[type="text"], input[type="number"], input[type="time"], input[type="tel"], select');
+      for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i] !== input) return candidates[i];
+      }
+    }
+    return input;
+  }
+  function enhanceDateInput(input) {
+    if (input.dataset.calEnhanced) return;
+    input.dataset.calEnhanced = '1';
+    var cs = getComputedStyle(findSizeReference(input));
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'cal-trigger';
+    trigger.style.border = cs.border;
+    trigger.style.borderRadius = cs.borderRadius;
+    trigger.style.padding = cs.padding;
+    trigger.style.fontSize = cs.fontSize;
+    trigger.style.fontFamily = cs.fontFamily;
+    trigger.style.background = cs.backgroundColor;
+    trigger.style.height = cs.height;
+    trigger.style.boxSizing = cs.boxSizing;
+    var hasValue = !!input.value;
+    trigger.textContent = hasValue ? pretty(input.value) : 'Select date';
+    if (!hasValue) trigger.classList.add('cal-placeholder');
+    if (input.disabled) { trigger.disabled = true; trigger.classList.add('cal-trigger-disabled'); }
+    input.style.position = 'absolute';
+    input.style.opacity = '0';
+    input.style.width = '1px';
+    input.style.height = '1px';
+    input.style.pointerEvents = 'none';
+    input.tabIndex = -1;
+    input.parentNode.insertBefore(trigger, input.nextSibling);
+    trigger.addEventListener('click', function () {
+      if (input.disabled) return;
+      openCalPicker(trigger, input);
+    });
+  }
+  document.querySelectorAll('input[type="date"]:not([data-cal-enhanced])').forEach(enhanceDateInput);
+})();
 </script>
 </body>
 </html>

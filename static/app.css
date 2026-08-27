@@ -6,15 +6,24 @@
    still reads as the same company, just a different, mobile-first surface.
    ========================================================================== */
 
-/* Smooths the blank-white flash on every /app/ page navigation (tapping a bottom-nav button,
-   any link) — this app is still a real server-rendered multi-page app underneath (every nav is a
-   genuine full page load, nothing about that changed), this just asks a supporting browser to
-   crossfade the old page into the new one instead of hard-cutting through blank white. Pure CSS,
-   no JS, no per-page wiring: a browser that doesn't support it yet (older Android WebView, etc.)
-   just ignores this at-rule entirely and behaves exactly as before — no fallback code needed. */
-@view-transition {
-  navigation: auto;
-}
+/* REMOVED: @view-transition { navigation: auto; } — was added early on to crossfade genuine full
+   page navigations instead of hard-cutting through blank white. Once the persistent-shell router
+   in base_app.html took over essentially all in-app navigation (nothing about .a-bottom-nav/.mo-
+   tab/.ra-tab taps is a real page load anymore), this rule stopped doing anything useful there —
+   but it was STILL firing on the navigations the router doesn't intercept (a slow/failed fetch
+   falling back to a real `window.location.href`, any link outside .a-bottom-nav, the very first
+   load). On real phones (iOS Safari in particular), the browser's own View Transition snapshot of
+   the OLD page does not track position:fixed elements against the live viewport during the
+   crossfade — .a-bottom-nav would render as a static ghost image, visibly detached mid-screen
+   with a shadow/blur, floating above or below its real fixed position until the transition
+   settled. Confirmed via real-device screenshots (2026-08-27) showing the nav floating mid-page
+   on Trips/Salary/Dashboard/Urea/Trip Detail — never reproduced in this dev environment (fast
+   local network, no fallback nav ever triggered), which is why it went uncaught until now. Fixed
+   by removing the at-rule outright rather than trying to exclude .a-bottom-nav with its own
+   view-transition-name (already tried once this session, on a narrower case — left a visible seam
+   artifact of its own). The router's own #aplOverlay loading state is what actually smooths
+   navigation now; a plain full-page fallback going back to a hard cut is a strict improvement over
+   a corrupted-looking crossfade. */
 
 :root {
   --a-ink: #14213d;
@@ -36,7 +45,15 @@ html, body { margin: 0; padding: 0; }
 body.app-body {
   font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   background: var(--a-paper); color: var(--a-ink);
-  padding-bottom: 84px; /* clears the fixed bottom bar */
+  /* No padding-bottom here anymore — that used to reserve room for .a-bottom-nav specifically
+     because position:fixed takes an element out of the document flow entirely (so without this,
+     the last row of content would render underneath it). Now that the nav is position:sticky
+     (see its own comment for why), it's a normal in-flow flex child again — .a-wrap's flex:1
+     already accounts for the real space the nav takes up, so an extra fixed padding-bottom here
+     would just leave a stale gap below the nav instead (confirmed via a real render — this line
+     used to read padding-bottom: 84px). Each floating "Add X" button (.vh-addbtn etc.) still
+     reserves its own local clearance the same way it always did (a `<div style="height:56px;">`
+     spacer right before it in that page's own template) — untouched by this. */
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden; /* safety net — a native form element (date-picker icon etc.) rendering
     wider than its box on some device clips here instead of pushing the whole screen sideways */
@@ -48,22 +65,39 @@ body.app-body {
      from one screen to the next — reported as the nav "coming up a little" on some tabs.
      min-height, not height, so it's a floor only — never shrinks pages already taller than the
      screen.
-     Three fallbacks, weakest to strongest: 100vh (works everywhere, but has a long-documented
-     mobile miscalculation bug this whole problem stems from) -> 100svh (fixes that on browsers
-     that support the unit) -> var(--app-vh) (base_app.html's own inline <head> script, setting a
-     real pixel value from window.visualViewport/innerHeight before first paint — works on every
-     browser regardless of viewport-unit support at all, so this is the one that actually has to
-     hold even where svh doesn't). Each line only takes effect if the browser understands it, so
-     this always degrades to the best one actually available, never breaks outright. */
+     Fallbacks, weakest to strongest: 100vh (works everywhere, but has a long-documented mobile
+     miscalculation bug this whole problem stems from) -> 100svh (fixes that on browsers that
+     support the unit) -> var(--app-vh), LISTED LAST SO IT WINS (base_app.html's own inline <head>
+     script — see that script's own comment for the full on-device story, confirmed against a real
+     iPhone 14). 100dvh and document.documentElement.clientHeight were both also tried as a
+     stronger final fallback at different points — dvh on the theory that a browser-native,
+     always-current unit had to be more reliable than a JS snapshot, clientHeight because it read
+     correctly in early on-device captures — but real device data eventually showed BOTH reporting
+     the same wrong, too-SMALL number (797, on a device whose real screen.height is 844), not just
+     window.innerHeight/visualViewport.height's own wrong number on first paint. Both were dropped
+     rather than left in as a false sense of safety — var(--app-vh) (now sourced from
+     window.screen.height on iOS standalone specifically, see base_app.html) is the intended final
+     answer here, not superseded by anything below it. */
   min-height: 100vh;
   min-height: 100svh;
   min-height: var(--app-vh, 100vh);
+  /* Flex column, header/main/nav as the 3 children — see .a-bottom-nav's own comment for why:
+     this (plus .a-wrap's flex:1 below) is what makes a short/empty page's nav land at the true
+     live bottom of the screen instead of floating above a gap. */
+  display: flex;
+  flex-direction: column;
 }
 a { color: inherit; text-decoration: none; }
 /* Applied while the FAB / account dropdown / More speed-dial is open — see lockPageScroll() in
    base_app.html. */
 body.a-scroll-lock { overflow: hidden; }
-.a-wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
+/* flex: 1 0 auto — grows to fill whatever vertical space is left between the header and the nav
+   (both fixed-content flex siblings in body's own column layout, see body.app-body above) on a
+   short/empty page, so the nav's own sticky bottom:0 (see .a-bottom-nav) starts out flush with
+   the true bottom of the screen instead of sitting right after a few short rows of content. On a
+   page whose real content is taller than the screen, this does nothing (main already exceeds its
+   flex-basis), same as before. */
+.a-wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; flex: 1 0 auto; width: 100%; }
 
 /* ---------- Top bar ---------- */
 .a-topbar {
@@ -82,28 +116,17 @@ body.a-scroll-lock { overflow: hidden; }
 .a-bell .a-badge { position: absolute; top: -5px; right: -6px; background: var(--a-red); color: #fff; font-size: 0.6rem; font-weight: 800; min-width: 15px; height: 15px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
 .a-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--a-ink); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 700; border: none; padding: 0; font-family: inherit; cursor: pointer; flex-shrink: 0; }
 
-/* ---------- Avatar → account dropdown ---------- */
+/* ---------- Account links (used by profile.html's own Account card) ----------
+   The dropdown these classes originally belonged to (.acct-menu/.acct-backdrop, anchored under
+   the topbar avatar) is gone — the avatar is a plain link to /app/profile now, which already
+   shows everything the dropdown did (and more: real Edit Profile/Change Password), so a small
+   menu in front of that page became a redundant extra tap. .acct-menu-item/-ext/-logout survive
+   because profile.html's own Account card links still use them. */
 .a-avatar-wrap { position: relative; }
-.acct-backdrop { display: none; position: fixed; inset: 0; z-index: 45; background: rgba(20,24,40,0.28); }
-.acct-backdrop.open { display: block; }
-.acct-menu {
-  position: absolute; top: calc(100% + 12px); right: 0; width: 262px; z-index: 50;
-  background: var(--a-white); border-radius: 16px; box-shadow: 0 10px 32px rgba(20,24,40,.18);
-  padding: 8px; opacity: 0; visibility: hidden; transform: translateY(-8px) scale(0.97); transform-origin: top right;
-  transition: opacity .16s ease, transform .16s ease, visibility .16s;
-}
-.acct-menu.open { opacity: 1; visibility: visible; transform: translateY(0) scale(1); }
-.acct-menu-head { display: flex; align-items: center; gap: 11px; padding: 10px 10px 14px; border-bottom: 1px solid var(--a-line); margin-bottom: 6px; }
-.acct-menu-avatar { width: 42px; height: 42px; font-size: 0.9rem; cursor: default; }
-.acct-menu-who { min-width: 0; }
-.acct-menu-name { font-weight: 800; font-size: 0.92rem; color: var(--a-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.acct-menu-role { font-size: 0.74rem; color: var(--a-accent); font-weight: 700; margin-top: 1px; }
-.acct-menu-email { font-size: 0.72rem; color: var(--a-steel); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acct-menu-item { display: flex; align-items: center; gap: 11px; padding: 10px 10px; border-radius: 10px; font-size: 0.85rem; font-weight: 600; color: var(--a-ink); }
 .acct-menu-item:active { background: var(--a-paper); }
 .acct-menu-item svg { width: 18px; height: 18px; color: var(--a-steel); flex-shrink: 0; }
 .acct-menu-ext { margin-left: auto; color: var(--a-steel); font-size: 0.8rem; }
-.acct-menu-sep { height: 1px; background: var(--a-line); margin: 6px 4px; }
 .acct-menu-logout { color: var(--a-red); }
 .acct-menu-logout svg { color: var(--a-red); }
 
@@ -184,7 +207,21 @@ body.a-scroll-lock { overflow: hidden; }
 
 /* ---------- Bottom nav with elevated center FAB ---------- */
 .a-bottom-nav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  /* position:sticky, not fixed — was fixed originally, changed after real-device reports (short/
+     empty-content pages: Employee Ledger with 1-2 rows, etc.) of the nav floating above a gap
+     instead of sitting flush with the true screen bottom. Root cause: mobile Safari positions a
+     `position:fixed` element against the LARGE/layout viewport (as if the address bar were
+     already collapsed) regardless of whether the address bar is actually showing — on a page
+     with nothing to scroll, the address bar never collapses, so a `fixed` nav sits above a gap
+     the height of that still-visible address bar. `position:sticky` doesn't have this quirk (it
+     tracks the real, live viewport like the header's own `position:sticky; top:0` already does,
+     with no reported issue) — combined with body's own flex column + .a-wrap's flex:1 (so the
+     nav's starting position is already flush with the bottom of a short page, not just after a
+     couple of content rows), this holds the nav at the true bottom whether the page scrolls or
+     not. Confirmed via real-device reports specifically on short pages; the previous `--app-vh`/
+     min-height fix (still in place above) was solving a different, smaller version of this same
+     family of bug and stays as a floor for `sticky`'s own containing block, not a replacement. */
+  position: sticky; left: 0; right: 0; bottom: 0; z-index: 50; flex-shrink: 0;
   background: var(--a-white); border-top: 1px solid var(--a-line);
   display: flex; align-items: center; justify-content: space-around;
   padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
@@ -426,6 +463,15 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
    a real floating DOM overlay instead — see .tw-date-wrap/.tw-date-icon below, which can't be
    painted over by anything since it's a genuine sibling element, not part of the input's own
    internal rendering. */
+/* Retints every native date-picker popup in the app from the browser's default blue to the app's
+   own orange (selected-date circle, the confirm checkmark button, focus ring) — accent-color is
+   the one real lever a webpage has over a native OS control's theme color; there's no way to
+   change the popup's own size or corner radius from here at all, that part is drawn entirely by
+   the OS/browser outside this page's DOM. One global rule (not scoped to any single field class)
+   so every date input in the app — filter sheets, Add X modals, Select Period's custom range —
+   picks it up automatically, including any added later. */
+input[type="date"] { accent-color: var(--a-accent); }
+
 .tw-field input[type="date"] { padding-left: 7px; padding-right: 4px; font-size: 0.8rem; }
 
 /* Floating calendar icon overlay for date fields — a real SVG element positioned on top of the
@@ -852,6 +898,86 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
   color: var(--a-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .vam-close svg { width: 16px; height: 16px; }
 
+/* Custom calendar popup — replaces the OS-native date picker everywhere in the app (the native
+   one can't be recolored or resized on iOS at all — a hard platform wall, not a CSS gap — so this
+   is a real from-scratch replacement; see base_app.html for how a plain <input type="date">
+   becomes a trigger for it with no per-page template changes). Small and centered (not a
+   bottom-sheet like .vam-modal) with visibly rounder corners, per instruction. z-index above
+   .vam-modal (81) so it still works when opened from inside an Add-X modal (e.g. Toll's own Add
+   Toll Entry date field). */
+.cal-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.45); z-index: 150; opacity: 0; visibility: hidden; transition: opacity .18s ease, visibility .18s; }
+.cal-backdrop.open { opacity: 1; visibility: visible; }
+.cal-popup {
+  position: fixed; top: 50%; left: 50%; z-index: 151; width: 272px; max-width: 88vw;
+  background: var(--a-white); border-radius: 24px; box-shadow: 0 20px 50px rgba(20,24,40,.28);
+  padding: 16px 14px 12px; opacity: 0; visibility: hidden; pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.92);
+  transition: opacity .18s ease, transform .18s ease, visibility .18s;
+}
+.cal-popup.open { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cal-nav-btn { width: 30px; height: 30px; border-radius: 10px; border: none; background: #fff3e8; color: var(--a-accent);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex-shrink: 0; }
+.cal-nav-btn svg { width: 16px; height: 16px; }
+.cal-nav-btn:active { background: var(--a-accent); color: #fff; }
+/* Now a <button> (was a plain div) — tapping it opens the 12-month grid below, the real "select
+   year and month manually" affordance instead of only ever stepping one month per tap. */
+.cal-month-label { font-weight: 800; font-size: 0.9rem; color: var(--a-ink); background: none; border: none;
+  font-family: inherit; cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+.cal-month-label:active { background: var(--a-paper); }
+/* 12-month grid (Jan-Dec), shown instead of .cal-grid's day cells while cal.mode === 'months' —
+   same card, same confirm/cancel row, just a different grid content and no weekday header.
+   .cal-grid.cal-month-grid (compound, not just .cal-month-grid) — .cal-grid's own base
+   grid-template-columns:repeat(7,1fr) is defined further down this file; same specificity as a
+   single-class selector means source order alone would decide the winner (confirmed via a real
+   render: it silently won, rendering this as 7 cramped columns instead of 3) — the compound
+   selector's higher specificity wins regardless of where either rule sits in the file. */
+.cal-grid.cal-month-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 4px 0 6px; }
+.cal-month-cell { padding: 12px 4px; border-radius: 12px; border: none; background: var(--a-paper);
+  font-family: inherit; font-size: 0.8rem; font-weight: 700; color: var(--a-ink); cursor: pointer; }
+.cal-month-cell.today:not(.selected) { color: var(--a-accent); box-shadow: inset 0 0 0 1.5px var(--a-accent); }
+.cal-month-cell.selected { background: var(--a-accent); color: #fff; }
+/* Full scrollable year list (100+ rows) — shown instead of .cal-grid's day/month cells while
+   cal.mode === 'years'. max-height caps it to roughly where the day grid normally sits (this
+   popup itself doesn't grow), own scroll so the Cancel/confirm row below stays put. */
+/* 3 columns, not 4 — confirmed via a real render that 4 columns plus this list's own vertical
+   scrollbar (overflow-y:auto, needed since 100+ years never fit at once) left too little width
+   per cell, clipping the rightmost column's digits (e.g. "2031" rendering as "203"). 3 gives every
+   cell real breathing room regardless of the scrollbar's width. */
+.cal-grid.cal-year-list { grid-template-columns: repeat(3, 1fr); gap: 8px; max-height: 240px; overflow-y: auto; padding: 4px 4px 6px 2px; }
+.cal-year-cell { padding: 10px 4px; border-radius: 10px; border: none; background: var(--a-paper);
+  font-family: inherit; font-size: 0.78rem; font-weight: 700; color: var(--a-ink); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-year-cell.today:not(.selected) { color: var(--a-accent); box-shadow: inset 0 0 0 1.5px var(--a-accent); }
+.cal-year-cell.selected { background: var(--a-accent); color: #fff; }
+.cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center;
+  font-size: 0.64rem; font-weight: 700; color: var(--a-steel); margin-bottom: 2px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+.cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; min-width: 0;
+  font-size: 0.78rem; font-weight: 600; color: var(--a-ink); border-radius: 50%; cursor: pointer;
+  border: none; background: none; font-family: inherit; }
+.cal-day.other-month { color: var(--a-line); }
+.cal-day.today:not(.selected) { color: var(--a-accent); font-weight: 800; box-shadow: inset 0 0 0 1.5px var(--a-accent); }
+.cal-day.selected { background: var(--a-accent); color: #fff; }
+.cal-day:disabled { color: var(--a-line); cursor: not-allowed; pointer-events: none; }
+.cal-actions { display: flex; align-items: center; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--a-line); }
+.cal-today-btn { background: none; border: none; color: var(--a-steel); font-weight: 700; font-size: 0.76rem;
+  padding: 8px 6px; cursor: pointer; font-family: inherit; }
+.cal-cancel-btn { background: none; border: none; color: var(--a-steel); font-weight: 700; font-size: 0.82rem;
+  padding: 8px 10px; cursor: pointer; font-family: inherit; }
+.cal-confirm-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  background: var(--a-accent); color: #fff; border: none; border-radius: 50%; cursor: pointer; flex-shrink: 0; }
+.cal-confirm-btn svg { width: 15px; height: 15px; }
+
+/* The trigger that stands in for a real <input type="date"> — border/radius/padding/font/height
+   are all set inline per-instance (copied live from that input's own computed style, so it's
+   pixel-identical to whatever that field already looked like on its own page); only true
+   cross-context layout rules belong here. */
+.cal-trigger { width: 100%; box-sizing: border-box; text-align: left; display: block; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--a-ink); }
+.cal-trigger.cal-placeholder { color: var(--a-steel); }
+.cal-trigger.cal-trigger-disabled { opacity: 0.55; cursor: default; }
+
 .vam-form { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
   padding: 16px 18px calc(20px + env(safe-area-inset-bottom, 0px)); }
 
@@ -924,6 +1050,15 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 }
 .vam-field input:focus, .vam-field select:focus, .vam-field textarea:focus { outline: none; border-color: var(--a-accent); }
 .vam-field textarea { resize: vertical; }
+/* input[type="time"] renders measurably taller than every other field in the same form even with
+   identical padding — its native segmented hour/minute/AM-PM display has its own taller intrinsic
+   line-height WebKit doesn't fully respect padding-based squeezing for (the same root category of
+   quirk input[type="date"] used to have, above — now moot for date specifically since that's a
+   custom trigger, not a native control, but time is still native and still has it). Explicit
+   height forces it back down to the same baseline every text/number/date-trigger field in
+   .vam-field already renders at, confirmed via a real side-by-side measurement (Toll's Add Toll
+   Entry: Vehicle/Toll Plaza/Highway/State/Amount all 38px, Time alone was 42.4px). */
+.vam-field input[type="time"], .tw-field input[type="time"] { height: 38px; padding-top: 0; padding-bottom: 0; }
 
 .vam-actions { display: flex; gap: 10px; margin-top: 22px; }
 .vam-btn-cancel { flex: 1; border: 1.5px solid var(--a-line); background: var(--a-white); color: var(--a-ink);
@@ -1289,11 +1424,46 @@ body.tw-body { background: var(--a-paper); padding-bottom: 90px; overflow-x: hid
 .ld-notes-body { font-size: 0.82rem; color: var(--a-ink); line-height: 1.5; }
 
 /* ---------- Profile page ---------- */
-.pr-hero { text-align: center; padding: 22px 16px 6px; }
-.pr-hero-avatar { width: 72px; height: 72px; font-size: 1.5rem; margin: 0 auto 12px; cursor: default; }
-.pr-hero-name { font-size: 1.08rem; font-weight: 800; color: var(--a-ink); }
-.pr-hero-role { font-size: 0.8rem; font-weight: 700; color: var(--a-accent); margin-top: 2px; }
-.pr-hero-email { font-size: 0.78rem; color: var(--a-steel); margin-top: 2px; }
+/* Dark hero card, per the reference design — same --a-ink navy every other dark surface in this
+   app already uses (the account-dropdown avatar, the brand badge), not a new color introduced
+   just for this. No camera/edit-photo badge on the avatar (unlike the reference) — there's no
+   real avatar-upload column or route anywhere in the schema, so a tap-to-change-photo affordance
+   would be fake; the ring is purely decorative, doesn't imply an action that isn't real. */
+.pr-hero-card { background: var(--a-ink); border-radius: 20px; padding: 22px 18px; margin: 14px 0; position: relative; overflow: hidden; }
+.pr-hero-card::before { content: ''; position: absolute; inset: 0; opacity: 0.5;
+  background: radial-gradient(circle at 85% -10%, rgba(255,255,255,0.10), transparent 55%); pointer-events: none; }
+.pr-hero-row { display: flex; align-items: center; gap: 14px; position: relative; }
+.pr-hero-avatar-ring { width: 62px; height: 62px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.28);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 3px; }
+.pr-hero-avatar { width: 100%; height: 100%; font-size: 1.15rem; cursor: default; }
+.pr-hero-who { min-width: 0; }
+.pr-hero-name { font-size: 1.05rem; font-weight: 800; color: #fff; }
+.pr-hero-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap; }
+.pr-hero-role { font-size: 0.78rem; font-weight: 700; color: var(--a-accent-dark); background: rgba(255,255,255,0.9); padding: 2px 9px; border-radius: 999px; }
+.pr-hero-status { font-size: 0.68rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+.pr-hero-status.Active { background: rgba(26,156,91,0.25); color: #6fe3a6; }
+.pr-hero-status.Inactive { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); }
+.pr-hero-email { font-size: 0.78rem; color: rgba(255,255,255,0.65); margin-top: 6px; }
+
+/* The two "Edit Profile" / "Change Password" action cards, side by side under the hero. */
+.pr-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.pr-action-card { background: var(--a-white); border-radius: 16px; padding: 13px 12px; display: flex; align-items: center; gap: 10px;
+  border: none; font-family: inherit; cursor: pointer; text-align: left; min-width: 0; }
+/* Neutral paper/steel, not a color-tinted box — matches .ld-info-icon just below on this same
+   page (Personal Information's own icons), not the KPI-card tinted-icon convention other native
+   pages use. Was blue/purple-tinted; per instruction that read as off-brand specifically here. */
+.pr-action-ic { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  background: var(--a-paper); color: var(--a-steel); }
+.pr-action-ic svg { width: 17px; height: 17px; }
+.pr-action-body { min-width: 0; flex: 1; }
+/* white-space:normal (wraps), not nowrap+ellipsis — "Change Password" is the longer of the two
+   real titles here and was clipping to "Change P…" at this card's actual width; both titles are
+   short enough (1-2 words) that wrapping to a 2nd line reads cleanly, unlike truncating mid-word. */
+.pr-action-title { font-size: 0.76rem; font-weight: 800; color: var(--a-ink); line-height: 1.25; }
+.pr-action-sub { font-size: 0.65rem; color: var(--a-steel); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-action-chev { color: var(--a-steel); flex-shrink: 0; }
+.pr-action-chev svg { width: 15px; height: 15px; }
+
 .pr-linkrow { padding: 12px 6px; }
 .pr-linkrow svg { width: 18px; height: 18px; }
 .pr-linkrow + .pr-linkrow { border-top: 1px solid var(--a-line); }
