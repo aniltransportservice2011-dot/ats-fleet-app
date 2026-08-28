@@ -8,13 +8,13 @@
 </div>
 
 <div class="tr-tabstrip">
-  <a class="tr-tab {{ 'active' if not f_status }}" href="{{ url_for('app_trips', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to) }}">
+  <a class="tr-tab {{ 'active' if not f_status }}" href="{{ url_for('app_trips', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to, sort_dir=f_sort_dir) }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/></svg>
     All Trips</a>
-  <a class="tr-tab {{ 'active' if f_status=='active' }}" href="{{ url_for('app_trips', status='active', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to) }}">
+  <a class="tr-tab {{ 'active' if f_status=='active' }}" href="{{ url_for('app_trips', status='active', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to, sort_dir=f_sort_dir) }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
     On Trip</a>
-  <a class="tr-tab {{ 'active' if f_status=='completed' }}" href="{{ url_for('app_trips', status='completed', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to) }}">
+  <a class="tr-tab {{ 'active' if f_status=='completed' }}" href="{{ url_for('app_trips', status='completed', search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to, sort_dir=f_sort_dir) }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>
     Completed</a>
 </div>
@@ -28,14 +28,17 @@
     {% if f_lr_received %}<input type="hidden" name="lr_received" value="{{ f_lr_received }}">{% endif %}
     {% if f_date_from %}<input type="hidden" name="date_from" value="{{ f_date_from }}">{% endif %}
     {% if f_date_to %}<input type="hidden" name="date_to" value="{{ f_date_to }}">{% endif %}
+    {% if f_sort_dir != 'desc' %}<input type="hidden" name="sort_dir" value="{{ f_sort_dir }}">{% endif %}
   </form>
-  <button type="button" class="a-filter-btn {{ 'active' if f_type or f_lr_received or f_date_from or f_date_to }}" onclick="openTrFilterSheet()" aria-label="Filters">
+  <button type="button" class="a-filter-btn {{ 'active' if f_type or f_lr_received or f_date_from or f_date_to or f_sort_dir != 'desc' }}" onclick="openTrFilterSheet()" aria-label="Filters">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
   </button>
 </div>
 
-<!-- Filter sheet — real filters (Type, LR Received, Date range), same fields the website's own
-     trips_list() supports. Status is already handled by the tab strip above. -->
+<!-- Filter sheet — real filters (Type, LR Received, Date range, Date sort), same fields the
+     website's own trips_list() supports (sort/dir there uses the same whitelist pattern, see its
+     sort_columns dict — this page just exposes the one column, Date, as a real control). Status
+     is already handled by the tab strip above. -->
 <div class="vam-backdrop" id="trFilterBackdrop" onclick="closeTrFilterSheet()"></div>
 <div class="vam-modal" id="trFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
   <div class="vam-head">
@@ -61,6 +64,20 @@
     <div class="vam-grid">
       <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Sort by Date</label>
+      <div class="sort-toggle" id="sortDirToggle">
+        <button type="button" class="sort-toggle-btn {{ '' if f_sort_dir == 'asc' else 'active' }}" data-val="desc" onclick="setSortDir('desc')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
+          Newest First
+        </button>
+        <button type="button" class="sort-toggle-btn {{ 'active' if f_sort_dir == 'asc' else '' }}" data-val="asc" onclick="setSortDir('asc')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
+          Oldest First
+        </button>
+      </div>
+      <input type="hidden" name="sort_dir" id="sortDirInput" value="{{ f_sort_dir }}">
     </div>
     <div class="vam-actions">
       <a href="{{ url_for('app_trips', search=f_search, status=f_status) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
@@ -121,7 +138,7 @@
 
 <div id="tr-load-area">
 {% if has_more %}
-<a class="vh-loadmore" data-loadmore href="{{ url_for('app_trips', status=f_status, search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to, show=show+15) }}">
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_trips', status=f_status, search=f_search, type=f_type, lr_received=f_lr_received, date_from=f_date_from, date_to=f_date_to, sort_dir=f_sort_dir, show=show+15) }}">
   Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
 </a>
 {% elif trips %}
@@ -174,6 +191,16 @@ function closeTrFilterSheet() {
   unlockPageScroll();
   document.getElementById('trFilterBackdrop').classList.remove('open');
   document.getElementById('trFilterSheet').classList.remove('open');
+}
+
+// Sort by Date — segmented Newest First / Oldest First toggle (replaces the old plain <select>).
+// Just updates the hidden sort_dir field + which button looks active; the real submit still
+// happens on "Apply" like every other field in this sheet, not on tap.
+function setSortDir(val) {
+  document.getElementById('sortDirInput').value = val;
+  document.querySelectorAll('#sortDirToggle .sort-toggle-btn').forEach(function (btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-val') === val);
+  });
 }
 </script>
 {% endblock %}

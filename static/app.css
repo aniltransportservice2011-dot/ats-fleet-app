@@ -978,6 +978,28 @@ input[type="date"] { accent-color: var(--a-accent); }
 .cal-trigger.cal-placeholder { color: var(--a-steel); }
 .cal-trigger.cal-trigger-disabled { opacity: 0.55; cursor: default; }
 
+/* Time popup — reuses .cal-backdrop/.cal-popup/.cal-head/.cal-actions/.cal-today-btn/
+   .cal-cancel-btn/.cal-confirm-btn as-is (same orange accent, same small 272px rounded card, see
+   .cal-popup above) so this never drifts from the calendar's own look; only the body content
+   (three scrollable columns instead of a day grid) needs its own rules below. Height matched to
+   .cal-grid's own real measured content height in day mode (~192px), not just eyeballed, so the
+   two popups render the same overall size, not merely a similar-looking one — a plain visual
+   guess left this ~30px taller before, tall enough to read as a bigger popup even though the
+   outer card width was already identical. Cell padding/font-size also brought down to
+   .cal-year-cell's own values (10px/8px vertical, 0.78rem) for the same reason — denser cells read
+   as closer to the calendar's own compact grid than the original taller list rows did. */
+.time-cols { display: flex; align-items: stretch; gap: 6px; height: 192px; }
+.time-col { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex;
+  flex-direction: column; gap: 6px; padding: 4px 2px; scroll-snap-type: y proximity; }
+.time-col-sep { display: flex; align-items: center; justify-content: center; font-weight: 800;
+  font-size: 1rem; color: var(--a-steel); padding-top: 4px; }
+.time-ampm-col { flex: 0 0 54px; overflow-y: visible; justify-content: center; }
+.time-cell { flex-shrink: 0; padding: 8px 4px; border-radius: 10px; border: none; background: var(--a-paper);
+  font-family: inherit; font-size: 0.78rem; font-weight: 700; color: var(--a-ink); cursor: pointer;
+  text-align: center; scroll-snap-align: center; }
+.time-cell.selected { background: var(--a-accent); color: #fff; }
+.time-ampm-cell { padding: 10px 4px; }
+
 .vam-form { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
   padding: 16px 18px calc(20px + env(safe-area-inset-bottom, 0px)); }
 
@@ -988,6 +1010,16 @@ input[type="date"] { accent-color: var(--a-accent); }
 .aty-mode-btn { flex: 1; text-align: center; padding: 9px 4px; border-radius: 10px; border: 1px solid var(--a-line);
   background: var(--a-white); font-size: 0.66rem; font-weight: 700; color: var(--a-steel); cursor: pointer; line-height: 1.25; font-family: inherit; }
 .aty-mode-btn.active { border-color: var(--a-accent); background: #fff3e8; color: var(--a-accent); }
+
+/* Sort by Date segmented toggle (Trips' own Filters sheet) — one continuous rounded pill (not
+   .aty-modes' own gapped/individually-rounded cards), solid accent fill on the active half rather
+   than a light tint, per instruction to match a specific reference design for this control. */
+.sort-toggle { display: flex; border-radius: 999px; overflow: hidden; border: 1px solid var(--a-line); }
+.sort-toggle-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 11px 6px; border: none; background: var(--a-white); color: var(--a-ink);
+  font-family: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.sort-toggle-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+.sort-toggle-btn.active { background: var(--a-accent); color: #fff; }
 .vam-error { background: #fdeceb; border: 1px solid rgba(227,73,72,.3); color: var(--a-red);
   border-radius: 10px; padding: 10px 12px; font-size: 0.82rem; margin-bottom: 14px; }
 .vam-section-title { font-size: 0.7rem; font-weight: 800; color: var(--a-steel); text-transform: uppercase;
@@ -1001,6 +1033,18 @@ input[type="date"] { accent-color: var(--a-accent); }
   .vam-grid { grid-template-columns: 1fr; }
 }
 .vam-field-full { grid-column: 1 / -1; }
+/* Vertical gap between successive top-level blocks in a filter/add sheet (a standalone
+   .vam-field-full like Type/Vehicle/Sort-by-Date, or a .vam-grid row like From/To Date) — .vam-
+   grid's own `gap` only spaces cells WITHIN one grid row, and a lone .vam-field-full has no
+   spacing of its own at all, so several of these stacked directly in .vam-form (e.g. Trips'
+   Filters: Type, LR Received, the From/To Date grid, Sort by Date) rendered with no vertical
+   breathing room between them — reported as fields "squeezed to each other". Scoped to DIRECT
+   children of .vam-form only (:not(:first-child), so the first block still sits flush under the
+   sheet's own top padding) — doesn't touch .vam-field-full when it's nested a level deeper inside
+   a .vam-grid (e.g. a full-width Notes textarea among 2-column Add-form fields), which already
+   has its own correct spacing from that grid's row gap. */
+.vam-form > .vam-field-full:not(:first-child),
+.vam-form > .vam-grid:not(:first-child) { margin-top: 16px; }
 /* min-width:0 on the grid item AND the input/select itself — without this, a grid item defaults
    to never shrinking below its content's own intrinsic width, so a native date-picker's own
    calendar-icon rendering (which varies by device/OS, unlike anything we control with CSS) can
@@ -1424,26 +1468,33 @@ input[type="date"] { accent-color: var(--a-accent); }
 .ld-notes-body { font-size: 0.82rem; color: var(--a-ink); line-height: 1.5; }
 
 /* ---------- Profile page ---------- */
-/* Dark hero card, per the reference design — same --a-ink navy every other dark surface in this
-   app already uses (the account-dropdown avatar, the brand badge), not a new color introduced
-   just for this. No camera/edit-photo badge on the avatar (unlike the reference) — there's no
-   real avatar-upload column or route anywhere in the schema, so a tap-to-change-photo affordance
-   would be fake; the ring is purely decorative, doesn't imply an action that isn't real. */
-.pr-hero-card { background: var(--a-ink); border-radius: 20px; padding: 22px 18px; margin: 14px 0; position: relative; overflow: hidden; }
-.pr-hero-card::before { content: ''; position: absolute; inset: 0; opacity: 0.5;
-  background: radial-gradient(circle at 85% -10%, rgba(255,255,255,0.10), transparent 55%); pointer-events: none; }
+/* White card, same tier as every other card on this page (.pr-action-card/.ld-info-card) and the
+   rest of the app — was a dark --a-ink navy block per the original reference design, but per
+   instruction that read as an off-brand "blue" section against an otherwise white/orange app, the
+   same complaint already fixed once for this page's action-card icons. Avatar ring keeps a dark
+   circle (matches the small header avatar in .a-bottom-nav — that one tiny circle isn't what read
+   as an off-brand section) but the card around it is now plain white. No camera/edit-photo badge
+   on the avatar (unlike the reference) — there's no real avatar-upload column or route anywhere in
+   the schema, so a tap-to-change-photo affordance would be fake; the ring is purely decorative,
+   doesn't imply an action that isn't real. */
+.pr-hero-card { background: var(--a-white); border-radius: 20px; padding: 22px 18px; margin: 14px 0; position: relative; overflow: hidden; }
 .pr-hero-row { display: flex; align-items: center; gap: 14px; position: relative; }
-.pr-hero-avatar-ring { width: 62px; height: 62px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.28);
+.pr-hero-avatar-ring { width: 62px; height: 62px; border-radius: 50%; border: 2px solid var(--a-line);
   display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 3px; }
 .pr-hero-avatar { width: 100%; height: 100%; font-size: 1.15rem; cursor: default; }
 .pr-hero-who { min-width: 0; }
-.pr-hero-name { font-size: 1.05rem; font-weight: 800; color: #fff; }
+.pr-hero-name { font-size: 1.05rem; font-weight: 800; color: var(--a-ink); }
 .pr-hero-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap; }
-.pr-hero-role { font-size: 0.78rem; font-weight: 700; color: var(--a-accent-dark); background: rgba(255,255,255,0.9); padding: 2px 9px; border-radius: 999px; }
+/* Orange-tinted, not blue — same convention as .cal-nav-btn's own #fff3e8/--a-accent pairing
+   elsewhere in this app, not a fresh color choice. */
+.pr-hero-role { font-size: 0.78rem; font-weight: 700; color: var(--a-accent-dark); background: #fff3e8; padding: 2px 9px; border-radius: 999px; }
 .pr-hero-status { font-size: 0.68rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
-.pr-hero-status.Active { background: rgba(26,156,91,0.25); color: #6fe3a6; }
-.pr-hero-status.Inactive { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); }
-.pr-hero-email { font-size: 0.78rem; color: rgba(255,255,255,0.65); margin-top: 6px; }
+/* Same Active/Inactive tint convention as .vh-status-badge/.lg-row-status elsewhere in the app
+   (green-on-light for Active, steel-on-light for Inactive), not a dark-background-only palette
+   that only worked against the old navy card. */
+.pr-hero-status.Active { background: #e8f5ee; color: var(--a-green); }
+.pr-hero-status.Inactive { background: var(--a-paper); color: var(--a-steel); }
+.pr-hero-email { font-size: 0.78rem; color: var(--a-steel); margin-top: 6px; }
 
 /* The two "Edit Profile" / "Change Password" action cards, side by side under the hero. */
 .pr-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }

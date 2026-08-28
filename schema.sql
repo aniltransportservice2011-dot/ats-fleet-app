@@ -740,9 +740,14 @@ CREATE TABLE overheads (
 -- Auth, Settings & Operational Logs
 -- ============================================================================
 
+-- username is case-insensitive (COLLATE NOCASE) — "Abinash"/"abinash"/"ABINASH" are the same
+-- username for the UNIQUE constraint and for every plain `WHERE username=?` lookup (login, app
+-- signup, add_user's duplicate check), on the website and in the app alike, since both read/write
+-- this one column. See migrate_username_nocase.sql for the migration that applied this to the
+-- live database (already applied — a historical record, not something to re-run).
 CREATE TABLE users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT UNIQUE NOT NULL,
+    username      TEXT NOT NULL COLLATE NOCASE UNIQUE,
     password_hash TEXT NOT NULL,
     role          TEXT DEFAULT 'staff',
     is_admin      INTEGER DEFAULT 0,

@@ -793,6 +793,14 @@ CREATE INDEX idx_overheads_company ON overheads(company_id);
 -- Auth, Settings & Operational Logs
 -- ============================================================================
 
+-- username is case-insensitive, same as the live SQLite schema's COLLATE NOCASE (see schema.sql
+-- and migrate_username_nocase.sql) — "Abinash"/"abinash"/"ABINASH" collide as the same username
+-- within a company. Postgres has no column-level NOCASE collation, so this is done as a
+-- lower(username)-based unique index instead of a plain UNIQUE(company_id, username) constraint;
+-- application code doing a lookup must match it with WHERE company_id=? AND lower(username) =
+-- lower(?) for the index to actually apply (a plain username=? comparison would still be
+-- case-sensitive against this column type). citext was deliberately not used here to avoid
+-- depending on a Postgres extension being enabled in every environment this ever deploys to.
 CREATE TABLE users (
     id            SERIAL PRIMARY KEY,
     username      TEXT NOT NULL,
@@ -810,9 +818,9 @@ CREATE TABLE users (
     created_by    INTEGER,
     updated_by    INTEGER,
     updated_at    TEXT,
-    company_id    INTEGER NOT NULL REFERENCES companies(id),
-    UNIQUE(company_id, username)
+    company_id    INTEGER NOT NULL REFERENCES companies(id)
 );
+CREATE UNIQUE INDEX idx_users_company_username_ci ON users(company_id, lower(username));
 CREATE INDEX idx_users_company ON users(company_id);
 
 CREATE TABLE access_logs (
