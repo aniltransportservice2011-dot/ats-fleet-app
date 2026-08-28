@@ -44,6 +44,10 @@
   setAppVh();
   window.addEventListener('resize', setAppVh);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', setAppVh);
+  // Exposed so the router (navigate(), below) can force a fresh measurement right at swap time —
+  // see its own call site for why a stale value specifically bites on Ledger's Parties/Vendors
+  // tabs.
+  window.__setAppVh = setAppVh;
 })();
 </script>
 
@@ -133,27 +137,25 @@
          icon+label items sized to stay on-screen on a narrow phone without overlapping their
          neighbors. Real 6 add-types Maintenance actually has (see MAINTENANCE_TAB_LABELS /
          maintenance_list() in app.py) minus the old free-text "Other" category (dropped per
-         instruction, not offered for now) — Service/Tyres/Battery/Urea/Toll are native, so each
-         jumps straight to that page and auto-opens its own real Add modal via the same ?add=1
-         convention /app/vehicles?add=1 already uses; Compliance is the only one not native yet,
-         so it lands on the website's own page for it (marked ↗, same convention as the More
-         speed-dial) — specifically the real Compliance Expenses tab (add_compliance_expense() in
-         app.py), same tab maintenance.html's own "More" list already links to. Label placement
-         follows each item's own spot on the arc rather than one fixed layout for all 6: with 6
-         stops (an even count) there's no single dead-center position the way the old 5-stop arc
-         had, so all 6 now use the side-label treatment — pos1/2/3 (left half) get the label
-         beside the icon pointing outward-left, pos4/5/6 (right half) point outward-right
-         (.fab-sub-side-l/-r). closeFabMenu() always resets back to this being hidden and the
-         level-1 .fab-menu showing again, so the FAB starts fresh at level 1 every time it's
-         reopened. -->
+         instruction, not offered for now) — all 6 (Service/Tyres/Battery/Urea/Toll/Compliance)
+         are native now, so each jumps straight to that page and auto-opens its own real Add modal
+         via the same ?add=1 convention /app/vehicles?add=1 already uses; Compliance was the last
+         one still bridging to the website (marked ↗) before this pass, now app_compliance() posts
+         through the same _insert_compliance_expense_from_form() the website's own
+         add_compliance_expense() uses. Label placement follows each item's own spot on the arc
+         rather than one fixed layout for all 6: with 6 stops (an even count) there's no single
+         dead-center position the way the old 5-stop arc had, so all 6 now use the side-label
+         treatment — pos1/2/3 (left half) get the label beside the icon pointing outward-left,
+         pos4/5/6 (right half) point outward-right (.fab-sub-side-l/-r). closeFabMenu() always
+         resets back to this being hidden and the level-1 .fab-menu showing again, so the FAB
+         starts fresh at level 1 every time it's reopened. -->
     <div class="fab-menu maint-fan" id="maintFanMenu">
       <!-- Ordered by label length, shortest at the outermost positions (pos1/pos6) and longest
-           toward the inner ones (pos3/pos4) — "Compliance ↗" is by far the longest label here,
-           and the outermost stops sit closest to the screen edge, so it needed the position with
-           the most real horizontal room to not clip off-screen. Native (Service/Tyres/Battery/
-           Urea/Toll) still groups left-then-right by original slot, bridge-to-website
-           (Compliance, now the only one) keeps its own slot too — only which position WITHIN
-           each side's group changed, not which side. -->
+           toward the inner ones (pos3/pos4) — "Compliance" is the longest label here, and the
+           outermost stops sit closest to the screen edge, so it needed the position with the most
+           real horizontal room to not clip off-screen. All 6 (Service/Tyres/Battery/Urea/Toll/
+           Compliance) are native now, grouped left-then-right by original slot — only which
+           position WITHIN each side's group changed, not which side. -->
       <a href="/app/tyres?add=1" class="fab-sub-option fab-sub-side-l" data-pos="1">
         <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg></span>
         <span class="fab-sub-label">Tyres</span>
@@ -166,9 +168,9 @@
         <span class="fab-sub-ic" style="background:#fff6e8;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg></span>
         <span class="fab-sub-label">Battery</span>
       </a>
-      <a href="/maintenance?tab=compliance-expenses" class="fab-sub-option fab-sub-side-r" data-pos="4">
+      <a href="/app/compliance?add=1" class="fab-sub-option fab-sub-side-r" data-pos="4">
         <span class="fab-sub-ic" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
-        <span class="fab-sub-label">Compliance ↗</span>
+        <span class="fab-sub-label">Compliance</span>
       </a>
       <a href="/app/urea?add=1" class="fab-sub-option fab-sub-side-r" data-pos="5">
         <span class="fab-sub-ic" style="background:#e6f6f4;color:var(--a-teal);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
@@ -275,10 +277,39 @@
   <div class="cal-weekdays" id="calWeekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
   <div class="cal-grid" id="calGrid"></div>
   <div class="cal-actions">
-    <button type="button" class="cal-today-btn" id="calTodayBtn">Today</button>
-    <div style="flex:1;"></div>
     <button type="button" class="cal-cancel-btn" onclick="closeCalPicker()">Cancel</button>
+    <div style="flex:1;"></div>
+    <button type="button" class="cal-today-btn" id="calTodayBtn">Today</button>
     <button type="button" class="cal-confirm-btn" id="calConfirmBtn" onclick="confirmCalPicker()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- Custom time popup — same reasoning and same visual language as the calendar popup right
+     above (reuses .cal-backdrop/.cal-popup/.cal-head/.cal-actions/.cal-today-btn/.cal-cancel-btn/
+     .cal-confirm-btn/.cal-trigger as-is, so it's automatically the same orange accent, same small
+     rounded card, no separate styling to keep in sync). Replaces the OS-native time wheel, which
+     takes over the full screen on both platforms and can't be recolored/resized — exactly the
+     "overriding" behavior reported; this stays a small in-page popup like the calendar instead.
+     Two independently-scrollable columns (hour 1-12, minute 00-59) plus an AM/PM toggle, styled
+     like .cal-year-cell's list-of-cells look. -->
+<div class="cal-backdrop" id="timeBackdrop" onclick="closeTimePicker()"></div>
+<div class="cal-popup time-popup" id="timePopup" role="dialog" aria-modal="true" aria-label="Select time">
+  <div class="cal-head">
+    <div class="cal-month-label" style="cursor:default;">Select Time</div>
+  </div>
+  <div class="time-cols">
+    <div class="time-col" id="timeHourCol"></div>
+    <div class="time-col-sep">:</div>
+    <div class="time-col" id="timeMinuteCol"></div>
+    <div class="time-col time-ampm-col" id="timeAmPmCol"></div>
+  </div>
+  <div class="cal-actions">
+    <button type="button" class="cal-cancel-btn" onclick="closeTimePicker()">Cancel</button>
+    <div style="flex:1;"></div>
+    <button type="button" class="cal-today-btn" id="timeNowBtn">Now</button>
+    <button type="button" class="cal-confirm-btn" id="timeConfirmBtn" onclick="confirmTimePicker()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
     </button>
   </div>
@@ -533,6 +564,202 @@
   }
   window.__enhanceAllDateInputs = enhanceAllDateInputs;
 
+  // Every "From Date"/"To Date" pair in the app (Trips' own filter sheet, Tyres/Battery/Urea/
+  // Maintenance/Expenses/Salary/Employee Ledger's identical filter sheets, and the Select Period
+  // custom-range shared by Dashboard/Toll/Route Analytics/Fleet Utilization/Performance/Business
+  // Performance) had no guard against picking a From Date after the To Date — the calendar would
+  // happily let you, and the result was just an empty list, no error. Wires every real
+  // name="date_from"/name="date_to" pair in the same form together live: picking one sets the
+  // other's min/max attribute, which the calendar popup above already reads at open time (see
+  // cal.min/cal.max in openCalPicker) — so the OTHER field's calendar simply won't let you tap a
+  // day that would create an invalid range, instead of allowing it and failing silently later. If
+  // an already-picked value becomes invalid (e.g. To Date was before the newly-picked From Date),
+  // that field is bumped to match rather than left showing a now-impossible range. Server-side
+  // (_normalized_date_range() in app.py) is the real backstop for a submitted/typed/URL-edited
+  // value this can't catch — this is purely the live, in-popup guidance.
+  function wireDateRangePair(fromInput, toInput) {
+    if (fromInput.dataset.rangeWired) return;
+    fromInput.dataset.rangeWired = '1';
+    toInput.dataset.rangeWired = '1';
+    function refreshTrigger(input) {
+      var trigger = input.nextSibling;
+      if (trigger && trigger.classList && trigger.classList.contains('cal-trigger')) {
+        trigger.textContent = input.value ? pretty(input.value) : 'Select date';
+        trigger.classList.toggle('cal-placeholder', !input.value);
+      }
+    }
+    function onFromChange() {
+      if (fromInput.value) toInput.setAttribute('min', fromInput.value); else toInput.removeAttribute('min');
+      if (fromInput.value && toInput.value && toInput.value < fromInput.value) {
+        toInput.value = fromInput.value;
+        refreshTrigger(toInput);
+        toInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    function onToChange() {
+      if (toInput.value) fromInput.setAttribute('max', toInput.value); else fromInput.removeAttribute('max');
+      if (fromInput.value && toInput.value && fromInput.value > toInput.value) {
+        fromInput.value = toInput.value;
+        refreshTrigger(fromInput);
+        fromInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+    onFromChange();
+    onToChange();
+    fromInput.addEventListener('change', onFromChange);
+    toInput.addEventListener('change', onToChange);
+  }
+  function wireAllDateRangePairs(root) {
+    (root || document).querySelectorAll('form').forEach(function (form) {
+      var fromInput = form.querySelector('input[type="date"][name="date_from"]');
+      var toInput = form.querySelector('input[type="date"][name="date_to"]');
+      if (fromInput && toInput) wireDateRangePair(fromInput, toInput);
+    });
+  }
+  window.__wireAllDateRangePairs = wireAllDateRangePairs;
+
+  // Same idea as the calendar above, for every real <input type="time"> in the app (Toll's own
+  // "Time" field, Trip's "End Time") — the OS-native time wheel takes over the whole screen on
+  // both Android and iOS and can't be recolored or shrunk, which is the "overriding" behavior
+  // reported; this is a small popup instead, same card/colors as the calendar via the shared
+  // .cal-* classes. 12-hour hour list + AM/PM toggle (not a raw 24-hour scroll) since that's what
+  // every OS-native time picker in this app already showed the user — the underlying real
+  // <input type="time"> still stores plain 24-hour HH:MM either way, so no data format changes.
+  var timeSt = { trigger: null, input: null, hour12: 12, minute: 0, ampm: 'AM' };
+  function pad2t(n) { return n < 10 ? '0' + n : '' + n; }
+  function to24(hour12, ampm) {
+    var h = hour12 % 12;
+    if (ampm === 'PM') h += 12;
+    return h;
+  }
+  function prettyTime(hhmm) {
+    if (!hhmm) return '';
+    var p = hhmm.split(':');
+    var hh = parseInt(p[0], 10), mm = parseInt(p[1], 10);
+    if (isNaN(hh) || isNaN(mm)) return hhmm;
+    var ampm = hh >= 12 ? 'PM' : 'AM';
+    var h12 = hh % 12; if (h12 === 0) h12 = 12;
+    return h12 + ':' + pad2t(mm) + ' ' + ampm;
+  }
+  function renderTimeCol(colEl, count, current, formatFn, onPick) {
+    colEl.innerHTML = '';
+    for (var i = 0; i < count; i++) {
+      (function (val) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'time-cell' + (val === current ? ' selected' : '');
+        btn.textContent = formatFn(val);
+        btn.addEventListener('click', function () { onPick(val); renderTimePicker(); });
+        colEl.appendChild(btn);
+      })(i);
+    }
+  }
+  function renderTimePicker() {
+    renderTimeCol(document.getElementById('timeHourCol'), 12, timeSt.hour12 - 1, function (v) { return v + 1; },
+      function (v) { timeSt.hour12 = v + 1; });
+    renderTimeCol(document.getElementById('timeMinuteCol'), 60, timeSt.minute, function (v) { return pad2t(v); },
+      function (v) { timeSt.minute = v; });
+    var ampmCol = document.getElementById('timeAmPmCol');
+    ampmCol.innerHTML = '';
+    ['AM', 'PM'].forEach(function (label) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'time-cell time-ampm-cell' + (label === timeSt.ampm ? ' selected' : '');
+      btn.textContent = label;
+      btn.addEventListener('click', function () { timeSt.ampm = label; renderTimePicker(); });
+      ampmCol.appendChild(btn);
+    });
+    requestAnimationFrame(function () {
+      ['timeHourCol', 'timeMinuteCol'].forEach(function (id) {
+        var col = document.getElementById(id);
+        var sel = col.querySelector('.selected');
+        if (sel) sel.scrollIntoView({ block: 'center' });
+      });
+    });
+  }
+  function openTimePicker(trigger, input) {
+    timeSt.trigger = trigger;
+    timeSt.input = input;
+    var val = input.value; // real input's own HH:MM (24-hour), or '' if never set
+    var hh, mm;
+    if (val && /^\d{2}:\d{2}/.test(val)) {
+      hh = parseInt(val.slice(0, 2), 10); mm = parseInt(val.slice(3, 5), 10);
+    } else {
+      var now = new Date(); hh = now.getHours(); mm = now.getMinutes();
+    }
+    timeSt.ampm = hh >= 12 ? 'PM' : 'AM';
+    timeSt.hour12 = hh % 12; if (timeSt.hour12 === 0) timeSt.hour12 = 12;
+    timeSt.minute = mm;
+    renderTimePicker();
+    lockPageScroll();
+    document.getElementById('timeBackdrop').classList.add('open');
+    document.getElementById('timePopup').classList.add('open');
+  }
+  function closeTimePicker() {
+    unlockPageScroll();
+    document.getElementById('timeBackdrop').classList.remove('open');
+    document.getElementById('timePopup').classList.remove('open');
+  }
+  function confirmTimePicker() {
+    if (timeSt.input) {
+      var hh24 = to24(timeSt.hour12, timeSt.ampm);
+      var hhmm = pad2t(hh24) + ':' + pad2t(timeSt.minute);
+      timeSt.input.value = hhmm;
+      if (timeSt.trigger) {
+        timeSt.trigger.textContent = prettyTime(hhmm);
+        timeSt.trigger.classList.remove('cal-placeholder');
+      }
+      timeSt.input.dispatchEvent(new Event('input', { bubbles: true }));
+      timeSt.input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    closeTimePicker();
+  }
+  window.closeTimePicker = closeTimePicker;
+  window.confirmTimePicker = confirmTimePicker;
+  document.getElementById('timeNowBtn').addEventListener('click', function () {
+    var now = new Date();
+    var hh = now.getHours(), mm = now.getMinutes();
+    timeSt.ampm = hh >= 12 ? 'PM' : 'AM';
+    timeSt.hour12 = hh % 12; if (timeSt.hour12 === 0) timeSt.hour12 = 12;
+    timeSt.minute = mm;
+    renderTimePicker();
+  });
+  function enhanceTimeInput(input) {
+    if (input.dataset.calEnhanced) return;
+    input.dataset.calEnhanced = '1';
+    var cs = getComputedStyle(findSizeReference(input));
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'cal-trigger';
+    trigger.style.border = cs.border;
+    trigger.style.borderRadius = cs.borderRadius;
+    trigger.style.padding = cs.padding;
+    trigger.style.fontSize = cs.fontSize;
+    trigger.style.fontFamily = cs.fontFamily;
+    trigger.style.background = cs.backgroundColor;
+    trigger.style.height = cs.height;
+    trigger.style.boxSizing = cs.boxSizing;
+    var hasValue = !!input.value;
+    trigger.textContent = hasValue ? prettyTime(input.value) : 'Select time';
+    if (!hasValue) trigger.classList.add('cal-placeholder');
+    if (input.disabled) { trigger.disabled = true; trigger.classList.add('cal-trigger-disabled'); }
+    input.style.position = 'absolute';
+    input.style.opacity = '0';
+    input.style.width = '1px';
+    input.style.height = '1px';
+    input.style.pointerEvents = 'none';
+    input.tabIndex = -1;
+    input.parentNode.insertBefore(trigger, input.nextSibling);
+    trigger.addEventListener('click', function () {
+      if (input.disabled) return;
+      openTimePicker(trigger, input);
+    });
+  }
+  function enhanceAllTimeInputs(root) {
+    (root || document).querySelectorAll('input[type="time"]:not([data-cal-enhanced])').forEach(enhanceTimeInput);
+  }
+  window.__enhanceAllTimeInputs = enhanceAllTimeInputs;
+
   // Every OTHER native list="..." datalist field across the app (Battery/Tyres/Urea/Toll/
   // Maintenance/Expenses' own Vehicle/Vendor/Supplier/Category fields, etc.) gets the exact same
   // tap-reliable suggestion widget trip_add.html's Vehicle/Party/Driver fields already use
@@ -610,7 +837,9 @@
   }
   window.__enhanceAllDatalistInputs = enhanceAllDatalistInputs;
   enhanceAllDateInputs(document);
+  enhanceAllTimeInputs(document);
   enhanceAllDatalistInputs(document);
+  wireAllDateRangePairs(document);
 })();
 </script>
 
@@ -791,15 +1020,30 @@
       // and silently never open the modal — reproduced via the FAB's "Add Maintenance" arc, whose
       // links all go through this router since they live inside .a-bottom-nav.
       if (!isPopState) history.pushState({ appNav: true }, '', url);
+      // Re-measure --app-vh right before the swap paints, not just on page-load/resize — the
+      // "flash on the bottom nav" reported switching Ledger's Parties/Vendors tabs: those two
+      // lists differ enough in length that the swap can land on a page whose real content height
+      // crosses the one-viewport line, right as a scroll-driven mobile address-bar show/hide is
+      // also settling; a stale --app-vh (last set on load or the previous resize event, which a
+      // client-side swap doesn't itself fire) briefly floors body's min-height against the wrong
+      // number until some later, unrelated resize event corrects it, reading as the nav twitching
+      // into place a beat after the new content appears. Cheap to always do, not just here.
+      if (window.__setAppVh) window.__setAppVh();
       mainEl.innerHTML = newMain.innerHTML;
       // Re-enhance any real <input type="date"> the swapped-in page brought with it — the calendar
       // popup itself lives outside #appMain (untouched by this swap), but its trigger buttons are
       // created per-input, so a freshly-swapped page's own date fields need this run again. See
       // enhanceAllDateInputs()'s own comment, defined earlier, before #appExtraScripts.
       if (window.__enhanceAllDateInputs) window.__enhanceAllDateInputs(mainEl);
+      // Same reasoning, for every real <input type="time"> the swapped-in page brought with it —
+      // see enhanceAllTimeInputs()'s own comment, defined right after the date one.
+      if (window.__enhanceAllTimeInputs) window.__enhanceAllTimeInputs(mainEl);
       // Same reasoning, for every native list="..." datalist field the swapped-in page brought
       // with it — see enhanceAllDatalistInputs()'s own comment, defined earlier.
       if (window.__enhanceAllDatalistInputs) window.__enhanceAllDatalistInputs(mainEl);
+      // Same reasoning, for any From Date/To Date pair the swapped-in page brought with it — see
+      // wireAllDateRangePairs()'s own comment, defined right after the date enhancer above.
+      if (window.__wireAllDateRangePairs) window.__wireAllDateRangePairs(mainEl);
       scriptsEl.innerHTML = newScripts ? newScripts.innerHTML : '';
       runScripts(scriptsEl);
       syncActiveNav(newDoc);
@@ -821,18 +1065,26 @@
     navigate(href, false);
   });
 
-  // Same router, extended to the in-page tab strips (.ra-tab: Best Routes/Route Rates, Overview/
-  // Idle Analysis/Empty Run Analysis, Driver/Vehicle Performance — .mo-tab: the outer Business
-  // Overview 4-tab strip, Maintenance/Tyres/Battery/Salary/Trip Detail's own sub-tabs). These
-  // were still doing a real full page reload even after the bottom nav stopped — every one of
-  // them lives inside #appMain, which is exactly what gets swapped, so listening here (not on
-  // .a-bottom-nav) and matching on the tab classes specifically (not just any link) keeps this
-  // scoped to tab switches, not every link on every page (a Trip Detail row, a Ledger party row,
-  // etc. still do a normal navigation, unchanged). Attached to mainEl itself, not the tabs
-  // directly, so it keeps working after a swap replaces them with a freshly fetched copy —
-  // event delegation resolves e.target at click time, not at listener-attachment time.
+  // Same router, extended to every in-page tab strip in the app (.ra-tab: Best Routes/Route
+  // Rates, Overview/Idle Analysis/Empty Run Analysis, Driver/Vehicle Performance — .mo-tab: the
+  // outer Business Overview 4-tab strip, Maintenance/Tyres/Battery/Salary/Trip Detail's own
+  // sub-tabs — .lg-tab: Ledger's All/Parties/Vendors strip — .tr-tab: Trips' All/On Trip/
+  // Completed — .vh-tab: Vehicles' All/Active/In Maintenance — .ld-tab: Ledger Detail's All
+  // Transactions/Receivables/Payables). These were still doing a real full page reload even
+  // after the bottom nav stopped — every one of them lives inside #appMain, which is exactly what
+  // gets swapped, so listening here (not on .a-bottom-nav) and matching on the tab classes
+  // specifically (not just any link) keeps this scoped to tab switches, not every link on every
+  // page (a Trip Detail row, a Ledger party row, etc. still do a normal navigation, unchanged).
+  // .lg-tab/.tr-tab/.vh-tab/.ld-tab were the ones still missing from this list — confirmed via a
+  // full sweep of every -tab class in templates/app/ after .lg-tab turned out to be one of them
+  // (a real full-page reload on every tap, which is what actually reads as "the bottom nav
+  // flashing": the whole page, nav included, unmounts and remounts from scratch — no amount of
+  // fixing --app-vh's own staleness could touch it, since navigate() never ran for these at all).
+  // Attached to mainEl itself, not the tabs directly, so it keeps working after a swap replaces
+  // them with a freshly fetched copy — event delegation resolves e.target at click time, not at
+  // listener-attachment time.
   mainEl.addEventListener('click', function (e) {
-    var link = e.target.closest('a.ra-tab[href], a.mo-tab[href]');
+    var link = e.target.closest('a.ra-tab[href], a.mo-tab[href], a.lg-tab[href], a.tr-tab[href], a.vh-tab[href], a.ld-tab[href]');
     if (!link) return;
     var href = link.getAttribute('href');
     if (href.indexOf('/app/') !== 0) return; // real nav for anything outside this app section

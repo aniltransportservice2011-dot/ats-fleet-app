@@ -1,0 +1,431 @@
+{% extends "app/base_app.html" %}
+{% block title %}Compliance — {{ company_name }}{% endblock %}
+{% block content %}
+
+<!-- Real data only — see _compliance_expense_tab_context() in app.py, shared verbatim with the
+     website's own Maintenance > Compliance Expenses tab. Its own top-level page (not a
+     Maintenance tab-strip box — same "lives in More instead" reasoning as Toll, see toll.html's
+     own comment), reached from the bottom nav's FAB fan and every native Maintenance page's own
+     "More" sheet — was a website-bridge (↗) link before this pass, now a real native page, same
+     migration Toll already went through.
+     Search + Filters — same collapsed-behind-one-icon convention as Toll/Urea/Tyres/Battery
+     (a real search box, substring match over vehicle/description/vendor — see
+     _compliance_expense_tab_context()'s own comment — plus Vehicle/Compliance Type/From Date/To
+     Date behind the .a-filter-btn icon), placed in the same spot right after the KPI grid, not
+     the reference mockup's always-visible panel above the list — per instruction to keep this
+     consistent with the rest of the app, not a one-off layout.
+     "Add Expense" is the same real _insert_compliance_expense_from_form() the website's own Add
+     Compliance Expense modal posts to (floating bottom-right button + native modal, same position/
+     style as Add Toll Entry/Add Urea/etc.). No breadcrumb above the title — Toll/Urea/Tyres/
+     Battery don't show one either, per instruction to keep this consistent with those. -->
+<div class="vh-head">
+  <div>
+    <h1>Compliance</h1>
+    <div class="sub">Track fleet upkeep, costs and vendor activity.</div>
+  </div>
+</div>
+
+<!-- Same Maintenance tab strip as maintenance.html/tyres.html/battery.html/urea.html/toll.html —
+     Compliance isn't one of the 5 boxes here (see the More sheet below instead, same as Toll), but
+     the strip itself still repeats on this page so the way back to Overview/Service/Tyres/Battery/
+     Urea is never lost. -->
+<div class="mo-tabstrip">
+  <a class="mo-tab" href="{{ url_for('app_maintenance') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
+    <span>Overview</span></a>
+  <a class="mo-tab" href="{{ url_for('app_maintenance', tab='service') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    <span>Service</span></a>
+  <a class="mo-tab" href="{{ url_for('app_tyres') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
+    <span>Tyres</span></a>
+  <a class="mo-tab" href="{{ url_for('app_battery') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
+    <span>Battery</span></a>
+  <a class="mo-tab" href="{{ url_for('app_urea') }}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
+    <span>Urea</span></a>
+  <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>More</span></button>
+</div>
+
+<div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
+<div class="mo-more-sheet" id="moMoreSheet">
+  <div class="mo-more-handle"></div>
+  <div class="mo-more-title">All Tabs</div>
+  <div class="mo-more-grid">
+    <a href="{{ url_for('app_toll') }}" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+      <span>Toll</span>
+    </a>
+    <a href="{{ url_for('app_compliance') }}" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/></svg></span>
+      <span>Compliance</span>
+    </a>
+  </div>
+</div>
+
+{% macro trend_badge(pct) %}{% if pct is not none %}<span class="mo-kpi-trend {{ 'up' if pct >= 0 else 'down' }}">{{ '↑' if pct >= 0 else '↓' }} {{ pct|abs }}% vs last month</span>{% endif %}{% endmacro %}
+
+<div class="mo-kpi-grid">
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Compliance Expenses</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(month_total) }}</div><div class="mo-kpi-sub">This Month</div>{{ trend_badge(total_change_pct) }}</div>
+      <div class="mo-kpi-icon" style="background:#fff3e8;color:var(--a-accent);">💰</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Total Transactions</div><div class="mo-kpi-val">{{ month_count }}</div><div class="mo-kpi-sub">This Month</div>{{ trend_badge(count_change_pct) }}</div>
+      <div class="mo-kpi-icon" style="background:#e8f5ee;color:var(--a-green);">📋</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Avg Expense / Day</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(avg_per_day) }}</div><div class="mo-kpi-sub">This Month</div>{{ trend_badge(avg_change_pct) }}</div>
+      <div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📅</div>
+    </div>
+  </div>
+  <div class="mo-kpi-card">
+    <div class="mo-kpi-top">
+      <div><div class="mo-kpi-lbl">Highest Expense</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(highest_amount) }}</div><div class="mo-kpi-sub">{% if highest_vehicle_no %}{{ highest_type }} — {{ highest_vehicle_no }}{% else %}No expenses this month{% endif %}</div></div>
+      <div class="mo-kpi-icon" style="background:#fdecea;color:var(--a-red);">📈</div>
+    </div>
+  </div>
+</div>
+
+<div class="a-search-row">
+  <form class="a-search-box" id="compSearchForm">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" name="search" value="{{ f_search }}" placeholder="Vehicle, description, vendor…" onchange="this.form.submit()">
+    <input type="hidden" name="vehicle" value="{{ f_vehicle }}">
+    <input type="hidden" name="compliance_type" value="{{ f_compliance_type }}">
+    <input type="hidden" name="date_from" value="{{ f_date_from }}">
+    <input type="hidden" name="date_to" value="{{ f_date_to }}">
+  </form>
+  <button type="button" class="a-filter-btn {{ 'active' if f_vehicle or f_compliance_type or f_date_from or f_date_to }}" onclick="openCompFilterSheet()" aria-label="Filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+  </button>
+</div>
+
+<!-- Filters sheet — Vehicle/Compliance Type/From Date/To Date, same real fields
+     _compliance_expense_tab_context() reads off request.args, same vam-modal sheet pattern every
+     other native Maintenance page's Filters uses (see openTollFilterSheet() etc.). -->
+<div class="vam-backdrop" id="compFilterBackdrop" onclick="closeCompFilterSheet()"></div>
+<div class="vam-modal" id="compFilterSheet" role="dialog" aria-modal="true" aria-label="Filters">
+  <div class="vam-head">
+    <h2>Filters</h2>
+    <button type="button" class="vam-close" onclick="closeCompFilterSheet()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form class="vam-form" method="GET" action="{{ url_for('app_compliance') }}">
+    <input type="hidden" name="search" value="{{ f_search }}">
+    <div class="vam-field vam-field-full">
+      <label>Vehicle</label>
+      <select name="vehicle"><option value="">All Vehicles</option>
+        {% for v in vehicles %}<option value="{{ v.vehicle_no }}" {% if f_vehicle == v.vehicle_no %}selected{% endif %}>{{ v.vehicle_no }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-field vam-field-full">
+      <label>Compliance Type</label>
+      <select name="compliance_type"><option value="">All Compliance</option>
+        {% for ct in compliance_types %}<option value="{{ ct }}" {% if f_compliance_type == ct %}selected{% endif %}>{{ ct }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="vam-grid">
+      <div class="vam-field"><label>From Date</label><div class="vam-date-wrap"><input type="date" name="date_from" value="{{ f_date_from }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>To Date</label><div class="vam-date-wrap"><input type="date" name="date_to" value="{{ f_date_to }}"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+    </div>
+    <div class="vam-actions">
+      <a href="{{ url_for('app_compliance', search=f_search) }}" class="vam-btn-cancel" style="text-align:center; display:flex; align-items:center; justify-content:center;">Clear</a>
+      <button type="submit" class="vam-btn-save">Apply</button>
+    </div>
+  </form>
+</div>
+
+<div class="mo-panel" style="padding:0; overflow:hidden;">
+  <div class="mo-panel-head" style="padding:14px 16px 10px;">
+    <h2>Compliance Expense List ({{ total_count }})</h2>
+  </div>
+  <div id="comp-list">
+  {% for r in rows %}
+  <div class="ms-row">
+    <div class="ms-row-main">
+      <div class="ms-row-top">
+        <div class="ms-row-vehicle">{{ r.vehicle_no }}</div>
+        <span class="vh-status-badge" style="background:{{ compliance_expense_colors.get(r.compliance_type, '#8a8f98') }}1a; color:{{ compliance_expense_colors.get(r.compliance_type, '#8a8f98') }};">{{ r.compliance_type }}</span>
+      </div>
+      <div class="ms-row-bottom">
+        <div class="ms-row-sub">{{ r.date }}{% if r.description %} · {{ r.description }}{% endif %}{% if r.vendor_name %} · {{ r.vendor_name }}{% endif %}</div>
+        <div class="ms-row-sub" style="font-weight:700; color:var(--a-ink); flex-shrink:0;">₹{{ '{:,.0f}'.format(r.amount or 0) }} <span style="font-weight:500; color:var(--a-steel);">{{ r.payment_mode or 'Unpaid' }}</span></div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No compliance expenses found for this selection.</div>
+  {% endfor %}
+  </div>
+</div>
+
+<div id="comp-load-area" style="margin-top:10px;">
+{% if has_more %}
+<a class="vh-loadmore" data-loadmore href="{{ url_for('app_compliance', vehicle=f_vehicle, compliance_type=f_compliance_type, date_from=f_date_from, date_to=f_date_to, search=f_search, show=show+15) }}">
+  Load More <span class="vh-loadmore-count">({{ total_count - show }} more)</span>
+</a>
+{% elif rows %}
+<div class="vh-listend">You've reached the end · {{ total_count }} entr{{ 'y' if total_count == 1 else 'ies' }} total</div>
+{% endif %}
+</div>
+
+<!-- Compliance Expenses Trend (6 months) — real single-series bar trend, same .mo-trend-bars
+     pattern Urea's own Stock Trend uses (default .mo-trend-bar color is already var(--a-accent),
+     no inline override needed) — native app chart convention rather than the website's own SVG
+     line chart, per "css style match with app". -->
+<div class="mo-panel">
+  <div class="mo-panel-head"><h2>Compliance Expenses Trend (6 months)</h2></div>
+  <div class="mo-trend-bars">
+    {% for t in trend %}
+    <div class="mo-trend-col">
+      <div class="mo-trend-bar" style="height:{{ ((t.amount / trend_max * 100) if trend_max else 0)|round(0) }}%;" title="₹{{ '{:,.0f}'.format(t.amount) }}"></div>
+      <div class="mo-trend-label">{{ t.label }}</div>
+    </div>
+    {% else %}
+    <div class="vd-empty">No compliance expense history yet.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Expenses by Compliance Type — real full-ledger breakdown (all-time, not scoped to the filter
+     above, same "KPIs/charts come from the unfiltered ledger" rule Toll's own top-plazas list
+     follows), same ranked-list style Toll's "Top Toll Plazas" already uses instead of the
+     website's own SVG donut. -->
+<div class="mo-panel">
+  <div class="mo-panel-head"><h2>Expenses by Compliance Type</h2></div>
+  {% for t in type_breakdown %}
+  <div class="ra-route-row">
+    <div class="ra-rank rn" style="background:{{ t.color }}1a; color:{{ t.color }};">●</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ t.type }}</div>
+      <div style="color:var(--a-steel); font-size:0.7rem;">{{ t.pct }}% of total</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin" style="color:var(--a-ink);">₹{{ '{:,.0f}'.format(t.amount) }}</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="vd-empty">No compliance expenses recorded yet.</div>
+  {% endfor %}
+</div>
+
+<div style="height:56px;"></div>
+<button type="button" class="vh-addbtn" onclick="openAddComplianceModal()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+  Add Expense
+</button>
+
+<!-- Add Compliance Expense modal — same real fields as the website's own Add Compliance Expense
+     modal (_maintenance_compliance_modals.html), posts through
+     _insert_compliance_expense_from_form() via app_add_compliance(), shared verbatim with the
+     website so the two can never accept a different set of fields. Paid Amount syncs to Amount
+     and locks read-only while no vendor is entered, same real "nobody to owe money to yet" rule
+     that modal already uses — see mtSyncPaid() there, replicated as compSyncPaid() below. -->
+<div class="vam-backdrop" id="acBackdrop" onclick="closeAddComplianceModal()"></div>
+<div class="vam-modal" id="acModal" role="dialog" aria-modal="true" aria-label="Add Compliance Expense">
+  <div class="vam-head">
+    <h2>Add Compliance Expense</h2>
+    <button type="button" class="vam-close" onclick="closeAddComplianceModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="acError" style="display:none; margin:0 18px 14px;"></div>
+  <form id="acForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" list="comp-vehicle-list" required></div>
+      <div class="vam-field"><label>Compliance Type <span class="req">*</span></label>
+        <select name="compliance_type" required>
+          {% for ct in compliance_types %}<option value="{{ ct }}">{{ ct }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field"><label>Description</label><input type="text" name="description" placeholder="e.g. Policy Renewal"></div>
+      <div class="vam-field"><label>Vendor</label><input type="text" name="vendor_name" id="acVendor" list="comp-vendor-list" placeholder="e.g. Bajaj Allianz"></div>
+      <div class="vam-field"><label>Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" id="acDate" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" min="0" name="amount" id="acAmount" required></div>
+      <div class="vam-field"><label>Paid Amount (₹) <span id="acPaidReq" style="color:var(--a-red);"></span></label><input type="number" step="0.01" min="0" name="paid_amount" id="acPaid" placeholder="0 if unpaid so far"></div>
+      <div class="vam-field"><label>Payment Mode</label>
+        <select name="payment_mode">
+          <option value="">-- Select --</option>
+          <option value="Cash">Cash</option>
+          <option value="UPI">UPI</option>
+          <option value="Bank">Bank Transfer</option>
+          <option value="Cheque">Cheque</option>
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" rows="2" placeholder="Optional notes..."></textarea></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeAddComplianceModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Expense</button>
+    </div>
+  </form>
+</div>
+<datalist id="comp-vehicle-list">{% for v in vehicles %}<option value="{{ v.vehicle_no }}">{% endfor %}</datalist>
+<datalist id="comp-vendor-list">{% for n in vendor_names %}<option value="{{ n }}">{% endfor %}</datalist>
+
+{% endblock %}
+{% block extra_scripts %}
+<script>
+// "More" tabs sheet — same as maintenance.html/tyres.html/battery.html/urea.html/toll.html's own.
+function openMoMoreSheet() {
+  lockPageScroll();
+  document.getElementById('moMoreSheet').classList.add('open');
+  document.getElementById('moMoreBackdrop').classList.add('open');
+  document.getElementById('moMoreTabBtn').classList.add('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'true');
+}
+function closeMoMoreSheet() {
+  unlockPageScroll();
+  document.getElementById('moMoreSheet').classList.remove('open');
+  document.getElementById('moMoreBackdrop').classList.remove('open');
+  document.getElementById('moMoreTabBtn').classList.remove('active');
+  document.getElementById('moMoreTabBtn').setAttribute('aria-expanded', 'false');
+}
+function toggleMoMoreSheet() {
+  if (document.getElementById('moMoreSheet').classList.contains('open')) closeMoMoreSheet();
+  else openMoMoreSheet();
+}
+
+// Filters sheet — same open/close/backdrop pattern as every other modal.
+function openCompFilterSheet() {
+  lockPageScroll();
+  document.getElementById('compFilterBackdrop').classList.add('open');
+  document.getElementById('compFilterSheet').classList.add('open');
+}
+function closeCompFilterSheet() {
+  unlockPageScroll();
+  document.getElementById('compFilterBackdrop').classList.remove('open');
+  document.getElementById('compFilterSheet').classList.remove('open');
+}
+
+// "Load More" — same fetch + DOM-swap + history.replaceState pattern as every other list.
+__onDocClick(function (e) {
+  var btn = e.target.closest('[data-loadmore]');
+  if (!btn) return;
+  e.preventDefault();
+  var url = btn.getAttribute('href');
+  var original = btn.innerHTML;
+  btn.innerHTML = 'Loading…';
+  btn.style.pointerEvents = 'none';
+  fetch(url)
+    .then(function (res) { return res.text(); })
+    .then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.getElementById('comp-list').innerHTML = doc.getElementById('comp-list').innerHTML;
+      document.getElementById('comp-load-area').innerHTML = doc.getElementById('comp-load-area').innerHTML;
+      history.replaceState(null, '', url);
+    })
+    .catch(function () {
+      btn.innerHTML = original;
+      btn.style.pointerEvents = '';
+    });
+});
+
+// Paid Amount syncs to Amount and locks read-only while no vendor is entered — same real
+// "nobody to owe money to yet" rule the website's own Add Compliance Expense modal uses
+// (mtSyncPaid() in _maintenance_compliance_modals.html).
+function compSyncPaid() {
+  var vendor = document.getElementById('acVendor');
+  var amt = document.getElementById('acAmount');
+  var paid = document.getElementById('acPaid');
+  var req = document.getElementById('acPaidReq');
+  if (!vendor || !amt || !paid) return;
+  var hasVendor = vendor.value.trim().length > 0;
+  paid.required = hasVendor;
+  if (req) req.textContent = hasVendor ? '*' : '';
+  if (hasVendor) {
+    paid.readOnly = false;
+    paid.style.background = '';
+  } else {
+    paid.value = amt.value || 0;
+    paid.readOnly = true;
+    paid.style.background = 'var(--a-paper)';
+  }
+}
+
+// Add Compliance Expense modal — same real fields as the website's own manual-entry modal,
+// floating bottom-right button, same position/style as Add Toll Entry/Add Urea's .vh-addbtn.
+function openAddComplianceModal() {
+  lockPageScroll();
+  document.getElementById('acError').style.display = 'none';
+  var d = document.getElementById('acDate');
+  if (d && !d.value) { d.valueAsDate = new Date(); }
+  compSyncPaid();
+  document.getElementById('acBackdrop').classList.add('open');
+  document.getElementById('acModal').classList.add('open');
+}
+function closeAddComplianceModal() {
+  unlockPageScroll();
+  document.getElementById('acBackdrop').classList.remove('open');
+  document.getElementById('acModal').classList.remove('open');
+}
+var acVendorFld = document.getElementById('acVendor');
+if (acVendorFld) {
+  acVendorFld.addEventListener('input', compSyncPaid);
+  acVendorFld.addEventListener('change', compSyncPaid);
+  // Fallback for browser autofill/form-fill helpers that set .value directly via JS without
+  // firing input/change — same polling backstop the website's own modal uses (mtWatchVendor()).
+  (function () {
+    var last = acVendorFld.value;
+    setInterval(function () {
+      if (acVendorFld.value !== last) { last = acVendorFld.value; compSyncPaid(); }
+    }, 400);
+  })();
+}
+var acForm = document.getElementById('acForm');
+if (acForm) {
+  acForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = acForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('acError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_add_compliance') }}", { method: 'POST', body: new FormData(acForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          window.location.href = (r.data.redirect || "{{ url_for('app_compliance') }}") + '?added=1';
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('added') === '1') {
+    showToast('Saved successfully');
+    params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+// Auto-open when landing here from the FAB's "Add Maintenance" picker (/app/compliance?add=1),
+// same ?add=1 convention /app/vehicles?add=1 already uses.
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add') === '1') {
+    openAddComplianceModal();
+    params.delete('add');
+    var qs = params.toString();
+    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+  }
+})();
+</script>
+{% endblock %}

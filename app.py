@@ -4,6 +4,7 @@ import datetime
 import calendar
 import os
 import json
+import re
 import requests
 from werkzeug.utils import secure_filename
 import compliance_service as cs
@@ -209,6 +210,22 @@ def _shift_period_year(date_from, date_to):
 def _month_bounds(year, month):
     last_day = calendar.monthrange(year, month)[1]
     return datetime.date(year, month, 1).isoformat(), datetime.date(year, month, last_day).isoformat()
+
+def _normalized_date_range(date_from, date_to):
+    """Every 'From Date'/'To Date' filter in the app — Trips, Tyres, Battery, Urea, Maintenance,
+    Expenses, Salary, Employee Ledger, and the Select Period custom-range used by Dashboard/Toll/
+    Route Analytics/Fleet Utilization/Performance/Business Performance — had no guard against a
+    From Date entered after the To Date; that silently produced a WHERE date>=from AND date<=to
+    with no rows possible, not an error. This is the one shared fix: if both are real YYYY-MM-DD
+    values and From is after To, swap them so the range is always valid, whichever end the two
+    values actually came in on (typed by hand, or a URL/query-string edited directly rather than
+    picked through the calendar). Deliberately silent (a swap, not a rejected request) — same
+    graceful-default philosophy every other filter in this app already uses (an unrecognized
+    period falls back to a sane default rather than erroring); leaves both alone if either is
+    missing or not a plain date string, no different from today's behavior in that case."""
+    if date_from and date_to and re.match(r'^\d{4}-\d{2}-\d{2}$', date_from) and re.match(r'^\d{4}-\d{2}-\d{2}$', date_to) and date_from > date_to:
+        return date_to, date_from
+    return date_from, date_to
 
 def _quarter_bounds(d):
     q_start_month = (d.month - 1) // 3 * 3 + 1
@@ -1995,6 +2012,7 @@ def _overhead_list_data(conn):
     status_f = request.args.get('status', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     search_f = request.args.get('search', '')
 
     query = """SELECT id, date, category, amount, notes, payment_mode, receipt_number,
@@ -2924,6 +2942,7 @@ def _urea_management_data(conn, location_f='', supplier_f='', type_f='', search_
     therefore the Overview 'Urea' card) at the moment stock is purchased or a direct/off-stock
     top-up happens — using stock you already paid for isn't a second expense. Does not close conn
     or handle pagination — callers own both, same split _fleet_utilization_data() etc. use."""
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     # paid_amount only ever lives on the linked maintenance row (a stock_out row has none --
     # consuming already-paid-for stock is never a new cost) -- joined in here so the list can
     # show a real pending Balance per entry instead of just the total.
@@ -3370,6 +3389,13 @@ def _compliance_expense_tab_context(conn):
     type_f = request.args.get('compliance_type', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
+    # Search is new (the website itself has no search box on this tab) — added as a plain
+    # substring match over vehicle/description/vendor, same "layer a search convenience on top of
+    # otherwise-real filters" call already made for Expenses/Ledger (see _overhead_list_data()'s
+    # own docstring): additive for the website (a query string it never sends), not a behavior
+    # change there.
+    search_f = request.args.get('search', '')
 
     query = """SELECT ce.*, v.vehicle_no, ve.name as vendor_name
                FROM compliance_expenses ce JOIN vehicles v ON ce.vehicle_id=v.id
@@ -3386,6 +3412,10 @@ def _compliance_expense_tab_context(conn):
         query += " AND ce.date<=?"; params.append(date_to)
     query += " ORDER BY ce.date DESC, ce.id DESC"
     all_rows = conn.execute(query, params).fetchall()
+    if search_f:
+        s = search_f.lower()
+        all_rows = [r for r in all_rows if s in (r['vehicle_no'] or '').lower()
+                    or s in (r['description'] or '').lower() or s in (r['vendor_name'] or '').lower()]
 
     # KPIs come from the *unfiltered* own-fleet ledger, same reasoning as Toll's KPIs — a table
     # filter below shouldn't make the stat cards lie about the real totals.
@@ -3456,7 +3486,7 @@ def _compliance_expense_tab_context(conn):
     vendor_names = [r['name'] for r in conn.execute("SELECT name FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()]
 
     return dict(
-        rows=page_rows, total_count=total_count,
+        rows=page_rows, all_rows=all_rows, total_count=total_count,
         month_total=month_total, month_count=month_count, total_change_pct=total_change_pct, count_change_pct=count_change_pct,
         avg_per_day=avg_per_day, avg_change_pct=avg_change_pct,
         highest_amount=(highest['amount'] if highest else 0), highest_vehicle_no=highest_vehicle_no,
@@ -3465,7 +3495,7 @@ def _compliance_expense_tab_context(conn):
         trend=trend, trend_max=trend_max,
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         vehicles=own_vehicles, vendor_names=vendor_names, compliance_types=COMPLIANCE_EXPENSE_TYPES,
-        f_vehicle=vehicle_f, f_compliance_type=type_f, f_date_from=date_from, f_date_to=date_to)
+        f_vehicle=vehicle_f, f_compliance_type=type_f, f_date_from=date_from, f_date_to=date_to, f_search=search_f)
 
 def _maintenance_compliance_tab(conn):
     """Compliance Expenses — own fleet only. Every entry also lands in the shared `maintenance`
@@ -3533,6 +3563,7 @@ def _tyre_management_data(conn):
     vendor_f = request.args.get('vendor', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     search_f = request.args.get('search', '')
 
     query = """SELECT m.*, v.vehicle_no, ve.name as vendor_name FROM maintenance m
@@ -3766,6 +3797,7 @@ def _battery_management_data(conn):
     type_f = request.args.get('battery_type', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     search_f = request.args.get('search', '')
 
     raw_rows = conn.execute("""SELECT b.*, v.vehicle_no, ve.name as vendor_name FROM batteries b
@@ -3974,6 +4006,7 @@ def _maintenance_service_rows(conn):
     status_f = request.args.get('status', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     search_f = request.args.get('search', '')
 
     query = """SELECT m.*, v.vehicle_no, ve.name as vendor_name FROM maintenance m
@@ -4766,18 +4799,18 @@ def delete_toll(entry_id):
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
 
-@app.route('/maintenance/compliance/add', methods=['POST'])
-def add_compliance_expense():
-    conn = get_db()
-    f = request.form
+def _insert_compliance_expense_from_form(conn, f):
+    """Shared by the website's add_compliance_expense() and the mobile app_add_compliance() —
+    same real insert either way, same own-fleet-only rule Toll's own _insert_toll_from_form()
+    uses (see that function's docstring). Returns (True, None) on success, or (False,
+    error_message) if the vehicle number given isn't a real own-fleet vehicle — never silently
+    creates a new vehicle record from a typo'd or hired number. Does not commit or close conn —
+    same convention _insert_toll_from_form() uses, caller owns the transaction."""
     row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE AND type = 'own'",
                         ((f.get('vehicle_no') or '').strip(),)).fetchone()
     vehicle_id = row['id'] if row else None
     if not vehicle_id:
-        # Own-fleet only — same rule as Toll, never silently creates a new vehicle record from a
-        # typo'd or hired vehicle number.
-        conn.close()
-        return redirect(url_for('maintenance_list', tab='compliance-expenses'))
+        return False, 'No own-fleet vehicle found with that number.'
 
     compliance_type = f.get('compliance_type') if f.get('compliance_type') in COMPLIANCE_EXPENSE_TYPES else 'Other'
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
@@ -4805,6 +4838,12 @@ def add_compliance_expense():
                  (date, vehicle_id, compliance_type, description, vendor_id, amount, payment_mode,
                   cur_m.lastrowid, notes, session.get('user_id'), now))
     conn.commit()
+    return True, None
+
+@app.route('/maintenance/compliance/add', methods=['POST'])
+def add_compliance_expense():
+    conn = get_db()
+    _insert_compliance_expense_from_form(conn, request.form)
     conn.close()
     return redirect(url_for('maintenance_list', tab='compliance-expenses'))
 
@@ -5359,6 +5398,7 @@ def _ledger_page_context(all_entries):
     """Shared filter/tab/pagination handling for both party_ledger() and vendor_ledger()."""
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     kind_f = request.args.get('txn_type', '')
     vtype_f = request.args.get('type', '')
     tab_f = request.args.get('tab', '')
@@ -6732,6 +6772,7 @@ def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
     one employee (by name, matching how `salaries`/`advances` are still keyed) — the same proven
     formula the standalone Employee Ledger page has always used, now reusable from the Employees
     module's drawers too instead of only living on that separate page."""
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     # COALESCE(date, payment_date, substr(created_at,1,10)) rather than a bare `date` column --
     # a salary row can have a NULL `date` (e.g. one left over from the old bulk-generate flow
     # that's since been removed) while still genuinely being paid on a real payment_date. A plain
@@ -9943,6 +9984,7 @@ def business_performance():
     default_from, default_to = _month_bounds(last_month_end.year, last_month_end.month)
     date_from = request.args.get('date_from') or default_from
     date_to = request.args.get('date_to') or default_to
+    date_from, date_to = _normalized_date_range(date_from, date_to)
 
     curr = _period_financials(conn, date_from, date_to)
     prev_from, prev_to = _shift_period_back(date_from, date_to)
@@ -10292,6 +10334,7 @@ def export_business_performance():
     default_from, default_to = _month_bounds(last_month_end.year, last_month_end.month)
     date_from = request.args.get('date_from') or default_from
     date_to = request.args.get('date_to') or default_to
+    date_from, date_to = _normalized_date_range(date_from, date_to)
 
     curr = _period_financials(conn, date_from, date_to)
 
@@ -10635,6 +10678,7 @@ def _resolve_analysis_period(period, c_from, c_to, today):
         mf, mt = _month_bounds(last_month_end.year, last_month_end.month)
         return mf, mt, 'Last Month'
     if period == 'custom' and c_from and c_to:
+        c_from, c_to = _normalized_date_range(c_from, c_to)
         try:
             lbl = (datetime.datetime.strptime(c_from, '%Y-%m-%d').strftime('%d %b') + ' – ' +
                    datetime.datetime.strptime(c_to, '%Y-%m-%d').strftime('%d %b %Y'))
@@ -10677,6 +10721,7 @@ def _resolve_dashboard_period(period, c_from, c_to, today):
     if period == 'fy2526':
         return '2025-04-01', '2026-03-31', 'FY 2025-26'
     if period == 'custom' and c_from and c_to:
+        c_from, c_to = _normalized_date_range(c_from, c_to)
         return c_from, c_to, f"{c_from} to {c_to}"
     mf, mt = _month_bounds(today.year, today.month)
     return mf, mt, 'This Month'
@@ -11234,6 +11279,7 @@ def app_urea():
     search_f = request.args.get('search', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     d = _urea_management_data(conn, location_f, supplier_f, type_f, search_f, date_from, date_to)
     all_rows = d['all_rows']
     total_count = len(all_rows)
@@ -11296,6 +11342,7 @@ def _resolve_toll_period(period, c_from, c_to, today):
     if period == 'all_time':
         return '', '', 'All Time'
     if period == 'custom' and c_from and c_to:
+        c_from, c_to = _normalized_date_range(c_from, c_to)
         try:
             lbl = (datetime.datetime.strptime(c_from, '%Y-%m-%d').strftime('%d %b') + ' – ' +
                    datetime.datetime.strptime(c_to, '%Y-%m-%d').strftime('%d %b %Y'))
@@ -11371,6 +11418,57 @@ def app_add_toll():
     if not ok:
         return jsonify({'ok': False, 'error': err}), 400
     return jsonify({'ok': True, 'redirect': url_for('app_toll')})
+
+@app.route('/app/compliance')
+def app_compliance():
+    """Mobile Compliance Expenses — its own top-level page (not a Maintenance tab-strip box, same
+    "lives in More instead" reasoning as Toll — see toll.html's own comment), reached from the
+    bottom nav's FAB/More sheet and every native Maintenance page's own More sheet. Real numbers
+    straight from _compliance_expense_tab_context() (shared verbatim with the website's own
+    Maintenance > Compliance Expenses tab) — was a website-bridge (↗) link before this pass, now a
+    real native page, same migration Toll already went through. "Add Expense" is the same real
+    _insert_compliance_expense_from_form() the website's own Add Compliance Expense modal posts
+    to, so the two can never accept a different set of fields. "Load More" (growing show count)
+    instead of the website's numbered pager, same convention every list in this app already uses."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    d = _compliance_expense_tab_context(conn)
+    all_rows = d.pop('all_rows')
+    total_count = len(all_rows)
+    try:
+        show = int(request.args.get('show', 15))
+    except (TypeError, ValueError):
+        show = 15
+    show = max(15, show)
+    has_more = total_count > show
+    page_rows = all_rows[:show]
+    conn.close()
+    # d still carries _compliance_expense_tab_context()'s own page/per_page pager fields (rows/
+    # total_count/page/per_page/total_pages/page_tokens/base_qs) — the website's numbered-pager
+    # convention. This route uses the "Load More" growing-window convention instead (rows/
+    # total_count/show/has_more, set explicitly below), so those page-pager keys are dropped
+    # rather than passed through, to avoid a duplicate-keyword clash with the ones set here — same
+    # pattern app_toll() already uses.
+    for k in ('rows', 'total_count', 'page', 'per_page', 'total_pages', 'page_tokens', 'base_qs'):
+        d.pop(k, None)
+    return render_template('app/compliance.html', company_name=company_name, user_initials=user_initials,
+        active='maintenance', notif_count=0, rows=page_rows, total_count=total_count,
+        show=show, has_more=has_more, compliance_expense_colors=COMPLIANCE_EXPENSE_COLORS, **d)
+
+@app.route('/app/compliance/add', methods=['POST'])
+def app_add_compliance():
+    """Add Compliance Expense — posts here via fetch instead of the website's own modal, same
+    _insert_compliance_expense_from_form() the website's own add_compliance_expense() uses, so the
+    two can never disagree on what makes a valid entry."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    ok, err = _insert_compliance_expense_from_form(conn, request.form)
+    conn.close()
+    if not ok:
+        return jsonify({'ok': False, 'error': err}), 400
+    return jsonify({'ok': True, 'redirect': url_for('app_compliance')})
 
 @app.route('/app/expenses')
 def app_expenses():
@@ -11472,6 +11570,7 @@ def app_employee_ledger(employee):
     company_name, user_initials = _app_user_display(conn)
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    date_from, date_to = _normalized_date_range(date_from, date_to)
     search_f = request.args.get('search', '')
     led = _employee_ledger_entries(conn, employee, date_from, date_to)
     entries = led['entries']
@@ -11564,6 +11663,14 @@ def app_trips():
     lr_received_f = request.args.get('lr_received', '')
     date_from_f = request.args.get('date_from', '')
     date_to_f = request.args.get('date_to', '')
+    date_from_f, date_to_f = _normalized_date_range(date_from_f, date_to_f)
+    # Date sort — same 'sort'/'dir' whitelist pattern trips_list() (the website's own /trips) uses
+    # (see its own sort_columns dict), just narrowed to the one column this page actually exposes
+    # a control for (date). 'desc' (Newest First) matches this page's existing default order, so
+    # a link/bookmark from before this existed behaves exactly as it always did.
+    sort_dir_f = request.args.get('sort_dir', 'desc')
+    if sort_dir_f not in ('asc', 'desc'):
+        sort_dir_f = 'desc'
 
     where = " WHERE 1=1"
     params = []
@@ -11602,10 +11709,11 @@ def app_trips():
     show = max(15, show)
     has_more = total_count > show
 
+    order_dir = 'ASC' if sort_dir_f == 'asc' else 'DESC'
     query = f"""SELECT t.id, t.date, t.lr_number, t.end_date, t.billed_amount, t.driver_name,
                       t.from_loc, t.to_loc, v.vehicle_no, p.name as party_name
                FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id LEFT JOIN parties p ON t.party_id=p.id
-               {where} ORDER BY t.date DESC, t.id DESC LIMIT ?"""
+               {where} ORDER BY t.date {order_dir}, t.id {order_dir} LIMIT ?"""
     rows = conn.execute(query, params + [show]).fetchall()
     trips = [{'id': r['id'], 'date': r['date'], 'lr_number': r['lr_number'] or f"Trip #{r['id']}",
               'ongoing': r['end_date'] is None, 'billed_amount': r['billed_amount'] or 0,
@@ -11638,7 +11746,7 @@ def app_trips():
     return render_template('app/trips.html', company_name=company_name, user_initials=user_initials,
         active='trips', notif_count=ongoing_count,
         trips=trips, f_status=status_f, f_search=search_f, f_type=type_f, f_lr_received=lr_received_f,
-        f_date_from=date_from_f, f_date_to=date_to_f, show=show, has_more=has_more, total_count=total_count,
+        f_date_from=date_from_f, f_date_to=date_to_f, f_sort_dir=sort_dir_f, show=show, has_more=has_more, total_count=total_count,
         total_trips_month=total_trips_month, ongoing_count=ongoing_count,
         completed_month=completed_month, total_freight_month=_fmt_freight(total_freight_month))
 
