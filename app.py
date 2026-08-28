@@ -2061,7 +2061,14 @@ def _overhead_list_data(conn):
                 or s in (r['description'] or '').lower()]
 
     categories = conn.execute("SELECT DISTINCT category FROM overheads WHERE category IS NOT NULL AND category != '' ORDER BY category").fetchall()
-    vendors = conn.execute("SELECT DISTINCT vendor FROM overheads WHERE vendor IS NOT NULL AND vendor != '' ORDER BY vendor").fetchall()
+    # Real vendors table, not "whatever vendor name has already been typed into an overhead
+    # entry" — the old query (SELECT DISTINCT vendor FROM overheads) returns nothing at all until
+    # at least one overhead has a vendor on it, which is exactly why this field read as broken:
+    # none of this company's real overhead rows have one yet. This is the same "suggest from the
+    # real table, not from your own history" fix already applied to Tyres/Battery/Compliance's
+    # own vendor fields — shared by overheads_list() (website) and app_expenses() (mobile), so
+    # both get real suggestions, not an empty datalist, the moment this lands.
+    vendors = conn.execute("SELECT name AS vendor FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
 
     all_rows = conn.execute("""SELECT date, amount, category, vendor, payment_mode, COALESCE(status,'Paid') as status,
                                COALESCE(is_recurring,0) as is_recurring, recurring_frequency, receipt_number, due_date
@@ -4493,8 +4500,10 @@ def delete_tyre_stock(stock_id):
     conn = get_db()
     stock = conn.execute("SELECT * FROM tyre_stock WHERE id=?", (stock_id,)).fetchone()
     if stock and stock['status'] == 'In Stock':
-        conn.execute("DELETE FROM maintenance WHERE id=?", (stock['maintenance_id'],))
+        # Child row before the parent maintenance row it references — see delete_battery()'s own
+        # comment on why the reverse order is a real (if currently dormant) bug.
         conn.execute("DELETE FROM tyre_stock WHERE id=?", (stock_id,))
+        conn.execute("DELETE FROM maintenance WHERE id=?", (stock['maintenance_id'],))
         conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -4671,10 +4680,20 @@ def delete_battery(battery_id):
     conn = get_db()
     battery = conn.execute("SELECT * FROM batteries WHERE id=?", (battery_id,)).fetchone()
     if battery and not battery['vehicle_id']:
-        if battery['maintenance_id']:
-            conn.execute("DELETE FROM maintenance WHERE id=?", (battery['maintenance_id'],))
+        # Child rows before the parent maintenance row they reference via maintenance_id — the
+        # reverse order (parent first) is currently harmless only because get_db()'s real
+        # connections never turn foreign_keys enforcement on for SQLite (schema.sql declares
+        # `PRAGMA foreign_keys = ON` as the intent, but that pragma is per-connection, not
+        # persisted in the file); with it actually on — as a stricter test harness or the
+        # planned Postgres migration (which enforces FKs unconditionally) would — deleting the
+        # parent first raises a FOREIGN KEY constraint failure and 500s the request instead of
+        # deleting anything. Same fix applied to delete_urea/delete_toll/
+        # delete_compliance_expense/delete_tyre_stock/delete_insurance, which had the identical
+        # ordering.
         conn.execute("DELETE FROM battery_checks WHERE battery_id=?", (battery_id,))
         conn.execute("DELETE FROM batteries WHERE id=?", (battery_id,))
+        if battery['maintenance_id']:
+            conn.execute("DELETE FROM maintenance WHERE id=?", (battery['maintenance_id'],))
         conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
@@ -4731,9 +4750,11 @@ def edit_urea(txn_id):
 def delete_urea(txn_id):
     conn = get_db()
     txn = conn.execute("SELECT maintenance_id FROM urea_transactions WHERE id=?", (txn_id,)).fetchone()
+    # Child row before the parent maintenance row it references — see delete_battery()'s own
+    # comment on why the reverse order is a real (if currently dormant) bug.
+    conn.execute("DELETE FROM urea_transactions WHERE id=?", (txn_id,))
     if txn and txn['maintenance_id']:
         conn.execute("DELETE FROM maintenance WHERE id=?", (txn['maintenance_id'],))
-    conn.execute("DELETE FROM urea_transactions WHERE id=?", (txn_id,))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='urea'))
@@ -4792,9 +4813,11 @@ def add_toll():
 def delete_toll(entry_id):
     conn = get_db()
     e = conn.execute("SELECT maintenance_id FROM toll_entries WHERE id=?", (entry_id,)).fetchone()
+    # Child row before the parent maintenance row it references — see delete_battery()'s own
+    # comment on why the reverse order is a real (if currently dormant) bug.
+    conn.execute("DELETE FROM toll_entries WHERE id=?", (entry_id,))
     if e and e['maintenance_id']:
         conn.execute("DELETE FROM maintenance WHERE id=?", (e['maintenance_id'],))
-    conn.execute("DELETE FROM toll_entries WHERE id=?", (entry_id,))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
@@ -4851,9 +4874,11 @@ def add_compliance_expense():
 def delete_compliance_expense(entry_id):
     conn = get_db()
     e = conn.execute("SELECT maintenance_id FROM compliance_expenses WHERE id=?", (entry_id,)).fetchone()
+    # Child row before the parent maintenance row it references — see delete_battery()'s own
+    # comment on why the reverse order is a real (if currently dormant) bug.
+    conn.execute("DELETE FROM compliance_expenses WHERE id=?", (entry_id,))
     if e and e['maintenance_id']:
         conn.execute("DELETE FROM maintenance WHERE id=?", (e['maintenance_id'],))
-    conn.execute("DELETE FROM compliance_expenses WHERE id=?", (entry_id,))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='compliance-expenses'))
@@ -5352,9 +5377,11 @@ def delete_insurance(policy_id):
     conn = get_db()
     policy = conn.execute("SELECT * FROM insurance_policies WHERE id=?", (policy_id,)).fetchone()
     if policy:
+        # Child row before the parent maintenance row it references — see delete_battery()'s own
+        # comment on why the reverse order is a real (if currently dormant) bug.
+        conn.execute("DELETE FROM insurance_policies WHERE id=?", (policy_id,))
         if policy['maintenance_id']:
             conn.execute("DELETE FROM maintenance WHERE id=?", (policy['maintenance_id'],))
-        conn.execute("DELETE FROM insurance_policies WHERE id=?", (policy_id,))
         conn.commit()
     conn.close()
     return redirect(url_for('vehicles_list', tab='insurance'))
@@ -10768,13 +10795,25 @@ def app_dashboard():
     # 15d/PUC 7d/Permit 30d), own-fleet vehicles, and prefers a synced vehicle_compliance record's
     # date over the raw vehicles.* column where one exists. Counts documents, not vehicles, so one
     # vehicle with 2 expiring documents counts as 2 — matches the tile's own name.
-    documents_expiring = len(cs.get_compliance_alerts(conn))
+    compliance_alerts = cs.get_compliance_alerts(conn)
+    # Split by the SAME two real statuses the website's own Vehicles page comp_colors scheme uses
+    # (Expired = red, Expiring Soon = accent orange, see vehicles_list.html) — each alert here
+    # already carries that exact status string, so this is just a partition, not a new judgment
+    # call about what counts as which. Shown as two separately-colored chips instead of one flat
+    # amber "Documents Expiring" total, so a real Expired document (already overdue) reads with
+    # the same urgency here as it does on the Vehicles page, not lumped in with a merely
+    # upcoming one.
+    documents_expired = sum(1 for a in compliance_alerts if a['status'] == 'Expired')
+    documents_expiring_soon = sum(1 for a in compliance_alerts if a['status'] == 'Expiring Soon')
+    documents_expiring = documents_expired + documents_expiring_soon
     alert_count = (1 if challans_pending else 0) + (1 if documents_expiring else 0)
     alert_bits = []
     if challans_pending:
         alert_bits.append(f"{challans_pending} challan{'s' if challans_pending != 1 else ''} pending")
-    if documents_expiring:
-        alert_bits.append(f"{documents_expiring} document{'s' if documents_expiring != 1 else ''} expiring soon")
+    if documents_expired:
+        alert_bits.append(f"{documents_expired} document{'s' if documents_expired != 1 else ''} expired")
+    if documents_expiring_soon:
+        alert_bits.append(f"{documents_expiring_soon} document{'s' if documents_expiring_soon != 1 else ''} expiring soon")
     alert_summary = ', '.join(alert_bits)
 
     # ---------- Global Period Filter — the ONE filter that drives Business Overview, Revenue vs
@@ -10890,6 +10929,7 @@ def app_dashboard():
         today_trips_completed=today_trips_completed, today_revenue=today_revenue,
         alert_count=alert_count, alert_summary=alert_summary,
         challans_pending=challans_pending, documents_expiring=documents_expiring,
+        documents_expired=documents_expired, documents_expiring_soon=documents_expiring_soon,
         bo_trips=dfin['trip_count'], bo_trip_growth=bo_trip_growth,
         bo_revenue=dfin['total_revenue'], bo_revenue_growth=bo_revenue_growth,
         bo_expenses=dfin['total_expenses'], bo_expense_growth=bo_expense_growth,

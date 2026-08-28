@@ -71,26 +71,44 @@
   </div>
 </div>
 
-<!-- Action Required (Current) — Challans Pending (real vehicle_challans) + Documents Expiring
-     (real Insurance/Fitness/PUC/Permit expiry, next 15 days). Invoices Pending and Services Due
-     are deliberately left off this pass (see app_dashboard() comment for why). -->
+<!-- Action Required (Current) — Challans Pending (real vehicle_challans) + Documents
+     Expired/Expiring Soon (real Insurance/Fitness/PUC/Permit expiry). Same red/orange severity
+     split the website's own Vehicles page comp_colors scheme uses (Expired = red, Expiring
+     Soon = accent orange — see vehicles_list.html) instead of one flat amber "Documents
+     Expiring" total, so a document that's actually overdue reads with the same urgency here as
+     it does there. Always exactly one row, never wrapping — labels shortened (Challans/Expired/
+     Expiring, not the fuller "Challans Pending"/"Expiring Soon") and the row split evenly across
+     however many of the 3 are actually present (grid-template-columns set to that count, not
+     hardcoded to 3), so 1, 2 or 3 chips all fill the row edge-to-edge instead of wrapping or
+     leaving a gap. Invoices Pending and Services Due are deliberately left off this pass (see
+     app_dashboard() comment for why). -->
 {% if alert_count %}
-<div class="a-card">
+{% set chip_count = (1 if challans_pending else 0) + (1 if documents_expired else 0) + (1 if documents_expiring_soon else 0) %}
+<!-- Whole card hidden outright when alert_count is 0 (nothing to act on) -- the surrounding
+     if-block above, not a display:none toggle, so an empty state never even reaches the page. -->
+<div class="a-card a-card-warn">
   <div class="a-card-head">
     <h2>Action Required</h2>
     <a href="/app/vehicles" class="a-card-link" aria-label="View Vehicles">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
     </a>
   </div>
-  <div class="a-vs-grid" style="grid-template-columns:repeat(2,1fr);">
-    <a href="/app/vehicles" class="a-vs-chip" style="background:#fdecea;color:var(--a-red); text-decoration:none;">
-      <div class="a-vs-num">{{ challans_pending }}</div>
-      <div class="a-vs-label">Challans Pending</div>
+  <div class="a-alert-chips" style="grid-template-columns: repeat({{ chip_count }}, 1fr);">
+    {% if challans_pending %}
+    <a href="/app/vehicles" class="a-alert-chip" style="background:#fdecea;color:var(--a-red);">
+      <span class="a-alert-chip-ic">&#9888;</span>{{ challans_pending }} Challans
     </a>
-    <a href="/app/vehicles" class="a-vs-chip" style="background:#fff6e8;color:var(--a-amber); text-decoration:none;">
-      <div class="a-vs-num">{{ documents_expiring }}</div>
-      <div class="a-vs-label">Documents Expiring</div>
+    {% endif %}
+    {% if documents_expired %}
+    <a href="/app/vehicles" class="a-alert-chip" style="background:#fdecea;color:var(--a-red);">
+      <span class="a-alert-chip-ic">&#9888;</span>{{ documents_expired }} Expired
     </a>
+    {% endif %}
+    {% if documents_expiring_soon %}
+    <a href="/app/vehicles" class="a-alert-chip" style="background:#fff3e8;color:var(--a-accent);">
+      <span class="a-alert-chip-ic">&#9888;</span>{{ documents_expiring_soon }} Expiring
+    </a>
+    {% endif %}
   </div>
 </div>
 {% endif %}
