@@ -193,6 +193,42 @@ body.a-scroll-lock { overflow: hidden; }
 .a-vs-num { font-size: 1.02rem; font-weight: 800; }
 .a-vs-label { font-size: 0.63rem; font-weight: 600; margin-top: 2px; }
 
+/* ---------- Dashboard Action Required — floating alert chips ---------- */
+/* Small rounded pills, always exactly one row — grid-template-columns is set inline per the
+   template's own chip_count (1-3 depending on what's actually outstanding), so however many
+   chips are present split the row evenly and never wrap to a second line. Same small-pill visual
+   language as the website's own Vehicles page warn-chip strip. min-width:0 on the pill itself
+   (grid items default to never shrinking below their content's intrinsic width, same class of
+   fix as .vam-field's own date-input overflow) plus a shrinkable label let a long count+word
+   combination compress instead of forcing the row wider than the card. Colors are set inline per
+   chip (red/orange) since they carry real severity meaning, same as every other status-colored
+   chip in this app. */
+.a-alert-chips { display: grid; gap: 6px; }
+.a-alert-chip { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 8px 4px;
+  border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-decoration: none; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.a-alert-chip-ic { font-size: 0.76rem; line-height: 1; flex-shrink: 0; }
+
+/* "Live" warning cue on the whole Action Required card — a soft red tone sliding across its
+   background on a loop, the actual "floating color" — same technique (and same 2.6s ease-in-out
+   loop) as the website's own Vehicles sidebar nav button (.nav-item-warn in templates/base.html),
+   just moved from a background-color to a background-image gradient since this card is white,
+   not transparent over the sidebar's own paper tone. Paused on hover/touch focus so it doesn't
+   fight a tap; respects prefers-reduced-motion the same way the website version does. */
+.a-card-warn {
+  background-image: linear-gradient(90deg, transparent, rgba(227,73,72,0.10), transparent);
+  background-size: 200% 100%;
+  animation: aCardWarnSlide 2.6s ease-in-out infinite;
+}
+.a-card-warn:active, .a-card-warn:hover { animation-play-state: paused; }
+@keyframes aCardWarnSlide {
+  0% { background-position: 150% 0; }
+  100% { background-position: -50% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .a-card-warn { animation: none; background-image: none; background-color: rgba(227,73,72,0.06); }
+}
+
 /* ---------- Recent activity ---------- */
 .a-activity-item { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-bottom: 1px solid var(--a-line); text-decoration: none; color: var(--a-ink); }
 .a-activity-item:last-child { border-bottom: none; }
