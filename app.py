@@ -48,6 +48,14 @@ VEHICLE_TYPE_OWN = 'own'
 VEHICLE_TYPE_HIRED = 'hired'
 VEHICLE_TYPE_LABELS = {VEHICLE_TYPE_OWN: 'Own', VEHICLE_TYPE_HIRED: 'Hired'}
 
+# The software product's own name — distinct from `company_name` (the settings.company_name row,
+# a per-tenant business name like "Anil Transport" used on invoices/documents, editable per company
+# in Settings). This is the platform's own identity: shown on the app's cold-open splash, where
+# showing the currently-logged-in company's business name instead would be wrong the same way a
+# phone's own lock-screen carrier name isn't a random app's own branding. One constant so a future
+# rename only ever means editing this one line, not hunting down every place it appears.
+APP_NAME = 'ATS Fleet Management'
+
 def get_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
@@ -8703,6 +8711,13 @@ def inject_company_name():
         return {'company_name': get_company_name(session.get('company_id', 1))}
     except Exception:
         return {'company_name': 'ANIL TRANSPORT SERVICE'}
+
+@app.context_processor
+def inject_app_name():
+    """`app_name` — the product's own fixed name (see APP_NAME above), never per-company settings
+    data. Used by the splash screen; kept as its own context processor rather than folded into
+    inject_company_name() so the two stay conceptually and literally separate."""
+    return {'app_name': APP_NAME}
 
 @app.context_processor
 def inject_current_year():

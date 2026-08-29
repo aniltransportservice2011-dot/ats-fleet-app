@@ -38,20 +38,8 @@
   </div>
   <div class="mo-kpi-card">
     <div class="mo-kpi-top">
-      <div><div class="mo-kpi-lbl">Recurring (Monthly)</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(recurring_monthly_amount) }}</div><div class="mo-kpi-sub">{{ recurring_count }} Expense{{ 's' if recurring_count != 1 else '' }}</div></div>
-      <div class="mo-kpi-icon" style="background:#eaf1fb;color:var(--a-blue);">🔁</div>
-    </div>
-  </div>
-  <div class="mo-kpi-card">
-    <div class="mo-kpi-top">
       <div><div class="mo-kpi-lbl">Avg Monthly Expense</div><div class="mo-kpi-val">₹{{ '{:,.0f}'.format(avg_monthly_expense) }}</div><div class="mo-kpi-sub">Last 6 Months</div></div>
       <div class="mo-kpi-icon" style="background:#e6f6f4;color:var(--a-teal);">📊</div>
-    </div>
-  </div>
-  <div class="mo-kpi-card">
-    <div class="mo-kpi-top">
-      <div><div class="mo-kpi-lbl">Categories</div><div class="mo-kpi-val">{{ active_categories }}</div><div class="mo-kpi-sub">Active</div></div>
-      <div class="mo-kpi-icon" style="background:#efeaff;color:var(--a-purple);">📌</div>
     </div>
   </div>
 </div>
