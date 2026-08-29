@@ -63,7 +63,7 @@
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
 
-<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<link rel="stylesheet" href="{{ asset_v('app.css') }}">
 {% block extra_head %}{% endblock %}
 </head>
 
@@ -868,6 +868,24 @@
   // for an instant — removing the scroll trigger removes that shift.
   function lockPageScroll() { document.body.classList.add('a-scroll-lock'); }
   function unlockPageScroll() { document.body.classList.remove('a-scroll-lock'); }
+
+  // reloadWithFlag(flagName, fallbackUrl) — used by every Add/Edit modal's post-save redirect
+  // (Vehicles, Tyres, Battery, Urea, Toll, Compliance, Expenses, Salary, Service, Ledger, Trip
+  // detail, Profile, ...). Previously each page redirected to a bare url_for(...) (or the
+  // server's own redirect, itself built the same bare way) plus its own "?added=1"/"?updated=1"
+  // toast flag — which silently dropped whatever filters (search, date range, status, vehicle,
+  // etc.) were active in the current URL's query string, since every one of those list pages
+  // reads its filters from request.args server-side. A filter is only ever meant to clear when
+  // the user clears it or switches tabs, not as a side effect of saving a record — so this keeps
+  // the CURRENT page's full query string (all active filters intact) and only adds/overwrites the
+  // one flag param, instead of starting from a filter-less fallback URL.
+  function reloadWithFlag(flagName, fallbackUrl) {
+    var base = window.location.search ? window.location.pathname + window.location.search : (fallbackUrl || window.location.pathname);
+    var params = new URLSearchParams(base.indexOf('?') !== -1 ? base.slice(base.indexOf('?')) : '');
+    params.set(flagName, '1');
+    var path = base.indexOf('?') !== -1 ? base.slice(0, base.indexOf('?')) : base;
+    window.location.href = path + '?' + params.toString();
+  }
 
   function openFabMenu() {
     closeMoreSheet(); lockPageScroll();

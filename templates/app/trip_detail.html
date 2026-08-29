@@ -291,7 +291,7 @@ if (etForm) {
       .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
       .then(function (r) {
         if (r.data.ok) {
-          window.location.href = (r.data.redirect || "{{ url_for('app_trip_detail', trip_id=t.id) }}") + '&ended=1';
+          reloadWithFlag('ended', r.data.redirect || "{{ url_for('app_trip_detail', trip_id=t.id) }}");
         } else {
           errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
           errBox.style.display = 'block';

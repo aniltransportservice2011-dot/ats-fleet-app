@@ -323,7 +323,7 @@ document.getElementById('vamForm').addEventListener('submit', function (e) {
         // ?added=1 survives the redirect so the fresh page load can show the confirmation
         // toast — a JS-only "show a toast now" call would never make it, since this is a real
         // navigation to a freshly-rendered list, not a same-page update.
-        window.location.href = (r.data.redirect || "{{ url_for('app_vehicles') }}") + '?added=1';
+        reloadWithFlag('added', r.data.redirect || "{{ url_for('app_vehicles') }}");
       } else {
         errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
         errBox.style.display = 'block';
