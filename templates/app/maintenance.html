@@ -9,18 +9,18 @@
   </div>
 </div>
 
-<!-- 5 real tabs shown as boxes (Overview/Service/Tyres/Battery/Urea) + a "More" box for the 2
-     remaining real tabs (Toll, Compliance) — same 7 real tabs as templates/maintenance.html's own
-     tab_titles, just split across a visible row + an overflow sheet instead of either scrolling
-     sideways or squeezing 7 into one line (Toll was briefly promoted into the row itself, same as
-     Urea before it, but 7-across read as too tight/cramped on a real phone — moved back into
-     More, keeping its own native page and ?add=1 auto-open unaffected). No fabricated tabs (Fuel/
-     Documents/Drivers/Reports/Settings aren't real maintenance sub-tabs anywhere in this codebase
-     — see MAINTENANCE_TAB_LABELS / maintenance_list() in app.py). Overview and Service are both
-     native now; Tyres, Battery, Urea and Toll are their own native top-level pages (see
-     app_tyres()/app_battery()/app_urea()/app_toll()), not sub-tabs here — Tyres/Battery/Urea link
-     straight to their page from the row, Toll links straight to its page from the More sheet;
-     Compliance still bridges to the real website. -->
+<!-- 4 real tabs shown as boxes (Overview/Service/Tyres/Battery) + a "More" box for the 3
+     remaining real tabs (Urea, Toll, Compliance) — same 7 real tabs as templates/maintenance.html's
+     own tab_titles, just split across a visible row + an overflow sheet instead of either
+     scrolling sideways or squeezing too many into one line (Toll was briefly promoted into the
+     row itself, same as Urea before it, but that many boxes across read as too tight/cramped on a
+     real phone — Urea moved back into More too now, same reasoning, for more breathing room per
+     box). No fabricated tabs (Fuel/Documents/Drivers/Reports/Settings aren't real maintenance
+     sub-tabs anywhere in this codebase — see MAINTENANCE_TAB_LABELS / maintenance_list() in
+     app.py). Overview and Service are both native now; Tyres, Battery, Urea and Toll are their
+     own native top-level pages (see app_tyres()/app_battery()/app_urea()/app_toll()), not
+     sub-tabs here — Tyres/Battery link straight to their page from the row, Urea/Toll link
+     straight to their page from the More sheet; Compliance still bridges to the real website. -->
 <div class="mo-tabstrip">
   <a class="mo-tab {{ 'active' if tab == 'overview' }}" href="{{ url_for('app_maintenance') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
@@ -34,23 +34,24 @@
   <a class="mo-tab" href="{{ url_for('app_battery') }}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
     <span>Battery</span></a>
-  <a class="mo-tab" href="{{ url_for('app_urea') }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
-    <span>Urea</span></a>
   <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
     <span>More</span></button>
 </div>
 
-<!-- More sheet — Toll (native, its own real page) and Compliance (still bridges to the website),
-     the 2 real tabs that don't fit the row above. Bottom sheet (slides up) rather than the
-     bottom-nav's own diagonal speed-dial, since this is a page-local grid of tab destinations,
-     not app-wide quick links. -->
+<!-- More sheet — Urea, Toll (both native, their own real pages) and Compliance (still bridges to
+     the website), the 3 real tabs that don't fit the row above. Bottom sheet (slides up) rather
+     than the bottom-nav's own diagonal speed-dial, since this is a page-local grid of tab
+     destinations, not app-wide quick links. -->
 <div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
 <div class="mo-more-sheet" id="moMoreSheet">
   <div class="mo-more-handle"></div>
   <div class="mo-more-title">All Tabs</div>
   <div class="mo-more-grid">
+    <a href="{{ url_for('app_urea') }}" class="mo-more-item">
+      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
+      <span>Urea</span>
+    </a>
     <a href="{{ url_for('app_toll') }}" class="mo-more-item">
       <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
       <span>Toll</span>
@@ -195,7 +196,19 @@
   </div>
   <div id="ms-list">
   {% for r in rows %}
-  <div class="ms-row">
+  {% set rec = dict(id=r.id, date=r.date or '', vehicle_no=r.vehicle_no or '', service_type=r.service_type or r.category or '',
+                     km_reading=r.km_reading, vendor_name=r.vendor_name or '', invoice_no=r.invoice_no or '',
+                     invoice_date=r.invoice_date or '', status=r.status or 'Completed', next_due_km=r.next_due_km,
+                     next_service_date=r.next_service_date or '', amount=r.amount or 0, paid_amount=r.paid_amount or 0,
+                     notes=r.notes or '', checklist_done=r.checklist_done or '') %}
+  <!-- data-record carries this row's full detail so tapping it works the same whether the row
+       came from the initial render or a Load More fetch (which swaps #ms-list's innerHTML without
+       re-running any <script> — a page-level JS lookup array would silently miss those rows).
+       forceescape (not the bare tojson Markup) so the JSON's own literal quote characters become
+       real HTML entities instead of prematurely closing this double-quoted attribute — the browser
+       decodes them back automatically when JS reads the attribute value, same round-trip every
+       other data-* JSON payload in this app already relies on. -->
+  <div class="ms-row" style="cursor:pointer;" onclick="openServiceView(this)" data-record="{{ (rec|tojson)|forceescape }}">
     <div class="ms-row-date">{{ r.date }}</div>
     <div class="ms-row-main">
       <div class="ms-row-top">
@@ -297,7 +310,7 @@
       <div class="vam-field vam-field-full"><label>Service Type <span class="req">*</span></label><input type="text" name="service_type" list="ms-service-type-list" required placeholder="e.g. Engine Service"></div>
       <div class="vam-field"><label>Service Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
-      <div class="vam-field vam-field-full"><label>Vendor / Workshop <span class="req">*</span></label><input type="text" name="vendor_name" list="ms-vendor-list" required></div>
+      <div class="vam-field vam-field-full"><label>Vendor / Workshop</label><input type="text" name="vendor_name" id="asVendorName" list="ms-vendor-list" oninput="msSyncPaid('asVendorName','asAmount','asPaidAmount','asPaidReq')" onblur="msSyncPaid('asVendorName','asAmount','asPaidAmount','asPaidReq')"></div>
       <div class="vam-field"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
       <div class="vam-field"><label>Invoice Date</label><div class="vam-date-wrap"><input type="date" name="invoice_date"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
       <div class="vam-field"><label>Status <span class="req">*</span></label>
@@ -305,8 +318,8 @@
       </div>
       <div class="vam-field"><label>Next Service Due (KM)</label><input type="number" step="1" name="next_due_km"></div>
       <div class="vam-field vam-field-full"><label>Next Service Reminder Date</label><div class="vam-date-wrap"><input type="date" name="next_service_date"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
-      <div class="vam-field vam-field-full"><label>Total Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" required></div>
-      <div class="vam-field vam-field-full"><label>Paid Amount (₹)</label><input type="number" step="0.01" name="paid_amount" placeholder="0 if unpaid so far"></div>
+      <div class="vam-field vam-field-full"><label>Total Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" id="asAmount" required oninput="msSyncPaid('asVendorName','asAmount','asPaidAmount','asPaidReq')"></div>
+      <div class="vam-field vam-field-full"><label>Paid Amount (₹) <span class="req" id="asPaidReq"></span></label><input type="number" step="0.01" name="paid_amount" id="asPaidAmount" placeholder="0 if unpaid so far"></div>
       <div class="vam-field vam-field-full"><label>Work Description</label><textarea name="notes" rows="2" placeholder="Brief description of work done..."></textarea></div>
     </div>
 
@@ -320,6 +333,69 @@
     <div class="vam-actions">
       <button type="button" class="vam-btn-cancel" onclick="closeAddServiceModal()">Cancel</button>
       <button type="submit" class="vam-btn-save" id="asSaveBtn">Save Service</button>
+    </div>
+  </form>
+</div>
+
+<!-- View Service Record — read-only popup opened by tapping a row (openServiceView() below reads
+     that row's own data-record JSON, no extra request). "Update" hands the same record off to the
+     Edit modal further down and closes this one; "Cancel" just closes it. Same .vam-modal
+     component every other sheet in this app uses, .ld-info-label/.ld-info-val for the plain
+     read-only field pairs (same classes Profile's own read-only fields already use). -->
+<div class="vam-backdrop" id="svBackdrop" onclick="closeServiceView()"></div>
+<div class="vam-modal" id="svModal" role="dialog" aria-modal="true" aria-label="Service Record">
+  <div class="vam-head">
+    <h2>Service Record</h2>
+    <button type="button" class="vam-close" onclick="closeServiceView()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-form" style="padding-top:16px;">
+    <div class="ld-info-grid" id="svFields" style="grid-template-columns:1fr 1fr; gap:22px 16px; margin-bottom:6px;"></div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeServiceView()">Cancel</button>
+      <button type="button" class="vam-btn-save" onclick="openEditServiceFromView()">Update</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Service Record — same real fields as Add New Service above, pre-filled, posted to
+     app_edit_service() via fetch — same _update_service_from_form() the website's own edit form
+     uses, so the two can never accept a different set of fields on edit. -->
+<div class="vam-backdrop" id="esBackdrop" onclick="closeEditServiceModal()"></div>
+<div class="vam-modal" id="esModal" role="dialog" aria-modal="true" aria-label="Edit Service">
+  <div class="vam-head">
+    <h2>Edit Service</h2>
+    <button type="button" class="vam-close" onclick="closeEditServiceModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form id="esForm" class="vam-form">
+    <div class="vam-error" id="esError" style="display:none;"></div>
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Vehicle <span class="req">*</span></label><input type="text" name="vehicle_no" id="esVehicleNo" list="ms-vehicle-list" required></div>
+      <div class="vam-field vam-field-full"><label>Service Type <span class="req">*</span></label><input type="text" name="service_type" id="esServiceType" list="ms-service-type-list" required placeholder="e.g. Engine Service"></div>
+      <div class="vam-field"><label>Service Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" id="esDate" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>KM Reading</label><input type="number" step="1" name="km_reading" id="esKmReading" placeholder="e.g. 125430"></div>
+      <div class="vam-field vam-field-full"><label>Vendor / Workshop</label><input type="text" name="vendor_name" id="esVendorName" list="ms-vendor-list" oninput="msSyncPaid('esVendorName','esAmount','esPaidAmount','esPaidReq')" onblur="msSyncPaid('esVendorName','esAmount','esPaidAmount','esPaidReq')"></div>
+      <div class="vam-field"><label>Invoice No.</label><input type="text" name="invoice_no" id="esInvoiceNo"></div>
+      <div class="vam-field"><label>Invoice Date</label><div class="vam-date-wrap"><input type="date" name="invoice_date" id="esInvoiceDate"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Status <span class="req">*</span></label>
+        <select name="status" id="esStatus"><option value="Completed">Completed</option><option value="Open">Open</option></select>
+      </div>
+      <div class="vam-field"><label>Next Service Due (KM)</label><input type="number" step="1" name="next_due_km" id="esNextDueKm"></div>
+      <div class="vam-field vam-field-full"><label>Next Service Reminder Date</label><div class="vam-date-wrap"><input type="date" name="next_service_date" id="esNextServiceDate"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field vam-field-full"><label>Total Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" id="esAmount" required oninput="msSyncPaid('esVendorName','esAmount','esPaidAmount','esPaidReq')"></div>
+      <div class="vam-field vam-field-full"><label>Paid Amount (₹) <span class="req" id="esPaidReq"></span></label><input type="number" step="0.01" name="paid_amount" id="esPaidAmount" placeholder="0 if unpaid so far"></div>
+      <div class="vam-field vam-field-full"><label>Work Description</label><textarea name="notes" id="esNotes" rows="2" placeholder="Brief description of work done..."></textarea></div>
+    </div>
+
+    <div class="vam-section-title">Job Card Checklist</div>
+    <div class="ms-checklist" id="esChecklist">
+      {% for item in checklist_items %}
+      <label class="ms-checklist-item"><input type="checkbox" name="checklist" value="{{ item }}">{{ item }}</label>
+      {% endfor %}
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeEditServiceModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="esSaveBtn">Save Changes</button>
     </div>
   </form>
 </div>
@@ -390,17 +466,62 @@ function closeMsFilterSheet() {
   document.getElementById('msFilterSheet').classList.remove('open');
 }
 
+// Vendor/Workshop is optional on Service (matches the website's own Add/Edit Service form and
+// the same pattern Compliance already uses in the app) — with no vendor there's no payable ledger
+// balance to track, so Paid Amount auto-locks to the full Total Amount and stops being required;
+// picking/typing a vendor unlocks it and makes it required, since now there's a real vendor
+// relationship that may only be partially paid. Same function reused by both the Add and Edit
+// Service forms (asVendorName/asAmount/asPaidAmount and esVendorName/esAmount/esPaidAmount).
+function msSyncPaid(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  var amt = document.getElementById(amtId);
+  var paid = document.getElementById(paidId);
+  if (!vendor || !amt || !paid) return;
+  var hasVendor = vendor.value.trim().length > 0;
+  var req = reqId ? document.getElementById(reqId) : null;
+  paid.required = hasVendor;
+  if (req) req.textContent = hasVendor ? '*' : '';
+  if (hasVendor) {
+    paid.readOnly = false;
+    paid.style.background = '';
+  } else {
+    paid.value = amt.value || 0;
+    paid.readOnly = true;
+    paid.style.background = 'var(--a-paper)';
+  }
+}
+// Fallback for browser extensions/autofill helpers that set .value directly via JS without firing
+// input/blur — polls the actual value on a timer so a real vendor selection is never missed.
+function msWatchVendor(vendorId, amtId, paidId, reqId) {
+  var vendor = document.getElementById(vendorId);
+  if (!vendor) return;
+  var last = vendor.value;
+  setInterval(function () {
+    if (vendor.value !== last) {
+      last = vendor.value;
+      msSyncPaid(vendorId, amtId, paidId, reqId);
+    }
+  }, 400);
+}
+
 // Add Service modal.
 function openAddServiceModal() {
   lockPageScroll();
   document.getElementById('asBackdrop').classList.add('open');
   document.getElementById('asModal').classList.add('open');
+  // Set the correct initial locked/unlocked Paid Amount state every time the modal opens, not
+  // just once on page load -- otherwise a previous fill left in the (still-in-DOM) form could
+  // show Paid Amount as editable/required with no vendor typed yet.
+  msSyncPaid('asVendorName', 'asAmount', 'asPaidAmount', 'asPaidReq');
 }
 function closeAddServiceModal() {
   unlockPageScroll();
   document.getElementById('asBackdrop').classList.remove('open');
   document.getElementById('asModal').classList.remove('open');
 }
+msSyncPaid('asVendorName', 'asAmount', 'asPaidAmount', 'asPaidReq');
+msWatchVendor('asVendorName', 'asAmount', 'asPaidAmount', 'asPaidReq');
+msWatchVendor('esVendorName', 'esAmount', 'esPaidAmount', 'esPaidReq');
 var asForm = document.getElementById('asForm');
 if (asForm) {
   asForm.addEventListener('submit', function (e) {
@@ -414,7 +535,7 @@ if (asForm) {
       .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
       .then(function (r) {
         if (r.data.ok) {
-          window.location.href = (r.data.redirect || "{{ url_for('app_maintenance', tab='service') }}") + '&added=1';
+          reloadWithFlag('added', r.data.redirect || "{{ url_for('app_maintenance', tab='service') }}");
         } else {
           errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
           errBox.style.display = 'block';
@@ -430,11 +551,140 @@ if (asForm) {
       });
   });
 }
+
+// Tap a Service Records row -> read-only View popup -> "Update" -> the real Edit modal,
+// pre-filled from the same record. currentServiceRecord holds whichever row was last tapped, so
+// openEditServiceFromView() (the View popup's own "Update" button) doesn't need to re-parse
+// anything -- it's the same object openServiceView() already parsed off that row's data-record.
+var currentServiceRecord = null;
+function _svEsc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function openServiceView(rowEl) {
+  var rec = JSON.parse(rowEl.getAttribute('data-record'));
+  currentServiceRecord = rec;
+  var fields = [
+    ['Vehicle', rec.vehicle_no], ['Service Type', rec.service_type],
+    ['Date', rec.date], ['KM Reading', rec.km_reading],
+    ['Vendor / Workshop', rec.vendor_name], ['Status', rec.status],
+    ['Invoice No.', rec.invoice_no], ['Invoice Date', rec.invoice_date],
+    ['Next Service Due (KM)', rec.next_due_km], ['Next Service Reminder', rec.next_service_date],
+    ['Total Amount', '₹' + Number(rec.amount || 0).toLocaleString('en-IN')],
+    ['Paid Amount', '₹' + Number(rec.paid_amount || 0).toLocaleString('en-IN')]
+  ];
+  var html = fields.map(function (f) {
+    var val = (f[1] === null || f[1] === undefined || f[1] === '') ? '—' : f[1];
+    return '<div><div class="ld-info-label">' + _svEsc(f[0]) + '</div><div class="ld-info-val" style="margin-top:4px; line-height:1.35;">' + _svEsc(val) + '</div></div>';
+  }).join('');
+  if (rec.notes) {
+    html += '<div style="grid-column:1 / -1;"><div class="ld-info-label">Work Description</div>' +
+            '<div class="ld-info-val" style="font-weight:500; margin-top:4px; line-height:1.4;">' + _svEsc(rec.notes) + '</div></div>';
+  }
+  if (rec.checklist_done) {
+    html += '<div style="grid-column:1 / -1;"><div class="ld-info-label">Checklist</div>' +
+            '<div class="ld-info-val" style="font-weight:500; margin-top:4px; line-height:1.4;">' + _svEsc(rec.checklist_done.split(',').join(', ')) + '</div></div>';
+  }
+  document.getElementById('svFields').innerHTML = html;
+  lockPageScroll();
+  document.getElementById('svBackdrop').classList.add('open');
+  document.getElementById('svModal').classList.add('open');
+}
+function closeServiceView() {
+  unlockPageScroll();
+  document.getElementById('svBackdrop').classList.remove('open');
+  document.getElementById('svModal').classList.remove('open');
+}
+
+// Edit Service modal — pre-filled from currentServiceRecord (set by openServiceView() above),
+// same real fields as Add New Service, posts to app_edit_service() instead of app_add_service().
+function openEditServiceFromView() {
+  closeServiceView();
+  openEditServiceModal(currentServiceRecord);
+}
+function openEditServiceModal(rec) {
+  document.getElementById('esError').style.display = 'none';
+  document.getElementById('esVehicleNo').value = rec.vehicle_no || '';
+  document.getElementById('esServiceType').value = rec.service_type || '';
+  document.getElementById('esDate').value = rec.date || '';
+  document.getElementById('esKmReading').value = rec.km_reading != null ? rec.km_reading : '';
+  document.getElementById('esVendorName').value = rec.vendor_name || '';
+  document.getElementById('esInvoiceNo').value = rec.invoice_no || '';
+  document.getElementById('esInvoiceDate').value = rec.invoice_date || '';
+  document.getElementById('esStatus').value = (rec.status === 'Open') ? 'Open' : 'Completed';
+  document.getElementById('esNextDueKm').value = rec.next_due_km != null ? rec.next_due_km : '';
+  document.getElementById('esNextServiceDate').value = rec.next_service_date || '';
+  document.getElementById('esAmount').value = rec.amount != null ? rec.amount : '';
+  document.getElementById('esPaidAmount').value = rec.paid_amount != null ? rec.paid_amount : '';
+  // Sync Paid Amount's locked/required state to the record just loaded (setting .value above
+  // doesn't fire input/blur on its own), same rule as the Add form: no vendor -> locked to the
+  // full Total Amount and not required; a vendor -> unlocked and required.
+  msSyncPaid('esVendorName', 'esAmount', 'esPaidAmount', 'esPaidReq');
+  document.getElementById('esNotes').value = rec.notes || '';
+  var done = (rec.checklist_done || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  document.querySelectorAll('#esChecklist input[type="checkbox"]').forEach(function (cb) {
+    cb.checked = done.indexOf(cb.value) !== -1;
+  });
+  // Re-run the app-wide date/time-picker + datalist enhancers on this modal's own fields — it's
+  // been sitting in the DOM since page load (not freshly swapped in), so its date inputs were
+  // already enhanced once; this just refreshes each trigger's displayed text to match the values
+  // just set above (setting .value on the real input directly doesn't move the calendar trigger's
+  // own separate button label on its own).
+  document.querySelectorAll('#esForm input[type="date"]').forEach(function (inp) {
+    var trigger = inp.nextSibling;
+    if (trigger && trigger.classList && trigger.classList.contains('cal-trigger')) {
+      trigger.textContent = inp.value ? new Date(inp.value + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Select date';
+      trigger.classList.toggle('cal-placeholder', !inp.value);
+    }
+  });
+  lockPageScroll();
+  document.getElementById('esBackdrop').classList.add('open');
+  document.getElementById('esModal').classList.add('open');
+}
+function closeEditServiceModal() {
+  unlockPageScroll();
+  document.getElementById('esBackdrop').classList.remove('open');
+  document.getElementById('esModal').classList.remove('open');
+}
+var esForm = document.getElementById('esForm');
+if (esForm) {
+  esForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!currentServiceRecord) return;
+    var btn = document.getElementById('esSaveBtn');
+    var errBox = document.getElementById('esError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch('/app/maintenance/service/' + currentServiceRecord.id + '/edit', { method: 'POST', body: new FormData(e.target) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          reloadWithFlag('updated', r.data.redirect || "{{ url_for('app_maintenance', tab='service') }}");
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Save Changes';
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+      });
+  });
+}
 (function () {
   var params = new URLSearchParams(window.location.search);
   if (params.get('added') === '1') {
     showToast('Service added successfully');
     params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+  if (params.get('updated') === '1') {
+    showToast('Service record updated');
+    params.delete('updated');
     history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
   }
 })();

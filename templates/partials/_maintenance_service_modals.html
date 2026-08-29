@@ -11,7 +11,7 @@
         <div class="mt-fld"><label>KM Reading</label><input type="number" step="1" name="km_reading" placeholder="e.g. 125430"></div>
       </div>
       <div class="mt-form-grid">
-        <div class="mt-fld"><label>Vendor / Workshop *</label><input type="text" name="vendor_name" id="asVendor" list="combined-list" required oninput="mtSyncPaid('asVendor','asAmount','asPaid','asPaidReq')" onblur="mtSyncPaid('asVendor','asAmount','asPaid','asPaidReq')"></div>
+        <div class="mt-fld"><label>Vendor / Workshop</label><input type="text" name="vendor_name" id="asVendor" list="combined-list" oninput="mtSyncPaid('asVendor','asAmount','asPaid','asPaidReq')" onblur="mtSyncPaid('asVendor','asAmount','asPaid','asPaidReq')"></div>
         <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no"></div>
         <div class="mt-fld"><label>Invoice Date</label><input type="date" name="invoice_date"></div>
         <div class="mt-fld"><label>Next Service Due (KM)</label><input type="number" step="1" name="next_due_km"></div>
@@ -209,7 +209,7 @@ function mtShowDetailTab(idx, which, btn) {
         <div class="mt-fld"><label>KM Reading</label><input type="number" step="1" name="km_reading" value="{{ r['km_reading'] or '' }}"></div>
       </div>
       <div class="mt-form-grid">
-        <div class="mt-fld"><label>Vendor / Workshop *</label><input type="text" name="vendor_name" id="asEditVendor{{ loop.index }}" value="{{ r['vendor_name'] or '' }}" list="combined-list" required oninput="mtSyncPaid('asEditVendor{{ loop.index }}','asEditAmount{{ loop.index }}','asEditPaid{{ loop.index }}','asEditPaidReq{{ loop.index }}')" onblur="mtSyncPaid('asEditVendor{{ loop.index }}','asEditAmount{{ loop.index }}','asEditPaid{{ loop.index }}','asEditPaidReq{{ loop.index }}')"></div>
+        <div class="mt-fld"><label>Vendor / Workshop</label><input type="text" name="vendor_name" id="asEditVendor{{ loop.index }}" value="{{ r['vendor_name'] or '' }}" list="combined-list" oninput="mtSyncPaid('asEditVendor{{ loop.index }}','asEditAmount{{ loop.index }}','asEditPaid{{ loop.index }}','asEditPaidReq{{ loop.index }}')" onblur="mtSyncPaid('asEditVendor{{ loop.index }}','asEditAmount{{ loop.index }}','asEditPaid{{ loop.index }}','asEditPaidReq{{ loop.index }}')"></div>
         <div class="mt-fld"><label>Invoice No.</label><input type="text" name="invoice_no" value="{{ r['invoice_no'] or '' }}"></div>
         <div class="mt-fld"><label>Invoice Date</label><input type="date" name="invoice_date" value="{{ r['invoice_date'] or '' }}"></div>
         <div class="mt-fld"><label>Next Service Due (KM)</label><input type="number" step="1" name="next_due_km" value="{{ r['next_due_km'] or '' }}"></div>

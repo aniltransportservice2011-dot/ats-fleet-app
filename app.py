@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, g
 import sqlite3
 import datetime
 import calendar
@@ -65,6 +65,23 @@ def inject_vehicle_type_labels():
     file for why the stored value and the shown word are kept separate."""
     return {'VEHICLE_TYPE_OWN': VEHICLE_TYPE_OWN, 'VEHICLE_TYPE_HIRED': VEHICLE_TYPE_HIRED,
             'VEHICLE_TYPE_LABELS': VEHICLE_TYPE_LABELS}
+
+@app.context_processor
+def inject_asset_version():
+    """Makes `asset_v(filename)` available to every template — appends that static file's own
+    mtime as a `?v=` cache-busting query param, so a CSS/JS fix actually shows up the next time a
+    browser (especially a phone that's had the app open a while, or a PWA that rarely re-fetches)
+    loads the page, instead of silently keeping whatever copy of app.css it fetched once and never
+    re-requested. Falls back to the plain URL if the file can't be stat'd (e.g. running somewhere
+    static/ isn't on local disk) rather than breaking the page over a cosmetic version tag."""
+    def asset_v(filename):
+        url = url_for('static', filename=filename)
+        try:
+            mtime = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+            return f'{url}?v={mtime}'
+        except OSError:
+            return url
+    return {'asset_v': asset_v}
 
 @app.context_processor
 def inject_site_logo():
@@ -424,6 +441,24 @@ def get_or_create_vehicle(conn, vno, type_hint=None):
                         (vno, vtype, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     return cur.lastrowid
 
+def _get_or_create_vehicle_no_type(conn, vno):
+    """Extracted from 13 byte-for-byte-identical nested closures (Tyre/Battery/Urea/Toll/
+    Compliance/Service's own insert-from-form functions each hand-rolled the exact same lookup).
+    Deliberately a SEPARATE function from get_or_create_vehicle() just above, not a call into it
+    with a default — that one sets a real `type` (own/hired) on a newly-created vehicle, these 13
+    call sites never did (a vehicle auto-created from typing a new number into e.g. Add Tyre gets
+    a NULL type, same as it always has); pointing them at get_or_create_vehicle() would silently
+    change that. Same SQL, same behavior as every one of those 13 copies, just one copy of it."""
+    if not vno or not vno.strip():
+        return None
+    vno = vno.strip()
+    row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
+    if row:
+        return row[0]
+    cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
+                        (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    return cur.lastrowid
+
 def _resolve_trip_type(conn, vehicle_id, posted_type):
     """A trip's own/hired type always mirrors its vehicle's own type — never an independent
     choice — so this re-reads the vehicle's actual stored type (the authoritative value) rather
@@ -460,12 +495,16 @@ def _accounts_rows(conn):
 
     rows = []
     for p in parties:
-        balance = _entry_balance(_get_party_ledger_entries(p['id']))
+        # conn=conn — reuses this function's own already-open connection for every party/vendor
+        # instead of each call opening (and closing) a brand new one; with 70+ parties and 36+
+        # vendors that was ~106 separate SQLite connections for one page load (Ledger/Dashboard/
+        # Business Performance all hit this). Same queries, same balances either way.
+        balance = _entry_balance(_get_party_ledger_entries(p['id'], conn=conn))
         rows.append({'id': p['id'], 'name': p['name'], 'role': 'Party', 'balance': balance,
                       'contact': p['contact'], 'email': p['email'], 'address': p['address'], 'credit_limit': p['credit_limit'],
                       'group': p['category'] or '', 'gstin': p['gstin'], 'status': p['status'] or 'Active'})
     for v in vendors:
-        balance = _entry_balance(_get_vendor_ledger_entries(v['id']))
+        balance = _entry_balance(_get_vendor_ledger_entries(v['id'], conn=conn))
         rows.append({'id': v['id'], 'name': v['name'], 'role': 'Vendor', 'balance': balance,
                       'contact': v['contact'], 'email': v['email'], 'address': v['address'], 'credit_limit': v['credit_limit'],
                       'group': v['category'] or '', 'gstin': v['gstin'], 'status': v['status'] or 'Active'})
@@ -3065,17 +3104,6 @@ def _insert_urea_from_form(conn, f):
     (True, None) on success, or (False, (kind, detail)) on failure — kind is 'insufficient_stock'
     (detail = the real quantity actually available) or 'validation' (detail = a message) — does
     not commit or close conn."""
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
     mode = f.get('mode')
     if mode not in ('stock_in', 'stock_out', 'direct'):
         return False, ('validation', 'Mode is required.')
@@ -3120,14 +3148,14 @@ def _insert_urea_from_form(conn, f):
                 current_stock -= t['quantity_l']
         if qty > current_stock:
             return False, ('insufficient_stock', round(current_stock, 2))
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
                         quantity_l, unit_price, total_value, location, odometer_km, notes, created_at, created_by)
                         VALUES (?, 'stock_out', 'stock', ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)""",
                      (date, f.get('batch_no'), vehicle_id, qty, location,
                       float(f.get('odometer_km')) if f.get('odometer_km') else None, notes, now, session.get('user_id')))
     elif mode == 'direct':
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
         supplier_id = get_or_create_vendor(conn, f.get('supplier_name')) if f.get('supplier_name') else None
         cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
                                 vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
@@ -4145,17 +4173,7 @@ def add_maintenance():
     conn = get_db()
     if request.method == 'POST':
         f = request.form
-        def get_or_create_vehicle(vno):
-            if not vno or not vno.strip():
-                return None
-            vno = vno.strip()
-            row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-            if row:
-                return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-            return cur.lastrowid
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
         vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
         conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount, vendor_id, notes, created_by, created_at)
                         VALUES (?,?,?,?,?,?,?,?,?)""",
@@ -4195,29 +4213,19 @@ def _insert_service_from_form(conn, f):
     (website) and app_add_service() (mobile), extracted here so the two can never quietly accept
     a different set of fields. Returns (ok, error_message_or_new_service_id) — does not commit or
     close conn."""
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
     if not (f.get('vehicle_no') or '').strip():
         return False, 'Vehicle is required.'
     if not (f.get('service_type') or '').strip():
         return False, 'Service Type is required.'
     if not f.get('date'):
         return False, 'Service Date is required.'
-    if not (f.get('vendor_name') or '').strip():
-        return False, 'Vendor / Workshop is required.'
+    # Vendor/Workshop is optional (matches the website form and the same mtSyncPaid pattern used
+    # by Compliance's own vendor field) — a service done in-house or paid on the spot with no
+    # workshop to track has nothing to reconcile against a vendor ledger later.
     if not f.get('amount'):
         return False, 'Total Amount is required.'
 
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     # Workshop/Vendor uses the exact same combined party+vendor lookup as every other vendor field
     # in the app, so a workshop typed here links up with that same organization's ledger elsewhere.
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
@@ -4244,26 +4252,17 @@ def add_service():
     conn.close()
     return redirect(url_for('maintenance_list', tab='service'))
 
-@app.route('/maintenance/service/edit/<int:m_id>', methods=['POST'])
-def edit_service(m_id):
-    conn = get_db()
-    f = request.form
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+def _update_service_from_form(conn, m_id, f):
+    """Shared by edit_service() (website) and app_edit_service() (mobile) — the exact same
+    field set _insert_service_from_form() writes on create (date/vehicle/service_type/amount/
+    paid_amount/vendor/notes/km_reading/next_due_km/next_service_date/invoice_no/invoice_date/
+    status/checklist), so editing a service record can never silently drop a field the create
+    form itself collects. Does not commit or close conn."""
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
     amount = float(f.get('amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
-    checklist = ','.join(request.form.getlist('checklist'))
+    checklist = ','.join(f.getlist('checklist'))
     conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, category=?, service_type=?, amount=?, paid_amount=?, vendor_id=?,
                     notes=?, km_reading=?, next_due_km=?, next_service_date=?, invoice_no=?, invoice_date=?, status=?, checklist_done=?,
                     updated_by=?, updated_at=?
@@ -4273,7 +4272,12 @@ def edit_service(m_id):
          f.get('next_service_date') or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
          f.get('status') or 'Completed', checklist or None, session.get('user_id'),
          datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), m_id))
-    _save_service_items(conn, m_id, request.form)
+    _save_service_items(conn, m_id, f)
+
+@app.route('/maintenance/service/edit/<int:m_id>', methods=['POST'])
+def edit_service(m_id):
+    conn = get_db()
+    _update_service_from_form(conn, m_id, request.form)
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='service'))
@@ -4289,17 +4293,6 @@ def _insert_tyre_from_form(conn, f):
     real modes (New Tyre / Add to Stock / Install from Stock) but each posts to its own dedicated
     route — see app_add_tyre() / app_add_tyre_stock() / app_install_tyre_stock(). Returns
     (ok, error_message_or_new_entry_id) — does not commit or close conn."""
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
     if not (f.get('vehicle_no') or '').strip():
         return False, 'Vehicle is required.'
     if not (f.get('tyre_action') or '').strip():
@@ -4311,7 +4304,7 @@ def _insert_tyre_from_form(conn, f):
     if not f.get('amount'):
         return False, 'Amount is required.'
 
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     # Same combined party+vendor lookup used everywhere else — a tyre supplier typed here
     # links up with that same organization's ledger, so the cost flows straight into it.
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
@@ -4332,18 +4325,7 @@ def _insert_tyre_from_form(conn, f):
 def add_tyre():
     conn = get_db()
     f = request.form
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
 
     stock_id = f.get('stock_id')
     if stock_id:
@@ -4374,18 +4356,7 @@ def add_tyre():
 def edit_tyre(m_id):
     conn = get_db()
     f = request.form
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
     amount = float(f.get('amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
@@ -4445,17 +4416,6 @@ def _install_tyre_stock_from_form(conn, stock_id, f):
     """Links an existing In Stock tyre to a vehicle/position — same fields/logic used by both
     install_tyre_stock() (website) and app_install_tyre_stock() (mobile). Returns
     (ok, error_message_or_None) — does not commit or close conn."""
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
     if not (f.get('vehicle_no') or '').strip():
         return False, 'Vehicle is required.'
     if not (f.get('position') or '').strip():
@@ -4466,7 +4426,7 @@ def _install_tyre_stock_from_form(conn, stock_id, f):
     if stock['status'] != 'In Stock':
         return False, 'This tyre is no longer in stock.'
 
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     install_date = f.get('install_date') or stock['purchase_date']
     km_reading = float(f.get('km_reading') or 0) or None
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -4516,17 +4476,6 @@ def _insert_battery_from_form(conn, f):
     Date/Warranty/Price/Vendor always required), used by both add_battery() (website) and
     app_add_battery() (mobile). Returns (ok, error_message_or_new_battery_id) — does not commit or
     close conn."""
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
     mode = f.get('mode', 'install')
     if not (f.get('brand') or '').strip():
         return False, 'Brand is required.'
@@ -4548,7 +4497,7 @@ def _insert_battery_from_form(conn, f):
     if not (f.get('vendor_name') or '').strip():
         return False, 'Vendor / Dealer is required.'
 
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no')) if mode == 'install' else None
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no')) if mode == 'install' else None
     # Same purchase-record-becomes-ledger-entry pattern as Tyres: the cost posts once, here,
     # whether the battery goes straight onto a vehicle or sits in stock first.
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
@@ -4600,17 +4549,6 @@ def _install_battery_from_form(conn, battery_id, f):
     """Links an existing In Stock battery to a vehicle — same fields/logic used by both
     install_battery() (website) and app_install_battery() (mobile). Returns
     (ok, error_message_or_None) — does not commit or close conn."""
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
     if not (f.get('vehicle_no') or '').strip():
         return False, 'Vehicle is required.'
     if not f.get('install_date'):
@@ -4621,7 +4559,7 @@ def _install_battery_from_form(conn, battery_id, f):
     if battery['vehicle_id']:
         return False, 'This battery is already installed.'
 
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     install_date = f.get('install_date')
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE batteries SET vehicle_id=?, installed_location=?, install_date=?, last_checked_date=?,
@@ -5265,18 +5203,7 @@ def toll_excel_import():
 def add_insurance():
     conn = get_db()
     f = request.form
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     # Insurers are companies we pay premiums to, same as any other vendor — reusing the vendor
     # table means the premium lands straight in that insurer's ledger, same as every other cost.
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
@@ -5328,18 +5255,7 @@ def edit_insurance(policy_id):
         conn.close()
         return redirect(url_for('vehicles_list', tab='insurance'))
 
-    def get_or_create_vehicle(vno):
-        if not vno or not vno.strip():
-            return None
-        vno = vno.strip()
-        row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-        if row:
-            return row[0]
-        cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                            (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        return cur.lastrowid
-
-    vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+    vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
     insurer_id = get_or_create_vendor(conn, f.get('insurer_name'))
     premium = float(f.get('premium_amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
@@ -5563,8 +5479,17 @@ def _payment_base_detail(p, label):
         detail += f" | {p['remarks']}"
     return detail
 
-def _get_party_ledger_entries(party_id):
-    conn = get_db()
+def _get_party_ledger_entries(party_id, conn=None):
+    # Optional conn — lets a caller that already has a connection open (e.g. _accounts_rows(),
+    # looping over every party+vendor to build the Ledger/Dashboard summary) reuse it instead of
+    # this function opening a brand new SQLite connection every single call. Same queries, same
+    # results either way; every existing call site (which never passes one) is unaffected — conn
+    # is opened and closed here exactly as it always was. Only closed at the end if THIS call
+    # opened it, and only after the linked-vendor sub-call below (also passed the same conn), so
+    # one party with a linked vendor now costs at most one connection instead of two.
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_db()
     party = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM parties WHERE id=?", (party_id,)).fetchone()
     trips = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount, payment_received, party_advance, type
                              FROM trips WHERE party_id=? ORDER BY date""", (party_id,)).fetchall()
@@ -5616,16 +5541,19 @@ def _get_party_ledger_entries(party_id):
             entries.append({'date': p['date'], 'detail': base_detail, 'debit': 0, 'credit': max(leftover, 0),
                              'kind': 'Payment In', 'ref': p['reference_id'] or '', 'vehicle_type': '',
                              'link': url_for('payment_view', payment_id=p['id'])})
-    conn.close()
     if linked_vendor:
         # Same organization also acts as a vendor (fuel/maintenance/owner-hire) — pull those in too,
-        # so this one ledger reflects everything, instead of splitting across two disconnected records.
-        vendor_entries = _get_vendor_ledger_entries(linked_vendor['id'])
+        # so this one ledger reflects everything, instead of splitting across two disconnected
+        # records. Passes this same conn through — still open at this point regardless of who
+        # opened it — so this costs no extra connection beyond the one already in use.
+        vendor_entries = _get_vendor_ledger_entries(linked_vendor['id'], conn=conn)
         for ve in vendor_entries:
             entries.append({'date': ve['date'], 'detail': ve['detail'],
                              'debit': ve['debit'], 'credit': ve['credit'],
                              'kind': ve.get('kind', 'Expense Adj.'), 'ref': ve.get('ref', ''), 'vehicle_type': ve.get('vehicle_type', ''),
                              'link': ve.get('link')})
+    if owns_conn:
+        conn.close()
     entries.sort(key=lambda x: x['date'] or '')
     balance = 0
     for e in entries:
@@ -5634,8 +5562,11 @@ def _get_party_ledger_entries(party_id):
     entries.reverse()
     return entries
 
-def _get_vendor_ledger_entries(vendor_id):
-    conn = get_db()
+def _get_vendor_ledger_entries(vendor_id, conn=None):
+    # Same optional-conn reuse as _get_party_ledger_entries() just above — see its own comment.
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_db()
     vendor = conn.execute("SELECT opening_balance, opening_balance_date, since_date FROM vendors WHERE id=?", (vendor_id,)).fetchone()
     maint = conn.execute("""SELECT m.id, m.date, m.category, m.service_type, m.tyre_action, m.tyre_id, m.invoice_no,
                              m.amount, m.paid_amount, v.vehicle_no, b.battery_no, ip.policy_number
@@ -5791,7 +5722,8 @@ def _get_vendor_ledger_entries(vendor_id):
             entries.append({'date': p['date'], 'detail': base_detail, 'debit': max(leftover, 0), 'credit': 0,
                              'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': '',
                              'link': url_for('payment_view', payment_id=p['id'])})
-    conn.close()
+    if owns_conn:
+        conn.close()
     entries.sort(key=lambda x: x['date'] or '')
     balance = 0
     for e in entries:
@@ -6088,10 +6020,12 @@ def add_overhead():
     conn.close()
     return render_template('add_overhead.html', active='overheads')
 
-@app.route('/overheads/edit/<int:o_id>', methods=['POST'])
-def edit_overhead(o_id):
-    conn = get_db()
-    f = request.form
+def _update_overhead_from_form(conn, o_id, f):
+    """Shared by edit_overhead() (website) and app_edit_overhead() (mobile) — the exact same field
+    set _insert_overhead_from_form() writes on create (date/category/amount/notes/payment_mode/
+    receipt_number/vendor/description/status/is_recurring/recurring_frequency/due_date), so editing
+    an expense can never silently drop a field the create form itself collects. Does not commit or
+    close conn."""
     is_recurring = 1 if f.get('is_recurring') == 'on' else 0
     status = f.get('status') or 'Paid'
     conn.execute("""UPDATE overheads SET date=?, category=?, amount=?, notes=?, payment_mode=?, receipt_number=?,
@@ -6102,6 +6036,11 @@ def edit_overhead(o_id):
                   status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
                   f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
                   datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), o_id))
+
+@app.route('/overheads/edit/<int:o_id>', methods=['POST'])
+def edit_overhead(o_id):
+    conn = get_db()
+    _update_overhead_from_form(conn, o_id, request.form)
     conn.commit()
     conn.close()
     return redirect(url_for('overheads_list'))
@@ -6200,17 +6139,7 @@ def edit_maintenance(m_id):
     conn = get_db()
     if request.method == 'POST':
         f = request.form
-        def get_or_create_vehicle(vno):
-            if not vno or not vno.strip():
-                return None
-            vno = vno.strip()
-            row = conn.execute("SELECT id FROM vehicles WHERE vehicle_no = ? COLLATE NOCASE", (vno,)).fetchone()
-            if row:
-                return row[0]
-            cur = conn.execute("INSERT INTO vehicles (vehicle_no, created_by, created_at) VALUES (?,?,?)",
-                                (vno, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-            return cur.lastrowid
-        vehicle_id = get_or_create_vehicle(f.get('vehicle_no'))
+        vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
         vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, category=?, amount=?, paid_amount=?, vendor_id=?, notes=?,
@@ -8749,11 +8678,24 @@ def update_opening_balance(entity_type, entity_id):
 
 def get_company_name(company_id=1):
     """company_id defaults to 1 — see the note on _get_invoice_settings above; same
-    zero-behavior-change-today, ready-for-real-multi-company-later reasoning applies here."""
+    zero-behavior-change-today, ready-for-real-multi-company-later reasoning applies here.
+    Cached on flask.g for the lifetime of the current request only (reset automatically by Flask
+    on every new request, never persisted or shared across requests/users) — this one function is
+    called many times per single page render (inject_company_name()'s context processor,
+    _app_user_display(), and assorted routes that still ask for it directly), always with the
+    exact same company_id within one request, always the same real DB value; caching it here
+    turns every one of those into a single real query instead of one query per call, with the
+    query itself, its result, and every caller's behavior completely unchanged."""
+    cache_key = f'_company_name_cache_{company_id}'
+    cached = getattr(g, cache_key, None)
+    if cached is not None:
+        return cached
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key='company_name' AND company_id=?", (company_id,)).fetchone()
     conn.close()
-    return row['value'] if row else 'ANIL TRANSPORT SERVICE'
+    result = row['value'] if row else 'ANIL TRANSPORT SERVICE'
+    setattr(g, cache_key, result)
+    return result
 
 @app.context_processor
 def inject_company_name():
@@ -8858,8 +8800,7 @@ def login():
         if user and check_password_hash(user['password_hash'], f.get('password') or ''):
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
-                return render_template('login.html', error='This account has been deactivated. Contact an administrator.',
-                                        company_name=get_company_name(session.get('company_id', 1)))
+                return render_template('login.html', error='This account has been deactivated. Contact an administrator.')
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -8875,7 +8816,7 @@ def login():
             return redirect(url_for('dashboard'))
         conn.close()
         error = 'Invalid username or password.'
-    return render_template('login.html', error=error, company_name=get_company_name(session.get('company_id', 1)))
+    return render_template('login.html', error=error)
 
 @app.route('/logout')
 def logout():
@@ -8905,13 +8846,13 @@ def send_login_otp():
     conn.close()
 
     if not phone:
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_error='Enter a mobile number.')
     if not user:
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_error='No account found with that mobile number.')
     if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
 
     otp = f"{random.randint(0, 999999):06d}"
@@ -8923,10 +8864,10 @@ def send_login_otp():
     try:
         _send_otp_sms(s, phone, otp)
     except Exception as e:
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_error=f'Could not send OTP: {e}')
 
-    return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+    return render_template('login.html', otp_mode=True,
                             otp_sent=True, otp_phone=phone)
 
 @app.route('/login/otp/verify', methods=['POST'])
@@ -8936,13 +8877,13 @@ def verify_login_otp():
     phone = request.form.get('phone') or ''
 
     if not session.get('otp_user_id') or session.get('otp_phone') != phone:
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_error='Session expired. Please request a new OTP.')
     if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_error='OTP expired. Please request a new one.')
     if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)), otp_mode=True,
+        return render_template('login.html', otp_mode=True,
                                 otp_sent=True, otp_phone=phone, otp_error='Incorrect OTP.')
 
     conn = get_db()
@@ -8954,7 +8895,7 @@ def verify_login_otp():
         return redirect(url_for('login'))
     if (user['status'] or 'Active') == 'Inactive':
         conn.close()
-        return render_template('login.html', company_name=get_company_name(session.get('company_id', 1)),
+        return render_template('login.html',
                                 error='This account has been deactivated. Contact an administrator.')
     session['user_id'] = user['id']
     session['username'] = user['username']
@@ -10592,7 +10533,7 @@ def app_login():
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
                 return render_template('app/login.html', error='This account has been deactivated. Contact an administrator.',
-                                        company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
+                                        year=datetime.date.today().year)
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -10608,7 +10549,7 @@ def app_login():
             return redirect(url_for('app_dashboard'))
         conn.close()
         error = 'Invalid username or password.'
-    return render_template('app/login.html', error=error, company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
+    return render_template('app/login.html', error=error, year=datetime.date.today().year)
 
 @app.route('/app/signup', methods=['GET', 'POST'])
 def app_signup():
@@ -10666,7 +10607,7 @@ def app_signup():
                     conn.close()
                     error = f'Username "{username}" is already taken.'
     return render_template('app/signup.html', error=error, form_values=form_values,
-                            company_name=get_company_name(session.get('company_id', 1)), year=datetime.date.today().year)
+                            year=datetime.date.today().year)
 
 def _current_fy_bounds(today):
     """(date_from, date_to, label) for the financial year (April-start) containing `today`,
@@ -10763,7 +10704,12 @@ def app_dashboard():
     username = session.get('username') or 'User'
     user_initials = ''.join([p[0] for p in username.replace('_', ' ').replace('.', ' ').split()[:2]]).upper() or 'U'
     greeting_name = username.replace('_', ' ').replace('.', ' ').split()[0].title()
-    company_name = get_company_name(session.get('company_id', 1))
+    # company_name deliberately NOT computed here — inject_company_name() (context_processor,
+    # near the top of this file) already runs this exact same get_company_name(session.get(
+    # 'company_id', 1)) call automatically for every render_template(), so a second explicit call
+    # here was a redundant query whose result just got overridden by the identical context-
+    # processor value anyway. Every render_template() call below that used to pass
+    # company_name=company_name now just omits it and gets the same value for free.
 
     # ---------- Today's Fleet — real, right-now operational numbers. Always current/live,
     # deliberately unaffected by the period filter below (same split the mockup's own "Global
@@ -10923,7 +10869,7 @@ def app_dashboard():
 
     conn.close()
     return render_template('app/dashboard.html', active='dashboard',
-        company_name=company_name, user_initials=user_initials, greeting_name=greeting_name,
+        user_initials=user_initials, greeting_name=greeting_name,
         today_display=today.strftime('%d %b %Y'), notif_count=alert_count,
         total_vehicles=total_vehicles, on_trip_count=on_trip_count,
         today_trips_completed=today_trips_completed, today_revenue=today_revenue,
@@ -10958,7 +10904,6 @@ def app_add_trip():
     for a server-side draft to belong to.
     """
     conn = get_db()
-    company_name = get_company_name(session.get('company_id', 1))
     if request.method == 'POST':
         f = request.form
         dup = _duplicate_lr_trip(conn, f.get('lr_number'))
@@ -10975,7 +10920,7 @@ def app_add_trip():
             return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles],
                                     combined_names=combined_names, employees=[e['name'] for e in employees],
                                     vehicle_type_map=vehicle_type_map, location_options=location_options,
-                                    error=error, company_name=company_name,
+                                    error=error,
                                     mode='add', custom_items=[])
         _insert_trip_from_form(conn, f)
         conn.commit()
@@ -10991,7 +10936,7 @@ def app_add_trip():
     return render_template('app/trip_add.html', t={}, vehicles=[v['vehicle_no'] for v in vehicles],
                             combined_names=combined_names, employees=[e['name'] for e in employees],
                             vehicle_type_map=vehicle_type_map, location_options=location_options,
-                            error=None, company_name=company_name,
+                            error=None,
                             mode='add', custom_items=[])
 
 @app.route('/app/trips/<int:trip_id>/edit', methods=['GET', 'POST'])
@@ -11006,7 +10951,6 @@ def app_edit_trip(trip_id):
     without that, saving would silently wipe them, since _save_trip_custom_items() always
     replaces a trip's items from whatever the submitted form actually contains."""
     conn = get_db()
-    company_name = get_company_name(session.get('company_id', 1))
 
     def _load_form_context():
         vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
@@ -11034,7 +10978,7 @@ def app_edit_trip(trip_id):
             return render_template('app/trip_add.html', t=f, vehicles=vehicles, combined_names=combined_names,
                                     employees=employees, vehicle_type_map=vehicle_type_map,
                                     location_options=location_options, error=error,
-                                    company_name=company_name, mode='edit', trip_id=trip_id, custom_items=custom_items)
+                                    mode='edit', trip_id=trip_id, custom_items=custom_items)
         ok, error = _update_trip_from_form(conn, trip_id, f)
         if not ok:
             conn.close()
@@ -11065,7 +11009,7 @@ def app_edit_trip(trip_id):
     return render_template('app/trip_add.html', t=dict(trip), vehicles=vehicles, combined_names=combined_names,
                             employees=employees, vehicle_type_map=vehicle_type_map,
                             location_options=location_options, error=None,
-                            company_name=company_name, mode='edit', trip_id=trip_id, custom_items=custom_items)
+                            mode='edit', trip_id=trip_id, custom_items=custom_items)
 
 @app.route('/app/maintenance')
 def app_maintenance():
@@ -11086,7 +11030,6 @@ def app_maintenance():
     tab = request.args.get('tab', 'overview')
     if tab not in ('overview', 'service'):
         tab = 'overview'
-    company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
     if session.get('user_id'):
         u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
@@ -11111,7 +11054,7 @@ def app_maintenance():
         service_types = sorted(set((r['service_type'] or r['category'] or '') for r in d['all_rows']
                                     if _maintenance_classify(r['category'], r['service_type']) == 'Service' and (r['service_type'] or r['category'])))
         conn.close()
-        return render_template('app/maintenance.html', company_name=company_name, user_initials=user_initials,
+        return render_template('app/maintenance.html', user_initials=user_initials,
             active='maintenance', notif_count=0, tab='service',
             rows=page_rows, total_count=total_count, show=show, has_more=has_more,
             total_cost=d['total_cost'], open_jobs=d['open_jobs'], completed_jobs=d['completed_jobs'],
@@ -11126,7 +11069,7 @@ def app_maintenance():
     d = _maintenance_overview_data(conn, date_from, date_to)
     conn.close()
 
-    return render_template('app/maintenance.html', company_name=company_name, user_initials=user_initials,
+    return render_template('app/maintenance.html', user_initials=user_initials,
         notif_count=d['pending_count'] + len(d['actions']), active='maintenance', tab='overview',
         period_label=datetime.datetime.strptime(date_from, '%Y-%m-%d').strftime('%b %Y'),
         total_fleet=d['total_fleet'], vehicles_serviced=d['vehicles_serviced'], pending_count=d['pending_count'],
@@ -11146,6 +11089,21 @@ def app_add_service():
     if not ok:
         conn.close()
         return jsonify({'ok': False, 'error': result}), 400
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_maintenance', tab='service')})
+
+@app.route('/app/maintenance/service/<int:m_id>/edit', methods=['POST'])
+def app_edit_service(m_id):
+    """Tap a Service Records row -> read-only detail popup -> "Update" -> this real edit form,
+    posted here via fetch instead of the website's own edit form — same
+    _update_service_from_form() the website's own edit_service() uses, so the two can never
+    quietly accept a different set of fields on edit than either already accepts on create."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    _update_service_from_form(conn, m_id, request.form)
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_maintenance', tab='service')})
@@ -11559,6 +11517,20 @@ def app_add_overhead():
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_expenses')})
 
+@app.route('/app/expenses/<int:o_id>/edit', methods=['POST'])
+def app_edit_overhead(o_id):
+    """In-app "Edit Expense" modal (expenses.html, opened from the read-only view popup's "Update"
+    button) posts here via fetch — same _update_overhead_from_form() the website's own edit form
+    uses, so the two can never accept a different set of fields on edit."""
+    from flask import jsonify
+    if not session.get('user_id'):
+        return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
+    conn = get_db()
+    _update_overhead_from_form(conn, o_id, request.form)
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'redirect': url_for('app_expenses')})
+
 @app.route('/app/salary')
 def app_salary():
     """Mobile Salary — real numbers straight from _employees_salary_data() (shared with the
@@ -11767,7 +11739,6 @@ def app_trips():
     total_freight_month = sum(t['billed_amount'] or 0 for t in month_trips)
     ongoing_count = conn.execute("SELECT COUNT(*) FROM trips WHERE end_date IS NULL").fetchone()[0]
 
-    company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
     if session.get('user_id'):
         u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
@@ -11783,7 +11754,7 @@ def app_trips():
             return f"₹{n/100000:.2f}L"
         return f"₹{n:,.0f}"
 
-    return render_template('app/trips.html', company_name=company_name, user_initials=user_initials,
+    return render_template('app/trips.html', user_initials=user_initials,
         active='trips', notif_count=ongoing_count,
         trips=trips, f_status=status_f, f_search=search_f, f_type=type_f, f_lr_received=lr_received_f,
         f_date_from=date_from_f, f_date_to=date_to_f, f_sort_dir=sort_dir_f, show=show, has_more=has_more, total_count=total_count,
@@ -11936,7 +11907,6 @@ def app_vehicles():
     challan_vehicle_count = len(challan_rows)
     challan_total_amount = sum(r['challan_amount'] or 0 for r in challan_rows)
 
-    company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
     if session.get('user_id'):
         u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
@@ -11947,7 +11917,7 @@ def app_vehicles():
                       (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
     conn.close()
 
-    return render_template('app/vehicles.html', company_name=company_name, user_initials=user_initials,
+    return render_template('app/vehicles.html', user_initials=user_initials,
         active='vehicles', notif_count=ins_expiring + challan_vehicle_count,
         vehicles=vehicles, f_status=status_f, f_search=search_f, f_type=type_f, f_age=age_f,
         show=show, has_more=has_more, total_count=total_count,
@@ -12054,7 +12024,6 @@ def app_analytics():
         rr = _route_rates_data(d['trips'], from_f, to_f)
         rr_show = min(int(request.args.get('show', 10) or 10), rr['rr_total_count']) or rr['rr_total_count']
 
-    company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
     if session.get('user_id'):
         u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
@@ -12069,7 +12038,7 @@ def app_analytics():
     base_qs = urlencode({'period': period, 'date_from': date_from, 'date_to': date_to,
                           'from': from_f, 'to': to_f, 'vehicle_type': type_f})
 
-    ctx = dict(company_name=company_name, user_initials=user_initials,
+    ctx = dict(user_initials=user_initials,
         active='analytics', notif_count=0, tab=tab, active_ov='route', base_qs=base_qs,
         period=period, period_label=period_label, period_presets=_analysis_period_presets(today),
         f_date_from=date_from, f_date_to=date_to, f_from=from_f, f_to=to_f, f_vehicle_type=type_f,
@@ -12270,7 +12239,6 @@ def app_ledger():
         letters = [c for c in r['name'].upper() if c.isalpha()]
         r['initials'] = ''.join(letters[:2]) or '?'
 
-    company_name = get_company_name(session.get('company_id', 1))
     display_name = session.get('username', '')
     if session.get('user_id'):
         u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
@@ -12281,7 +12249,7 @@ def app_ledger():
                       (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
     conn.close()
 
-    return render_template('app/ledger.html', company_name=company_name, user_initials=user_initials,
+    return render_template('app/ledger.html', user_initials=user_initials,
         active='ledger', notif_count=0, f_search=search_f, f_role=role_f, f_group=group_f, f_status=status_f,
         groups=groups, show=show, has_more=has_more,
         total_count=total_count, rows=rows,
@@ -12622,7 +12590,6 @@ def app_login_otp():
     view is new here, not a duplicate of anything.
     """
     import random, hashlib
-    company_name = get_company_name(session.get('company_id', 1))
     if request.method == 'POST':
         phone = (request.form.get('phone') or '').strip()
         conn = get_db()
@@ -12631,11 +12598,11 @@ def app_login_otp():
         conn.close()
 
         if not phone:
-            return render_template('app/login_otp.html', company_name=company_name, error='Enter a mobile number.')
+            return render_template('app/login_otp.html', error='Enter a mobile number.')
         if not user:
-            return render_template('app/login_otp.html', company_name=company_name, error='No account found with that mobile number.')
+            return render_template('app/login_otp.html', error='No account found with that mobile number.')
         if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
-            return render_template('app/login_otp.html', company_name=company_name,
+            return render_template('app/login_otp.html',
                                     error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
 
         otp = f"{random.randint(0, 999999):06d}"
@@ -12647,10 +12614,10 @@ def app_login_otp():
         try:
             _send_otp_sms(s, phone, otp)
         except Exception as e:
-            return render_template('app/login_otp.html', company_name=company_name, error=f'Could not send OTP: {e}')
+            return render_template('app/login_otp.html', error=f'Could not send OTP: {e}')
 
-        return render_template('app/verify_otp.html', company_name=company_name, phone=phone, error=None)
-    return render_template('app/login_otp.html', company_name=company_name, error=None)
+        return render_template('app/verify_otp.html', phone=phone, error=None)
+    return render_template('app/login_otp.html', error=None)
 
 @app.route('/app/login/otp/verify', methods=['POST'])
 def app_verify_login_otp():
@@ -12659,16 +12626,15 @@ def app_verify_login_otp():
     of dashboard on success, and back to the app's own Verify OTP screen (not login.html) on
     failure."""
     import hashlib
-    company_name = get_company_name(session.get('company_id', 1))
     code = (request.form.get('otp') or '').strip()
     phone = request.form.get('phone') or ''
 
     if not session.get('otp_user_id') or session.get('otp_phone') != phone:
-        return render_template('app/login_otp.html', company_name=company_name, error='Session expired. Please request a new OTP.')
+        return render_template('app/login_otp.html', error='Session expired. Please request a new OTP.')
     if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
-        return render_template('app/login_otp.html', company_name=company_name, error='OTP expired. Please request a new one.')
+        return render_template('app/login_otp.html', error='OTP expired. Please request a new one.')
     if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
-        return render_template('app/verify_otp.html', company_name=company_name, phone=phone, error='Incorrect OTP. Please try again.')
+        return render_template('app/verify_otp.html', phone=phone, error='Incorrect OTP. Please try again.')
 
     conn = get_db()
     user = conn.execute("SELECT * FROM users WHERE id=?", (session['otp_user_id'],)).fetchone()
@@ -12679,7 +12645,7 @@ def app_verify_login_otp():
         return redirect(url_for('app_login'))
     if (user['status'] or 'Active') == 'Inactive':
         conn.close()
-        return render_template('app/login_otp.html', company_name=company_name,
+        return render_template('app/login_otp.html',
                                 error='This account has been deactivated. Contact an administrator.')
     session['user_id'] = user['id']
     session['username'] = user['username']

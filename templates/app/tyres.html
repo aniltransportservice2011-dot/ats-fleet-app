@@ -422,7 +422,7 @@ function atHandleSubmit(e, url) {
     .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
     .then(function (r) {
       if (r.data.ok) {
-        window.location.href = (r.data.redirect || "{{ url_for('app_tyres') }}") + '?added=1';
+        reloadWithFlag('added', r.data.redirect || "{{ url_for('app_tyres') }}");
       } else {
         errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
         errBox.style.display = 'block';

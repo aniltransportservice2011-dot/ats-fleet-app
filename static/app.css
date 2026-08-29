@@ -160,6 +160,16 @@ body.a-scroll-lock { overflow: hidden; }
 .a-card-head h2 { font-size: 0.88rem; margin: 0; font-weight: 700; }
 .a-card-link { font-size: 0.74rem; color: var(--a-accent); font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 2px; }
 
+/* Alert icon on the card's own title — the rest of that card (the floating chips, the sliding
+   warn cue) is unchanged, this only adds the icon. The real 🚨 emoji, not a hand-drawn
+   approximation of it — nothing built here matches its actual glossy/shaded artwork, so this
+   renders the platform's own real glyph directly instead. No background/border of its own
+   (transparent box, just centers it); box itself still the same ~30px footprint, only the
+   emoji's own font-size changes when it needs to look bigger/smaller. */
+.a-alert-head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.a-alert-head-ic { width: 30px; height: 30px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.15rem; line-height: 1; }
+
 /* ---------- Quick actions ---------- */
 .a-qa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px; text-align: center; }
 .a-qa-item { display: flex; flex-direction: column; align-items: center; gap: 6px; text-decoration: none; color: var(--a-ink); background: none; border: none; font-family: inherit; cursor: pointer; padding: 4px 0; }
@@ -626,9 +636,9 @@ input[type="date"] { accent-color: var(--a-accent); }
    that, doubling the side gap to 32px on this page only vs. 16px everywhere else. */
 .mo-tabstrip { display: flex; gap: 7px; padding: 12px 0 6px; background: transparent; }
 /* Boxed pill style (white card per tab, active = light-orange fill) instead of the old
-   underline-tab-strip look. 5 real tabs (Overview/Service/Tyres/Battery/Urea) + a 6th "More" box
-   that opens .mo-more-sheet below for the remaining 2 real tabs (Toll, Compliance) — see the big
-   HTML comment above the tab strip markup for why nothing here is fabricated. */
+   underline-tab-strip look. 4 real tabs (Overview/Service/Tyres/Battery) + a 5th "More" box
+   that opens .mo-more-sheet below for the remaining 3 real tabs (Urea, Toll, Compliance) — see
+   the big HTML comment above the tab strip markup for why nothing here is fabricated. */
 .mo-tab { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 11px 3px; background: var(--a-white); border-radius: 14px; border: none; font-family: inherit; cursor: pointer;
   color: var(--a-ink); font-size: 0.6rem; font-weight: 700; }
@@ -636,7 +646,7 @@ input[type="date"] { accent-color: var(--a-accent); }
 .mo-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mo-tab.active { background: #fff3e8; color: var(--a-accent); }
 
-/* ---------- "More" tabs sheet (Toll / Compliance) ---------- */
+/* ---------- "More" tabs sheet (Urea / Toll / Compliance) ---------- */
 .mo-more-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.4); z-index: 80;
   opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility .2s; }
 .mo-more-backdrop.open { opacity: 1; visibility: visible; }
@@ -1147,6 +1157,27 @@ input[type="date"] { accent-color: var(--a-accent); }
   border-radius: 12px; padding: 13px; font-weight: 700; font-size: 0.9rem; font-family: inherit; cursor: pointer; }
 .vam-btn-save:active { background: var(--a-accent-dark); }
 .vam-btn-save:disabled { opacity: 0.6; }
+
+/* Service Record view/edit (maintenance.html) — .vam-modal's default (top:48px, full remaining
+   screen height, .vam-form flex:1 stretching to fill it) is right for long forms but leaves a big
+   empty gap under a short read-only record with its buttons floating away from the fields. These
+   two only ever hold one field set each (never Load More'd, never grows), so they size to their
+   own content instead: top:auto/height:auto so the sheet is only as tall as .vam-head + .vam-form
+   need, capped at 85vh with .vam-form no longer flex:1 (flex:none, its own max-height + scroll)
+   for the rare case a record's Notes/Checklist text is long enough to still need scrolling. */
+#svModal, #esModal, #evModal, #eeModal { top: auto; height: auto; max-height: 85vh; }
+#svModal .vam-form, #esModal .vam-form, #evModal .vam-form, #eeModal .vam-form { flex: none; max-height: calc(85vh - 60px); }
+/* Cancel/Update (and Save Changes) pinned to the bottom of the sheet even when a long record
+   (Notes/Checklist, or Expense's Description/Notes) makes .vam-form scroll — sticky rather than a
+   separate flex footer so short records (the common case) still sit flush under the fields with
+   no gap, per the content-sized behaviour above; only pins away from the fields once there's
+   actually something to scroll past. Same record view/edit pattern as Maintenance's Service tab,
+   reused here for Expenses. */
+#svModal .vam-actions, #esModal .vam-actions, #evModal .vam-actions, #eeModal .vam-actions {
+  position: sticky; bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
+  margin-left: -18px; margin-right: -18px; margin-bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--a-paper); box-shadow: 0 -6px 12px -8px rgba(20,24,40,.18);
+}
 
 /* ==========================================================================
    Vehicle detail (templates/app/vehicle_detail.html) — own prefix (vd-).

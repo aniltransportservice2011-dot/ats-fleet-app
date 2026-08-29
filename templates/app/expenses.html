@@ -74,7 +74,11 @@
   <div id="exp-list">
   {% set icon_emoji = {'building':'🏢','bolt':'⚡','wifi':'📶','box':'📦','monitor':'💻','fuel':'⛽','cup':'☕','bank':'🏦','road':'🛣️','car':'🚗','phone':'📱','receipt':'🧾'} %}
   {% for r in rows %}
-  <div class="ms-row">
+  {% set rec = dict(id=r.id, date=r.date or '', category=r.category or '', amount=r.amount or 0,
+                     vendor=r.vendor or '', payment_mode=r.payment_mode or '', receipt_number=r.receipt_number or '',
+                     description=r.description or '', status=r.status or 'Paid', is_recurring=r.is_recurring or 0,
+                     recurring_frequency=r.recurring_frequency or '', due_date=r.due_date or '', notes=r.notes or '') %}
+  <div class="ms-row" style="cursor:pointer;" onclick="openExpenseView(this)" data-record="{{ (rec|tojson)|forceescape }}">
     <div class="ms-row-date">{{ r.date }}</div>
     <div class="ms-row-main">
       <div class="ms-row-top">
@@ -205,6 +209,79 @@
 <datalist id="exp-category-list">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
 <datalist id="exp-vendor-list">{% for v in vendors %}<option value="{{ v }}">{% endfor %}</datalist>
 
+<!-- View Expense — read-only popup opened by tapping a row (openExpenseView() below reads that
+     row's own data-record JSON, no extra request). "Update" hands the same record off to the Edit
+     modal further down and closes this one; "Cancel" just closes it. Same .vam-modal component +
+     .ld-info-label/.ld-info-val pairs + content-sized/sticky-footer behaviour as Maintenance's own
+     Service Record view/edit (see #svModal/#esModal in app/maintenance.html and the matching
+     #evModal/#eeModal rule in app.css) — same pattern, reused here. -->
+<div class="vam-backdrop" id="evBackdrop" onclick="closeExpenseView()"></div>
+<div class="vam-modal" id="evModal" role="dialog" aria-modal="true" aria-label="Expense">
+  <div class="vam-head">
+    <h2>Expense</h2>
+    <button type="button" class="vam-close" onclick="closeExpenseView()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-form" style="padding-top:16px;">
+    <div class="ld-info-grid" id="evFields" style="grid-template-columns:1fr 1fr; gap:22px 16px; margin-bottom:6px;"></div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeExpenseView()">Cancel</button>
+      <button type="button" class="vam-btn-save" onclick="openEditExpenseFromView()">Update</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Expense — same real fields as Add Expense above, pre-filled, posted to
+     app_edit_overhead() via fetch — same _update_overhead_from_form() the website's own edit form
+     uses, so the two can never accept a different set of fields on edit. -->
+<div class="vam-backdrop" id="eeBackdrop" onclick="closeEditExpenseModal()"></div>
+<div class="vam-modal" id="eeModal" role="dialog" aria-modal="true" aria-label="Edit Expense">
+  <div class="vam-head">
+    <h2>Edit Expense</h2>
+    <button type="button" class="vam-close" onclick="closeEditExpenseModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form id="eeForm" class="vam-form">
+    <div class="vam-error" id="eeError" style="display:none;"></div>
+
+    <div class="vam-grid">
+      <div class="vam-field"><label>Date <span class="req">*</span></label><div class="vam-date-wrap"><input type="date" name="date" id="eeDate" required><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field"><label>Amount (₹) <span class="req">*</span></label><input type="number" step="0.01" name="amount" id="eeAmount" required></div>
+      <div class="vam-field vam-field-full"><label>Category <span class="req">*</span></label><input type="text" name="category" id="eeCategory" list="exp-category-list" required placeholder="e.g. Office Rent"></div>
+      <div class="vam-field vam-field-full"><label>Vendor</label><input type="text" name="vendor" id="eeVendor" list="exp-vendor-list" placeholder="e.g. ABC Properties"></div>
+      <div class="vam-field"><label>Payment Mode</label>
+        <select name="payment_mode" id="eePaymentMode"><option value="">Select Mode</option>
+          {% for m in ['Cash','Bank Transfer','UPI','Online','Credit Card','Cheque'] %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field"><label>Receipt / Invoice No.</label><input type="text" name="receipt_number" id="eeReceiptNumber" placeholder="Optional"></div>
+      <div class="vam-field vam-field-full"><label>Description</label><textarea name="description" id="eeDescription" rows="2" placeholder="What this expense was for"></textarea></div>
+      <div class="vam-field vam-field-full"><label>Status</label>
+        <select name="status" id="eeStatus" onchange="document.getElementById('eeDueWrap').style.display = this.value === 'Pending' ? '' : 'none';">
+          <option value="Paid">Paid</option>
+          <option value="Pending">Pending</option>
+        </select>
+      </div>
+      <div class="vam-field vam-field-full" id="eeDueWrap" style="display:none;"><label>Due Date</label><div class="vam-date-wrap"><input type="date" name="due_date" id="eeDueDate"><svg class="vam-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg></div></div>
+      <div class="vam-field vam-field-full">
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:0;">
+          <input type="checkbox" name="is_recurring" id="eeRecurring" style="width:auto;" onchange="document.getElementById('eeFreqWrap').style.display = this.checked ? '' : 'none';">
+          Recurring expense
+        </label>
+      </div>
+      <div class="vam-field vam-field-full" id="eeFreqWrap" style="display:none;"><label>Frequency</label>
+        <select name="recurring_frequency" id="eeFrequency">
+          {% for f in ['Monthly','Weekly','Quarterly','Yearly'] %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vam-field vam-field-full"><label>Notes</label><textarea name="notes" id="eeNotes" rows="2" placeholder="Add any notes here..."></textarea></div>
+    </div>
+
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeEditExpenseModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save" id="eeSaveBtn">Save Changes</button>
+    </div>
+  </form>
+</div>
+
 {% endblock %}
 {% block extra_scripts %}
 <script>
@@ -267,7 +344,7 @@ if (aeForm) {
       .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
       .then(function (r) {
         if (r.data.ok) {
-          window.location.href = (r.data.redirect || "{{ url_for('app_expenses') }}") + '?added=1';
+          reloadWithFlag('added', r.data.redirect || "{{ url_for('app_expenses') }}");
         } else {
           errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
           errBox.style.display = 'block';
@@ -283,11 +360,129 @@ if (aeForm) {
       });
   });
 }
+
+// Tap an Expenses row -> read-only View popup -> "Update" -> the real Edit modal, pre-filled from
+// the same record. currentExpenseRecord holds whichever row was last tapped, so
+// openEditExpenseFromView() (the View popup's own "Update" button) doesn't need to re-parse
+// anything -- it's the same object openExpenseView() already parsed off that row's data-record.
+// Same tap-row -> view -> edit pattern as Maintenance's own Service tab (see openServiceView() /
+// openEditServiceModal() in app/maintenance.html).
+var currentExpenseRecord = null;
+function _expEsc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function openExpenseView(rowEl) {
+  var rec = JSON.parse(rowEl.getAttribute('data-record'));
+  currentExpenseRecord = rec;
+  var fields = [ ['Category', rec.category], ['Amount', '₹' + Number(rec.amount || 0).toLocaleString('en-IN')],
+    ['Date', rec.date], ['Vendor', rec.vendor], ['Payment Mode', rec.payment_mode], ['Status', rec.status],
+    ['Receipt / Invoice No.', rec.receipt_number] ];
+  if (rec.status === 'Pending') fields.push(['Due Date', rec.due_date]);
+  fields.push(['Recurring', rec.is_recurring ? ('Yes' + (rec.recurring_frequency ? ' · ' + rec.recurring_frequency : '')) : 'No']);
+  var html = fields.map(function (f) {
+    var val = (f[1] === null || f[1] === undefined || f[1] === '') ? '—' : f[1];
+    return '<div><div class="ld-info-label">' + _expEsc(f[0]) + '</div><div class="ld-info-val" style="margin-top:4px; line-height:1.35;">' + _expEsc(val) + '</div></div>';
+  }).join('');
+  if (rec.description) {
+    html += '<div style="grid-column:1 / -1;"><div class="ld-info-label">Description</div><div class="ld-info-val" style="margin-top:4px; line-height:1.4;">' + _expEsc(rec.description) + '</div></div>';
+  }
+  if (rec.notes) {
+    html += '<div style="grid-column:1 / -1;"><div class="ld-info-label">Notes</div><div class="ld-info-val" style="margin-top:4px; line-height:1.4;">' + _expEsc(rec.notes) + '</div></div>';
+  }
+  document.getElementById('evFields').innerHTML = html;
+  lockPageScroll();
+  document.getElementById('evBackdrop').classList.add('open');
+  document.getElementById('evModal').classList.add('open');
+}
+function closeExpenseView() {
+  unlockPageScroll();
+  document.getElementById('evBackdrop').classList.remove('open');
+  document.getElementById('evModal').classList.remove('open');
+}
+
+// Edit Expense modal — pre-filled from currentExpenseRecord (set by openExpenseView() above),
+// same real fields as Add Expense, posts to app_edit_overhead() instead of app_add_overhead().
+function openEditExpenseFromView() {
+  closeExpenseView();
+  openEditExpenseModal(currentExpenseRecord);
+}
+function openEditExpenseModal(rec) {
+  document.getElementById('eeError').style.display = 'none';
+  document.getElementById('eeDate').value = rec.date || '';
+  document.getElementById('eeAmount').value = rec.amount != null ? rec.amount : '';
+  document.getElementById('eeCategory').value = rec.category || '';
+  document.getElementById('eeVendor').value = rec.vendor || '';
+  document.getElementById('eePaymentMode').value = rec.payment_mode || '';
+  document.getElementById('eeReceiptNumber').value = rec.receipt_number || '';
+  document.getElementById('eeDescription').value = rec.description || '';
+  document.getElementById('eeStatus').value = (rec.status === 'Pending') ? 'Pending' : 'Paid';
+  document.getElementById('eeDueDate').value = rec.due_date || '';
+  document.getElementById('eeDueWrap').style.display = (rec.status === 'Pending') ? '' : 'none';
+  document.getElementById('eeRecurring').checked = !!rec.is_recurring;
+  document.getElementById('eeFrequency').value = rec.recurring_frequency || 'Monthly';
+  document.getElementById('eeFreqWrap').style.display = rec.is_recurring ? '' : 'none';
+  document.getElementById('eeNotes').value = rec.notes || '';
+  // Re-run the app-wide date-picker enhancer's own trigger label on this modal's fields — it's
+  // been sitting in the DOM since page load (not freshly swapped in), so its date inputs were
+  // already enhanced once; this just refreshes each trigger's displayed text to match the values
+  // just set above.
+  document.querySelectorAll('#eeForm input[type="date"]').forEach(function (inp) {
+    var trigger = inp.nextSibling;
+    if (trigger && trigger.classList && trigger.classList.contains('cal-trigger')) {
+      trigger.textContent = inp.value ? new Date(inp.value + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Select date';
+      trigger.classList.toggle('cal-placeholder', !inp.value);
+    }
+  });
+  lockPageScroll();
+  document.getElementById('eeBackdrop').classList.add('open');
+  document.getElementById('eeModal').classList.add('open');
+}
+function closeEditExpenseModal() {
+  unlockPageScroll();
+  document.getElementById('eeBackdrop').classList.remove('open');
+  document.getElementById('eeModal').classList.remove('open');
+}
+var eeForm = document.getElementById('eeForm');
+if (eeForm) {
+  eeForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!currentExpenseRecord) return;
+    var btn = document.getElementById('eeSaveBtn');
+    var errBox = document.getElementById('eeError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch('/app/expenses/' + currentExpenseRecord.id + '/edit', { method: 'POST', body: new FormData(e.target) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          reloadWithFlag('updated', r.data.redirect || "{{ url_for('app_expenses') }}");
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Save Changes';
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+      });
+  });
+}
+
 (function () {
   var params = new URLSearchParams(window.location.search);
   if (params.get('added') === '1') {
     showToast('Expense added successfully');
     params.delete('added');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+  if (params.get('updated') === '1') {
+    showToast('Expense updated');
+    params.delete('updated');
     history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
   }
 })();
