@@ -8840,7 +8840,14 @@ def logout():
     # the installed app, so it should land back on the app's own login screen, not the website's.
     came_from_app = bool(request.referrer) and '/app/' in request.referrer
     session.clear()
-    return redirect(url_for('app_login') if came_from_app else url_for('login'))
+    if came_from_app:
+        # from_logout=1 tells _splash.html to skip the cold-open splash on this one landing —
+        # sessionStorage's own "already shown this session" gate can't be relied on here (some
+        # mobile WebViews don't reliably keep sessionStorage across a standalone-PWA navigation
+        # like this), and replaying the full splash animation right after a deliberate logout
+        # reads as a jarring re-launch instead of a quick, quiet sign-out.
+        return redirect(url_for('app_login', from_logout=1))
+    return redirect(url_for('login'))
 
 def _send_otp_sms(s, phone, otp):
     from twilio.rest import Client
