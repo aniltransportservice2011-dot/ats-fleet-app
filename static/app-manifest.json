@@ -1,7 +1,7 @@
 {
-  "name": "Anil Transport",
-  "short_name": "ATS App",
-  "description": "Fleet operations app for Anil Transport Service",
+  "name": "RAATH",
+  "short_name": "RAATH",
+  "description": "Fleet operations app",
   "start_url": "/app/dashboard",
   "scope": "/app/",
   "display": "standalone",

@@ -4,181 +4,38 @@
      page that extends it) and login.html (the pre-auth landing page, the other realistic
      "just opened the app" entry point) so it fires no matter which one is hit first.
 
-     Built from the user's own written brief (colors #F97316/#14213D/#F7F8FA, a ~4.2s staged
-     timeline, truck starting small/distant and growing as it arrives — see the CSS's own timeline
-     comment above .app-splash-road path in app.css for the exact phase breakdown): a ring of 6
-     fleet-ops icons (Track/Monitor/Manage/Maintenance/Fuel/Compliance) orbiting the ATS badge at
-     top, and a full hero "scene" at the bottom — cityscape silhouette, curving road with a real
-     tarmac surface under the glow, pin markers, a headlit truck driving in and arriving — closing
-     on the "Managing Fleet, Driving Excellence" tagline + a loading-style progress bar. One real
-     trade-off from that brief: this is a NOT a React app (it's Flask/Jinja — see CLAUDE.md), so
-     this partial + the .app-splash* rules in app.css are the actual isolation boundary here, same
-     effect as a standalone component; and no photoreal/3D truck render is possible without an
-     image-generation tool — this is a detailed flat SVG truck illustration instead (proper cab,
-     container, wheels, windshield, headlights, grille — see the SVG below), not a stock icon. -->
+     Back to the original design — full-bleed solid brand orange, a plain badge + name + tagline,
+     gone in ~1.1s (see app.css's own .app-splash comment for why the later, more elaborate
+     ring+skyline+road+truck redesign was reverted). One thing kept from that later version,
+     deliberately not reverted: {{ app_name }} (APP_NAME in app.py), not {{ company_name }} — a
+     splash is the PRODUCT introducing itself, the same way a phone's own lock screen never shows
+     a random app's own branding, and that's a real fix independent of the visual redesign. -->
 <div class="app-splash" id="appSplash">
-  <svg class="app-splash-net" viewBox="0 0 375 812" preserveAspectRatio="none" aria-hidden="true">
-    <g fill="#14213D" opacity="0.05">
-      <circle cx="30" cy="40" r="2.4"/><circle cx="70" cy="70" r="2"/><circle cx="345" cy="50" r="2.4"/>
-      <circle cx="310" cy="90" r="2"/><circle cx="20" cy="110" r="2"/>
-    </g>
-  </svg>
-
-  <!-- Top zone: the icon ring around the brand lockup. Ring items positioned with the classic
-       rotate -> translateX(radius) -> counter-rotate trick (7 items, 360/7deg apart, starting at
-       -90deg so the first one sits at 12 o'clock) so every icon glyph itself stays upright while
-       its position walks around the circle — hand-placing 7 icons at explicit angles would drift
-       out of alignment the moment the radius or icon size ever changes. -->
-  <div class="app-splash-top">
-    <div class="app-splash-ring">
-      <div class="app-splash-ring-guide"></div>
-      {% set ring_items = [
-        ('Monitor', '<path d="M4 20V10M10 20V4M16 20v-7M22 20v-4"/>'),
-        ('Manage', '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
-        ('Maintenance', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
-        ('Compliance', '<path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/>'),
-        ('Fuel', '<path d="M3 22V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M3 10h10"/><path d="M13 8h3l4 4v6a1 1 0 0 1-1 1h-2"/><circle cx="7" cy="20" r="1.6"/><circle cx="17" cy="20" r="1.6"/>'),
-        ('Track', '<path d="M12 21s7-6.1 7-11.5A7 7 0 0 0 5 9.5C5 14.9 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.4"/>'),
-      ] %}
-      {% for label, path in ring_items %}
-      <div class="app-splash-ring-item" style="--ring-angle: {{ (loop.index0 * (360 / ring_items|length)) - 90 }}deg; animation-delay: {{ 0.15 + loop.index0 * 0.06 }}s;">
-        <span class="app-splash-ring-ic"><svg viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{{ path|safe }}</svg></span>
-        <span class="app-splash-ring-label">{{ label }}</span>
-      </div>
-      {% endfor %}
-
-      <div class="app-splash-lockup">
-        <div class="app-splash-badge">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
-        </div>
-        <!-- The app's own fixed name (APP_NAME in app.py, injected as `app_name`), not the
-             logged-in tenant's business name — a splash is the PRODUCT introducing itself, the
-             same way a phone's own lock screen never shows a random app's own branding. This is
-             deliberately NOT `company_name` (settings.company_name, editable per company in
-             Settings > Company Profile) — those are two genuinely different things that happened
-             to be the same string for a while, not one value with two names. -->
-        <div class="app-splash-name">{{ app_name }}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bottom zone: the hero "scene" — cityscape, curving road, glowing route with pin markers,
-       the truck driving in and arriving, tagline, then a small loading-style progress bar. -->
-  <div class="app-splash-scene">
-    <svg class="app-splash-skyline" viewBox="0 0 375 140" preserveAspectRatio="none" aria-hidden="true">
-      <defs>
-        <linearGradient id="appSplashSkylineFade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#14213D" stop-opacity="0.1"/>
-          <stop offset="100%" stop-color="#14213D" stop-opacity="0.04"/>
-        </linearGradient>
-      </defs>
-      <g fill="url(#appSplashSkylineFade)">
-        <rect x="0" y="76" width="24" height="64" rx="1"/><rect x="27" y="50" width="18" height="90" rx="1"/>
-        <polygon points="48,140 48,60 64,50 80,60 80,140"/><rect x="84" y="88" width="26" height="52" rx="1"/>
-        <rect x="264" y="60" width="22" height="80" rx="1"/><polygon points="290,140 290,55 305,42 320,55 320,140"/>
-        <rect x="324" y="82" width="24" height="58" rx="1"/><rect x="352" y="58" width="22" height="82" rx="1"/>
+  <div class="app-splash-badge">
+    <!-- Same wheel-and-speed-lines mark as the login screen's own center badge (templates/app/
+         login.html's .lg-badge, the app icon) — one consistent brand mark across the splash and
+         login. White fill, not the icon's own orange gradient, since it sits on this splash's
+         solid orange background. -->
+    <svg viewBox="0 0 24 24" fill="none">
+      <g stroke="#fff" stroke-width="1.6" stroke-linecap="round">
+        <line x1="6" y1="6.5" x2="9.5" y2="6.5"/>
+        <line x1="3" y1="9.5" x2="9.5" y2="9.5"/>
+        <line x1="1" y1="14" x2="9.5" y2="14"/>
+        <line x1="4.5" y1="17.3" x2="9.5" y2="17.3"/>
       </g>
-      <g fill="#F97316" opacity="0.35">
-        <rect x="6" y="90" width="2.4" height="2.4"/><rect x="14" y="102" width="2.4" height="2.4"/>
-        <rect x="90" y="100" width="2.4" height="2.4"/><rect x="98" y="112" width="2.4" height="2.4"/>
-        <rect x="330" y="94" width="2.4" height="2.4"/><rect x="358" y="106" width="2.4" height="2.4"/>
+      <path fill-rule="evenodd" clip-rule="evenodd" fill="#fff" d="M16 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 1.7a5.3 5.3 0 1 1 0 10.6 5.3 5.3 0 0 1 0-10.6Z"/>
+      <g stroke="#fff" stroke-width="1.4" stroke-linecap="round">
+        <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(0 16 12)"/>
+        <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(60 16 12)"/>
+        <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(120 16 12)"/>
+        <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(180 16 12)"/>
+        <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(240 16 12)"/>
+        <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(300 16 12)"/>
       </g>
+      <circle cx="16" cy="12" r="1.6" fill="#fff"/>
     </svg>
-
-    <div class="app-splash-road-wrap">
-      <!-- Single smooth curve, x strictly increasing left -> right (off-canvas at the start, stop
-           point at the end) — deliberate, not arbitrary: the truck is drawn cab-forward at its own
-           local +x side (see appSplashTruckG below), and its position/rotation are computed live
-           off THIS SAME path via getPointAtLength() in the script at the bottom, so a path that
-           ever doubled back right-to-left would spin the truck a half-turn (wheels-up) partway
-           through instead of just banking through the bend.
-
-           The truck and the 2 route pins all live INSIDE this <svg>, as children of the same
-           coordinate space as #appSplashRoadPath itself — not separately-positioned HTML elements
-           with hand-tuned left/top guesses. That's deliberate: getPointAtLength() returns
-           coordinates in the path's own user-space, and this SVG is the only place those numbers
-           mean anything directly; keeping the truck as a sibling <g> here means "put the truck at
-           this point on the path" is exactly one setAttribute('transform', ...) call, correct at
-           any viewport width, instead of a second, independently-authored approximation of the
-           same curve that can only ever get close.
-
-           Three copies of the road path: a wide soft-dark stroke first (the actual tarmac, so the
-           route reads as a real road, not a bare glowing line floating on white), an even wider
-           blurred orange copy for the glow, then the crisp bright line on top — all reveal via the
-           same stroke-dashoffset animation as the road "draws itself in". -->
-      <svg class="app-splash-road" id="appSplashRoadSvg" viewBox="0 0 375 380" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <filter id="appSplashRoadGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3.4"/></filter>
-        </defs>
-        <path class="app-splash-road-surface" d="M -30 322 C 60 322, 90 181, 195 165" pathLength="1"/>
-        <path class="app-splash-road-glow" d="M -30 322 C 60 322, 90 181, 195 165" pathLength="1" filter="url(#appSplashRoadGlow)"/>
-        <path id="appSplashRoadPath" d="M -30 322 C 60 322, 90 181, 195 165" pathLength="1"/>
-
-        <!-- Teardrop tip sits exactly at local (0,0) — same path as the earlier flat pin, just
-             re-based so translate(x,y) below plants the TIP on the route point, not some
-             arbitrary corner of the shape's own bounding box. -->
-        <g id="appSplashPin1" class="app-splash-pin" opacity="0">
-          <path d="M0,0 s6.5,-5.8 6.5,-10.6 A6.5 6.5 0 0 0 -6.5,-10.6 C-6.5,-5.8 0,0 0,0 Z" fill="#F97316"/><circle cx="0" cy="-11" r="2.6" fill="#fff"/>
-        </g>
-        <g id="appSplashPin2" class="app-splash-pin" opacity="0">
-          <path d="M0,0 s6.5,-5.8 6.5,-10.6 A6.5 6.5 0 0 0 -6.5,-10.6 C-6.5,-5.8 0,0 0,0 Z" fill="#F97316"/><circle cx="0" cy="-11" r="2.6" fill="#fff"/>
-        </g>
-
-        <!-- The truck. Local coordinate system 0 0 122 58, same detailed illustration as before
-             (proper cab, container, wheels, windshield, headlights, grille) — only how it's placed
-             changed, not what it looks like. #appSplashTruckAnchor's transform is set entirely by
-             the script below each frame (translate to the path point, rotate to the path's own
-             tangent, scale for the "grows as it approaches" depth cue) — no CSS animation touches
-             its position, so there's exactly one source of truth for where the truck is. -->
-        <g id="appSplashTruckG" opacity="0">
-          <g id="appSplashTruckAnchor">
-            <g transform="translate(-61,-44)">
-              <ellipse cx="61" cy="53.5" rx="55" ry="3.2" fill="#14213D" opacity="0.15"/>
-
-              <!-- Container: corrugated panel lines + the same badge glyph used everywhere else in
-                   the app (base_app.html's own header logo) at small scale, so the truck reads as
-                   this fleet's own vehicle, not a generic stock truck. -->
-              <rect x="2" y="8" width="66" height="33" rx="3" fill="#F97316"/>
-              <rect x="2" y="8" width="66" height="7" rx="3" fill="#EA580C"/>
-              <g stroke="#EA580C" stroke-width="1" opacity="0.45">
-                <line x1="10" y1="17" x2="10" y2="39"/><line x1="18" y1="17" x2="18" y2="39"/>
-                <line x1="26" y1="17" x2="26" y2="39"/><line x1="34" y1="17" x2="34" y2="39"/>
-                <line x1="42" y1="17" x2="42" y2="39"/><line x1="50" y1="17" x2="50" y2="39"/>
-                <line x1="58" y1="17" x2="58" y2="39"/>
-              </g>
-              <circle cx="15.5" cy="28" r="7.4" fill="#14213D"/>
-              <svg x="9.5" y="22" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
-              <text x="27" y="32.5" font-family="-apple-system, Arial, sans-serif" font-weight="800" font-size="11.5" letter-spacing="0.5" fill="#fff">ATS</text>
-
-              <!-- Cab: rounded body + tapered hood merging into the bumper, angled windshield with
-                   a glass highlight streak, side mirror, twin headlights, slatted grille. -->
-              <rect x="70" y="15" width="32" height="26" rx="5" fill="#14213D"/>
-              <path d="M96 41 L114 41 L114 31 L105 22 L96 22 Z" fill="#14213D"/>
-              <rect x="70" y="21" width="3.2" height="5.4" rx="1.2" fill="#1E293B"/>
-              <path d="M73.5 19 L93 19 L101 26 L73.5 26 Z" fill="#BFDBFE"/>
-              <path d="M75.5 19.4 L82.5 19.4 L78 25.4 L73.8 25.4 Z" fill="#fff" opacity="0.4"/>
-              <rect x="105.5" y="30" width="7.5" height="8.4" rx="1.6" fill="#1E293B"/>
-              <g stroke="#64748B" stroke-width="0.8"><line x1="107.2" y1="31" x2="107.2" y2="37.4"/><line x1="109.2" y1="31" x2="109.2" y2="37.4"/><line x1="111.2" y1="31" x2="111.2" y2="37.4"/></g>
-              <circle class="app-splash-headlight" cx="108" cy="26.5" r="2.7" fill="#FDE68A"/>
-              <circle class="app-splash-headlight" cx="114.5" cy="29.5" r="2.3" fill="#FDE68A"/>
-              <rect x="110" y="39" width="8.5" height="4" rx="1.3" fill="#1E293B"/>
-              <rect x="67.5" y="5.5" width="3" height="11" rx="1.2" fill="#94A3B8"/><rect x="66.7" y="4" width="4.6" height="2.2" rx="1" fill="#64748B"/>
-
-              <rect x="2" y="41" width="116" height="2" fill="#14213D" opacity="0.15"/>
-              <g fill="#1E293B"><circle cx="20" cy="45.5" r="8.2"/><circle cx="50" cy="45.5" r="8.2"/><circle cx="99" cy="45.5" r="8.2"/></g>
-              <g fill="#94A3B8"><circle cx="20" cy="45.5" r="4.6"/><circle cx="50" cy="45.5" r="4.6"/><circle cx="99" cy="45.5" r="4.6"/></g>
-              <g fill="#1E293B" opacity="0.7">
-                <circle cx="20" cy="45.5" r="1.4"/><circle cx="50" cy="45.5" r="1.4"/><circle cx="99" cy="45.5" r="1.4"/>
-              </g>
-            </g>
-          </g>
-        </g>
-      </svg>
-    </div>
-
-    <div class="app-splash-tag">Managing Fleet, Driving <b>Excellence</b></div>
-    <div class="app-splash-progress"><span></span></div>
   </div>
+  <div class="app-splash-name">{{ app_name }}</div>
 </div>
 <script>
 (function () {
@@ -190,130 +47,9 @@
     return;
   }
   sessionStorage.setItem('fleetapp_splash_shown', '1');
-
-  // Truck + pins ride the SAME <path> the route itself is drawn from — getPointAtLength() reads
-  // real coordinates off #appSplashRoadPath every frame, so "where the truck is" can never drift
-  // from "where the orange line actually is", at any viewport width, unlike a second hand-tuned
-  // set of left/top/rotate keyframes trying to approximate the same curve from outside it.
-  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var roadPath = document.getElementById('appSplashRoadPath');
-  var truckG = document.getElementById('appSplashTruckG');
-  var truckAnchor = document.getElementById('appSplashTruckAnchor');
-  var pin1 = document.getElementById('appSplashPin1');
-  var pin2 = document.getElementById('appSplashPin2');
-  var progressFill = document.querySelector('.app-splash-progress span');
-  // Direct children only — the truck's own decorative artwork (windshield, hood, grille, ...) is
-  // also drawn with <path> elements nested a level deeper (inside #appSplashTruckG), and a plain
-  // descendant selector would silently sweep those up too and set stroke-dashoffset on them for
-  // no reason (harmless since they have no stroke-dasharray to react to it, but not what this is
-  // meant to target).
-  var roadDrawEls = document.querySelectorAll('#appSplashRoadSvg > path');
-
-  function pointAndAngleAt(fracOfLength, totalLen) {
-    var d = Math.max(0, Math.min(1, fracOfLength)) * totalLen;
-    var p = roadPath.getPointAtLength(d);
-    // Tangent direction via a point a hair further along — the path runs strictly left -> right
-    // (see the big comment above), so this angle only ever banks through the curve, never flips.
-    // Near the very end of the path, "a hair further along" (d+1) gets clamped back down to d
-    // itself (Math.min(totalLen, d+1) === d once d is within 1 unit of totalLen), so the two
-    // sample points collapse toward the same spot and atan2() of a near-zero vector is numerically
-    // unstable — the truck's rotation would visibly jitter/snap for the last few frames right as
-    // it arrives (this is what looked like the truck "getting dropped" at the end). Falling back
-    // to a look-BEHIND sample whenever look-ahead would've clamped keeps the two points a real
-    // 1-unit apart the entire time, all the way through the final frame — the direction just
-    // needs a 180° flip since it's now pointing back the way the truck came from.
-    var lookD = (d + 1 <= totalLen) ? d + 1 : Math.max(0, d - 1);
-    var look = roadPath.getPointAtLength(lookD);
-    var angle = Math.atan2(look.y - p.y, look.x - p.x) * 180 / Math.PI;
-    if (lookD < d) angle += 180;
-    return { x: p.x, y: p.y, angle: angle };
-  }
-
-  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
-
-  // requestAnimationFrame never fires for a backgrounded/hidden document (browsers suspend it
-  // outright) — normally a non-issue since a splash is only ever shown in the foreground tab the
-  // user just opened, but some WebView resume timings can briefly report the page hidden right at
-  // first paint. Falling back to a plain ~60fps setTimeout in that one case means the truck still
-  // arrives instead of silently never animating.
-  function scheduleFrame(fn) {
-    if (document.hidden) { setTimeout(function () { fn(performance.now()); }, 16); }
-    else { requestAnimationFrame(fn); }
-  }
-
-  if (roadPath && truckG && truckAnchor && roadPath.getTotalLength) {
-    var totalLen = roadPath.getTotalLength();
-    var PIN1_FRAC = 0.2, PIN2_FRAC = 0.62;
-    var TRUCK_BASE_SCALE = 0.62; // final resting size, tuned against the container/ring above it
-
-    if (pin1) { var a1 = pointAndAngleAt(PIN1_FRAC, totalLen); pin1.setAttribute('transform', 'translate(' + a1.x + ',' + a1.y + ')'); }
-    if (pin2) { var a2 = pointAndAngleAt(PIN2_FRAC, totalLen); pin2.setAttribute('transform', 'translate(' + a2.x + ',' + a2.y + ')'); }
-
-    if (reduceMotion) {
-      // Skip straight to the settled frame: truck at the route's end, full size, fully visible;
-      // pins already placed above; route fully drawn. No rAF loop at all for reduced-motion.
-      var end = pointAndAngleAt(1, totalLen);
-      truckAnchor.setAttribute('transform', 'translate(' + end.x + ',' + end.y + ') rotate(0) scale(' + TRUCK_BASE_SCALE + ')');
-      truckG.setAttribute('opacity', '1');
-      if (pin1) pin1.setAttribute('opacity', '1');
-      if (pin2) pin2.setAttribute('opacity', '1');
-      if (progressFill) progressFill.style.width = '100%';
-      roadDrawEls.forEach(function (el) { el.style.strokeDashoffset = '0'; });
-    } else {
-      // Timeline (matches the brief's own staged breakdown):
-      //   0.0s       progress bar starts filling (0%) — visible from the very first frame, not a
-      //              decorative afterthought that only shows up once everything's already landed
-      //   0.5s       truck enters, small and low on the path (reads as "distant") — the route
-      //              itself is still fully hidden at this point, not pre-drawn
-      //   0.5-3.3s   truck travels the full path, growing the whole way, the route builds in
-      //              lockstep right up to the truck's own current position (same `eased` value
-      //              drives both), and the progress bar fills to 100% over the same window — a
-      //              single rAF-driven pass rather than separately-timed phases, since it's the
-      //              same continuous motion just described from a few different angles
-      //   3.3s       truck at rest, full size, route fully drawn, progress bar full — badge
-      //              illuminate / tagline (CSS) pick up from here
-      var ENTER_DELAY = 500, TRAVEL_DURATION = 2800;
-      var pin1Shown = false, pin2Shown = false;
-      var rafStart = null;
-
-      function frame(ts) {
-        if (rafStart === null) rafStart = ts;
-        var elapsed = ts - rafStart;
-
-        if (!pin1Shown && elapsed >= 250) { if (pin1) pin1.setAttribute('opacity', '1'); pin1Shown = true; }
-        if (!pin2Shown && elapsed >= 550) { if (pin2) pin2.setAttribute('opacity', '1'); pin2Shown = true; }
-
-        if (elapsed < ENTER_DELAY) {
-          scheduleFrame(frame);
-          return;
-        }
-        var t = Math.min(1, (elapsed - ENTER_DELAY) / TRAVEL_DURATION);
-        var eased = easeOutCubic(t);
-        var pt = pointAndAngleAt(eased, totalLen);
-        var scale = (0.45 + 0.55 * eased) * TRUCK_BASE_SCALE;
-        truckG.setAttribute('opacity', String(Math.min(1, t / 0.12)));
-        truckAnchor.setAttribute('transform', 'translate(' + pt.x + ',' + pt.y + ') rotate(' + pt.angle + ') scale(' + scale + ')');
-        // Same `eased` fraction as the truck's own position above (not a separately-timed CSS
-        // animation) — the pathLength=1 trick means dashoffset is just "1 - how much of the path
-        // is drawn", so this guarantees the revealed line's end always lands exactly on the truck,
-        // the track visibly building as it's driven rather than sitting fully drawn beforehand.
-        for (var ri = 0; ri < roadDrawEls.length; ri++) { roadDrawEls[ri].style.strokeDashoffset = String(1 - eased); }
-        // Linear t, not the truck's own eased position — a loading bar reads as "how much time
-        // has elapsed", not "how far along a decelerating curve the truck happens to be", so it
-        // shouldn't visually rush near the end the way the truck's own ease-out motion does.
-        if (progressFill) progressFill.style.width = (t * 100) + '%';
-        if (t < 1) scheduleFrame(frame);
-      }
-      scheduleFrame(frame);
-    }
-  }
-
-  // 4000ms — the truck settles by ~3.3s and the badge/tagline/progress (CSS, timed off that same
-  // mark) finish landing shortly after, plus a short beat to actually read the final composition
-  // before the whole splash starts its own 350ms fade-out.
   setTimeout(function () {
     splash.classList.add('app-splash-out');
     setTimeout(function () { splash.style.display = 'none'; }, 350);
-  }, 4000);
+  }, 1100);
 })();
 </script>

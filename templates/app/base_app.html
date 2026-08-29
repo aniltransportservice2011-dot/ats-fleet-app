@@ -1098,11 +1098,17 @@
   // (a real full-page reload on every tap, which is what actually reads as "the bottom nav
   // flashing": the whole page, nav included, unmounts and remounts from scratch — no amount of
   // fixing --app-vh's own staleness could touch it, since navigate() never ran for these at all).
+  // .mo-more-item was the same bug again, just missed on the first sweep because it lives inside
+  // the "More" bottom sheet rather than the main tab row — Maintenance's own Urea/Toll/Compliance
+  // links (and every other page's More sheet, same markup pattern) were still doing a real reload
+  // on every tap, which is what read as "a loading icon, taking a long time, with no data to show
+  // for it": a full page reload re-fetches and re-runs everything from scratch (including the
+  // cold-open splash check) even though the destination page itself has little to load.
   // Attached to mainEl itself, not the tabs directly, so it keeps working after a swap replaces
   // them with a freshly fetched copy — event delegation resolves e.target at click time, not at
   // listener-attachment time.
   mainEl.addEventListener('click', function (e) {
-    var link = e.target.closest('a.ra-tab[href], a.mo-tab[href], a.lg-tab[href], a.tr-tab[href], a.vh-tab[href], a.ld-tab[href]');
+    var link = e.target.closest('a.ra-tab[href], a.mo-tab[href], a.mo-more-item[href], a.lg-tab[href], a.tr-tab[href], a.vh-tab[href], a.ld-tab[href]');
     if (!link) return;
     var href = link.getAttribute('href');
     if (href.indexOf('/app/') !== 0) return; // real nav for anything outside this app section

@@ -2,60 +2,9 @@
 {% block title %}Urea — {{ company_name }}{% endblock %}
 {% block content %}
 
-<!-- Real data only — see _urea_management_data() in app.py, shared verbatim with the website's
-     own Maintenance > Urea tab. Its own top-level page (not a Maintenance sub-tab), reached from
-     the bottom nav's FAB/More sheet and this Maintenance tab strip, same pattern as Tyres/
-     Battery — was a website-bridge (↗) link before this pass. Filters collapsed to a search box
-     + filter icon instead of showing all fields inline, same convention as Tyres/Battery. "Add
-     Urea" is a floating bottom-right button + native modal (same position/style as Add Vehicle/
-     Add Tyre/Add Battery), not the website's top-right inline button + inline filter row. -->
-<div class="vh-head">
-  <div>
-    <h1>Urea Management</h1>
-    <div class="sub">Track AdBlue/DEF stock and usage across your fleet.</div>
-  </div>
-</div>
-
-<!-- Same Maintenance tab strip as maintenance.html/tyres.html/battery.html — this page IS one of
-     those real tabs (Urea), just promoted to its own top-level route/URL instead of a ?tab=
-     query param on /app/maintenance. See the same comment on tyres.html for why this repeats
-     here. -->
-<div class="mo-tabstrip">
-  <a class="mo-tab" href="{{ url_for('app_maintenance') }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-4"/></svg>
-    <span>Overview</span></a>
-  <a class="mo-tab" href="{{ url_for('app_maintenance', tab='service') }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-    <span>Service</span></a>
-  <a class="mo-tab" href="{{ url_for('app_tyres') }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg>
-    <span>Tyres</span></a>
-  <a class="mo-tab" href="{{ url_for('app_battery') }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg>
-    <span>Battery</span></a>
-  <a class="mo-tab active" href="{{ url_for('app_urea') }}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg>
-    <span>Urea</span></a>
-  <button type="button" class="mo-tab" id="moMoreTabBtn" onclick="toggleMoMoreSheet()" aria-expanded="false">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-    <span>More</span></button>
-</div>
-
-<div class="mo-more-backdrop" id="moMoreBackdrop" onclick="closeMoMoreSheet()"></div>
-<div class="mo-more-sheet" id="moMoreSheet">
-  <div class="mo-more-handle"></div>
-  <div class="mo-more-title">All Tabs</div>
-  <div class="mo-more-grid">
-    <a href="{{ url_for('app_toll') }}" class="mo-more-item">
-      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
-      <span>Toll</span>
-    </a>
-    <a href="{{ url_for('app_compliance') }}" class="mo-more-item">
-      <span class="mo-more-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/></svg></span>
-      <span>Compliance</span>
-    </a>
-  </div>
-</div>
+<!-- Shared strip — see templates/app/_maintenance_tabstrip.html's own comment for why this is a single included partial (not repeated inline) across every one of the 7 real tab pages. -->
+{% set mo_active = 'urea' %}
+{% include "app/_maintenance_tabstrip.html" %}
 
 <div class="mo-kpi-grid">
   <div class="mo-kpi-card">
