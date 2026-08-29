@@ -40,9 +40,21 @@
 <script>
 (function () {
   var splash = document.getElementById('appSplash');
-  if (sessionStorage.getItem('fleetapp_splash_shown')) {
-    // Already shown once this session — hide instantly, synchronously, before the browser
-    // gets a chance to paint this element, so ordinary navigation never flashes it.
+  // from_logout=1 (set by the /logout route's own redirect) means this exact page load is the
+  // landing right after a deliberate sign-out — skip the splash regardless of sessionStorage,
+  // same as the "already shown" case below. sessionStorage's own gate isn't enough on its own
+  // here: some mobile WebViews don't reliably keep sessionStorage across a standalone-PWA
+  // navigation like a logout redirect, so without this a logout could replay the full cold-open
+  // splash, which reads as a jarring re-launch instead of a quick, quiet sign-out.
+  var skipForLogout = /(?:^|[?&])from_logout=1(?:&|$)/.test(location.search);
+  if (skipForLogout) {
+    // Scrub the query param right away so the address bar just reads /app/login, not
+    // /app/login?from_logout=1 — purely cosmetic, doesn't affect anything the page itself reads.
+    history.replaceState(null, '', location.pathname);
+  }
+  if (skipForLogout || sessionStorage.getItem('fleetapp_splash_shown')) {
+    // Hide instantly, synchronously, before the browser gets a chance to paint this element, so
+    // this navigation never flashes it.
     splash.style.display = 'none';
     return;
   }
