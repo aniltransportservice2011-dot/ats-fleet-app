@@ -8835,10 +8835,14 @@ def login():
 
 @app.route('/logout')
 def logout():
-    # Same app-vs-website redirect split as require_login above, for whenever the app section
-    # grows its own logout link — a Referer of /app/... means the sign-out happened from inside
-    # the installed app, so it should land back on the app's own login screen, not the website's.
-    came_from_app = bool(request.referrer) and '/app/' in request.referrer
+    # ctx=app is the reliable signal — set explicitly by templates/app/profile.html's own logout
+    # link — that this sign-out happened from inside the installed app, so it should land back on
+    # the app's own login screen, not the website's. Referer is kept only as a fallback for any
+    # other logout link that doesn't pass ctx=app yet: an installed, standalone PWA frequently
+    # sends NO Referer header at all (privacy-motivated browser/OS behavior), which silently made
+    # this always fall through to the website's login page — the real cause behind "logout lands
+    # somewhere with the old design" reports, not a caching or deployment issue.
+    came_from_app = request.args.get('ctx') == 'app' or (bool(request.referrer) and '/app/' in request.referrer)
     session.clear()
     if came_from_app:
         # from_logout=1 tells _splash.html to skip the cold-open splash on this one landing —
