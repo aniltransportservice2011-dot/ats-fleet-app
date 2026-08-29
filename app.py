@@ -54,7 +54,7 @@ VEHICLE_TYPE_LABELS = {VEHICLE_TYPE_OWN: 'Own', VEHICLE_TYPE_HIRED: 'Hired'}
 # showing the currently-logged-in company's business name instead would be wrong the same way a
 # phone's own lock-screen carrier name isn't a random app's own branding. One constant so a future
 # rename only ever means editing this one line, not hunting down every place it appears.
-APP_NAME = 'ATS Fleet Management'
+APP_NAME = 'RAATH'
 
 def get_db():
     conn = sqlite3.connect(DB)

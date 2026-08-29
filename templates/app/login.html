@@ -5,7 +5,30 @@
 <!-- This page doesn't extend base_app.html (it's the pre-login entry point), so it needs its own
      copy of the same zoom lock — see base_app.html's viewport meta for the full rationale. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Sign In — ATS Fleet Management</title>
+<title>Sign In — RAATH</title>
+
+<!-- Same --app-vh fix as base_app.html, and for the same reason: this is the OTHER realistic
+     "just opened the installed app" entry point (session expired, or the app was launched
+     logged-out), so it hits the exact same broken-innerHeight-in-standalone-iOS-PWA-mode case —
+     100dvh alone under-reports the real screen height there, leaving the page's own html/body
+     (and the splash sitting on top of it) short of the true bottom of the screen; the gap only
+     becomes visible once the splash finishes and hands off, reading as a white strip appearing
+     below everything right as the app "launches". Set as a real pixel value on <html> BEFORE the
+     stylesheet below is even requested, same as base_app.html, so body's height calc (below) has
+     a real number to use from this page's very first paint. See base_app.html's own copy of this
+     script for the full platform-detection rationale. -->
+<script>
+(function () {
+  function setAppVh() {
+    var h = (window.navigator.standalone === true && window.screen && window.screen.height) ||
+      (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.documentElement.style.setProperty('--app-vh', h + 'px');
+  }
+  setAppVh();
+  window.addEventListener('resize', setAppVh);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', setAppVh);
+})();
+</script>
 
 <!-- Same install metadata as base_app.html — a user can land here first (session expired, or
      the installed app was just opened logged-out), so this page needs to look and install the
@@ -15,7 +38,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="ATS Fleet Management">
+<meta name="apple-mobile-web-app-title" content="RAATH">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
 
@@ -29,8 +52,8 @@
      photo-hero/white-card split. The pill row (Track Fleet Live / Better Efficiency / Grow Your
      Business) from the earlier build is dropped — the spec's own mockup doesn't show it, and
      removing it also buys back the vertical room the spec's larger type needs to still fit one
-     locked, non-scrolling screen. Brand name stays hardcoded "ATS Fleet Management" on THIS page
-     only, per the earlier explicit instruction overriding the usual {{ company_name }} rule —
+     locked, non-scrolling screen. Brand name stays hardcoded "RAATH" on THIS page only, per the
+     earlier explicit instruction overriding the usual {{ company_name }} rule —
      see CLAUDE.md's multi-tenancy-prep discipline; every other page still uses the real dynamic
      company_name untouched. -->
 <style>
@@ -63,6 +86,13 @@
     margin: 0;
     height: 100vh;
     height: 100dvh;
+    /* var(--app-vh) last — the script above sets a real pixel value that's correct even in the
+       one confirmed-broken case (standalone iOS PWA) where 100dvh itself under-reports the real
+       screen height, which is what was leaving a gap below the page (and, since the splash sits
+       on top of this same html/body, below the splash too) visible right as the splash finished
+       and handed off. Falls back to the 100dvh above on any page/browser where the script hasn't
+       run or the var is unsupported. */
+    height: var(--app-vh, 100dvh);
     overflow: hidden;
     /* White, not the ink token — on real phones, mobile Safari/Chrome's collapsing address-bar
        chrome can leave a hairline the flex math here can't see (100dvh is recalculated by the
@@ -76,90 +106,117 @@
   }
   body.app-login-body { display: flex; flex-direction: column; }
 
-  /* Full-bleed photo hero (~40% of the screen, per spec) — the real image itself is the
-     background, brand lockup sits directly on top of it. */
+  /* Redesigned to match the splash screen's own identity (_splash.html / .app-splash* in
+     app.css) instead of the earlier photo hero — same light ground + faint dot "network", same
+     icon-ring-around-the-badge language — so the very first thing a logged-out user sees looks
+     like the same product as the cold-open splash they just watched, not a second, unrelated
+     design. Own --lgr-* tokens (not the shared --spl-* ones) since this ring is a PERMANENT part
+     of the login page, not the splash partial — see the .lg-ring-* rules below for why this
+     isn't just _splash.html reused as-is: the splash's truck drives a separate road scene under
+     the ring, this one drives a small loop AROUND the ring itself, stopping at each icon in turn
+     (see the script at the bottom of this file), which needs its own truck/route markup and its
+     own per-icon "arrived" state that the splash's truck-on-a-road version has no equivalent of. */
   .lg-hero {
+    --lgr-navy: #14213D; --lgr-orange: #F97316; --lgr-orange-dark: #EA580C; --lgr-red: #EF4444;
     position: relative;
     flex: 0 0 auto;
-    height: 42dvh;
-    min-height: 269px;
+    height: 45dvh;
+    min-height: 330px;
     overflow: hidden;
+    background: var(--lg-white);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: max(16px, env(safe-area-inset-top)) 24px 0;
+    padding: max(10px, env(safe-area-inset-top)) 24px 30px;
   }
-  /* The photo itself is a separate absolutely-positioned layer (not .lg-hero's own
-     background-image) so it can be sized larger than the box and slowly panned across it — a
-     Ken Burns effect. There's no way to animate just the truck in isolation (it's baked into one
-     flat photo, not a separate layer — that would need real photo editing/inpainting), but
-     panning the whole scene gives a real sense of motion, like the camera is tracking alongside
-     the truck as it drives, without needing to touch the image file itself. 130% background-size
-     gives enough overscan that the pan never reveals an edge. */
-  .lg-hero-photo {
-    position: absolute; inset: -6% -8%; z-index: 0;
-    background-image: url("{{ url_for('static', filename='img/login-hero.jpg') }}");
-    background-size: cover;
-    background-position: center 58%;
-    background-repeat: no-repeat;
-    animation: lgHeroPan 22s ease-in-out infinite alternate;
+  /* City silhouette along the hero's bottom edge, same flat-building idea as the splash's own
+     .app-splash-skyline, just cropped to a thin strip peeking out from behind the ring/card. */
+  .lg-hero-skyline { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 70px; z-index: 0; }
+
+  /* ---- Icon ring: same "rotate -> translate(radius) -> counter-rotate" placement trick as
+     .app-splash-ring-item, sized for this hero's own budget — 270px ring / 100px icon radius
+     here, with the visible track and the icons sharing that exact same 100px radius (see
+     .lg-ring-route-dashed below) so the drawn line always passes straight through every icon's
+     center — enough dedicated room between the ring's own edge and the center lockup that the
+     track/icons never crowd the brand name text in the middle. */
+  .lg-ring { position: relative; z-index: 1; width: 270px; height: 270px; flex-shrink: 0; }
+  .lg-ring-item {
+    /* z-index above .lg-ring-route (1) — the track circle passes exactly through every icon's
+       center (same 100px radius as the icons' own translate below), so without this the track
+       would draw its dashed line right across the icon's face where they overlap. Icons painting
+       on top means each icon's own opaque white circle naturally occludes the track segment
+       underneath it, leaving the dashes visible only in the gaps between icons, not over them. */
+    position: absolute; top: 50%; left: 50%; width: 54px; margin: -35px 0 0 -27px; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    transform: rotate(var(--ring-angle)) translate(100px) rotate(calc(-1 * var(--ring-angle)));
   }
-  @keyframes lgHeroPan {
-    0%   { transform: scale(1.12) translate(1.5%, 0.5%); }
-    100% { transform: scale(1.12) translate(-1.5%, -0.5%); }
+  /* Border + a visible (not just soft-shadow) outline — against the hero's own plain white
+     background a white circle with only a faint blurred shadow nearly disappears; the shadow
+     alone read fine over the old dotted/gray backdrop but needs this extra definition now. */
+  .lg-ring-ic {
+    position: relative; width: 46px; height: 46px; border-radius: 50%; background: #fff;
+    border: 1.5px solid rgba(20,33,61,0.12);
+    box-shadow: 0 6px 14px -4px rgba(15,23,42,0.28); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    transition: background 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s cubic-bezier(.34,1.56,.64,1);
   }
-  @media (prefers-reduced-motion: reduce) {
-    .lg-hero-photo { animation: none; }
-  }
-  .lg-hero::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    background: linear-gradient(180deg, rgba(8,22,41,0.5) 0%, rgba(8,22,41,0.14) 32%, rgba(8,22,41,0) 55%);
-  }
-  .lg-hero::after {
-    content: '';
-    position: absolute;
-    left: 0; right: 0; bottom: 0;
-    height: 90px;
-    z-index: 1;
-    background: linear-gradient(180deg, rgba(10,14,22,0) 0%, rgba(10,14,22,0.4) 100%);
-  }
+  .lg-ring-ic svg { width: 17px; height: 17px; transition: stroke 0.25s ease; }
+  .lg-ring-label { font-size: 0.62rem; font-weight: 600; color: var(--lg-steel);
+    font-family: 'Poppins', sans-serif; }
+  /* The truck "arrives" at each icon in turn (see the ring script below) — same white circle /
+     orange icon, no color change, it just pops a little bigger (with a matching soft halo) then
+     settles back as the truck moves on to the next one. Pure class toggle + CSS transition, not
+     a per-frame JS style write — the script only ever adds/removes this one class, timed to when
+     the truck's own position reaches this icon. */
+  .lg-ring-item.lg-ring-arrived .lg-ring-ic { box-shadow: 0 6px 16px -4px rgba(15,23,42,0.32), 0 0 0 6px rgba(249,115,22,0.16); transform: scale(1.18); }
+
+  /* The visible track + the truck that loops it — plain children of one small <svg> overlaid on
+     the ring (see the big comment on .app-splash-road-wrap in app.css for why this has to be one
+     shared coordinate space rather than separately-positioned HTML: the script below reads real
+     coordinates off #lgRingRoutePath via getPointAtLength() every frame, so "where the truck is"
+     can never drift from the actual circle). No separate skyline/road scene under the ring
+     either — the splash already has that; this is a different, permanent, looping idea. */
+  .lg-ring-route { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 1; }
+  #lgRingRoutePath { fill: none; stroke: none; }
+  .lg-ring-route-dashed { fill: none; stroke: rgba(249,115,22,0.55); stroke-width: 2; stroke-dasharray: 3 8; stroke-linecap: round; }
+  /* Small glowing waypoint markers at the midpoint of each gap between two icons — same
+     rotate+translate(100px) placement trick as the icons themselves (see .lg-ring-item), just
+     with no counter-rotate since a plain dot has no "upright" orientation to preserve. */
+  .lg-ring-waypoint { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%; background: var(--lgr-orange); box-shadow: 0 0 6px 2px rgba(249,115,22,0.55); z-index: 1; }
+  /* The truck fades out while paused at an icon (see the ring script's ARRIVE_PAUSE handling) so
+     it never visually sits on top of / crowds the icon it just "reached" — the icon's own red
+     flash + checkmark popup is what reads as "arrived" while the truck is briefly hidden, then
+     the truck fades back in as it pulls away toward the next icon. */
+  #lgRingTruck { filter: drop-shadow(0 2px 4px rgba(15,23,42,0.28)); transition: opacity 0.25s ease; }
+
+  .lg-lockup { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; width: 128px; }
   .lg-badge {
-    position: relative;
-    z-index: 2;
-    width: 50px;
-    height: 50px;
-    border-radius: 16px;
+    width: 46px;
+    height: 46px;
+    border-radius: 13px;
     background: linear-gradient(135deg, var(--lg-orange), var(--lg-orange-deep));
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 8px 20px rgba(249,115,22,0.35);
+    box-shadow: 0 10px 24px -6px rgba(249,115,22,0.5);
+    flex-shrink: 0;
   }
   .lg-brand {
-    position: relative;
-    z-index: 2;
     font-family: 'Poppins', sans-serif;
-    font-weight: 600;
-    font-size: 1.15rem;
-    line-height: 1.3;
-    color: #fff;
+    font-weight: 800;
+    font-size: 0.88rem;
+    line-height: 1.22;
+    letter-spacing: -0.01em;
+    color: var(--lg-ink);
     text-align: center;
-    margin: 10px 0 2px;
-    text-shadow: 0 2px 10px rgba(9,26,49,0.5);
+    margin: 0;
   }
-  .lg-tagline {
-    position: relative;
-    z-index: 2;
-    font-style: italic;
-    font-size: 0.8rem;
-    font-weight: 400;
-    color: rgba(255,255,255,0.88);
-    text-align: center;
-    text-shadow: 0 1px 6px rgba(9,26,49,0.45);
+  @media (prefers-reduced-motion: reduce) {
+    /* No looping to skip mid-cycle — the script's own reduceMotion branch just parks the truck at
+       the first icon and never starts the rAF loop, so there's nothing further to freeze here. */
+    #lgRingTruck { opacity: 0; }
   }
 
   .lg-card {
@@ -183,19 +240,12 @@
   }
   .lg-card-title {
     font-family: 'Poppins', sans-serif;
-    font-size: 1.15rem;
-    font-style: italic;
+    font-size: 1rem;
+    font-style: normal;
     line-height: 1.3;
     font-weight: 600;
-    margin: 0;
+    margin: 0 0 calc(6px + var(--lg-extra));
     color: var(--lg-ink);
-  }
-  .lg-card-sub {
-    margin: 2px 0 calc(2px + var(--lg-extra));
-    font-size: 0.86rem;
-    line-height: 1.4;
-    color: var(--lg-steel);
-    font-weight: 400;
   }
   .lg-error {
     background: #FDECEA;
@@ -289,26 +339,127 @@
 </head>
 <body class="app-login-body">
 <!-- Shadowing company_name to this page's own hardcoded brand (see the note above on why this
-     page hardcodes "ATS Fleet Management") purely so _splash.html — which normally shows the
+     page hardcodes "RAATH") purely so _splash.html — which normally shows the
      real dynamic company name, correctly, everywhere else — doesn't flash a different name here
      right before revealing this page's own hardcoded one underneath it. -->
-{% set company_name = "ATS Fleet Management" %}
+{% set company_name = "RAATH" %}
 {% include "app/_splash.html" %}
 
 <div class="lg-hero">
-  <div class="lg-hero-photo"></div>
-  <div class="lg-badge">
-    <!-- Same real truck icon used everywhere else in this app (Total Vehicles KPI, Vehicles nav
-         icon, Add Vehicle) so the login badge matches the app's own icon language. -->
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="16" r="1.4" fill="#fff" stroke="none"/></svg>
+  <svg class="lg-hero-skyline" viewBox="0 0 375 70" preserveAspectRatio="none" aria-hidden="true">
+    <g fill="#14213D" opacity="0.08">
+      <rect x="0" y="28" width="24" height="42"/><rect x="27" y="16" width="18" height="54"/>
+      <polygon points="48,70 48,20 64,10 80,20 80,70"/><rect x="84" y="34" width="26" height="36"/>
+      <rect x="264" y="20" width="22" height="50"/><polygon points="290,70 290,14 305,4 320,14 320,70"/>
+      <rect x="324" y="30" width="24" height="40"/><rect x="352" y="18" width="22" height="52"/>
+    </g>
+  </svg>
+
+  <!-- Fleet-ops icons around the ring (no "Track" — this app has no live vehicle tracking, so
+       that icon would advertise a capability that doesn't exist; Monitor/Manage/Maintenance/
+       Compliance/Analytics/Fuel are all real /app/ sections) — angle spacing
+       computed in Jinja same as the splash's own ring so adding/removing one never needs the
+       angles re-balanced by hand. -->
+  <div class="lg-ring">
+    {% set lg_ring_items = [
+      ('Monitor', '<path d="M4 20V10M10 20V4M16 20v-7M22 20v-4"/>'),
+      ('Manage', '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+      ('Maintenance', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
+      ('Compliance', '<path d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3Z"/>'),
+      ('Analytics', '<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-4 4"/>'),
+      ('Fuel', '<path d="M3 22V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M3 10h10"/><path d="M13 8h3l4 4v6a1 1 0 0 1-1 1h-2"/><circle cx="7" cy="20" r="1.6"/><circle cx="17" cy="20" r="1.6"/>'),
+    ] %}
+    {% for label, path in lg_ring_items %}
+    <div class="lg-ring-item" id="lgRingItem{{ loop.index0 }}" style="--ring-angle: {{ (loop.index0 * (360 / lg_ring_items|length)) - 90 }}deg;">
+      <span class="lg-ring-ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{{ path|safe }}</svg>
+      </span>
+      <span class="lg-ring-label">{{ label }}</span>
+    </div>
+    {% endfor %}
+    {% for i in range(lg_ring_items|length) %}
+    <div class="lg-ring-waypoint" style="transform: rotate({{ ((i + 0.5) * (360 / lg_ring_items|length)) - 90 }}deg) translate(100px);"></div>
+    {% endfor %}
+
+    <!-- The visible track + the truck's own math-only path — see the .lg-ring-route comment in
+         this file's own <style> above for why these are SVG children of the same coordinate
+         space, not separately-positioned HTML. r=100 matches the icons' own translate(100px)
+         above exactly, so the drawn line passes straight through every icon's center and the
+         truck stays visibly ON it the whole time. -->
+    <svg class="lg-ring-route" viewBox="0 0 270 270" aria-hidden="true">
+      <circle id="lgRingRoutePath" cx="135" cy="135" r="100" pathLength="1"/>
+      <circle class="lg-ring-route-dashed" cx="135" cy="135" r="100"/>
+
+      <!-- Truck — a detailed illustration (proper cab, container with the brand's own text +
+           corrugated panel lines, windshield, headlights, grille, 3 wheels), scaled down to ring
+           size via the fixed inner scale(0.34) below. This truck stays one constant size (unlike
+           the splash's own, much simpler badge) since it's doing endless laps here, not a single
+           arrival. Anchor's own transform (translate/rotate only, no scale) is set every frame by
+           the script from #lgRingRoutePath's own getPointAtLength() — see that script's comment. -->
+      <g id="lgRingTruck">
+        <g transform="scale(0.34)">
+          <g transform="translate(-61,-44)">
+            <ellipse cx="61" cy="53.5" rx="55" ry="3.2" fill="#14213D" opacity="0.15"/>
+            <rect x="2" y="8" width="66" height="33" rx="3" fill="#F97316"/>
+            <rect x="2" y="8" width="66" height="7" rx="3" fill="#EA580C"/>
+            <g stroke="#EA580C" stroke-width="1" opacity="0.45">
+              <line x1="10" y1="17" x2="10" y2="39"/><line x1="18" y1="17" x2="18" y2="39"/>
+              <line x1="26" y1="17" x2="26" y2="39"/><line x1="34" y1="17" x2="34" y2="39"/>
+              <line x1="42" y1="17" x2="42" y2="39"/><line x1="50" y1="17" x2="50" y2="39"/>
+              <line x1="58" y1="17" x2="58" y2="39"/>
+            </g>
+            <circle cx="15.5" cy="28" r="7.4" fill="#14213D"/>
+            <svg x="9.5" y="22" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
+            <text x="27" y="32.5" font-family="-apple-system, Arial, sans-serif" font-weight="800" font-size="9.5" letter-spacing="0.2" fill="#fff">RAATH</text>
+            <rect x="70" y="15" width="32" height="26" rx="5" fill="#14213D"/>
+            <path d="M96 41 L114 41 L114 31 L105 22 L96 22 Z" fill="#14213D"/>
+            <rect x="70" y="21" width="3.2" height="5.4" rx="1.2" fill="#1E293B"/>
+            <path d="M73.5 19 L93 19 L101 26 L73.5 26 Z" fill="#BFDBFE"/>
+            <path d="M75.5 19.4 L82.5 19.4 L78 25.4 L73.8 25.4 Z" fill="#fff" opacity="0.4"/>
+            <rect x="105.5" y="30" width="7.5" height="8.4" rx="1.6" fill="#1E293B"/>
+            <g stroke="#64748B" stroke-width="0.8"><line x1="107.2" y1="31" x2="107.2" y2="37.4"/><line x1="109.2" y1="31" x2="109.2" y2="37.4"/><line x1="111.2" y1="31" x2="111.2" y2="37.4"/></g>
+            <circle cx="108" cy="26.5" r="2.7" fill="#FDE68A"/><circle cx="114.5" cy="29.5" r="2.3" fill="#FDE68A"/>
+            <rect x="110" y="39" width="8.5" height="4" rx="1.3" fill="#1E293B"/>
+            <rect x="67.5" y="5.5" width="3" height="11" rx="1.2" fill="#94A3B8"/><rect x="66.7" y="4" width="4.6" height="2.2" rx="1" fill="#64748B"/>
+            <rect x="2" y="41" width="116" height="2" fill="#14213D" opacity="0.15"/>
+            <g fill="#1E293B"><circle cx="20" cy="45.5" r="8.2"/><circle cx="50" cy="45.5" r="8.2"/><circle cx="99" cy="45.5" r="8.2"/></g>
+            <g fill="#94A3B8"><circle cx="20" cy="45.5" r="4.6"/><circle cx="50" cy="45.5" r="4.6"/><circle cx="99" cy="45.5" r="4.6"/></g>
+            <g fill="#1E293B" opacity="0.7"><circle cx="20" cy="45.5" r="1.4"/><circle cx="50" cy="45.5" r="1.4"/><circle cx="99" cy="45.5" r="1.4"/></g>
+          </g>
+        </g>
+      </g>
+    </svg>
+
+    <div class="lg-lockup">
+      <div class="lg-badge">
+        <!-- The brand's own wheel-and-speed-lines mark (the app icon) — white fill, not the
+             icon's own orange gradient, since it sits on this badge's solid orange background. -->
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none">
+          <g stroke="#fff" stroke-width="1.6" stroke-linecap="round">
+            <line x1="6" y1="6.5" x2="9.5" y2="6.5"/>
+            <line x1="3" y1="9.5" x2="9.5" y2="9.5"/>
+            <line x1="1" y1="14" x2="9.5" y2="14"/>
+            <line x1="4.5" y1="17.3" x2="9.5" y2="17.3"/>
+          </g>
+          <path fill-rule="evenodd" clip-rule="evenodd" fill="#fff" d="M16 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 1.7a5.3 5.3 0 1 1 0 10.6 5.3 5.3 0 0 1 0-10.6Z"/>
+          <g stroke="#fff" stroke-width="1.4" stroke-linecap="round">
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(0 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(60 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(120 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(180 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(240 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(300 16 12)"/>
+          </g>
+          <circle cx="16" cy="12" r="1.6" fill="#fff"/>
+        </svg>
+      </div>
+      <p class="lg-brand">RAATH</p>
+    </div>
   </div>
-  <p class="lg-brand">ATS Fleet Management</p>
-  <p class="lg-tagline">Drive Business. Move India.</p>
 </div>
 
 <div class="lg-card">
   <p class="lg-card-title">Welcome Back!</p>
-  <p class="lg-card-sub">Login to continue to your account</p>
   {% if error %}<div class="lg-error">{{ error }}</div>{% endif %}
   <form method="post">
     <div class="lg-field">
@@ -365,6 +516,93 @@ function auTogglePw() {
 function auForgotPw() {
   alert('Password resets aren\'t self-service in this app — please contact your fleet administrator to reset your password.');
 }
+
+// Ring truck: the brand's truck loops the circle drawn through the fleet-ops icons, pausing at
+// each one in turn — the icon pops slightly bigger (same white/orange design, no color change),
+// then the truck moves on. Runs forever (this is a permanent part of the login page, not a
+// one-shot splash), independent of the unrelated cold-open splash's own script in _splash.html.
+(function () {
+  var routePath = document.getElementById('lgRingRoutePath');
+  var truckG = document.getElementById('lgRingTruck');
+  if (!routePath || !truckG || !routePath.getTotalLength) return;
+
+  var items = [];
+  for (var i = 0; document.getElementById('lgRingItem' + i); i++) items.push(document.getElementById('lgRingItem' + i));
+  var N = items.length;
+  if (!N) return;
+
+  var totalLen = routePath.getTotalLength();
+
+  // Same getPointAtLength()-driven positioning as the splash's own truck (see _splash.html's
+  // script for the full rationale) — except this path is a CLOSED loop (a circle), so "a hair
+  // further along" for the tangent-angle sample wraps around modulo totalLen instead of ever
+  // needing the splash's look-behind fallback near an open path's end.
+  //
+  // PHASE offset: a plain SVG <circle>'s own length-0 point sits at its 3-o'clock point (verified
+  // directly against this browser: cx,cy,r=120,120,90 -> getPointAtLength(0) = (210,120), i.e.
+  // (cx+r, cy)), and length increases CLOCKWISE from there. Icon 0's own CSS placement, though, is
+  // rotate(-90deg) translate(...) — i.e. the TOP of the ring, a quarter turn further round. Without
+  // correcting for that gap, "the truck's logical fraction i/N" and "icon i's actual on-screen
+  // position" silently point at two different spots on the circle — the truck would visibly stop
+  // a quarter-lap away from whichever icon actually lit up red. Subtracting a quarter-turn here is
+  // what makes fraction 0 land exactly on icon 0 (and fraction i/N on icon i) for real.
+  var PHASE = -0.25;
+  function pointAndAngleAt(frac) {
+    var g = (((frac + PHASE) % 1) + 1) % 1;
+    var d = g * totalLen;
+    var p = routePath.getPointAtLength(d);
+    var look = routePath.getPointAtLength((d + 1) % totalLen);
+    var angle = Math.atan2(look.y - p.y, look.x - p.x) * 180 / Math.PI;
+    return { x: p.x, y: p.y, angle: angle };
+  }
+
+  // Icon i sits at fraction i/N around this same circle (see the PHASE comment above for why that
+  // now actually lines up with icon i's real CSS position) — fraction 0 = icon 0, fraction i/N =
+  // icon i, clockwise. No separate angle-to-fraction mapping needed beyond that one offset.
+  function place(frac) {
+    var pt = pointAndAngleAt(frac);
+    truckG.setAttribute('transform', 'translate(' + pt.x + ',' + pt.y + ') rotate(' + pt.angle + ')');
+  }
+
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  place(0);
+  if (reduceMotion) return; // parked at icon 0, opacity:0 via CSS — no loop, nothing to arrive at
+
+  function scheduleFrame(fn) {
+    if (document.hidden) { setTimeout(function () { fn(performance.now()); }, 16); }
+    else { requestAnimationFrame(fn); }
+  }
+  function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+  function setArrived(i, on) { if (items[i]) items[i].classList.toggle('lg-ring-arrived', on); }
+
+  var LEG_TRAVEL = 900, ARRIVE_PAUSE = 650;
+  var leg = 0, state = 'travel', stateStart = null;
+
+  function frame(ts) {
+    if (stateStart === null) stateStart = ts;
+    var elapsed = ts - stateStart;
+    if (state === 'travel') {
+      var t = Math.min(1, elapsed / LEG_TRAVEL);
+      var fFrom = leg / N, fTo = (leg + 1) / N;
+      place(fFrom + (fTo - fFrom) * easeInOutCubic(t));
+      if (t >= 1) {
+        // Truck fades out for the pause — the icon itself (red flash + checkmark popup, pure
+        // CSS via .lg-ring-arrived) is what reads as "arrived" while the truck is hidden, so the
+        // truck body never sits on top of / crowds the icon it just reached.
+        setArrived((leg + 1) % N, true);
+        truckG.style.opacity = '0';
+        state = 'pause'; stateStart = ts;
+      }
+    } else if (elapsed >= ARRIVE_PAUSE) {
+      setArrived((leg + 1) % N, false);
+      leg = (leg + 1) % N;
+      truckG.style.opacity = '1';
+      state = 'travel'; stateStart = ts;
+    }
+    scheduleFrame(frame);
+  }
+  scheduleFrame(frame);
+})();
 </script>
 </body>
 </html>
