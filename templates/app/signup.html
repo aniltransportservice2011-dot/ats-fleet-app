@@ -234,7 +234,7 @@
       <label for="full_name">Full Name</label>
       <div class="lg-input-shell">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <input type="text" id="full_name" name="full_name" placeholder="Full name" autocomplete="name" required value="{{ form_values.full_name if form_values else '' }}">
+        <input type="text" id="full_name" name="full_name" placeholder="Full name" autocomplete="name" autocapitalize="characters" required value="{{ form_values.full_name if form_values else '' }}">
       </div>
     </div>
     <div class="lg-field">
@@ -286,6 +286,23 @@
 </div>
 
 <script>
+// Uppercases the whole name as the user types — autocapitalize="characters" on the input covers
+// mobile virtual keyboards, but desktop browsers largely ignore that attribute, so this listener
+// is what actually makes it work when typing (or pasting) on a laptop/desktop. Preserves cursor
+// position so typing doesn't jump.
+(function () {
+  var fullName = document.getElementById('full_name');
+  if (!fullName) return;
+  fullName.addEventListener('input', function () {
+    var start = fullName.selectionStart, end = fullName.selectionEnd;
+    var capped = fullName.value.toUpperCase();
+    if (capped !== fullName.value) {
+      fullName.value = capped;
+      fullName.setSelectionRange(start, end);
+    }
+  });
+})();
+
 function asTogglePw(fieldId, iconId) {
   var pw = document.getElementById(fieldId);
   var showing = pw.type === 'text';

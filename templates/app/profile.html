@@ -108,7 +108,7 @@
   <div class="vam-error" id="epError" style="display:none; margin:0 18px 14px;"></div>
   <form id="epForm" class="vam-form">
     <div class="vam-grid">
-      <div class="vam-field vam-field-full"><label>Full Name <span class="req">*</span></label><input type="text" name="full_name" value="{{ full_name }}" required></div>
+      <div class="vam-field vam-field-full"><label>Full Name <span class="req">*</span></label><input type="text" id="epFullName" name="full_name" value="{{ full_name }}" autocapitalize="characters" required></div>
       <div class="vam-field"><label>Email</label><input type="email" name="email" value="{{ email }}"></div>
       <div class="vam-field"><label>Phone</label><input type="tel" name="phone" value="{{ phone }}"></div>
     </div>
@@ -144,6 +144,23 @@
 {% endblock %}
 {% block extra_scripts %}
 <script>
+// Uppercases the whole name as the user types — autocapitalize="characters" on the input covers
+// mobile virtual keyboards, but desktop browsers largely ignore that attribute, so this listener
+// is what actually makes it work when typing (or pasting) on a laptop/desktop. Preserves cursor
+// position so typing doesn't jump.
+(function () {
+  var epFullName = document.getElementById('epFullName');
+  if (!epFullName) return;
+  epFullName.addEventListener('input', function () {
+    var start = epFullName.selectionStart, end = epFullName.selectionEnd;
+    var capped = epFullName.value.toUpperCase();
+    if (capped !== epFullName.value) {
+      epFullName.value = capped;
+      epFullName.setSelectionRange(start, end);
+    }
+  });
+})();
+
 function openEditProfileModal() {
   lockPageScroll();
   document.getElementById('epError').style.display = 'none';

@@ -12538,7 +12538,7 @@ def app_profile():
             member_since = u['created_at']
     return render_template('app/profile.html', company_name=company_name, user_initials=user_initials,
         active='profile', notif_count=0,
-        full_name=u['full_name'] or u['username'], username=u['username'], phone=u['phone'] or '',
+        full_name=u['full_name'] or u['username'].upper(), username=u['username'], phone=u['phone'] or '',
         email=u['email'] or '', role_label='Administrator' if session.get('is_admin') else (u['role'] or 'Staff'),
         access_level=u['access_level'] or '', status=u['status'] or 'Active', member_since=member_since,
         is_admin=bool(session.get('is_admin')))

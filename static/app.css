@@ -1161,19 +1161,22 @@ input[type="date"] { accent-color: var(--a-accent); }
 /* Service Record view/edit (maintenance.html) — .vam-modal's default (top:48px, full remaining
    screen height, .vam-form flex:1 stretching to fill it) is right for long forms but leaves a big
    empty gap under a short read-only record with its buttons floating away from the fields. These
-   two only ever hold one field set each (never Load More'd, never grows), so they size to their
+   only ever hold one field set each (never Load More'd, never grows), so they size to their
    own content instead: top:auto/height:auto so the sheet is only as tall as .vam-head + .vam-form
    need, capped at 85vh with .vam-form no longer flex:1 (flex:none, its own max-height + scroll)
-   for the rare case a record's Notes/Checklist text is long enough to still need scrolling. */
-#svModal, #esModal, #evModal, #eeModal { top: auto; height: auto; max-height: 85vh; }
-#svModal .vam-form, #esModal .vam-form, #evModal .vam-form, #eeModal .vam-form { flex: none; max-height: calc(85vh - 60px); }
+   for the rare case a record's Notes/Checklist text is long enough to still need scrolling. Same
+   reasoning applies to profile.html's Edit Profile (#epModal, 3 fields) and Change Password
+   (#cpModal, 3 fields) — neither ever grows either, so they get the same content-sized treatment
+   instead of stretching to fill the screen with the Save/Update button floating far below them. */
+#svModal, #esModal, #evModal, #eeModal, #epModal, #cpModal { top: auto; height: auto; max-height: 85vh; }
+#svModal .vam-form, #esModal .vam-form, #evModal .vam-form, #eeModal .vam-form, #epModal .vam-form, #cpModal .vam-form { flex: none; max-height: calc(85vh - 60px); }
 /* Cancel/Update (and Save Changes) pinned to the bottom of the sheet even when a long record
    (Notes/Checklist, or Expense's Description/Notes) makes .vam-form scroll — sticky rather than a
    separate flex footer so short records (the common case) still sit flush under the fields with
    no gap, per the content-sized behaviour above; only pins away from the fields once there's
    actually something to scroll past. Same record view/edit pattern as Maintenance's Service tab,
-   reused here for Expenses. */
-#svModal .vam-actions, #esModal .vam-actions, #evModal .vam-actions, #eeModal .vam-actions {
+   reused here for Expenses, Edit Profile, and Change Password. */
+#svModal .vam-actions, #esModal .vam-actions, #evModal .vam-actions, #eeModal .vam-actions, #epModal .vam-actions, #cpModal .vam-actions {
   position: sticky; bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
   margin-left: -18px; margin-right: -18px; margin-bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
   padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--a-paper); box-shadow: 0 -6px 12px -8px rgba(20,24,40,.18);
@@ -1433,6 +1436,11 @@ input[type="date"] { accent-color: var(--a-accent); }
   animation: appSplashPop 0.5s cubic-bezier(.34,1.56,.64,1) both;
 }
 .app-splash-badge svg { width: 54px; height: 54px; }
+/* The wheel spins in place for as long as the splash is up — transform-origin is the wheel's own
+   center (16,12) in the icon's 24x24 viewBox coordinate space, not the svg's own bounding box, so
+   it spins on its own hub instead of orbiting some off-center point. */
+.app-splash-wheel-spin { transform-origin: 16px 12px; animation: appSplashWheelSpin 0.9s linear infinite; }
+@keyframes appSplashWheelSpin { to { transform: rotate(360deg); } }
 .app-splash-name { color: #fff; font-weight: 800; font-size: 1.15rem; margin-top: 18px;
   font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   animation: appSplashFadeUp 0.5s ease 0.15s both; }
@@ -1442,7 +1450,7 @@ input[type="date"] { accent-color: var(--a-accent); }
 @keyframes appSplashPop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
 @keyframes appSplashFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) {
-  .app-splash-badge, .app-splash-name, .app-splash-tag { animation: none; opacity: 1; }
+  .app-splash-badge, .app-splash-name, .app-splash-tag, .app-splash-wheel-spin { animation: none; opacity: 1; }
 }
 
 /* ==========================================================================
