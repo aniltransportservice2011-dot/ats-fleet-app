@@ -5,7 +5,7 @@
 <!-- This page doesn't extend base_app.html (it's the pre-login entry point), so it needs its own
      copy of the same zoom lock — see base_app.html's viewport meta for the full rationale. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Sign In — RAATH</title>
+<title>Sign In — {{ app_name }}</title>
 
 <!-- Same --app-vh fix as base_app.html, and for the same reason: this is the OTHER realistic
      "just opened the installed app" entry point (session expired, or the app was launched
@@ -33,12 +33,12 @@
 <!-- Same install metadata as base_app.html — a user can land here first (session expired, or
      the installed app was just opened logged-out), so this page needs to look and install the
      same way the rest of /app/ does, not fall back to being just "a web page". -->
-<link rel="manifest" href="{{ url_for('static', filename='app-manifest.json') }}">
+<link rel="manifest" href="{{ url_for('app_manifest') }}">
 <meta name="theme-color" content="#0D1B2A">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="RAATH">
+<meta name="apple-mobile-web-app-title" content="{{ app_name }}">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='app-icons/icon-180.png') }}">
 <link rel="icon" href="{{ url_for('static', filename='app-icons/icon-192.png') }}">
 
@@ -52,10 +52,13 @@
      photo-hero/white-card split. The pill row (Track Fleet Live / Better Efficiency / Grow Your
      Business) from the earlier build is dropped — the spec's own mockup doesn't show it, and
      removing it also buys back the vertical room the spec's larger type needs to still fit one
-     locked, non-scrolling screen. Brand name stays hardcoded "RAATH" on THIS page only, per the
-     earlier explicit instruction overriding the usual {{ company_name }} rule —
-     see CLAUDE.md's multi-tenancy-prep discipline; every other page still uses the real dynamic
-     company_name untouched. -->
+     locked, non-scrolling screen. Brand shown here is {{ app_name }} (APP_NAME in app.py), not
+     {{ company_name }}, per the earlier explicit instruction — see CLAUDE.md's
+     multi-tenancy-prep discipline; every other page still uses the real dynamic company_name
+     untouched. Every occurrence on this page reads {{ app_name }} rather than a hardcoded
+     string, same as every other RATH screen — see inject_app_name()'s own comment in app.py for
+     why: renaming the product is exactly one edit (APP_NAME) and nothing else, not a
+     find-and-replace across every page that mentions it. -->
 <style>
   :root {
     --lg-ink: #0D1B2A;      /* Text Primary */
@@ -338,11 +341,17 @@
 </style>
 </head>
 <body class="app-login-body">
-<!-- Shadowing company_name to this page's own hardcoded brand (see the note above on why this
-     page hardcodes "RAATH") purely so _splash.html — which normally shows the
-     real dynamic company name, correctly, everywhere else — doesn't flash a different name here
-     right before revealing this page's own hardcoded one underneath it. -->
-{% set company_name = "RAATH" %}
+<!-- Portrait-lock fallback — same as base_app.html's own copy (see .a-rotate-lock's comment in
+     app.css), needed here separately since this page doesn't extend base_app.html. -->
+<div class="a-rotate-lock" aria-hidden="true">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+  <p>Please rotate your device back to portrait for the best experience.</p>
+</div>
+<!-- Shadowing company_name to app_name (see the note above on why this page shows the product's
+     own fixed name, not the tenant's) purely so _splash.html — which normally shows the real
+     dynamic company name, correctly, everywhere else — doesn't flash a different name here right
+     before revealing this page's own {{ app_name }} underneath it. -->
+{% set company_name = app_name %}
 {% include "app/_splash.html" %}
 
 <div class="lg-hero">
@@ -410,7 +419,7 @@
             </g>
             <circle cx="15.5" cy="28" r="7.4" fill="#14213D"/>
             <svg x="9.5" y="22" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h11v8H2z"/><path d="M13 11h4l3 3v2h-7z"/><circle cx="6" cy="17.6" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="17.6" r="1.4" fill="#fff" stroke="none"/></svg>
-            <text x="27" y="32.5" font-family="-apple-system, Arial, sans-serif" font-weight="800" font-size="9.5" letter-spacing="0.2" fill="#fff">RAATH</text>
+            <text x="27" y="32.5" font-family="-apple-system, Arial, sans-serif" font-weight="800" font-size="9.5" letter-spacing="0.2" fill="#fff">{{ app_name }}</text>
             <rect x="70" y="15" width="32" height="26" rx="5" fill="#14213D"/>
             <path d="M96 41 L114 41 L114 31 L105 22 L96 22 Z" fill="#14213D"/>
             <rect x="70" y="21" width="3.2" height="5.4" rx="1.2" fill="#1E293B"/>
@@ -453,7 +462,7 @@
           <circle cx="16" cy="12" r="1.6" fill="#fff"/>
         </svg>
       </div>
-      <p class="lg-brand">RAATH</p>
+      <p class="lg-brand">{{ app_name }}</p>
     </div>
   </div>
 </div>

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, g
+from flask import Flask, render_template, request, redirect, url_for, session, g, jsonify
 import sqlite3
 import datetime
 import calendar
@@ -54,7 +54,7 @@ VEHICLE_TYPE_LABELS = {VEHICLE_TYPE_OWN: 'Own', VEHICLE_TYPE_HIRED: 'Hired'}
 # showing the currently-logged-in company's business name instead would be wrong the same way a
 # phone's own lock-screen carrier name isn't a random app's own branding. One constant so a future
 # rename only ever means editing this one line, not hunting down every place it appears.
-APP_NAME = 'RAATH'
+APP_NAME = 'RATH'
 
 def get_db():
     conn = sqlite3.connect(DB)
@@ -8715,9 +8715,41 @@ def inject_company_name():
 @app.context_processor
 def inject_app_name():
     """`app_name` — the product's own fixed name (see APP_NAME above), never per-company settings
-    data. Used by the splash screen; kept as its own context processor rather than folded into
-    inject_company_name() so the two stay conceptually and literally separate."""
+    data. Used by the splash, login/signup/OTP screens, and the browser-tab title on all of
+    them — every one of those reads {{ app_name }} rather than hardcoding the string, so renaming
+    the product is exactly one edit (APP_NAME above) and nothing else. Kept as its own context
+    processor rather than folded into inject_company_name() so the two stay conceptually and
+    literally separate. See app_manifest() below for the one place APP_NAME couldn't reach as a
+    plain Jinja variable — the PWA install manifest, which used to be a static JSON file with its
+    own separately-hardcoded copy of the name."""
     return {'app_name': APP_NAME}
+
+@app.route('/app-manifest.json')
+def app_manifest():
+    """The PWA install manifest — name/short_name come from APP_NAME (the same single source of
+    truth every other RATH-branded screen reads via {{ app_name }}), not a second hardcoded copy.
+    Used to live as a plain static file (static/app-manifest.json) with its own "RAATH" baked in,
+    which is exactly the kind of second copy that goes stale the moment the product gets renamed
+    again — same reasoning as _auth_hero.html's own comment about page-local copies. Icons/colors
+    stay as real constants here (they're the brand's visual identity, not "the name", and aren't
+    read from anywhere else) — see static/app-icons/*.png for those. mimetype set explicitly since
+    this is a route, not a static file, so Flask wouldn't otherwise know to serve it as JSON."""
+    return jsonify({
+        'name': APP_NAME,
+        'short_name': APP_NAME,
+        'description': 'Fleet operations app',
+        'start_url': '/app/dashboard',
+        'scope': '/app/',
+        'display': 'standalone',
+        'background_color': '#c05621',
+        'theme_color': '#c05621',
+        'orientation': 'portrait-primary',
+        'icons': [
+            {'src': '/static/app-icons/icon-192.png', 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any'},
+            {'src': '/static/app-icons/icon-512.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any'},
+            {'src': '/static/app-icons/icon-512-maskable.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'maskable'},
+        ],
+    })
 
 @app.context_processor
 def inject_current_year():
@@ -8762,7 +8794,7 @@ IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero reques
 @app.before_request
 def require_login():
     exempt = ['login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick',
-              'app_login_otp', 'app_verify_login_otp']
+              'app_login_otp', 'app_verify_login_otp', 'app_manifest']
     if request.endpoint in exempt:
         return
     # Every redirect-to-login below picks app_login instead of the website's own login for any
