@@ -2,6 +2,14 @@
 {% block title %}Toll — {{ company_name }}{% endblock %}
 {% block content %}
 
+<!-- Page title — see battery.html's own copy of this comment for why this was missing. -->
+<div class="vh-head">
+  <div>
+    <h1>Toll Management</h1>
+    <div class="sub">Track toll expenses across your fleet.</div>
+  </div>
+</div>
+
 <!-- Shared strip — see templates/app/_maintenance_tabstrip.html's own comment for why this is a single included partial (not repeated inline) across every one of the 7 real tab pages. -->
 {% set mo_active = 'toll' %}
 {% include "app/_maintenance_tabstrip.html" %}

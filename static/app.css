@@ -87,6 +87,167 @@ body.app-body {
   display: flex;
   flex-direction: column;
 }
+
+/* Portrait-lock fallback (.a-rotate-lock, markup in base_app.html/login.html) — the manifest's
+   "orientation": "portrait-primary" and base_app.html's own screen.orientation.lock() attempt are
+   the real lock, but neither can be enforced in every context (a plain browser tab, an
+   Android shortcut that never became a true installed WebAPK, iOS Safari which has no orientation
+   lock API at all for web content). This is what keeps the app from just rendering broken/sideways
+   in those cases — a full-screen "please rotate back" prompt instead of the real UI, shown purely
+   by CSS (no JS orientation-change listener needed) and gone the instant the phone is portrait
+   again. pointer:coarse scopes it to touch devices — an actual landscape desktop monitor should
+   never trigger this. */
+.a-rotate-lock { display: none; }
+@media (orientation: landscape) and (pointer: coarse) {
+  .a-rotate-lock {
+    display: flex; position: fixed; inset: 0; z-index: 99999;
+    background: var(--a-accent); color: #fff;
+    flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 24px; gap: 14px;
+  }
+  .a-rotate-lock svg { width: 52px; height: 52px; animation: aRotateLockSpin 1.8s ease-in-out infinite; }
+  .a-rotate-lock p { margin: 0; font-size: 0.95rem; font-weight: 600; max-width: 260px; line-height: 1.4; }
+  /* Real content stays mounted underneath (this overlay just covers it) but shouldn't be
+     independently scrollable while hidden — a stray scroll gesture on the prompt itself
+     shouldn't be able to move the page behind it. */
+  body.app-body, body.app-login-body { overflow: hidden; }
+}
+@keyframes aRotateLockSpin {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-90deg); }
+}
+
+/* ==========================================================================
+   Auth hero (templates/app/_auth_hero.html) — the ring+truck header shared by
+   every pre-login /app/ screen: login.html, login_otp.html, signup.html.
+   Pulled out to here (rather than staying inline in login.html's own <style>,
+   which is where this was originally built) specifically because login_otp.html
+   and signup.html were found still showing the OLD photo-hero design long
+   after login.html itself moved to this ring — a page-local inline copy is
+   exactly what goes stale the next time this needs a change, same reasoning
+   as _maintenance_tabstrip.html's own comment. One shared partial + one
+   shared stylesheet section means that class of drift can't happen again.
+
+   Reads --lg-orange/--lg-orange-deep/--lg-white/--lg-ink/--lg-steel from
+   whichever page includes _auth_hero.html — each of the three still declares
+   those in its own inline <style> (for its own card/form styling below the
+   hero), so they're already in scope here without this section needing its
+   own copy. Redesigned to match the splash screen's own identity (light
+   ground + faint dot "network", same icon-ring-around-the-badge language) so
+   the very first thing a logged-out user sees looks like the same product as
+   the cold-open splash they just watched, not a second, unrelated design. Own
+   --lgr-* tokens (not the shared --spl-* ones) since this ring is a PERMANENT
+   part of these pages, not the splash partial — the splash's truck drives a
+   separate road scene under the ring, this one drives a small loop AROUND the
+   ring itself, stopping at each icon in turn (see _auth_hero.html's own
+   script), which needs its own truck/route markup and its own per-icon
+   "arrived" state that the splash's truck-on-a-road version has no
+   equivalent of.
+   ========================================================================== */
+.lg-hero {
+  --lgr-navy: #14213D; --lgr-orange: #F97316; --lgr-orange-dark: #EA580C; --lgr-red: #EF4444;
+  position: relative;
+  flex: 0 0 auto;
+  height: 45dvh;
+  min-height: 330px;
+  overflow: hidden;
+  background: var(--lg-white);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: max(10px, env(safe-area-inset-top)) 24px 30px;
+}
+/* City silhouette along the hero's bottom edge, same flat-building idea as the splash's own
+   .app-splash-skyline, just cropped to a thin strip peeking out from behind the ring/card. */
+.lg-hero-skyline { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 70px; z-index: 0; }
+
+/* ---- Icon ring: same "rotate -> translate(radius) -> counter-rotate" placement trick as
+   .app-splash-ring-item, sized for this hero's own budget — 270px ring / 100px icon radius
+   here, with the visible track and the icons sharing that exact same 100px radius (see
+   .lg-ring-route-dashed below) so the drawn line always passes straight through every icon's
+   center — enough dedicated room between the ring's own edge and the center lockup that the
+   track/icons never crowd the brand name text in the middle. */
+.lg-ring { position: relative; z-index: 1; width: 270px; height: 270px; flex-shrink: 0; }
+.lg-ring-item {
+  /* z-index above .lg-ring-route (1) — the track circle passes exactly through every icon's
+     center (same 100px radius as the icons' own translate below), so without this the track
+     would draw its dashed line right across the icon's face where they overlap. Icons painting
+     on top means each icon's own opaque white circle naturally occludes the track segment
+     underneath it, leaving the dashes visible only in the gaps between icons, not over them. */
+  position: absolute; top: 50%; left: 50%; width: 54px; margin: -35px 0 0 -27px; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  transform: rotate(var(--ring-angle)) translate(100px) rotate(calc(-1 * var(--ring-angle)));
+}
+/* Border + a visible (not just soft-shadow) outline — against the hero's own plain white
+   background a white circle with only a faint blurred shadow nearly disappears. */
+.lg-ring-ic {
+  position: relative; width: 46px; height: 46px; border-radius: 50%; background: #fff;
+  border: 1.5px solid rgba(20,33,61,0.12);
+  box-shadow: 0 6px 14px -4px rgba(15,23,42,0.28); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  transition: background 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s cubic-bezier(.34,1.56,.64,1);
+}
+.lg-ring-ic svg { width: 17px; height: 17px; transition: stroke 0.25s ease; }
+.lg-ring-label { font-size: 0.62rem; font-weight: 600; color: var(--lg-steel);
+  font-family: 'Poppins', sans-serif; }
+/* The truck "arrives" at each icon in turn (see _auth_hero.html's own script) — same white
+   circle / orange icon, no color change, it just pops a little bigger (with a matching soft
+   halo) then settles back as the truck moves on to the next one. Pure class toggle + CSS
+   transition, not a per-frame JS style write — the script only ever adds/removes this one
+   class, timed to when the truck's own position reaches this icon. */
+.lg-ring-item.lg-ring-arrived .lg-ring-ic { box-shadow: 0 6px 16px -4px rgba(15,23,42,0.32), 0 0 0 6px rgba(249,115,22,0.16); transform: scale(1.18); }
+
+/* The visible track + the truck that loops it — plain children of one small <svg> overlaid on
+   the ring (see the big comment on .app-splash-road-wrap further down for why this has to be
+   one shared coordinate space rather than separately-positioned HTML: _auth_hero.html's own
+   script reads real coordinates off #lgRingRoutePath via getPointAtLength() every frame, so
+   "where the truck is" can never drift from the actual circle). No separate skyline/road scene
+   under the ring either — the splash already has that; this is a different, permanent, looping
+   idea. */
+.lg-ring-route { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 1; }
+#lgRingRoutePath { fill: none; stroke: none; }
+.lg-ring-route-dashed { fill: none; stroke: rgba(249,115,22,0.55); stroke-width: 2; stroke-dasharray: 3 8; stroke-linecap: round; }
+/* Small glowing waypoint markers at the midpoint of each gap between two icons — same
+   rotate+translate(100px) placement trick as the icons themselves (see .lg-ring-item), just
+   with no counter-rotate since a plain dot has no "upright" orientation to preserve. */
+.lg-ring-waypoint { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  border-radius: 50%; background: var(--lgr-orange); box-shadow: 0 0 6px 2px rgba(249,115,22,0.55); z-index: 1; }
+/* The truck fades out while paused at an icon (see _auth_hero.html's script's ARRIVE_PAUSE
+   handling) so it never visually sits on top of / crowds the icon it just "reached" — the
+   icon's own pop-bigger effect is what reads as "arrived" while the truck is briefly hidden,
+   then the truck fades back in as it pulls away toward the next icon. */
+#lgRingTruck { filter: drop-shadow(0 2px 4px rgba(15,23,42,0.28)); transition: opacity 0.25s ease; }
+
+.lg-lockup { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; width: 128px; }
+.lg-badge {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--lg-orange), var(--lg-orange-deep));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 24px -6px rgba(249,115,22,0.5);
+  flex-shrink: 0;
+}
+.lg-brand {
+  font-family: 'Poppins', sans-serif;
+  font-weight: 800;
+  font-size: 0.88rem;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+  color: var(--lg-ink);
+  text-align: center;
+  margin: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No looping to skip mid-cycle — _auth_hero.html's own script's reduceMotion branch just parks
+     the truck at the first icon and never starts the rAF loop, so there's nothing further to
+     freeze here. */
+  #lgRingTruck { opacity: 0; }
+}
+
 a { color: inherit; text-decoration: none; }
 /* Applied while the FAB / account dropdown / More speed-dial is open — see lockPageScroll() in
    base_app.html. */
@@ -931,8 +1092,20 @@ input[type="date"] { accent-color: var(--a-accent); }
    (60-71) and the topbar/bottom-nav (40/50) so it always sits on top of everything else. */
 .vam-backdrop { position: fixed; inset: 0; background: rgba(20,33,61,0.45); z-index: 80; opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility .2s; }
 .vam-backdrop.open { opacity: 1; visibility: visible; }
+/* top:auto/height:auto/max-height:85vh — every one of these modals sizes to its own content
+   instead of always stretching to fill the screen down from top:48px. A short modal (most of
+   them: a handful of fields, a filter sheet, a period picker) then sits flush under its own
+   fields with Save/Cancel right there, not floating below a big empty gap; a genuinely long one
+   (Add Vehicle's full form, Add Payment's "select from pending trips" list, etc.) caps at 85vh
+   and scrolls internally instead — same as it always effectively did (the previous top:48px
+   already left roughly this much room), just with .vam-form/.vam-actions below now making that
+   internal scroll actually keep the buttons reachable. One shared rule for all of them (not a
+   growing per-#id list) so a brand new modal gets this for free — was previously overridden per
+   #id for just Service Record and Edit Profile/Change Password; audited every .vam-modal in the
+   app and this content-sized behavior turned out right for all of them, so it's the base rule
+   now instead of an opt-in list. */
 .vam-modal {
-  position: fixed; left: 0; right: 0; bottom: 0; top: 48px; z-index: 81;
+  position: fixed; left: 0; right: 0; bottom: 0; top: auto; height: auto; max-height: 85vh; z-index: 81;
   background: var(--a-paper); border-radius: 20px 20px 0 0; box-shadow: 0 -8px 32px rgba(20,24,40,.22);
   display: flex; flex-direction: column; transform: translateY(100%); transition: transform .25s ease;
 }
@@ -1046,7 +1219,10 @@ input[type="date"] { accent-color: var(--a-accent); }
 .time-cell.selected { background: var(--a-accent); color: #fff; }
 .time-ampm-cell { padding: 10px 4px; }
 
-.vam-form { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
+/* flex:none (not 1) — .vam-modal itself is content-sized now (see its own comment), so this
+   shouldn't stretch to fill a fixed-height parent anymore; its own max-height is what caps a long
+   form and makes IT (not the whole modal) the thing that scrolls. */
+.vam-form { flex: none; max-height: calc(85vh - 60px); overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
   padding: 16px 18px calc(20px + env(safe-area-inset-bottom, 0px)); }
 
 /* Add Tyre modal's 3 real modes (New Tyre / Add to Stock / Install from Stock) — a segmented
@@ -1150,7 +1326,18 @@ input[type="date"] { accent-color: var(--a-accent); }
    Entry: Vehicle/Toll Plaza/Highway/State/Amount all 38px, Time alone was 42.4px). */
 .vam-field input[type="time"], .tw-field input[type="time"] { height: 38px; padding-top: 0; padding-bottom: 0; }
 
-.vam-actions { display: flex; gap: 10px; margin-top: 22px; }
+/* Sticky rather than a separate flex footer — Save/Cancel then sits flush under the fields with
+   no gap on the common case (a short modal, per .vam-modal's own comment), and only pins away
+   from the fields (staying reachable without scrolling all the way down) once a long form's own
+   .vam-form actually has something to scroll past. Negative side margins/bottom + matching
+   padding cancel out .vam-form's own 18px/env(safe-area-inset-bottom) padding exactly, so this
+   bar reaches genuinely edge-to-edge and safe-area-flush instead of floating inset within it. */
+.vam-actions {
+  display: flex; gap: 10px; margin-top: 22px;
+  position: sticky; bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
+  margin-left: -18px; margin-right: -18px; margin-bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--a-paper); box-shadow: 0 -6px 12px -8px rgba(20,24,40,.18);
+}
 .vam-btn-cancel { flex: 1; border: 1.5px solid var(--a-line); background: var(--a-white); color: var(--a-ink);
   border-radius: 12px; padding: 13px; font-weight: 700; font-size: 0.9rem; font-family: inherit; cursor: pointer; }
 .vam-btn-save { flex: 1; border: none; background: var(--a-accent); color: #fff;
@@ -1158,29 +1345,10 @@ input[type="date"] { accent-color: var(--a-accent); }
 .vam-btn-save:active { background: var(--a-accent-dark); }
 .vam-btn-save:disabled { opacity: 0.6; }
 
-/* Service Record view/edit (maintenance.html) — .vam-modal's default (top:48px, full remaining
-   screen height, .vam-form flex:1 stretching to fill it) is right for long forms but leaves a big
-   empty gap under a short read-only record with its buttons floating away from the fields. These
-   only ever hold one field set each (never Load More'd, never grows), so they size to their
-   own content instead: top:auto/height:auto so the sheet is only as tall as .vam-head + .vam-form
-   need, capped at 85vh with .vam-form no longer flex:1 (flex:none, its own max-height + scroll)
-   for the rare case a record's Notes/Checklist text is long enough to still need scrolling. Same
-   reasoning applies to profile.html's Edit Profile (#epModal, 3 fields) and Change Password
-   (#cpModal, 3 fields) — neither ever grows either, so they get the same content-sized treatment
-   instead of stretching to fill the screen with the Save/Update button floating far below them. */
-#svModal, #esModal, #evModal, #eeModal, #epModal, #cpModal { top: auto; height: auto; max-height: 85vh; }
-#svModal .vam-form, #esModal .vam-form, #evModal .vam-form, #eeModal .vam-form, #epModal .vam-form, #cpModal .vam-form { flex: none; max-height: calc(85vh - 60px); }
-/* Cancel/Update (and Save Changes) pinned to the bottom of the sheet even when a long record
-   (Notes/Checklist, or Expense's Description/Notes) makes .vam-form scroll — sticky rather than a
-   separate flex footer so short records (the common case) still sit flush under the fields with
-   no gap, per the content-sized behaviour above; only pins away from the fields once there's
-   actually something to scroll past. Same record view/edit pattern as Maintenance's Service tab,
-   reused here for Expenses, Edit Profile, and Change Password. */
-#svModal .vam-actions, #esModal .vam-actions, #evModal .vam-actions, #eeModal .vam-actions, #epModal .vam-actions, #cpModal .vam-actions {
-  position: sticky; bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
-  margin-left: -18px; margin-right: -18px; margin-bottom: calc(-1 * (20px + env(safe-area-inset-bottom, 0px)));
-  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--a-paper); box-shadow: 0 -6px 12px -8px rgba(20,24,40,.18);
-}
+/* Service Record view/edit, Expenses, Edit Profile, Change Password, and every other .vam-modal
+   in the app now get this content-sized/sticky-actions treatment as the BASE .vam-modal/.vam-form/
+   .vam-actions rules above, not a per-#id override list here anymore — see .vam-modal's own
+   comment for why that list was replaced. */
 
 /* ==========================================================================
    Vehicle detail (templates/app/vehicle_detail.html) — own prefix (vd-).
