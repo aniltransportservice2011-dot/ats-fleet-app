@@ -110,6 +110,9 @@
     margin-bottom: 8px;
   }
 
+  .lg-field-hint { font-size: 0.72rem; color: var(--lg-steel); margin-top: 3px; min-height: 0; }
+  .lg-field-hint.err { color: #C13B2E; font-weight: 500; }
+
   .lg-field { margin-bottom: calc(2px + var(--lg-extra)); }
   .lg-field label {
     display: block;
@@ -183,7 +186,7 @@
   <p class="lg-card-title">Create Account</p>
   <p class="lg-card-sub">Sign up to start managing your fleet</p>
   {% if error %}<div class="lg-error">{{ error }}</div>{% endif %}
-  <form method="post">
+  <form method="post" id="signupForm">
     <div class="lg-field">
       <label for="full_name">Full Name</label>
       <div class="lg-input-shell">
@@ -191,19 +194,18 @@
         <input type="text" id="full_name" name="full_name" placeholder="Full name" autocomplete="name" autocapitalize="characters" required value="{{ form_values.full_name if form_values else '' }}">
       </div>
     </div>
+    <!-- Username IS the mobile number or email — not a separate free-choice name plus a separate
+         contact field. app_signup() below validates this format server-side and also copies it
+         into users.phone (if it's a 10-digit mobile) or users.email (if it's an email) so OTP
+         login (which looks users up by phone) and anything else keyed on those columns keep
+         working exactly as before, without a second field asking for the same information twice. -->
     <div class="lg-field">
-      <label for="username">Username</label>
+      <label for="username">Mobile Number / Email</label>
       <div class="lg-input-shell">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l2.5 2.5"/></svg>
-        <input type="text" id="username" name="username" placeholder="Choose a username" autocomplete="username" required value="{{ form_values.username if form_values else '' }}">
+        <input type="text" id="username" name="username" placeholder="Mobile Number or Email" autocomplete="username" required value="{{ form_values.username if form_values else '' }}">
       </div>
-    </div>
-    <div class="lg-field">
-      <label for="phone">Mobile Number</label>
-      <div class="lg-input-shell">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-        <input type="tel" id="phone" name="phone" placeholder="Mobile number" autocomplete="tel" value="{{ form_values.phone if form_values else '' }}">
-      </div>
+      <div class="lg-field-hint" id="usernameHint"></div>
     </div>
     <div class="lg-field">
       <label for="password">Password</label>
@@ -253,6 +255,46 @@
     if (capped !== fullName.value) {
       fullName.value = capped;
       fullName.setSelectionRange(start, end);
+    }
+  });
+})();
+
+// Username must be a 10-digit mobile number or an email address — same rule app_signup()
+// enforces server-side (see that route's own comment for why: this IS the account's contact
+// info now, not a separate free-choice name plus a separate mobile-number field). Live hint as
+// they type, and a real submit block so a bad value never even reaches the server round-trip.
+(function () {
+  var MOBILE_RE = /^\d{10}$/;
+  var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  var usernameEl = document.getElementById('username');
+  var hintEl = document.getElementById('usernameHint');
+  if (!usernameEl || !hintEl) return;
+
+  function isValid(v) { return MOBILE_RE.test(v) || EMAIL_RE.test(v); }
+
+  function updateHint() {
+    var v = usernameEl.value.trim();
+    if (!v) {
+      hintEl.textContent = 'Enter a 10-digit mobile number or an email address.';
+      hintEl.classList.remove('err');
+    } else if (isValid(v)) {
+      hintEl.textContent = '';
+      hintEl.classList.remove('err');
+    } else {
+      hintEl.textContent = 'Must be a 10-digit mobile number or a valid email address.';
+      hintEl.classList.add('err');
+    }
+  }
+  usernameEl.addEventListener('input', updateHint);
+  updateHint();
+
+  document.getElementById('signupForm').addEventListener('submit', function (e) {
+    var v = usernameEl.value.trim();
+    if (!isValid(v)) {
+      e.preventDefault();
+      hintEl.textContent = 'Must be a 10-digit mobile number or a valid email address.';
+      hintEl.classList.add('err');
+      usernameEl.focus();
     }
   });
 })();

@@ -1588,145 +1588,37 @@ input[type="date"] { accent-color: var(--a-accent); }
    Cold-open splash screen (templates/app/_splash.html) — shown once per
    session via sessionStorage, see the script in that partial.
 
-   Redesigned per the reference mockup — full-bleed solid brand orange (--a-accent), badge with a
-   fire-trail speed tail + spinning wheel, RATH drops in from the top, a 4-icon "what this app
-   does" row assembles in one by one, a highway-at-sunset photo anchored to the bottom third
-   (static/img/splash-highway.png) fading up into the solid orange above it, and a closing
-   "MOVE · MANAGE · GROW" + loading bar over the photo. 1.9s total (up from the old 1.1s — the
-   richer sequence needs the extra time to actually read as a sequence), no per-frame JS beyond
-   the sessionStorage gate + the timed fade-out; every animation below is a plain CSS
-   opacity/transform keyframe. */
+   Back to the original design (the elaborate light-ground ring+skyline+road+truck version was
+   tried and then reverted) — full-bleed solid brand orange (--a-accent, the same token the rest
+   of the app already uses), a plain white-on-translucent badge, and the app's own name. Simple,
+   fast (1.1s), no per-frame JS beyond the sessionStorage gate + the timed fade-out. */
 .app-splash {
-  /* #EA580C, not var(--a-accent) (#c05621) — matches the photo tint/badge's own richer orange
-     (see their comments) so there's no visible color shift in the half-second before the photo
-     layer finishes fading in on top of this base color. */
-  position: fixed; inset: 0; z-index: 999; background: #EA580C; overflow: hidden;
+  position: fixed; inset: 0; z-index: 999; background: var(--a-accent);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
   opacity: 1; transition: opacity 0.35s ease;
 }
 .app-splash.app-splash-out { opacity: 0; pointer-events: none; }
-
-/* Photo layer — now full-bleed (behind everything, top to bottom), not a separate bottom-third
-   block, per instruction: the badge/RATH/tagline/icon-row all sit centered together ON TOP of
-   the one photo, instead of a solid-color zone above a separate photo zone below. The two
-   gradients painted OVER the photo (first background-image, painted on top since backgrounds
-   list front-to-back) are what keep the brand orange identity + white-text legibility across the
-   WHOLE image now that it's the full background: an all-over accent-color tint (so this still
-   reads as "the orange app" with the photo visible through it, not a bare stock photo), plus a
-   stronger version of that tint at the very top and bottom edges specifically, where the status
-   bar and footer text need the most contrast. Set inline in the template (the url() needs
-   {{ url_for(...) }}), this rule only sizes/positions it. */
-.app-splash-photo {
-  position: absolute; inset: 0;
-  background-size: cover; background-position: center 65%; background-repeat: no-repeat;
-  opacity: 0; animation: appSplashFadeIn 0.9s ease both;
-}
-.app-splash-content {
-  position: relative; z-index: 2; height: 100%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
-/* Vivid gradient + glow, not a flat translucent square — matches the reference mockup's own
-   glowing badge look (and reuses the exact same #F97316/#EA580C vivid-orange pair the login
-   screen's own .lg-badge already established, rather than inventing a third orange for this one
-   spot) — a glossy diagonal highlight plus a soft outward bloom is what makes it read as
-   "glowing" rather than just "a colored square". */
 .app-splash-badge {
-  position: relative;
-  width: 92px; height: 92px; border-radius: 24px;
-  background: linear-gradient(135deg, #FF9D5C 0%, #F97316 45%, #EA580C 100%);
-  box-shadow: 0 0 46px 12px rgba(255,148,64,0.55), 0 10px 24px -6px rgba(20,10,0,0.45),
-    inset 0 1.5px 0 rgba(255,255,255,0.5);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 76px; height: 76px; border-radius: 20px; background: rgba(255,255,255,0.16);
+  display: flex; align-items: center; justify-content: center;
   animation: appSplashPop 0.5s cubic-bezier(.34,1.56,.64,1) both;
 }
-.app-splash-badge svg { width: 66px; height: 66px; overflow: visible; position: relative; z-index: 1; }
+.app-splash-badge svg { width: 54px; height: 54px; }
 /* The wheel spins in place for as long as the splash is up — transform-origin is the wheel's own
    center (16,12) in the icon's 24x24 viewBox coordinate space, not the svg's own bounding box, so
    it spins on its own hub instead of orbiting some off-center point. */
 .app-splash-wheel-spin { transform-origin: 16px 12px; animation: appSplashWheelSpin 0.9s linear infinite; }
 @keyframes appSplashWheelSpin { to { transform: rotate(360deg); } }
-/* Fire tail — a soft blur glow (drop-shadow, GPU-friendly, unlike box-shadow on an SVG stroke)
-   plus a gentle pulse so the amber-to-white gradient (defined inline on the <line> group's own
-   stroke, see the template) reads as a live flame streaming off the wheel, not a static ruled
-   line that merely happens to be colored warm. */
-.app-splash-fire-tail { filter: drop-shadow(0 0 3px rgba(255,180,90,0.85)); animation: appSplashFirePulse 1.1s ease-in-out infinite; }
-@keyframes appSplashFirePulse { 0%, 100% { opacity: 0.85; } 50% { opacity: 1; } }
-/* RATH drops in from above — the reference's own "word drops from the top" entrance. Falls past
-   its resting position slightly (translateY overshoots to 0 via the bezier's own dip below 1)
-   then settles, rather than a plain linear slide, so it reads as a real drop with a touch of
-   weight instead of just sliding into place. */
-.app-splash-name { color: #fff; font-weight: 800; font-size: 1.6rem; letter-spacing: 0.02em; margin-top: 18px;
+.app-splash-name { color: #fff; font-weight: 800; font-size: 1.15rem; margin-top: 18px;
   font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-  animation: appSplashDropIn 0.6s cubic-bezier(.34,1.1,.4,1) 0.25s both; }
-.app-splash-tag { color: rgba(255,255,255,0.85); font-size: 0.85rem; margin-top: 6px; text-align: center;
+  animation: appSplashFadeUp 0.5s ease 0.15s both; }
+.app-splash-tag { color: rgba(255,255,255,0.8); font-size: 0.8rem; margin-top: 4px;
   font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-  animation: appSplashFadeUp 0.5s ease 0.55s both; }
-.app-splash-divider { width: 46px; height: 2px; border-radius: 2px; margin-top: 22px;
-  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.7), rgba(255,255,255,0));
-  animation: appSplashFadeIn 0.4s ease 0.7s both; }
-
-/* Fleet / Track / Finance / Maintain — assembles in one by one (see .app-splash-icon-item's own
-   --i-indexed delay below), connected by a static dashed wave + 2 waypoint dots (decorative, sits
-   just above the icon row — the login screen's own ring is the real looping-truck version of this
-   idea; this is a one-shot "forming" entrance, nothing here needs to keep moving once it's in
-   place). */
-.app-splash-icons { position: relative; display: flex; justify-content: center; gap: 34px; margin-top: 44px; padding: 0 20px; }
-.app-splash-icons-route { position: absolute; left: 10%; right: 10%; top: -14px; width: 80%; height: 20px; overflow: visible; }
-.app-splash-icons-route-dashed { fill: none; stroke: rgba(255,255,255,0.4); stroke-width: 1.6; stroke-dasharray: 2 6; stroke-linecap: round; }
-/* position:absolute (not the flow default) is the real fix for the icon row reading as shifted
-   right — these 2 dots are plain <span>s, not SVG <circle>s (see the template's own comment on
-   why), and without this they were 2 extra, invisible, zero-styled FLEX ITEMS ahead of the 4 real
-   icons in .app-splash-icons' flex row — each one still claiming its own `gap` on either side —
-   which silently pushed the actual icons rightward off-center while the row's own outer bounding
-   box still measured as centered. Also genuinely round now (width/height/border-radius/background,
-   not `fill`, which is an SVG-only property that does nothing on a <span>). */
-.app-splash-icons-dot {
-  position: absolute; top: -6px; width: 6px; height: 6px; margin-left: -3px;
-  border-radius: 50%; background: rgba(255,255,255,0.65);
-}
-.app-splash-icon-item {
-  position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 7px;
-  opacity: 0; animation: appSplashIconIn 0.45s cubic-bezier(.34,1.56,.64,1) both;
-  animation-delay: calc(0.85s + var(--i) * 0.12s);
-}
-.app-splash-icon-bubble {
-  width: 46px; height: 46px; border-radius: 50%;
-  background: rgba(255,255,255,0.10); border: 1.5px solid rgba(255,255,255,0.4);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  box-shadow: 0 4px 14px -4px rgba(20,10,0,0.35);
-}
-.app-splash-icon-bubble svg { width: 22px; height: 22px; }
-.app-splash-icon-label { color: rgba(255,255,255,0.92); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.03em;
-  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; }
-
-/* Footer — sits over the lower part of the photo (z-index above .app-splash-photo), same fade-in
-   timing as the photo itself so the two arrive together rather than the text popping in ahead of
-   what it's sitting on. */
-.app-splash-footer {
-  position: absolute; left: 0; right: 0; bottom: max(34px, env(safe-area-inset-bottom) + 20px);
-  z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 14px;
-  opacity: 0; animation: appSplashFadeIn 0.6s ease 1.15s both;
-}
-.app-splash-footer-tag { color: #fff; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.18em;
-  font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; text-shadow: 0 1px 4px rgba(0,0,0,0.25); }
-.app-splash-progress { width: 132px; height: 3px; border-radius: 3px; background: rgba(255,255,255,0.3); overflow: hidden; }
-.app-splash-progress-fill {
-  height: 100%; width: 0; border-radius: 3px;
-  background: linear-gradient(90deg, #FFD9A8, #fff);
-  animation: appSplashProgress 1.05s ease-out 1.15s both;
-}
-
+  animation: appSplashFadeUp 0.5s ease 0.25s both; }
 @keyframes appSplashPop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
 @keyframes appSplashFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes appSplashFadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes appSplashDropIn { 0% { opacity: 0; transform: translateY(-46px); } 70% { opacity: 1; transform: translateY(4px); } 100% { opacity: 1; transform: translateY(0); } }
-@keyframes appSplashIconIn { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
-@keyframes appSplashProgress { from { width: 0; } to { width: 100%; } }
-
 @media (prefers-reduced-motion: reduce) {
-  .app-splash-badge, .app-splash-name, .app-splash-tag, .app-splash-divider, .app-splash-photo,
-  .app-splash-icon-item, .app-splash-footer, .app-splash-progress-fill, .app-splash-wheel-spin,
-  .app-splash-fire-tail { animation: none; opacity: 1; }
-  .app-splash-progress-fill { width: 100%; }
+  .app-splash-badge, .app-splash-name, .app-splash-tag, .app-splash-wheel-spin { animation: none; opacity: 1; }
 }
 
 /* ==========================================================================

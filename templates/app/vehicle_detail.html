@@ -44,7 +44,7 @@
   {% endif %}
 </div>
 
-{% set comp_colors = {'Valid': ('#e8f5ee','var(--a-green)'), 'Expiring Soon': ('#fff3e8','var(--a-accent)'), 'Expired': ('#fdecea','var(--a-red)'), 'Unknown': ('var(--a-paper)','var(--a-steel)')} %}
+{% set comp_colors = {'Valid': ('#e8f5ee','var(--a-green)'), 'Expiring Soon': ('#fff3e8','var(--a-accent)'), 'Expired': ('#fdecea','var(--a-red)'), 'Cancelled': ('#fdecea','var(--a-red)'), 'Unknown': ('var(--a-paper)','var(--a-steel)')} %}
 <div class="vd-comp-grid">
   <a href="{{ url_for('vehicle_detail', v_id=v['id']) }}?tab=insurance" class="vd-comp-card">
     <div class="hd"><span class="ic" style="background:#eaf1fb;color:#2a78d6;">🛡️</span>Insurance <span class="vd-ext">↗</span></div>

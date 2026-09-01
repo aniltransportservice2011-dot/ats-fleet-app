@@ -322,6 +322,7 @@ CREATE TABLE trips (
     from_loc              TEXT,
     to_loc                TEXT,
     quantity              REAL,
+    guarantee_qty         REAL DEFAULT 0,
     rate                  REAL,
     driver_name           TEXT,
     material              TEXT,
@@ -764,6 +765,16 @@ CREATE TABLE users (
     updated_at    TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
+-- Mobile number and email must each be unique per account, same as username above — a
+-- self-signup's username IS its phone/email (see app_signup()'s own comment in app.py), and
+-- _duplicate_user_contact() already enforces this at the application layer for every user
+-- create/update path; this is the database-level backstop. Partial (WHERE ... IS NOT NULL) so
+-- any number of accounts can still share "no phone set"/"no email set" — most admin-created
+-- accounts legitimately have one or both blank. Not yet applied to the live database — see
+-- migrate_unique_phone_email.sql's own header for why (a real pre-existing duplicate has to be
+-- resolved first).
+CREATE UNIQUE INDEX idx_users_phone_unique ON users(phone) WHERE phone IS NOT NULL;
+CREATE UNIQUE INDEX idx_users_email_unique_ci ON users(lower(email)) WHERE email IS NOT NULL;
 
 CREATE TABLE access_logs (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,

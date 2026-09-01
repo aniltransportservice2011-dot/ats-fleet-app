@@ -192,8 +192,15 @@ def sync_all_vehicles(conn):
 def refresh_compliance(conn):
     """Cheap, DB-only. One row per own-fleet vehicle with a computed status for each of the
     4 compliance types, ready for the Vehicles list badges / Compliance dashboard / alerts.
-    Insurance status is read straight off vehicles.insurance_expiry (kept in sync by the real
-    Insurance module already) — never re-derived from a second source.
+    Insurance's *expiry date* is read straight off vehicles.insurance_expiry (kept in sync by the
+    real Insurance module already) — never re-derived from a second source. Its *status* also
+    checks insurance_policies.status_override — 'Cancelled' is a real, asserted fact a date alone
+    can't express (a cancelled policy can still have a future expiry_date on paper), so it has to
+    win outright over whatever the date alone would compute, same priority _insurance_status()
+    already uses on the Insurance tab itself. Without this, marking a policy Cancelled there saved
+    correctly but every badge reading refresh_compliance() (Vehicles list, dashboard alerts, the
+    vehicle detail overview card) kept showing Valid/Expiring Soon purely from the date — a real
+    bug, not just a hypothetical one.
     """
     vehicles = own_fleet_vehicles(conn)
     comp_rows = conn.execute("SELECT * FROM vehicle_compliance").fetchall()
@@ -203,6 +210,15 @@ def refresh_compliance(conn):
 
     vfull = {v['id']: v for v in conn.execute(
         "SELECT id, vehicle_no, type, insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto FROM vehicles WHERE type = 'own'").fetchall()}
+
+    # The "active" policy per vehicle — same convention _vehicle_detail_data() (app.py) already
+    # uses: whichever row sorts first by expiry_date desc (furthest-out expiry, or most recently
+    # added if expiry is blank/tied) is the one that's actually current. Only status_override is
+    # needed here (the date itself already lives on vehicles.insurance_expiry).
+    override_by_vehicle = {}
+    for r in conn.execute("""SELECT vehicle_id, status_override FROM insurance_policies
+                             ORDER BY vehicle_id, COALESCE(expiry_date,'') DESC, id DESC""").fetchall():
+        override_by_vehicle.setdefault(r['vehicle_id'], r['status_override'])
 
     out = []
     for v in vehicles:
@@ -217,10 +233,12 @@ def refresh_compliance(conn):
         puc_exp = (comp.get('puc') or {}).get('valid_upto') or full['puc_valid_upto']
         permit_exp = (comp.get('permit') or {}).get('valid_upto') or full['permit_valid_upto']
         insurance_exp = full['insurance_expiry']
+        insurance_status = 'Cancelled' if override_by_vehicle.get(vid) == 'Cancelled' \
+            else status_for_expiry(insurance_exp, ALERT_WARN_DAYS['insurance'])
 
         out.append({
             'vehicle_id': vid, 'vehicle_no': v['vehicle_no'], 'type': v['type'],
-            'insurance': {'expiry': insurance_exp, 'status': status_for_expiry(insurance_exp, ALERT_WARN_DAYS['insurance']),
+            'insurance': {'expiry': insurance_exp, 'status': insurance_status,
                           'days_left': days_left_for_expiry(insurance_exp)},
             'fitness': {'expiry': fitness_exp, 'status': status_for_expiry(fitness_exp, ALERT_WARN_DAYS['fitness']),
                         'days_left': days_left_for_expiry(fitness_exp),

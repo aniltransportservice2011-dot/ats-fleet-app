@@ -151,10 +151,17 @@
              trip weight either way, so it's never hidden the way Rate/Fixed Amount are. -->
         <div class="tw-field twcargo" id="twQtyFld"><label>Quantity (MT) <span class="req">*</span></label>
           <input type="number" step="0.01" class="tw-calc" name="quantity" id="twQuantity" value="{{ t.get('quantity',0) or 0 }}" required></div>
+        <!-- Minimum Guarantee Weight — PER_MT only (FIXED freight doesn't depend on quantity at
+             all, so there's nothing for a guarantee to act on), hidden/shown by twToggleRateType()
+             the same way Rate/Fixed Freight Amount already are. 0 = no guarantee clause on this
+             trip, same schema default every trip already had before this field existed. -->
+        <div class="tw-field twcargo" id="twGuaranteeFld"><label>Guarantee Quantity (MT)</label>
+          <input type="number" step="0.01" class="tw-calc" name="guarantee_qty" id="twGuaranteeQty" value="{{ t.get('guarantee_qty',0) or 0 }}" placeholder="0 = no guarantee"></div>
         <div class="tw-field twcargo" id="twRateFld"><label>Rate (per unit)</label>
           <input type="number" step="0.01" class="tw-calc" name="rate" id="twRate" value="{{ t.get('rate',0) or 0 }}"></div>
         <div class="tw-field twcargo" id="twFixedFld" style="display:none;"><label>Fixed Freight Amount</label>
           <input type="number" step="0.01" class="tw-calc" name="fixed_rate_amount" id="twFixedAmt" value="{{ t.get('fixed_rate_amount',0) or 0 }}"></div>
+        <div class="tw-field twcargo tw-hint" id="twGuaranteeHint" style="grid-column:1/-1;font-size:0.78rem;color:var(--a-steel,#6b7280);">If the party's Minimum Guarantee Weight is more than the Quantity actually loaded, freight bills for the guarantee amount instead.</div>
       </div>
     </div>
   </div>
@@ -358,9 +365,12 @@ function twToggleRateType() {
   // Quantity (Weight) stays visible for BOTH Freight Types, matching the website's own Add/Edit
   // Trip — Fixed just doesn't use it to calculate billed_amount, it's still real trip weight to
   // track either way. Only Rate/Fixed Amount actually toggle, since exactly one of those two is
-  // what freight is calculated from.
+  // what freight is calculated from. Guarantee Quantity toggles the same way as Rate — a flat
+  // Fixed freight doesn't depend on quantity at all, so a guarantee has nothing to act on.
   document.getElementById('twRateFld').style.display = fixed ? 'none' : '';
   document.getElementById('twFixedFld').style.display = fixed ? '' : 'none';
+  document.getElementById('twGuaranteeFld').style.display = fixed ? 'none' : '';
+  document.getElementById('twGuaranteeHint').style.display = fixed ? 'none' : '';
 }
 
 function twToggleOwnerRateType() {
@@ -453,7 +463,14 @@ function twUpdateReview() {
   document.getElementById('rvRoute').textContent = (from || to) ? ((from || '?') + ' → ' + (to || '?')) : '—';
 
   var rateType = twVal('rate_type');
-  var freight = rateType === 'FIXED' ? twNum('twFixedAmt') : (twNum('twQuantity') * twNum('twRate'));
+  // Same formula as _trip_freight() in app.py — PER_MT bills off Guarantee Quantity whenever one
+  // is filled in (non-zero), regardless of whether it's higher or lower than actual Quantity;
+  // otherwise plain quantity * rate. Guarantee Quantity is only ever filled in when it genuinely
+  // applies to this trip — left blank whenever the party is just paying actual, which is exactly
+  // what falls through to quantity here.
+  var guaranteeQty = twNum('twGuaranteeQty');
+  var billedQty = guaranteeQty ? guaranteeQty : twNum('twQuantity');
+  var freight = rateType === 'FIXED' ? twNum('twFixedAmt') : (billedQty * twNum('twRate'));
   var additions = ['detention_charges','gps_cost','loading_charge','unloading_charge','police_charges','sim_tracking','union_charges','weight_charges','other_charges']
     .reduce(function(s, k) { return s + twNum('tw_' + k); }, 0);
   var deductions = ['brokerage','builty_commission','late_fees','material_damage','shortage_amount','tds','other_deductions']

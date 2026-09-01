@@ -69,7 +69,7 @@
 {% endblock %}
 {% block content %}
 {% set tab_titles = {'insurance':'Insurance','permit':'Permit','fitness':'Fitness','puc':'PUC','echallan':'eChallan','history':'History'} %}
-{% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
+{% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Cancelled': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
 <div id="main-content" class="wrap" style="max-width:none; width:100%;">
   <div class="mt-crumb"><a href="/vehicles">Vehicles</a> &nbsp;&rsaquo;&nbsp; {{ v['vehicle_no'] }} &nbsp;&rsaquo;&nbsp; {{ tab_titles[tab] }}</div>
   <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin:10px 0 16px;">
@@ -208,11 +208,17 @@
           <table>
             <tr><th>Policy Number</th><th>Insurer</th><th>Type</th><th>Start Date</th><th>End Date</th><th class="num">IDV</th><th>Status</th></tr>
             {% for ip in insurance_rows %}
+            {% set is_cancelled = ip.status_override == 'Cancelled' %}
+            {% set is_active = not is_cancelled and ip.expiry_date and ip.expiry_date >= today_str %}
             <tr>
               <td>{{ ip.policy_number or '—' }}</td><td>{{ ip.insurer_name or '—' }}</td><td>{{ ip.insurance_type or '—' }}</td>
               <td>{{ ip.start_date or '—' }}</td><td>{{ ip.expiry_date or '—' }}</td>
               <td class="num">{% if ip.idv %}₹{{ '{:,.0f}'.format(ip.idv) }}{% else %}—{% endif %}</td>
-              <td><span class="mt-status-badge" style="background:{% if ip.expiry_date and ip.expiry_date >= today_str %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{% if ip.expiry_date and ip.expiry_date >= today_str %}Active{% else %}Expired{% endif %}</span></td>
+              <!-- Cancelled is a real, asserted fact (status_override) and has to win outright over
+                   whatever the date alone would say — same priority _insurance_status() already
+                   uses on the Insurance tab, so this table can't show "Active" for a policy that
+                   was actually cancelled, just because its expiry_date hasn't arrived yet. -->
+              <td><span class="mt-status-badge" style="background:{% if is_cancelled %}#fdecea;color:var(--red){% elif is_active %}#e8f5ee;color:var(--green){% else %}var(--paper);color:var(--steel){% endif %};">{% if is_cancelled %}Cancelled{% elif is_active %}Active{% else %}Expired{% endif %}</span></td>
             </tr>
             {% endfor %}
           </table>
