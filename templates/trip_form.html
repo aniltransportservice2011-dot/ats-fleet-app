@@ -61,7 +61,6 @@
   .tf-field input:focus, .tf-field select:focus { outline:none; border-color:var(--accent); }
   .tf-field input:disabled, .tf-field select:disabled, .tf-field input[readonly] { background:var(--paper); color:var(--steel); cursor:not-allowed; opacity:1; -webkit-text-fill-color:var(--steel); }
   .tf-hint { grid-column:1/-1; font-size:0.76rem; color:var(--steel); margin-top:-6px; }
-
   .tf-others-table { width:100%; border-collapse:collapse; margin-bottom:2px; }
   .tf-others-table th { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.02em; color:var(--steel); text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
   .tf-others-table td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -166,8 +165,14 @@
             <div class="tf-field"><label>From</label><input type="text" name="from_loc" value="{{ t.get('from_loc','') or '' }}" placeholder="From Location"></div>
             <div class="tf-field"><label>To</label><input type="text" name="to_loc" value="{{ t.get('to_loc','') or '' }}" placeholder="To Location"></div>
             <div class="tf-field tf-cargo-fld"><label>Quantity (MT)</label><input type="number" step="0.01" class="tf-calc" name="quantity" value="{{ t.get('quantity',0) or 0 }}"></div>
+            <!-- Only filled in when a Minimum Guarantee Weight actually applies to this trip —
+                 left blank whenever the party is just paying for actual quantity (including when
+                 actual comes in below what a guarantee would have covered), which is exactly what
+                 makes _trip_freight() fall through to plain quantity below. -->
+            <div class="tf-field tf-cargo-fld" id="tfGuaranteeFld"><label>Guarantee Quantity (MT)</label><input type="number" step="0.01" class="tf-calc" name="guarantee_qty" id="tfGuaranteeQty" value="{{ t.get('guarantee_qty',0) or 0 }}" placeholder="0 = no guarantee"></div>
             <div class="tf-field tf-cargo-fld" id="tfRateFld"><label>Rate (per unit)</label><input type="number" step="0.01" class="tf-calc" name="rate" value="{{ t.get('rate',0) or 0 }}"></div>
             <div class="tf-field tf-cargo-fld" id="tfFixedFld"><label>Fixed Rate Amount</label><input type="number" step="0.01" class="tf-calc" name="fixed_rate_amount" value="{{ t.get('fixed_rate_amount',0) or 0 }}"></div>
+            <div class="tf-hint tf-cargo-fld" id="tfGuaranteeHint">If the party's Minimum Guarantee Weight (e.g. a 32 MT vehicle booked with a 31 MT guarantee) is more than the actual Quantity loaded, freight bills for the guarantee amount instead — leave at 0 if this trip has no guarantee clause.</div>
           </div>
         </div>
 
@@ -417,15 +422,35 @@ function tfRecalc() {
 
   var rateType = document.querySelector('select[name="rate_type"]').value;
   var quantity = tfNum(document.querySelector('input[name="quantity"]'));
+  var guaranteeQty = tfNum(document.querySelector('input[name="guarantee_qty"]'));
   var rate = tfNum(document.querySelector('input[name="rate"]'));
   var fixedAmt = tfNum(document.querySelector('input[name="fixed_rate_amount"]'));
-  var freight = rateType === 'FIXED' ? fixedAmt : quantity * rate;
+  // Same formula as _trip_freight() in app.py — PER_MT bills off Guarantee Quantity whenever one
+  // is filled in (non-zero), regardless of whether it's higher or lower than actual Quantity;
+  // otherwise plain quantity * rate. Guarantee Quantity is only ever filled in when it genuinely
+  // applies to this trip — left blank whenever the party is just paying actual, which is exactly
+  // what falls through to quantity here.
+  var billedQty = guaranteeQty ? guaranteeQty : quantity;
+  var freight = rateType === 'FIXED' ? fixedAmt : billedQty * rate;
   var net = freight + additions - deductions;
 
-  // Charge Type = Fixed → enable Fixed Rate Amount and disable Rate (per unit), and vice versa —
-  // both fields stay visible (never hidden), only the one that doesn't apply is greyed out.
+  // Charge Type = Fixed → enable Fixed Rate Amount and disable Rate (per unit) + Guarantee
+  // Quantity (a flat fee doesn't depend on what was loaded, so a guarantee has nothing to act on),
+  // and vice versa — fields stay visible (never hidden), only the ones that don't apply are greyed
+  // out, same convention as Rate/Fixed Rate Amount already used.
   document.querySelector('#tfRateFld input').disabled = rateType === 'FIXED';
   document.querySelector('#tfFixedFld input').disabled = rateType !== 'FIXED';
+  document.getElementById('tfGuaranteeQty').disabled = rateType === 'FIXED';
+  var ghint = document.getElementById('tfGuaranteeHint');
+  if (rateType !== 'FIXED' && guaranteeQty > 0 && guaranteeQty !== quantity) {
+    ghint.textContent = 'Freight is billing for the Guarantee Quantity, ' + guaranteeQty.toFixed(2) + ' MT, not the ' + quantity.toFixed(2) + ' MT actually loaded.';
+    ghint.style.color = 'var(--accent, #c05621)';
+    ghint.style.fontWeight = '600';
+  } else {
+    ghint.textContent = "Fill this in only when a Minimum Guarantee Weight actually applies to this trip — freight then bills off this amount instead of Quantity. Leave blank whenever the party is just paying for actual quantity.";
+    ghint.style.color = '';
+    ghint.style.fontWeight = '';
+  }
 
   document.getElementById('sumAdditions').textContent = '₹' + additions.toFixed(2);
   document.getElementById('sumDeductions').textContent = '₹' + deductions.toFixed(2);

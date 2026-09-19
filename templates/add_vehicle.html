@@ -41,7 +41,9 @@
     <div><label>Capacity (MT)</label><input type="number" step="0.01" name="capacity_mt"></div>
     <div><label>Chassis Number</label><input type="text" name="chassis_number" placeholder="Full chassis / VIN number"></div>
     <div><label>Engine Number</label><input type="text" name="engine_number" placeholder="Full engine number"></div>
-    <div><label>Insurance Expiry</label><input type="date" name="insurance_expiry"></div>
+    <!-- Insurance Expiry deliberately isn't asked for here — there's no vehicle_id yet to attach
+         a real policy to, and insurance_policies (Vehicles > Insurance tab) is the single source
+         of truth for it; add the real policy there once this vehicle exists. -->
     <div><label>Fitness Expiry</label><input type="date" name="fitness_expiry"></div>
     <div><label>PUC Valid Upto</label><input type="date" name="puc_valid_upto"></div>
     <div><label>Permit Valid Upto</label><input type="date" name="permit_valid_upto"></div>

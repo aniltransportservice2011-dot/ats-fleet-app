@@ -4,45 +4,136 @@
      page that extends it) and login.html (the pre-auth landing page, the other realistic
      "just opened the app" entry point) so it fires no matter which one is hit first.
 
-     Back to the original design — full-bleed solid brand orange, a plain badge + name + tagline,
-     gone in ~1.1s (see app.css's own .app-splash comment for why the later, more elaborate
-     ring+skyline+road+truck redesign was reverted). One thing kept from that later version,
-     deliberately not reverted: {{ app_name }} (APP_NAME in app.py), not {{ company_name }} — a
-     splash is the PRODUCT introducing itself, the same way a phone's own lock screen never shows
-     a random app's own branding, and that's a real fix independent of the visual redesign. -->
+     Redesigned per the reference mockup: a highway-at-sunset photo (static/img/splash-highway.png)
+     is now the full-bleed background behind everything, tinted with the brand orange (see
+     .app-splash-photo's own comment in app.css) rather than a separate solid-color zone above a
+     separate photo zone below — badge (fire-trail speed lines + spinning wheel, both kept from
+     the prior simple version), RATH name (drops in from the top), tagline, and the 4-icon "what
+     this app does" row (Fleet/Track/Finance/Maintain, assembling in one by one, connected by a
+     dashed line with waypoint dots — same visual language the login ring/route used earlier this
+     session, just static here, a one-shot "forming" entrance rather than a looping truck, since
+     the splash is only up for ~1.9s total) all sit centered together on top of that one photo →
+     "MOVE · MANAGE · GROW" + a loading bar near the bottom, also over the photo.
+
+     {{ app_name }} (APP_NAME in app.py), not {{ company_name }} — a splash is the PRODUCT
+     introducing itself, the same way a phone's own lock screen never shows a random app's own
+     branding, kept from every earlier version of this partial. -->
 <div class="app-splash" id="appSplash">
-  <div class="app-splash-badge">
-    <!-- Same wheel-and-speed-lines mark as the login screen's own center badge (templates/app/
-         login.html's .lg-badge, the app icon) — one consistent brand mark across the splash and
-         login. White fill, not the icon's own orange gradient, since it sits on this splash's
-         solid orange background. -->
-    <svg viewBox="0 0 24 24" fill="none">
-      <g stroke="#fff" stroke-width="1.6" stroke-linecap="round">
-        <line x1="6" y1="6.5" x2="9.5" y2="6.5"/>
-        <line x1="3" y1="9.5" x2="9.5" y2="9.5"/>
-        <line x1="1" y1="14" x2="9.5" y2="14"/>
-        <line x1="4.5" y1="17.3" x2="9.5" y2="17.3"/>
-      </g>
-      <!-- Just the wheel itself (rim + spokes + hub) spins in place, continuously, for as long as
-           the splash is up — the motion lines stay put (they're already how "speed" reads, a
-           second thing rotating alongside them would read as noise, not motion). transform-origin
-           is the wheel's own center (16,12) in this SVG's viewBox coordinate space. -->
-      <g class="app-splash-wheel-spin">
-        <path fill-rule="evenodd" clip-rule="evenodd" fill="#fff" d="M16 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 1.7a5.3 5.3 0 1 1 0 10.6 5.3 5.3 0 0 1 0-10.6Z"/>
-        <g stroke="#fff" stroke-width="1.4" stroke-linecap="round">
-          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(0 16 12)"/>
-          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(60 16 12)"/>
-          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(120 16 12)"/>
-          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(180 16 12)"/>
-          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(240 16 12)"/>
-          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(300 16 12)"/>
+  <!-- Tint uses the same vivid #EA580C/#F97316 pair as the badge above (see .app-splash-badge's
+       own comment) — not var(--a-accent) (#c05621), which reads noticeably more muted/brownish
+       against a photo than the reference's richer orange-red. This is a deliberate, splash-only
+       departure from the app's own everyday accent color, same reasoning a cold-open splash
+       already gets more visual license than an in-app screen. -->
+  <div class="app-splash-photo" style="background-image: linear-gradient(180deg, rgba(234,88,12,0.88) 0%, rgba(234,88,12,0.42) 30%, rgba(234,88,12,0.48) 65%, rgba(210,66,8,0.9) 100%), url('{{ url_for('static', filename='img/splash-highway.png') }}');"></div>
+
+  <div class="app-splash-content">
+    <div class="app-splash-badge">
+      <!-- Same wheel-and-speed-lines mark as the login screen's own center badge (templates/app/
+           login.html's .lg-badge, the app icon) — one consistent brand mark across the splash and
+           login. White fill, not the icon's own orange gradient, since it sits on this splash's
+           solid orange background. The 4 speed lines are now a warm white->amber->transparent
+           gradient (fully opaque throughout — a stop at 0 opacity was making the tail read as
+           "missing" rather than fading, since the tips are most of each line's length) plus a
+           warm glow, reading as a fire/motion trail streaming off the wheel rather than plain
+           ruled lines. Hot white where the tail meets the wheel, cooling to amber then a deep
+           orange-red at the tip — same direction a real exhaust/flame trail cools moving away
+           from its source. -->
+      <svg viewBox="0 0 24 24" fill="none">
+        <defs>
+          <!-- gradientUnits="userSpaceOnUse" (not the default objectBoundingBox) — this is the
+               actual fix for the tail being invisible: each of the 4 lines below is perfectly
+               horizontal (y1 == y2), so its own bounding box has ZERO height, and an
+               objectBoundingBox gradient's bbox-to-userspace transform is singular/non-invertible
+               when either bbox dimension is 0 — browsers silently fail to paint it rather than
+               erroring, which is exactly what made the whole tail disappear instead of merely
+               fading oddly. userSpaceOnUse coordinates (in the same 0-24 units the lines
+               themselves use, spanning x=1..9.5 — where the tail actually is) sidesteps that
+               degenerate case entirely. -->
+          <linearGradient id="splashFireGrad" gradientUnits="userSpaceOnUse" x1="1" y1="12" x2="9.5" y2="12">
+            <stop offset="0%" stop-color="#EA580C"/>
+            <stop offset="45%" stop-color="#FDBA74"/>
+            <stop offset="100%" stop-color="#fff"/>
+          </linearGradient>
+        </defs>
+        <g stroke="url(#splashFireGrad)" stroke-width="2.1" stroke-linecap="round" class="app-splash-fire-tail">
+          <line x1="6" y1="6.5" x2="9.5" y2="6.5"/>
+          <line x1="3" y1="9.5" x2="9.5" y2="9.5"/>
+          <line x1="1" y1="14" x2="9.5" y2="14"/>
+          <line x1="4.5" y1="17.3" x2="9.5" y2="17.3"/>
         </g>
-        <circle cx="16" cy="12" r="1.6" fill="#fff"/>
-      </g>
-    </svg>
+        <!-- Just the wheel itself (rim + spokes + hub) spins in place, continuously, for as long as
+             the splash is up — the motion lines stay put (they're already how "speed" reads, a
+             second thing rotating alongside them would read as noise, not motion). transform-origin
+             is the wheel's own center (16,12) in this SVG's viewBox coordinate space. -->
+        <g class="app-splash-wheel-spin">
+          <path fill-rule="evenodd" clip-rule="evenodd" fill="#fff" d="M16 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 1.7a5.3 5.3 0 1 1 0 10.6 5.3 5.3 0 0 1 0-10.6Z"/>
+          <g stroke="#fff" stroke-width="1.4" stroke-linecap="round">
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(0 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(60 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(120 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(180 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(240 16 12)"/>
+            <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(300 16 12)"/>
+          </g>
+          <circle cx="16" cy="12" r="1.6" fill="#fff"/>
+        </g>
+      </svg>
+    </div>
+    <div class="app-splash-name">{{ app_name }}</div>
+    <div class="app-splash-tag">Manage Every Mile. Every Move.</div>
+    <div class="app-splash-divider"></div>
+
+    <!-- Fleet/Track/Finance/Maintain — a quick "what this app actually does" row, not the
+         Monitor/Manage/Maintenance/Compliance/Analytics/Fuel set the login ring uses (that's the
+         full 6-section nav; this is a 4-word elevator pitch for a screen that's only up ~1.9s).
+         Connecting dashed line + waypoint dots between each pair, same visual language as the
+         login ring's own route, just drawn once (a static SVG path) rather than looped by a
+         truck — nothing here needs to move once it's finished assembling. -->
+    <div class="app-splash-icons">
+      <svg class="app-splash-icons-route" viewBox="0 0 300 10" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M 30 5 Q 100 -6, 150 5 T 270 5" class="app-splash-icons-route-dashed"/>
+      </svg>
+      <!-- Waypoint dots as plain elements, not SVG <circle>s inside the route svg above — that
+           svg's own preserveAspectRatio="none" (needed so the dashed path itself stretches to
+           fill the full row width) also non-uniformly scales any fill shape inside it, squashing
+           a circle into a visibly flattened ellipse. Positioned by simple percentage instead, so
+           they stay perfectly round regardless of how wide the row ends up. -->
+      <span class="app-splash-icons-dot" style="left: 30%;"></span>
+      <span class="app-splash-icons-dot" style="left: 70%;"></span>
+      <!-- y is each icon's own vertical offset along the same gentle arc the connecting dashed
+           line follows (0 / -14 / -14 / 0 — the two middle icons sit higher, matching the
+           reference's curve) — a flat row with only the LINE arcing above it read as "the icons
+           are in a straight line" even though the line itself curved, so the icons need to
+           actually sit ON that curve too, not just have it decorate past them. -->
+      {% set app_splash_items = [
+        ('FLEET', 0, '<path d="M4 16V11l2-5h12l2 5v5"/><path d="M4 16h16v2a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H7v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2Z"/><circle cx="7.5" cy="16" r="1.4" fill="#fff" stroke="none"/><circle cx="16.5" cy="16" r="1.4" fill="#fff" stroke="none"/>'),
+        ('TRACK', -14, '<path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="10" r="2.4"/>'),
+        ('FINANCE', -14, '<text x="12" y="16.5" text-anchor="middle" font-family="Poppins, -apple-system, sans-serif" font-weight="700" font-size="13" fill="#fff" stroke="none">&#8377;</text>'),
+        ('MAINTAIN', 0, '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'),
+      ] %}
+      {% for label, y, path in app_splash_items %}
+      <!-- Two nested elements, deliberately — the outer one only ever carries the static
+           translateY(y) arc position; the inner .app-splash-icon-item is what the scale-in
+           entrance animation (a plain CSS transform, same property) targets. Combining a static
+           positioning transform and an animated one on the SAME element means whichever applies
+           last wins outright instead of composing — the exact bug that made every icon in the
+           login screen's own SVG rebuild collapse onto one spot earlier this session. -->
+      <div style="transform: translateY({{ y }}px);">
+        <div class="app-splash-icon-item" style="--i: {{ loop.index0 }};">
+        <span class="app-splash-icon-bubble">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{{ path|safe }}</svg>
+        </span>
+        <span class="app-splash-icon-label">{{ label }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
-  <div class="app-splash-name">{{ app_name }}</div>
-  <div class="app-splash-tag">Manage Every Mile. Every Move.</div>
+
+  <div class="app-splash-footer">
+    <div class="app-splash-footer-tag">MOVE&nbsp;&nbsp;&middot;&nbsp;&nbsp;MANAGE&nbsp;&nbsp;&middot;&nbsp;&nbsp;GROW</div>
+    <div class="app-splash-progress"><div class="app-splash-progress-fill"></div></div>
+  </div>
 </div>
 <script>
 (function () {
@@ -66,9 +157,12 @@
     return;
   }
   sessionStorage.setItem('fleetapp_splash_shown', '1');
+  // 1900ms, not the old 1100ms — the richer sequence (name drop-in, 4 icons assembling one by
+  // one, photo/footer fading in) genuinely needs the extra time to read as a real sequence rather
+  // than a blur; still well under the ~2.5s ceiling where a splash starts feeling slow.
   setTimeout(function () {
     splash.classList.add('app-splash-out');
     setTimeout(function () { splash.style.display = 'none'; }, 350);
-  }, 1100);
+  }, 1900);
 })();
 </script>

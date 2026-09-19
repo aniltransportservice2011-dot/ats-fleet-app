@@ -56,6 +56,37 @@ VEHICLE_TYPE_LABELS = {VEHICLE_TYPE_OWN: 'Own', VEHICLE_TYPE_HIRED: 'Hired'}
 # rename only ever means editing this one line, not hunting down every place it appears.
 APP_NAME = 'RATH'
 
+# A username IS a mobile number or email — not a separate free-choice name (see app_signup()
+# below). Mobile means a real Indian mobile number: 10 digits, first digit 6-9 (TRAI's own
+# allocated range — landline/other numbers, and junk like "0000000000", are rejected), same shape
+# the OTP login form already expects (templates/app/login_otp.html's own pattern="[0-9]{10}",
+# which is only ever reachable by first passing this same check at signup).
+USERNAME_MOBILE_RE = re.compile(r'^[6-9]\d{9}$')
+USERNAME_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+# Enforced at Sign Up unconditionally, and at Login for every username EXCEPT this fixed set —
+# the real accounts that predate this rule and still have a plain-name username (admin, Priyanka,
+# Prakash, Muna), grandfathered in by explicit instruction rather than forced to change their
+# login just because a validation rule was added after their accounts already existed. Abinash is
+# deliberately NOT here any more — his username was renamed to his real mobile number (9668348621,
+# by explicit instruction), so it already satisfies the format on its own merit; keeping him in
+# this list too would just be redundant, not wrong, but the list should reflect who actually still
+# needs the exemption. Lowercase, matched case-insensitively against the submitted username below
+# — usernames themselves are stored COLLATE NOCASE (schema.sql), so this mirrors that same
+# case-insensitivity.
+LOGIN_USERNAME_FORMAT_EXEMPT = {'admin', 'priyanka', 'prakash', 'muna'}
+
+def _username_login_format_ok(username):
+    """True if `username` is allowed to attempt login — either it matches the mobile/email format
+    every new Sign Up is required to use, or it's one of the fixed pre-existing exempt accounts
+    above. Checked BEFORE the password lookup in login()/app_login(), so a bad-format username is
+    rejected with a clear message instead of silently falling through to 'Invalid username or
+    password' (which is also still what a right-format-but-wrong-password attempt gets — this
+    check is purely about shape, never a substitute for the real credential check)."""
+    if (username or '').strip().lower() in LOGIN_USERNAME_FORMAT_EXEMPT:
+        return True
+    return bool(USERNAME_MOBILE_RE.match(username or '') or USERNAME_EMAIL_RE.match(username or ''))
+
 def get_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
@@ -1441,8 +1472,13 @@ def _vehicles_permit_fitness_tab(conn):
                                WHERE type IS NOT NULL AND type = 'own' ORDER BY vehicle_no""").fetchall()
     comp_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
 
+    # 'Cancelled' is Insurance-only (refresh_compliance()'s own status_override check — see that
+    # function's comment) but lives in this one shared dict since every *_colors lookup below is
+    # keyed by whatever status string a compliance type's own status happens to be; Fitness/PUC/
+    # Permit never produce 'Cancelled' today, so this entry is simply never reached for those.
     comp_colors = {'Valid': ('#e8f5ee', 'var(--green)'), 'Expiring Soon': ('#fff3e8', 'var(--accent)'),
-                   'Expired': ('#fdecea', 'var(--red)'), 'Unknown': ('var(--paper)', 'var(--steel)')}
+                   'Expired': ('#fdecea', 'var(--red)'), 'Cancelled': ('#fdecea', 'var(--red)'),
+                   'Unknown': ('var(--paper)', 'var(--steel)')}
 
     rows = []
     for v in veh_rows:
@@ -2461,6 +2497,27 @@ def _duplicate_lr_trip(conn, lr_number, exclude_trip_id=None):
         params.append(exclude_trip_id)
     return conn.execute(query, params).fetchone()
 
+def _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty=0):
+    """Party-side freight for one trip — the single formula every place in the app that bills a
+    trip's party (insert, update, invoice preview/PDF, invoice batch line items) calls, so a
+    Guarantee Quantity (Minimum Guarantee Weight) trip is billed identically no matter which page
+    shows it. PER_MT bills off guarantee_qty whenever one is filled in (non-zero) on the trip,
+    regardless of whether it's higher or lower than the actual quantity moved — trips only ever
+    get a guarantee_qty typed in when it actually applies; when the party is only paying actual
+    this time (even below what the guarantee would have covered), the field is simply left blank,
+    which is exactly what makes this fall through to plain quantity * rate below. guarantee_qty
+    defaults to 0 (the schema default, and every trip that existed before this feature) so this is
+    a strict no-op for those. FIXED-rate trips ignore quantity/guarantee entirely, same as always —
+    a flat amount doesn't depend on what was loaded.
+
+    Deliberately NOT applied to owner-side freight (what the vehicle owner is paid) — the owner is
+    paid for what they actually moved; the guarantee premium is the transporter's own margin for
+    having arranged the capacity, not something owed on to the owner."""
+    if rate_type == 'FIXED':
+        return fixed_rate_amount or 0
+    billed_qty = guarantee_qty if guarantee_qty else quantity
+    return (billed_qty or 0) * (rate or 0)
+
 def _insert_trip_from_form(conn, f):
     """Builds and inserts one trips row from a submitted form — same field list, same computed
     billed_amount, same get_or_create_*/vendor resolution used by both add_trip() (website) and
@@ -2481,13 +2538,14 @@ def _insert_trip_from_form(conn, f):
     misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
 
     quantity = n('quantity')
+    guarantee_qty = n('guarantee_qty')
     rate = n('rate')
     rate_type = f.get('rate_type')
     fixed_rate_amount = n('fixed_rate_amount')
     owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
     owner_fixed_amount = n('owner_fixed_amount')
 
-    freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
+    freight = _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty)
 
     # Note: driver_payment ("Driver Bata") is no longer collected from this form — Driver Advance
     # already covers driver payments, so this legacy field is left at its schema default (0) for
@@ -2503,7 +2561,7 @@ def _insert_trip_from_form(conn, f):
     # Fuel Liters/Fuel Price below) — simply left out of the INSERT so they take their schema
     # default for every new trip, same "stop collecting, don't touch history" pattern as
     # driver_payment above.
-    cols = ['date','lr_number','vehicle_id','type','party_id','from_loc','to_loc','quantity','rate',
+    cols = ['date','lr_number','vehicle_id','type','party_id','from_loc','to_loc','quantity','guarantee_qty','rate',
             'driver_name','material','rate_type','billed_amount',
             'detention_charges','gps_cost','loading_charge','unloading_charge',
             'police_charges','sim_tracking','union_charges','weight_charges','other_charges',
@@ -2514,7 +2572,7 @@ def _insert_trip_from_form(conn, f):
             'toll','urea','loading_expense','unloading_expense','weighbridge_charges','other_expense','misc_vendor_id',
             'lr_received','is_empty']
     vals = [f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
-            quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
+            quantity, guarantee_qty, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
             n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
             n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
             n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
@@ -2559,12 +2617,13 @@ def _update_trip_from_form(conn, trip_id, f):
     owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
 
     quantity = n('quantity')
+    guarantee_qty = n('guarantee_qty')
     rate = n('rate')
     rate_type = f.get('rate_type')
     fixed_rate_amount = n('fixed_rate_amount')
     owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
     owner_fixed_amount = n('owner_fixed_amount')
-    freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
+    freight = _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty)
     total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
                       n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
                       n('weight_charges')+n('other_charges'))
@@ -2588,7 +2647,7 @@ def _update_trip_from_form(conn, trip_id, f):
     paid_to_owner_val = max(n('paid_to_owner'), paid_owner_floor)
 
     conn.execute("""UPDATE trips SET
-        date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, rate=?,
+        date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, guarantee_qty=?, rate=?,
         driver_name=?, material=?, rate_type=?, billed_amount=?,
         detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
         police_charges=?, sim_tracking=?, union_charges=?, weight_charges=?, other_charges=?,
@@ -2600,7 +2659,7 @@ def _update_trip_from_form(conn, trip_id, f):
         lr_received=?, is_empty=?, updated_by=?, updated_at=?
         WHERE id=?""",
         (f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
-         quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
+         quantity, guarantee_qty, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
          n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
          n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
          n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
@@ -4368,6 +4427,7 @@ def edit_tyre(m_id):
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name'))
     amount = float(f.get('amount') or 0)
     paid_amount = float(f.get('paid_amount') or 0)
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=?,
                     km_reading=?, invoice_no=?, invoice_date=?, tyre_action=?, tyre_id=?, tyre_brand=?, tyre_position=?,
                     updated_by=?, updated_at=?
@@ -4375,8 +4435,17 @@ def edit_tyre(m_id):
         (f.get('date'), vehicle_id, amount, paid_amount, vendor_id, f.get('notes') or None,
          float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
          f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
-         f.get('tyre_position') or None, session.get('user_id'),
-         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), m_id))
+         f.get('tyre_position') or None, session.get('user_id'), _now, m_id))
+    # This maintenance row may be the installed side of a Tyre Stock purchase (add_tyre()'s own
+    # stock_id branch and install_tyre_stock() both link one via tyre_stock.maintenance_id) — if
+    # so, mirror the vehicle/position change there too, or "Vehicle Tyre Layout" (reads
+    # maintenance.tyre_position) and the Tyre Stock tab (reads tyre_stock.installed_position
+    # directly) can show the same physical tyre in two different places after a routine edit here.
+    # No-op for a tyre that was never bought from stock (add_tyre_from_form's own path) — the
+    # UPDATE below just matches zero rows.
+    conn.execute("""UPDATE tyre_stock SET installed_vehicle_id=?, installed_position=?, updated_by=?, updated_at=?
+                    WHERE maintenance_id=?""",
+                 (vehicle_id, f.get('tyre_position') or None, session.get('user_id'), _now, m_id))
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -6344,6 +6413,41 @@ def delete_overhead(o_id):
     conn.close()
     return redirect(url_for('overheads_list'))
 
+def _mirror_vehicle_compliance_from_form(conn, vehicle_id, vtype, f, now):
+    """Keeps vehicle_compliance (the real source refresh_compliance()/the detail page read — see
+    that function's own comment) from silently drifting behind whatever Fitness/PUC/Permit dates
+    were just typed into the Add/Edit Vehicle form. Same source='manual'/sync_status='Not Synced'
+    convention vehicle_compliance_renew() already uses for its own manual edits — this is the
+    other direction of that same mirroring, closing the one real gap that let vehicle OD14J0117's
+    permit date drift to two different values in two different places (Edit Vehicle overwrote
+    vehicles.permit_valid_upto directly, with nothing telling vehicle_compliance a newer date
+    existed). Own-fleet only — vehicle_compliance doesn't track Hired vehicles at all (see
+    compliance_service.py's own module docstring), so a Hired vehicle's dates stay exactly where
+    they've always lived, on the vehicles row itself.
+
+    Deliberately skips any field left BLANK on this form — unlike the Compliance tab's own
+    single-purpose renewal form (submitting that IS the "renew this" action), Add/Edit Vehicle is
+    a general form where Fitness/PUC/Permit are just 3 fields among many; leaving one blank here
+    usually means "wasn't editing that today," not "clear it," so an existing, possibly richer
+    (document number, sync history) vehicle_compliance record is never blanked out by omission."""
+    if vtype != VEHICLE_TYPE_OWN:
+        return
+    for ctype, field_name in (('fitness', 'fitness_expiry'), ('puc', 'puc_valid_upto'), ('permit', 'permit_valid_upto')):
+        valid_upto = f.get(field_name)
+        if not valid_upto:
+            continue
+        existing_row = conn.execute("SELECT id FROM vehicle_compliance WHERE vehicle_id=? AND compliance_type=?",
+                                     (vehicle_id, ctype)).fetchone()
+        if existing_row:
+            conn.execute("""UPDATE vehicle_compliance SET valid_upto=?, source='manual', sync_status='Not Synced',
+                            updated_at=?, updated_by=? WHERE id=?""",
+                         (valid_upto, now, session.get('user_id'), existing_row['id']))
+        else:
+            conn.execute("""INSERT INTO vehicle_compliance
+                            (vehicle_id, compliance_type, valid_upto, source, sync_status, created_at, updated_at, created_by)
+                            VALUES (?,?,?,'manual','Not Synced',?,?,?)""",
+                         (vehicle_id, ctype, valid_upto, now, now, session.get('user_id')))
+
 def _insert_vehicle_from_form(conn, f):
     """Shared by add_vehicle() (website) and app_add_vehicle() (mobile modal) — the same
     insert-or-update-by-vehicle_no logic, unchanged. Every column add_vehicle() ever wrote here
@@ -6357,24 +6461,37 @@ def _insert_vehicle_from_form(conn, f):
     existing = conn.execute("SELECT id FROM vehicles WHERE vehicle_no=?", (vno,)).fetchone()
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     if existing:
+        vehicle_id = existing[0]
+        # insurance_expiry is deliberately NOT in this column list — insurance_policies (Vehicles
+        # > Insurance tab) is its single source of truth (add_insurance()/edit_insurance() are the
+        # only writers), so this UPDATE must never touch it, even to a blank value, or a re-save
+        # through this shared insert-or-update path (e.g. re-adding an existing vehicle_no on
+        # mobile) would silently wipe out a real policy's expiry that this form doesn't even ask
+        # about anymore. Same reasoning fitness/puc/permit already get via _mirror_vehicle_
+        # compliance_from_form() below — that one still writes forward, this one just never writes
+        # to that column here at all.
         conn.execute("""UPDATE vehicles SET type=?, registration_date=?, capacity_mt=?,
-                        insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
+                        fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
                         status=?, body_type=?, chassis_number=?, engine_number=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
                      (vtype, f.get('registration_date'), f.get('capacity_mt') or None,
-                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                      f.get('fitness_expiry'), f.get('puc_valid_upto'),
                       f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
                       f.get('chassis_number') or None, f.get('engine_number') or None,
-                      f.get('notes'), session.get('user_id'), _now, existing[0]))
+                      f.get('notes'), session.get('user_id'), _now, vehicle_id))
     else:
-        conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
-                        insurance_expiry, fitness_expiry, puc_valid_upto, permit_valid_upto,
+        # No insurance_expiry here either, same reasoning as the UPDATE branch above — a brand
+        # new vehicle has no policy yet; add one via the Insurance tab once it exists.
+        cur = conn.execute("""INSERT INTO vehicles (vehicle_no, type, registration_date, capacity_mt,
+                        fitness_expiry, puc_valid_upto, permit_valid_upto,
                         status, body_type, chassis_number, engine_number, notes, created_by, created_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (vno, vtype, f.get('registration_date'), f.get('capacity_mt') or None,
-                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                      f.get('fitness_expiry'), f.get('puc_valid_upto'),
                       f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
                       f.get('chassis_number') or None, f.get('engine_number') or None,
                       f.get('notes'), session.get('user_id'), _now))
+        vehicle_id = cur.lastrowid
+    _mirror_vehicle_compliance_from_form(conn, vehicle_id, vtype, f, _now)
     conn.commit()
     return True, None
 
@@ -6634,15 +6751,27 @@ def edit_vehicle(vehicle_id):
     conn = get_db()
     if request.method == 'POST':
         f = request.form
+        _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # insurance_expiry deliberately NOT in this column list — see the identical comment on
+        # _insert_vehicle_from_form()'s own UPDATE branch; insurance_policies is its single source
+        # of truth, and the field is now read-only on edit_vehicle.html so nothing real is ever
+        # submitted here anyway, but this is the actual backend gate that matters.
         conn.execute("""UPDATE vehicles SET vehicle_no=?, type=?, registration_date=?, capacity_mt=?,
-                        insurance_expiry=?, fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
+                        fitness_expiry=?, puc_valid_upto=?, permit_valid_upto=?,
                         status=?, body_type=?, chassis_number=?, engine_number=?, notes=?, updated_by=?, updated_at=? WHERE id=?""",
                      (f.get('vehicle_no'), f.get('type'), f.get('registration_date'), f.get('capacity_mt') or None,
-                      f.get('insurance_expiry'), f.get('fitness_expiry'), f.get('puc_valid_upto'),
+                      f.get('fitness_expiry'), f.get('puc_valid_upto'),
                       f.get('permit_valid_upto'), f.get('status') or 'Active', f.get('body_type'),
                       f.get('chassis_number') or None, f.get('engine_number') or None,
                       f.get('notes'), session.get('user_id'),
-                      datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), vehicle_id))
+                      _now, vehicle_id))
+        # Same mirroring _insert_vehicle_from_form() does — this is the OTHER real edit path
+        # (the website's own full-page Edit Vehicle, not the Add-Vehicle-or-update-by-number
+        # modal both surfaces share) that was writing Fitness/PUC/Permit dates straight into
+        # vehicles.* with nothing telling vehicle_compliance a newer date existed. See
+        # _mirror_vehicle_compliance_from_form()'s own comment for the full story (this exact gap
+        # is what let vehicle OD14J0117's permit date drift to two different values).
+        _mirror_vehicle_compliance_from_form(conn, vehicle_id, f.get('type'), f, _now)
         conn.commit()
         conn.close()
         return redirect(url_for('vehicles_list'))
@@ -7449,7 +7578,7 @@ def invoice_center_review():
             # for the real-world confirmation of this — it was the reverse before, incorrectly).
             net = freight - (t['paid_to_owner'] or 0)
         else:
-            freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
+            freight = _trip_freight(t['quantity'], t['rate'], t['rate_type'], t['fixed_rate_amount'], t['guarantee_qty'])
             net = t['billed_amount'] or 0
         line_items.append({'trip': t, 'freight': freight, 'net': net})
 
@@ -7576,7 +7705,7 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
         if invoice_type == 'vehicle_owner':
             freight = t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT')=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         else:
-            freight = t['fixed_rate_amount'] if t['rate_type']=='FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
+            freight = _trip_freight(t['quantity'], t['rate'], t['rate_type'], t['fixed_rate_amount'], t['guarantee_qty'])
         tid = t['id']
         line_items.append({
             'trip': t, 'freight': freight,
@@ -8478,7 +8607,7 @@ def invoice_preview(trip_id):
     ]
     deductions = [(l, v) for l, v in deductions if v]
     deductions += [(item['description'], item['amount']) for item in extra_items if item['item_type']=='deduction']
-    freight = t['fixed_rate_amount'] if t['rate_type'] == 'FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
+    freight = _trip_freight(t['quantity'], t['rate'], t['rate_type'], t['fixed_rate_amount'], t['guarantee_qty'])
     extra_charges_total = sum(item['amount'] or 0 for item in extra_items if item['item_type']=='charge')
     extra_deductions_total = sum(item['amount'] or 0 for item in extra_items if item['item_type']=='deduction')
     invoice_total = (t['billed_amount'] or 0) + extra_charges_total - extra_deductions_total
@@ -8562,7 +8691,7 @@ def invoice_pdf(trip_id):
     due_date = (inv['due_date'] if inv and inv['due_date'] else '')
     inv_notes = (inv['notes'] if inv and inv['notes'] else '')
 
-    freight = t['fixed_rate_amount'] if t['rate_type'] == 'FIXED' else (t['quantity'] or 0) * (t['rate'] or 0)
+    freight = _trip_freight(t['quantity'], t['rate'], t['rate_type'], t['fixed_rate_amount'], t['guarantee_qty'])
     charges_total = sum(t[c] or 0 for c in ['driver_payment','detention_charges','gps_cost','loading_charge',
                         'unloading_charge','police_charges','sim_tracking','union_charges','weight_charges','other_charges'])
     deductions_total = sum(t[c] or 0 for c in ['brokerage','builty_commission','late_fees','material_damage',
@@ -8842,8 +8971,11 @@ def login():
     error = None
     if request.method == 'POST':
         f = request.form
+        username = f.get('username') or ''
+        if not _username_login_format_ok(username):
+            return render_template('login.html', error='Username must be a valid Indian mobile number or email address.')
         conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE username=?", (f.get('username'),)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
         if user and check_password_hash(user['password_hash'], f.get('password') or ''):
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
@@ -9060,6 +9192,59 @@ def _get_all_settings(conn, company_id=1):
         s[key] = row['value'] if row else ''
     return s
 
+def _duplicate_user_contact(conn, phone, email, exclude_user_id=None):
+    """Returns a human-readable reason string if `phone` or `email` is already used by a
+    DIFFERENT user account, else None — checked before every user create/update (add_user,
+    edit_user, update_user_phone, app_signup) so two accounts can never silently end up sharing
+    the same mobile number or email. Each is how a real person is identified/contacted now (see
+    app_signup()'s own comment on why username IS the phone/email for self-signups), so a
+    collision here is a real account mixup waiting to happen, not just a cosmetic duplicate.
+    Blank phone/email never conflicts with anything — most admin-created accounts legitimately
+    have one or both unset. exclude_user_id lets an edit ignore the row's own current value."""
+    phone = (phone or '').strip() or None
+    email = (email or '').strip() or None
+    if phone:
+        q = "SELECT username FROM users WHERE phone=?"
+        params = [phone]
+        if exclude_user_id is not None:
+            q += " AND id != ?"; params.append(exclude_user_id)
+        row = conn.execute(q, params).fetchone()
+        if row:
+            return f'Mobile number "{phone}" is already used by another account ("{row["username"]}").'
+    if email:
+        q = "SELECT username FROM users WHERE email=? COLLATE NOCASE"
+        params = [email]
+        if exclude_user_id is not None:
+            q += " AND id != ?"; params.append(exclude_user_id)
+        row = conn.execute(q, params).fetchone()
+        if row:
+            return f'Email "{email}" is already used by another account ("{row["username"]}").'
+    return None
+
+def _render_settings_users_error(conn, error, reopen_add_user=False, reopen_edit_user_id=None):
+    """Shared re-render for every Settings > Users form's validation-failure path (username
+    taken, duplicate phone/email, ...) — one place building the same users/stats/access_logs
+    context add_user()'s own username-taken branch always needed, so edit_user() and future
+    checks don't each re-duplicate that block. Closes `conn`. reopen_add_user/reopen_edit_user_id
+    tell settings.html which modal (if any) to pop back open with `error` shown inside it, instead
+    of the admin's in-progress edit silently vanishing behind a page reload."""
+    users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
+    role_counts = {}
+    for u in users:
+        r = u['role'] or 'Unassigned'
+        role_counts[r] = role_counts.get(r, 0) + 1
+    access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
+                                  LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
+    s = _get_all_settings(conn, session.get('company_id', 1))
+    invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
+    conn.close()
+    return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
+                            users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
+                            limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
+                            access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
+                            s=s, invoice_example=invoice_example, active='settings', active_settings_tab='users',
+                            user_error=error, reopen_add_user=reopen_add_user, reopen_edit_user_id=reopen_edit_user_id)
+
 @app.route('/settings/users/add', methods=['POST'])
 def add_user():
     from werkzeug.security import generate_password_hash
@@ -9072,34 +9257,37 @@ def add_user():
     # set one here and they can also sign in the normal username+password way.
     pw = f.get('password') or ''
     pw_hash = generate_password_hash(pw) if pw else generate_password_hash(secrets.token_hex(16))
+    # Username IS the mobile number now, same rule Sign Up enforces (app_signup()'s own comment) —
+    # this form no longer asks for Username and Mobile Number as two separately-typed fields that
+    # could disagree; the one required field here becomes both.
+    username = (f.get('username') or '').strip()
+    full_name = (f.get('full_name') or '').strip()
+    email = (f.get('email') or '').strip() or None
+    # Full Name is mandatory — it's what the greeting/avatar on every /app/ page actually shows
+    # (app_dashboard()'s own comment on this: falling back to username, now a phone number, reads
+    # as "Hi 9668348621" instead of a real name), so an account created without one would show a
+    # phone number as its "name" everywhere until someone went back and filled this in by hand.
+    if not full_name:
+        return _render_settings_users_error(conn, 'Full Name is required.', reopen_add_user=True)
+    if not USERNAME_MOBILE_RE.match(username):
+        return _render_settings_users_error(conn, 'Mobile Number must be a valid 10-digit Indian mobile number.', reopen_add_user=True)
+    phone = username
+    dup = _duplicate_user_contact(conn, phone, email)
+    if dup:
+        return _render_settings_users_error(conn, dup, reopen_add_user=True)
     try:
         conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone, full_name, email,
                         access_level, module_access, status, created_at, created_by)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                     (f.get('username'), pw_hash, f.get('role'),
-                      1 if access_level == 'Full Access' else 0, (f.get('phone') or '').strip() or None,
-                      f.get('full_name') or None, f.get('email') or None, access_level, modules,
+                     (username, pw_hash, f.get('role'),
+                      1 if access_level == 'Full Access' else 0, phone,
+                      full_name, email, access_level, modules,
                       f.get('status') or 'Active', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                       session.get('user_id')))
         conn.commit()
         conn.close()
     except sqlite3.IntegrityError:
-        users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
-        role_counts = {}
-        for u in users:
-            r = u['role'] or 'Unassigned'
-            role_counts[r] = role_counts.get(r, 0) + 1
-        access_logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
-                                      LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
-        s = _get_all_settings(conn, session.get('company_id', 1))
-        invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
-        conn.close()
-        return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
-                                users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
-                                limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
-                                access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
-                                s=s, invoice_example=invoice_example, active='settings', active_settings_tab='users',
-                                user_error=f"Username \"{f.get('username')}\" is already taken.", reopen_add_user=True)
+        return _render_settings_users_error(conn, f"Mobile Number \"{username}\" is already taken.", reopen_add_user=True)
     return redirect(url_for('settings_page', tab='users'))
 
 @app.route('/settings/users/<int:user_id>/edit', methods=['POST'])
@@ -9109,11 +9297,22 @@ def edit_user(user_id):
     conn = get_db()
     access_level = f.get('access_level') or 'Read Only'
     modules = ','.join(request.form.getlist('modules')) if access_level == 'Limited Access' else None
+    full_name = (f.get('full_name') or '').strip()
+    phone = (f.get('phone') or '').strip() or None
+    email = (f.get('email') or '').strip() or None
+    # Same reasoning as add_user()'s own check — Full Name is what every /app/ page's greeting and
+    # avatar actually show; leaving it blank on an edit would fall back to showing this account's
+    # phone-number username instead of a real name.
+    if not full_name:
+        return _render_settings_users_error(conn, 'Full Name is required.', reopen_edit_user_id=user_id)
+    dup = _duplicate_user_contact(conn, phone, email, exclude_user_id=user_id)
+    if dup:
+        return _render_settings_users_error(conn, dup, reopen_edit_user_id=user_id)
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE users SET full_name=?, role=?, phone=?, email=?, access_level=?, module_access=?,
                     status=?, is_admin=?, updated_by=?, updated_at=? WHERE id=?""",
-                 (f.get('full_name') or None, f.get('role'), (f.get('phone') or '').strip() or None,
-                  f.get('email') or None, access_level, modules, f.get('status') or 'Active',
+                 (full_name, f.get('role'), phone,
+                  email, access_level, modules, f.get('status') or 'Active',
                   1 if access_level == 'Full Access' else 0, session.get('user_id'), _now, user_id))
     # Leave the password untouched unless a new one was actually typed in.
     new_pw = f.get('password') or ''
@@ -9127,8 +9326,12 @@ def edit_user(user_id):
 @app.route('/settings/users/<int:user_id>/phone', methods=['POST'])
 def update_user_phone(user_id):
     conn = get_db()
+    phone = (request.form.get('phone') or '').strip() or None
+    if _duplicate_user_contact(conn, phone, None, exclude_user_id=user_id):
+        conn.close()
+        return redirect(url_for('settings_page', tab='users'))
     conn.execute("UPDATE users SET phone=?, updated_by=?, updated_at=? WHERE id=?",
-                 ((request.form.get('phone') or '').strip() or None, session.get('user_id'),
+                 (phone, session.get('user_id'),
                   datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
     conn.commit()
     conn.close()
@@ -9841,12 +10044,13 @@ def edit_trip(trip_id):
         misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
 
         quantity = n('quantity')
+        guarantee_qty = n('guarantee_qty')
         rate = n('rate')
         rate_type = f.get('rate_type')
         fixed_rate_amount = n('fixed_rate_amount')
         owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
         owner_fixed_amount = n('owner_fixed_amount')
-        freight = fixed_rate_amount if rate_type == 'FIXED' else quantity * rate
+        freight = _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty)
         # driver_payment ("Driver Bata") no longer has a form field — deliberately left out of both
         # the recompute and the UPDATE below so an existing trip's historical value is never touched.
         total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
@@ -9882,7 +10086,7 @@ def edit_trip(trip_id):
         # (not just zeroed) so an existing trip's historical value is never touched, same pattern as
         # driver_payment above.
         conn.execute("""UPDATE trips SET
-            date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, rate=?,
+            date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, guarantee_qty=?, rate=?,
             driver_name=?, material=?, rate_type=?, billed_amount=?,
             detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
             police_charges=?, sim_tracking=?, union_charges=?, weight_charges=?, other_charges=?,
@@ -9894,7 +10098,7 @@ def edit_trip(trip_id):
             lr_received=?, is_empty=?, updated_by=?, updated_at=?
             WHERE id=?""",
             (f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
-             quantity, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
+             quantity, guarantee_qty, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
              n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
              n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
              n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
@@ -10585,8 +10789,12 @@ def app_login():
     error = None
     if request.method == 'POST':
         f = request.form
+        username = f.get('username') or ''
+        if not _username_login_format_ok(username):
+            return render_template('app/login.html', error='Username must be a valid Indian mobile number or email address.',
+                                    year=datetime.date.today().year)
         conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE username=?", (f.get('username'),)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
         if user and check_password_hash(user['password_hash'], f.get('password') or ''):
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
@@ -10617,7 +10825,13 @@ def app_signup():
     (see add_user() above). There's no approval-queue status anywhere else in this app (the login
     route only ever blocks 'Inactive'), so a self-signup account can sign in immediately, same as
     one an admin creates; an admin can promote access_level/role or deactivate it afterward from
-    Settings > Users like any other account."""
+    Settings > Users like any other account.
+
+    Username IS the mobile number or email (see USERNAME_MOBILE_RE/USERNAME_EMAIL_RE's own
+    comment) — there's no separate "Mobile Number" form field anymore, so whichever one it
+    matches is what gets copied into users.phone or users.email below, purely so OTP login
+    (which looks a user up by the phone column) and anything else keyed on those two columns
+    keep working without asking for the same information twice."""
     from werkzeug.security import generate_password_hash
     import sqlite3
     error = None
@@ -10626,12 +10840,15 @@ def app_signup():
         f = request.form
         full_name = (f.get('full_name') or '').strip()
         username = (f.get('username') or '').strip()
-        phone = (f.get('phone') or '').strip()
         password = f.get('password') or ''
         confirm = f.get('confirm_password') or ''
-        form_values = {'full_name': full_name, 'username': username, 'phone': phone}
+        form_values = {'full_name': full_name, 'username': username}
+        is_mobile = bool(USERNAME_MOBILE_RE.match(username))
+        is_email = bool(USERNAME_EMAIL_RE.match(username))
         if not full_name or not username or not password:
             error = 'Please fill in your name, username and password.'
+        elif not (is_mobile or is_email):
+            error = 'Username must be a 10-digit mobile number or a valid email address.'
         elif len(password) < 6:
             error = 'Password must be at least 6 characters.'
         elif password != confirm:
@@ -10639,16 +10856,26 @@ def app_signup():
         else:
             conn = get_db()
             existing = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+            phone = username if is_mobile else None
+            email = username if is_email else None
+            # Catches the gap the username-uniqueness check above can't: an admin-created account
+            # (Settings > Users) that has this same phone/email in its own separate phone/email
+            # column, under a completely different username — e.g. an admin added "Rahul" with
+            # phone 9876543210 before this self-signup ever happened.
+            dup = None if existing else _duplicate_user_contact(conn, phone, email)
             if existing:
                 conn.close()
                 error = f'Username "{username}" is already taken.'
+            elif dup:
+                conn.close()
+                error = dup
             else:
                 now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 try:
-                    cur = conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone,
+                    cur = conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone, email,
                                     full_name, access_level, status, created_at)
-                                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                                 (username, generate_password_hash(password), 'Staff', 0, phone or None,
+                                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                                 (username, generate_password_hash(password), 'Staff', 0, phone, email,
                                   full_name, 'Read Only', 'Active', now))
                     user_id = cur.lastrowid
                     session.permanent = False
@@ -10759,9 +10986,22 @@ def app_dashboard():
     today_str = today.isoformat()
 
     # ---------- Top bar ----------
-    username = session.get('username') or 'User'
-    user_initials = ''.join([p[0] for p in username.replace('_', ' ').replace('.', ' ').split()[:2]]).upper() or 'U'
-    greeting_name = username.replace('_', ' ').replace('.', ' ').split()[0].title()
+    # Full Name, not username, drives both the greeting and the avatar initials — a self-signed-up
+    # account's username IS its mobile number now (see app_signup()'s own comment), so falling
+    # back to username here the way this used to unconditionally do reads as "Hi 9668348621" and
+    # an avatar showing "9" instead of a real name, even though the account's real name is right
+    # there on file. Same "full_name or username" fallback _app_user_display() (used by every
+    # other /app/ page's own top bar) already applies — this route just never went through that
+    # shared helper for these two values specifically. Falls back to the raw username only for the
+    # rare account with no full_name on file at all (e.g. the plain-name legacy accounts that
+    # predate this rule), same as before.
+    display_name = session.get('username') or 'User'
+    if session.get('user_id'):
+        u_row = conn.execute("SELECT full_name FROM users WHERE id=?", (session['user_id'],)).fetchone()
+        if u_row and u_row['full_name']:
+            display_name = u_row['full_name']
+    user_initials = ''.join([p[0] for p in display_name.replace('_', ' ').replace('.', ' ').split()[:2]]).upper() or 'U'
+    greeting_name = display_name.replace('_', ' ').replace('.', ' ').split()[0].title()
     # company_name deliberately NOT computed here — inject_company_name() (context_processor,
     # near the top of this file) already runs this exact same get_company_name(session.get(
     # 'company_id', 1)) call automatically for every render_template(), so a second explicit call
@@ -11914,14 +12154,40 @@ def app_vehicles():
                 pass
         return {'date': date_str, 'bucket': bucket or 'unknown', 'days_left': days_left}
 
+    # A Cancelled policy needs its own card treatment — the date-only bucket above has no concept
+    # of "Cancelled" at all (a cancelled policy can still carry a real, unexpired date on paper),
+    # so this reads it straight from refresh_compliance()'s own status_override check (see that
+    # function's own comment for the bug this closes: Insurance status showing Valid/Expiring on
+    # every card even after being marked Cancelled on the Insurance tab). Maps onto the same
+    # red/"needs attention" styling .expired already has — a cancelled policy needs a new one just
+    # as urgently as an expired one does.
+    def _insurance_field(comp, raw_date):
+        if comp and comp['insurance']['status'] == 'Cancelled':
+            return {'date': 'Cancelled', 'bucket': 'expired', 'days_left': None}
+        return _exp_field(raw_date)
+
+    # Fitness/PUC/Permit have a real synced source of truth — vehicle_compliance, populated by
+    # eChallan syncs — that this card's raw vehicles.fitness_expiry/puc_valid_upto/permit_valid_upto
+    # columns often never catch up to (those only ever get set if someone manually types a date into
+    # the old Add/Edit Vehicle fields). cs.refresh_compliance() is the exact same "synced date,
+    # falling back to the manual column" merge the vehicle detail page already uses (see
+    # _vehicle_detail_data()'s own comp_row) — reusing it here means this card can never show a
+    # blank "—" for a compliance type that's actually on file, just because it was synced instead of
+    # typed in by hand. Own-fleet only (refresh_compliance()'s own scope — hired vehicles have no
+    # compliance sync at all, so they keep reading the plain columns below, same as before).
+    comp_by_vehicle_id = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
+
     all_vehicles = []
     for r in raw_rows:
+        comp = comp_by_vehicle_id.get(r['id'])
         all_vehicles.append({
             'id': r['id'], 'vehicle_no': r['vehicle_no'],
             'body_type_short': _short_body_type(r['body_type']) or (r['type'] or '').title(),
             'status': r['status'] or 'Active', 'age_years': _vehicle_age_years(r['registration_date']),
-            'insurance': _exp_field(r['insurance_expiry']), 'fitness': _exp_field(r['fitness_expiry']),
-            'puc': _exp_field(r['puc_valid_upto']), 'permit': _exp_field(r['permit_valid_upto']),
+            'insurance': _insurance_field(comp, r['insurance_expiry']),
+            'fitness': _exp_field(comp['fitness']['expiry'] if comp else r['fitness_expiry']),
+            'puc': _exp_field(comp['puc']['expiry'] if comp else r['puc_valid_upto']),
+            'permit': _exp_field(comp['permit']['expiry'] if comp else r['permit_valid_upto']),
             'challan_count': r['challan_count'] or 0, 'challan_amount': r['challan_amount'] or 0,
         })
     # Age-bucket filter — same post-query logic as vehicles_list() (age is computed, never a real

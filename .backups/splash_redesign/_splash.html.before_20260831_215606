@@ -1,0 +1,74 @@
+<!-- Cold-open splash screen — shown once per browser/app session (sessionStorage-gated), never
+     on ordinary in-app navigation between pages. Included identically at the very top of <body>
+     in both base_app.html (covers /app/dashboard, the manifest's start_url, and every other
+     page that extends it) and login.html (the pre-auth landing page, the other realistic
+     "just opened the app" entry point) so it fires no matter which one is hit first.
+
+     Back to the original design — full-bleed solid brand orange, a plain badge + name + tagline,
+     gone in ~1.1s (see app.css's own .app-splash comment for why the later, more elaborate
+     ring+skyline+road+truck redesign was reverted). One thing kept from that later version,
+     deliberately not reverted: {{ app_name }} (APP_NAME in app.py), not {{ company_name }} — a
+     splash is the PRODUCT introducing itself, the same way a phone's own lock screen never shows
+     a random app's own branding, and that's a real fix independent of the visual redesign. -->
+<div class="app-splash" id="appSplash">
+  <div class="app-splash-badge">
+    <!-- Same wheel-and-speed-lines mark as the login screen's own center badge (templates/app/
+         login.html's .lg-badge, the app icon) — one consistent brand mark across the splash and
+         login. White fill, not the icon's own orange gradient, since it sits on this splash's
+         solid orange background. -->
+    <svg viewBox="0 0 24 24" fill="none">
+      <g stroke="#fff" stroke-width="1.6" stroke-linecap="round">
+        <line x1="6" y1="6.5" x2="9.5" y2="6.5"/>
+        <line x1="3" y1="9.5" x2="9.5" y2="9.5"/>
+        <line x1="1" y1="14" x2="9.5" y2="14"/>
+        <line x1="4.5" y1="17.3" x2="9.5" y2="17.3"/>
+      </g>
+      <!-- Just the wheel itself (rim + spokes + hub) spins in place, continuously, for as long as
+           the splash is up — the motion lines stay put (they're already how "speed" reads, a
+           second thing rotating alongside them would read as noise, not motion). transform-origin
+           is the wheel's own center (16,12) in this SVG's viewBox coordinate space. -->
+      <g class="app-splash-wheel-spin">
+        <path fill-rule="evenodd" clip-rule="evenodd" fill="#fff" d="M16 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 1.7a5.3 5.3 0 1 1 0 10.6 5.3 5.3 0 0 1 0-10.6Z"/>
+        <g stroke="#fff" stroke-width="1.4" stroke-linecap="round">
+          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(0 16 12)"/>
+          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(60 16 12)"/>
+          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(120 16 12)"/>
+          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(180 16 12)"/>
+          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(240 16 12)"/>
+          <line x1="16" y1="8.2" x2="16" y2="6.4" transform="rotate(300 16 12)"/>
+        </g>
+        <circle cx="16" cy="12" r="1.6" fill="#fff"/>
+      </g>
+    </svg>
+  </div>
+  <div class="app-splash-name">{{ app_name }}</div>
+  <div class="app-splash-tag">Manage Every Mile. Every Move.</div>
+</div>
+<script>
+(function () {
+  var splash = document.getElementById('appSplash');
+  // from_logout=1 (set by the /logout route's own redirect) means this exact page load is the
+  // landing right after a deliberate sign-out — skip the splash regardless of sessionStorage,
+  // same as the "already shown" case below. sessionStorage's own gate isn't enough on its own
+  // here: some mobile WebViews don't reliably keep sessionStorage across a standalone-PWA
+  // navigation like a logout redirect, so without this a logout could replay the full cold-open
+  // splash, which reads as a jarring re-launch instead of a quick, quiet sign-out.
+  var skipForLogout = /(?:^|[?&])from_logout=1(?:&|$)/.test(location.search);
+  if (skipForLogout) {
+    // Scrub the query param right away so the address bar just reads /app/login, not
+    // /app/login?from_logout=1 — purely cosmetic, doesn't affect anything the page itself reads.
+    history.replaceState(null, '', location.pathname);
+  }
+  if (skipForLogout || sessionStorage.getItem('fleetapp_splash_shown')) {
+    // Hide instantly, synchronously, before the browser gets a chance to paint this element, so
+    // this navigation never flashes it.
+    splash.style.display = 'none';
+    return;
+  }
+  sessionStorage.setItem('fleetapp_splash_shown', '1');
+  setTimeout(function () {
+    splash.classList.add('app-splash-out');
+    setTimeout(function () { splash.style.display = 'none'; }, 350);
+  }, 1100);
+})();
+</script>

@@ -179,7 +179,7 @@
         </th>
         <th>Actions</th>
       </tr>
-      {% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
+      {% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Cancelled': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
       {% set MONTHS = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] %}
       {% macro fmt_date(d) %}{% if d %}{% set p = d.split('-') %}{{ p[2] }} {{ MONTHS[p[1]|int] }} {{ p[0] }}{% else %}—{% endif %}{% endmacro %}
       {% for r in rows %}
@@ -352,7 +352,7 @@ function dismissChallanAlert() {
 })();
 </script>
 
-{% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
+{% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Cancelled': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
 {% for r in rows %}
 <div class="modal-overlay" id="editModal{{ loop.index }}">
   <div class="modal-box veh-modal-box">

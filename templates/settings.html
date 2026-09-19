@@ -558,10 +558,14 @@
       <label class="ur-section-lbl">1. User Information</label>
       <div class="row2" style="margin-top:8px;">
         <div><label>Full Name *</label><input type="text" name="full_name" required></div>
-        <div><label>Username *</label><input type="text" name="username" required></div>
+        <!-- Username IS the mobile number now — same rule Sign Up already enforces (see
+             app_signup()'s own comment in app.py) — so this is one field, not a separately-typed
+             Username duplicating whatever gets typed into Mobile Number right next to it.
+             add_user() validates the format and uses this same value for both username and
+             phone. -->
+        <div><label>Mobile Number *</label><input type="text" name="username" required placeholder="10-digit mobile number"></div>
       </div>
       <div class="row2">
-        <div><label>Mobile Number *</label><input type="text" name="phone" required placeholder="+91XXXXXXXXXX"></div>
         <div><label>Email (Optional)</label><input type="email" name="email"></div>
       </div>
       <div class="row2">
@@ -600,18 +604,21 @@
 <!-- EDIT USER (per row) -->
 {% for u in users %}
 {% set user_modules = (u['module_access'] or '').split(',') %}
-<div class="modal-overlay" id="editUserModal{{ u['id'] }}">
+<div class="modal-overlay {{ 'open' if reopen_edit_user_id == u['id'] }}" id="editUserModal{{ u['id'] }}">
   <div class="modal-box ur-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('editUserModal{{ u['id'] }}').classList.remove('open')">&#10005;</button>
     <h3>&#9998; Edit User — {{ u['username'] }}</h3>
+    {% if user_error and reopen_edit_user_id == u['id'] %}
+    <div style="background:rgba(179,57,47,0.08);border:1px solid rgba(179,57,47,0.25);color:var(--red);padding:10px 14px;border-radius:4px;font-size:0.85rem;margin-bottom:14px;">{{ user_error }}</div>
+    {% endif %}
     <form method="POST" action="/settings/users/{{ u['id'] }}/edit">
       <label class="ur-section-lbl">User Information</label>
       <div class="row2" style="margin-top:8px;">
-        <div><label>Full Name</label><input type="text" name="full_name" value="{{ u['full_name'] or '' }}"></div>
+        <div><label>Full Name *</label><input type="text" name="full_name" value="{{ u['full_name'] or '' }}" required></div>
         <div><label>Username</label><input type="text" value="{{ u['username'] }}" disabled style="background:var(--paper);"></div>
       </div>
       <div class="row2">
-        <div><label>Mobile Number</label><input type="text" name="phone" value="{{ u['phone'] or '' }}" placeholder="+91XXXXXXXXXX"></div>
+        <div><label>Mobile Number *</label><input type="text" name="phone" value="{{ u['phone'] or '' }}" placeholder="+91XXXXXXXXXX" required></div>
         <div><label>Email</label><input type="email" name="email" value="{{ u['email'] or '' }}"></div>
       </div>
       <div><label>Reset Password (Optional)</label><input type="password" name="password" placeholder="Leave blank to keep the current password" autocomplete="new-password"></div>
