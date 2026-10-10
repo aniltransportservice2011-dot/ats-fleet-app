@@ -1,0 +1,12 @@
+test_ledger_integrity: SUMMARY: 20 passed, 0 failed
+test_floor_protection: SUMMARY: 5 passed, 0 failed
+test_maintenance_ledger: SUMMARY: 10 passed, 0 failed
+test_financial_integrity: SUMMARY: 21 passed, 0 failed
+test_employee_ledger: SUMMARY: 8 passed, 0 failed
+test_invoice_charge_exclusions: SUMMARY: 16 passed, 0 failed
+test_no_bfcache: SUMMARY: 4 passed, 0 failed
+test_vehicles_sort_persist: SUMMARY: 5 passed, 0 failed
+test_route_finder: 131 passed, 0 failed
+test_business_performance: SUMMARY: 6 passed, 0 failed
+test_phase2_ledger_trips_maintenance: SUMMARY: 13 passed, 0 failed
+test_phase3_analysis_combinations: SUMMARY: 8 passed, 0 failed

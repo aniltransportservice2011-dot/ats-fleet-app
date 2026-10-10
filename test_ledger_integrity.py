@@ -30,6 +30,7 @@ Every entry a party or vendor ledger can ever show comes from exactly one of the
 Each group below is a real scenario type; sub-cases are the specific combinations/edge cases
 within it. A [FAIL] names exactly which combination broke and by how much.
 """
+from test_support import ensure_test_user
 import os
 import shutil
 import sys
@@ -78,7 +79,7 @@ def main():
     appmod.app.config['TESTING'] = True
     client = appmod.app.test_client()
     with client.session_transaction() as sess:
-        sess['user_id'] = 1
+        sess['user_id'] = ensure_test_user(TEST_DB)
 
     def raw():
         conn = sqlite3.connect(TEST_DB)

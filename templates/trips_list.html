@@ -42,6 +42,11 @@
 {% endblock %}
 {% block content %}
 <div class="wrap">
+  {% if end_error %}
+  <div role="alert" style="background:#fdecea;color:var(--red);border:1px solid rgba(211,47,47,0.3);border-radius:4px;padding:10px 14px;margin-bottom:14px;font-size:0.85rem;font-weight:600;">
+    &#9888;&#65039; Trip not ended — {{ end_error }}
+  </div>
+  {% endif %}
   {% if delete_error == 'has_payment' %}
   <div style="background:#fdecea;color:var(--red);border:1px solid rgba(211,47,47,0.3);border-radius:4px;padding:10px 14px;margin-bottom:14px;font-size:0.85rem;font-weight:600;">
     &#9888;&#65039; Can't delete trip {{ delete_error_lr }} — it has a ₹{{ '{:,.0f}'.format(delete_error_amount|float) }} payment already recorded against it.
@@ -187,7 +192,7 @@
             <option value="No" {% if t['lr_received'] and t['lr_received']!='Yes' %}selected{% endif %}>No</option>
           </select>
         </div>
-        <div class="fld-sm"><label>Freight Amount (₹)</label><input type="number" step="0.01" name="freight_amount" value="{{ t['billed_amount'] or 0 }}"></div>
+        <div class="fld-sm"><label>Freight Amount (₹)</label><input type="number" step="0.01" name="freight_amount" value="{{ (t['billed_amount'] or 0) + (t['shortage_amount'] or 0) }}"></div>
       </div>
 
       <div class="shortage-box">

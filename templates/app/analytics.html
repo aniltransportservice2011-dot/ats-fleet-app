@@ -11,17 +11,32 @@
      future scope for a native chart) — everything else Route Rates shows here is real. -->
 {% set period_endpoint = 'app_analytics' %}
 {% set period_extra = {'tab': tab, 'from': f_from, 'to': f_to, 'vehicle_type': f_vehicle_type} %}
+{% if tab == 'finder' %}
+<!-- Route Finder is its own screen on the phone: a compact header instead of the Business Overview
+     period bar + tab strip (neither applies to a live route search), with a way back. -->
+<div class="rf-pagehead">
+  <a class="rf-back" href="{{ url_for('app_analytics') }}?tab=best" aria-label="Back to Route Analytics">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+  </a>
+  <div><h1>Route Finder</h1><p>Find the best route with key stops</p></div>
+</div>
+{% else %}
 {% include "app/_business_overview_header.html" %}
 
 <div style="display:flex; align-items:flex-end; gap:8px; margin:14px 0 12px;">
   <div class="ra-tabstrip" style="flex:1; min-width:0; margin:0; border-bottom:1px solid var(--a-line);">
     <a class="ra-tab {{ 'active' if tab=='best' }}" href="{{ url_for('app_analytics') }}?tab=best&{{ base_qs }}">Best Routes</a>
     <a class="ra-tab {{ 'active' if tab=='rates' }}" href="{{ url_for('app_analytics') }}?tab=rates&{{ base_qs }}">Route Rates</a>
+    <a class="ra-tab {{ 'active' if tab=='finder' }}" href="{{ url_for('app_analytics') }}?tab=finder&{{ base_qs }}">Route Finder</a>
   </div>
+  {% if tab != 'finder' %}
   <button type="button" class="a-filter-btn {{ 'active' if f_from or f_to or f_vehicle_type }}" style="flex-shrink:0; margin-bottom:10px;" onclick="openRaFilterSheet()" aria-label="Filters">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
   </button>
+  {% endif %}
 </div>
+
+{% endif %}
 
 {% if tab == 'best' %}
 <div class="ra-kpi-grid">
@@ -50,7 +65,7 @@
     <h2>Top 5 Best Performing Routes</h2>
   </div>
   {% for r in top5_by_margin %}
-  <div class="ra-route-row">
+  <a class="ra-route-row" style="text-decoration:none;color:inherit;" href="{{ url_for('app_analytics') }}?tab=finder&rf_from={{ rf_texts.get(r.clean_from, r.clean_from)|urlencode }}&rf_to={{ rf_texts.get(r.clean_to, r.clean_to)|urlencode }}" title="Show this route on the map">
     <div class="ra-rank {{ 'r1' if loop.index==1 else ('r2' if loop.index==2 else ('r3' if loop.index==3 else 'rn')) }}">{{ loop.index }}</div>
     <div class="ra-route-body">
       <div class="ra-route-name">{{ r.clean_from }} → {{ r.clean_to }}</div>
@@ -59,7 +74,7 @@
     <div class="ra-route-right">
       <div class="ra-route-margin">{{ r.margin }}%</div>
     </div>
-  </div>
+  </a>
   {% else %}
   <div class="ra-empty">No route data for this period.</div>
   {% endfor %}
@@ -251,8 +266,14 @@
   </form>
 </div>
 
+
+{% if tab == 'finder' %}
+{% include "partials/_route_finder.html" %}
+{% endif %}
+
 {% endblock %}
 {% block extra_scripts %}
+{% if tab == 'finder' %}{% include "partials/_route_finder_scripts.html" %}{% endif %}
 <script>
 function openRaFilterSheet() {
   lockPageScroll();

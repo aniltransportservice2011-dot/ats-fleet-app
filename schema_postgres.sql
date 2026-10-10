@@ -324,20 +324,21 @@ CREATE INDEX idx_payments_company ON payments(company_id);
 
 -- trip_id -> ALTER TABLE constraint near the end (trips is defined later in this file).
 -- trip_id/maintenance_id: exactly one is set, never both, never neither (CHECK below) -- a
--- payment allocation is always against either a trip (party billing / owner-hire) or a
--- maintenance entry (Tyre/Battery/Insurance/etc), never ambiguous about which.
+-- payment allocation is always against exactly one of: a trip (party billing / owner-hire), a
+-- maintenance entry (Tyre/Battery/Insurance/etc) or an expense bill (overheads), never ambiguous.
 CREATE TABLE payment_allocations (
     id             SERIAL PRIMARY KEY,
     payment_id     INTEGER NOT NULL REFERENCES payments(id),
     trip_id        INTEGER,
     maintenance_id INTEGER,
+    overhead_id    INTEGER,
     amount         REAL NOT NULL,
     created_by INTEGER,
     created_at TEXT,
     updated_by INTEGER,
     updated_at TEXT,
     company_id INTEGER NOT NULL REFERENCES companies(id),
-    CHECK ((trip_id IS NOT NULL AND maintenance_id IS NULL) OR (trip_id IS NULL AND maintenance_id IS NOT NULL))
+    CHECK ((trip_id IS NOT NULL)::int + (maintenance_id IS NOT NULL)::int + (overhead_id IS NOT NULL)::int = 1)
 );
 CREATE INDEX idx_payment_allocations_company ON payment_allocations(company_id);
 
@@ -884,6 +885,7 @@ ALTER TABLE tyre_stock ADD CONSTRAINT fk_tyre_stock_maintenance FOREIGN KEY (mai
 ALTER TABLE tyre_stock ADD CONSTRAINT fk_tyre_stock_vendor FOREIGN KEY (vendor_id) REFERENCES vendors(id);
 ALTER TABLE payment_allocations ADD CONSTRAINT fk_payment_allocations_trip FOREIGN KEY (trip_id) REFERENCES trips(id);
 ALTER TABLE payment_allocations ADD CONSTRAINT fk_payment_allocations_maintenance FOREIGN KEY (maintenance_id) REFERENCES maintenance(id);
+ALTER TABLE payment_allocations ADD CONSTRAINT fk_payment_allocations_overhead FOREIGN KEY (overhead_id) REFERENCES overheads(id);
 
 -- created_by / updated_by -> users(id), deferred for the same reason: users is defined near
 -- the end of this file (after most tenant tables), and users' own created_by/updated_by are

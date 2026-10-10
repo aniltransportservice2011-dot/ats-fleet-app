@@ -6,9 +6,13 @@ import os
 import json
 import re
 import requests
+import hashlib
+import threading
+import time as _time
 from werkzeug.utils import secure_filename
 import compliance_service as cs
 from providers.echallan_client import fetch_rc, parse_challan_date, parse_rc_date
+from providers import osm_routes
 import db
 
 app = Flask(__name__)
@@ -94,7 +98,68 @@ def get_db():
     # happens in this one function — every one of the ~475 call sites elsewhere that just do
     # conn.execute(sql, params) stay exactly as they are. Zero behavior change today: db.Connection
     # is a pure passthrough on the sqlite backend.
-    return db.Connection(conn, backend='sqlite')
+    wrapper = db.Connection(conn, backend='sqlite')
+    # Remember every connection a request opens so teardown below can close any a route left open
+    # when it raised — otherwise a 500 leaves the SQLite file locked for the next request.
+    from flask import has_request_context
+    if has_request_context():
+        g.setdefault('_open_db_conns', []).append(wrapper)
+    return wrapper
+
+@app.errorhandler(ValueError)
+@app.errorhandler(OverflowError)
+@app.errorhandler(sqlite3.IntegrityError)
+def _bad_form_input(e):
+    """A number, date or required field typed into a form that could not be understood (e.g. 'abc'
+    in an amount, a date like 2026-13-45, a missing required value) used to surface as a bare
+    500 'Internal Server Error'. It is the user's input that is wrong, not the server — answer 400
+    with a readable message instead (JSON for the mobile app's fetch() calls, a small page for
+    normal form posts). Nothing was saved: the request's database work is rolled back when the
+    connection is closed at teardown. The original error is still logged for diagnosis."""
+    app.logger.warning('Rejected bad form input on %s %s: %r', request.method, request.path, e)
+    message = "That couldn't be saved — a number, date or required field in the form isn't valid. Nothing was changed; please check the values and try again."
+    wants_html = 'text/html' in (request.headers.get('Accept') or '')
+    if request.path.startswith('/app/') and not wants_html:
+        return jsonify({'ok': False, 'error': message}), 400
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>Could not save</title><body style="font-family:system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1rem;line-height:1.5">'
+            f'<h2>Could not save</h2><p>{message}</p><p><a href="javascript:history.back()">&larr; Go back</a></p></body>', 400)
+
+_NUMERIC_FIELD_HINT = re.compile(r'(amount|rate|qty|quantity|price|charge|cost|paid|advance|balance|salary|liters|_km|km_|tds|gst|premium|capacity|'
+                                 r'voltage|health|temp|commission|fees|damage|brokerage|expense|toll|urea|parking|puncture|fine|labour|weight|'
+                                 r'shortage|deduction|received|fixed|owner_rate|limit|odometer|mileage|value)', re.I)
+
+@app.before_request
+def _reject_non_finite_numbers():
+    """'nan', 'inf', '1e999' or an absurdly large number typed into any amount-like field would be
+    stored as NULL / infinity / nonsense and then poison every total built from that column. Catch
+    them once, here, for every form in the app — the individual routes' own float() calls only
+    guard against text, not against these. Only fields whose NAME looks numeric are checked, so a
+    vendor called 'Inf' or a remark that says 'nan' is never affected."""
+    if request.method != 'POST' or not request.form:
+        return None
+    for key in request.form:
+        if not _NUMERIC_FIELD_HINT.search(key):
+            continue
+        for raw in request.form.getlist(key):
+            t = (raw or '').strip().replace(',', '')
+            if not t or t[0] not in '+-.0123456789iInN':
+                continue
+            try:
+                v = float(t)
+            except ValueError:
+                continue
+            if v != v or v in (float('inf'), float('-inf')) or abs(v) > 1e12:
+                return _bad_form_input(ValueError(f'non-finite or absurd number in field {key!r}'))
+    return None
+
+@app.teardown_request
+def _close_leaked_db_conns(exc):
+    for c in g.pop('_open_db_conns', []):
+        try:
+            c.close()
+        except Exception:
+            pass
 
 @app.context_processor
 def inject_vehicle_type_labels():
@@ -203,8 +268,12 @@ def _period_financials(conn, date_from, date_to, vehicle_no=''):
     else:
         trips = conn.execute("SELECT * FROM trips WHERE date>=? AND date<=?", (date_from, date_to)).fetchall()
     revenue = sum(t['billed_amount'] or 0 for t in trips)
-    fuel = sum(t['fuel_amount'] or 0 for t in trips)
-    driver_adv = sum(t['driver_adv_amount'] or 0 for t in trips)
+    # Fuel / driver advance recorded on a HIRED trip is already part of the owner's contracted
+    # freight (owner_cost below) — counting it again would charge the same money twice. So, exactly
+    # like the Dashboard, they only count for own-vehicle trips. A hired trip's profit is therefore
+    # always: billed amount - owner freight (- its other trip charges).
+    fuel = sum(t['fuel_amount'] or 0 for t in trips if t['type'] != VEHICLE_TYPE_HIRED)
+    driver_adv = sum(t['driver_adv_amount'] or 0 for t in trips if t['type'] != VEHICLE_TYPE_HIRED)
     parking = sum(t['parking'] or 0 for t in trips)
     misc = sum((t['agent_commission'] or 0) + (t['builty_expense'] or 0) + (t['conductor_expense'] or 0) +
                (t['fine'] or 0) + (t['labour_charges'] or 0) + (t['puncture'] or 0) + (t['urea'] or 0) +
@@ -656,8 +725,11 @@ def _create_account_from_form(conn, f):
     address = f.get('address') or None
     category = f.get('category') or None
     gstin = f.get('gstin') or None
-    credit_limit = float(f.get('credit_limit') or 0) or None
-    opening_balance = float(f.get('opening_balance') or 0)
+    credit_limit, err1 = _parse_money(f.get('credit_limit'), 'Credit limit')
+    opening_balance, err2 = _parse_money(f.get('opening_balance'), 'Opening balance', allow_negative=True)
+    if err1 or err2:
+        return False          # a typed-nonsense amount must not crash the page or be stored
+    credit_limit = credit_limit or None
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         if role == 'Vendor':
@@ -700,12 +772,10 @@ def _dashboard_financials_data(conn, date_from, date_to, vehicle_f=''):
     """Revenue/expense/profit core for the Dashboard — extracted unchanged from dashboard()
     (website) so app_dashboard() (mobile) can show the exact same Business Overview numbers and
     the exact same Top Expenses breakdown, never a second hand-written copy that could quietly
-    drift. This is deliberately a DIFFERENT formula from _period_financials() (used by Business
-    Performance/Route Analytics/native Business Overview elsewhere) — dashboard() has always
-    computed its own total_expenses this way (excluding Hired-trip fuel/driver-advance entirely
-    rather than folding them into an owner_cost bucket), and changing that now would be a
-    behavior change to an already-shipped, already-relied-on page, not a bug fix. Returns a dict;
-    does not close conn."""
+    drift. It follows the same rule as _period_financials() (Business Performance/Route Analytics):
+    own-vehicle trips cost their fuel / driver advance / other charges, hired-vehicle trips cost
+    what the owner is paid (billed - owner cost = the trip's profit; the fuel/advance on a hired
+    trip sit inside that owner freight and are not counted again). Returns a dict; does not close conn."""
     trip_query = "SELECT t.*, v.vehicle_no FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.date>=? AND t.date<=?"
     params = [date_from, date_to]
     if vehicle_f:
@@ -722,6 +792,12 @@ def _dashboard_financials_data(conn, date_from, date_to, vehicle_f=''):
     # Fuel/driver-advance recorded on a Hired trip is the owner's own money (covered by the
     # contracted freight, same rule as the vendor ledger and invoice center) — not a real company
     # expense, so it's excluded here. Everything else in this sum applies regardless of vehicle type.
+    # What the owner of a hired vehicle is paid IS the cost of a hired trip (same figure as the
+    # 'Hired Vehicle Profit' tile = billed - owner cost, and as Business Performance), so it belongs
+    # in total expenses — otherwise Total Profit would count a hired trip's whole bill as profit.
+    hired_owner_cost = sum((t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED'
+                           else (t['owner_rate'] or 0) * (t['quantity'] or 0)
+                           for t in trips if t['type'] == VEHICLE_TYPE_HIRED)
     fuel_total = sum(t['fuel_amount'] or 0 for t in trips if t['type'] == VEHICLE_TYPE_OWN)
     driveradv_total = sum(t['driver_adv_amount'] or 0 for t in trips if t['type'] == VEHICLE_TYPE_OWN)
     other_charges_total = sum((t['agent_commission'] or 0)+(t['builty_expense'] or 0)+(t['conductor_expense'] or 0)+
@@ -742,7 +818,7 @@ def _dashboard_financials_data(conn, date_from, date_to, vehicle_f=''):
     maint_toll_total = conn.execute(maint_toll_query, maint_total_params).fetchone()[0]
     salaries_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM salaries WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
     overheads_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM overheads WHERE date>=? AND date<=?", (date_from, date_to)).fetchone()[0]
-    total_expenses = total_charges_paid + maint_total + overheads_total + salaries_total
+    total_expenses = total_charges_paid + maint_total + overheads_total + salaries_total + hired_owner_cost
     total_profit = total_revenue - total_expenses
 
     all_vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE type IS NOT NULL").fetchall()
@@ -762,7 +838,7 @@ def _dashboard_financials_data(conn, date_from, date_to, vehicle_f=''):
     exp_items = [('Fuel', fuel_total, '#2a78d6'), ('Driver Advance', driveradv_total, '#eb6834'),
                  ('Toll', toll_total, '#eda100'), ('Maintenance', maint_other_total, '#e34948'),
                  ('Salaries', salaries_total, '#1a9c5b'), ('Expenses', overheads_total, '#7a5ad6'),
-                 ('Other', other_exp_total, '#4a3aa7')]
+                 ('Hired Vehicle Owners', hired_owner_cost, '#0e8a8a'), ('Other', other_exp_total, '#4a3aa7')]
     exp_max = max([v for _, v, _ in exp_items], default=1) or 1
     exp_breakdown = [{'label': l, 'value': v, 'color': c, 'pct': round((v/exp_max)*100, 1)} for l, v, c in exp_items]
     # Same items, sorted purely by rupee value descending — for a "Top N expense heads" widget
@@ -776,7 +852,7 @@ def _dashboard_financials_data(conn, date_from, date_to, vehicle_f=''):
         'total_charges_paid': total_charges_paid, 'adj_revenue': adj_revenue,
         'maint_total': maint_total, 'maint_toll_total': maint_toll_total, 'toll_total': toll_total,
         'maint_other_total': maint_other_total, 'salaries_total': salaries_total, 'overheads_total': overheads_total,
-        'other_exp_total': other_exp_total, 'total_expenses': total_expenses, 'total_profit': total_profit,
+        'other_exp_total': other_exp_total, 'hired_owner_cost': hired_owner_cost, 'total_expenses': total_expenses, 'total_profit': total_profit,
         'running_count': running_count, 'idle_count': idle_count, 'own_vehicle_count': own_vehicle_count,
         'own_idle_count': own_idle_count, 'exp_breakdown': exp_breakdown, 'exp_breakdown_ranked': exp_breakdown_ranked,
     }
@@ -786,6 +862,7 @@ def dashboard():
     conn = get_db()
     date_from = request.args.get('date_from', '2026-04-01')
     date_to = request.args.get('date_to', '2027-03-31')
+    date_from, date_to = _normalized_date_range(date_from, date_to)      # a From date after the To date is swapped, like every other page
     vehicle_f = request.args.get('vehicle', '')
 
     dfin = _dashboard_financials_data(conn, date_from, date_to, vehicle_f)
@@ -2153,9 +2230,10 @@ def _overhead_list_data(conn):
     # both get real suggestions, not an empty datalist, the moment this lands.
     vendors = conn.execute("SELECT name AS vendor FROM vendors WHERE COALESCE(status,'Active')='Active' ORDER BY name").fetchall()
 
-    all_rows = conn.execute("""SELECT date, amount, category, vendor, payment_mode, COALESCE(status,'Paid') as status,
-                               COALESCE(is_recurring,0) as is_recurring, recurring_frequency, receipt_number, due_date
-                               FROM overheads""").fetchall()
+    all_rows = conn.execute("""SELECT o.date, o.amount, o.category, o.vendor, o.payment_mode, COALESCE(o.status,'Paid') as status,
+                               COALESCE(o.is_recurring,0) as is_recurring, o.recurring_frequency, o.receipt_number, o.due_date,
+                               COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.overhead_id=o.id),0) AS allocated
+                               FROM overheads o""").fetchall()
 
     total_amount = sum(r['amount'] or 0 for r in all_rows)
     total_count = len(all_rows)
@@ -2163,8 +2241,9 @@ def _overhead_list_data(conn):
     this_month_key = today.strftime('%Y-%m')
     this_month_amount = sum(r['amount'] or 0 for r in all_rows if (r['date'] or '')[:7] == this_month_key)
 
-    pending_rows_all = [r for r in all_rows if r['status'] == 'Pending']
-    pending_amount = sum(r['amount'] or 0 for r in pending_rows_all)
+    pending_rows_all = [r for r in all_rows if r['status'] == 'Pending' and (r['amount'] or 0) - r['allocated'] > 0.004]
+    # still unpaid = bill amount minus what ledger payments already covered (part-paid bills count their remainder)
+    pending_amount = sum((r['amount'] or 0) - r['allocated'] for r in pending_rows_all)
     pending_count = len(pending_rows_all)
 
     recurring_rows = [r for r in all_rows if r['is_recurring']]
@@ -2207,10 +2286,11 @@ def overheads_list():
     today = datetime.date.today()
     this_month_key = today.strftime('%Y-%m')
     raw_rows = rows  # kept unfiltered-by-search since the website itself never sends ?search=
-    all_rows = conn.execute("""SELECT date, amount, category, vendor, payment_mode, COALESCE(status,'Paid') as status,
-                               COALESCE(is_recurring,0) as is_recurring, recurring_frequency, receipt_number, due_date
-                               FROM overheads""").fetchall()
-    pending_rows_all = [r for r in all_rows if r['status'] == 'Pending']
+    all_rows = conn.execute("""SELECT o.date, o.amount, o.category, o.vendor, o.payment_mode, COALESCE(o.status,'Paid') as status,
+                               COALESCE(o.is_recurring,0) as is_recurring, o.recurring_frequency, o.receipt_number, o.due_date,
+                               COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.overhead_id=o.id),0) AS allocated
+                               FROM overheads o""").fetchall()
+    pending_rows_all = [r for r in all_rows if r['status'] == 'Pending' and (r['amount'] or 0) - r['allocated'] > 0.004]
 
     # Upcoming Payments — pending bills, soonest due date first.
     upcoming = []
@@ -2221,7 +2301,7 @@ def overheads_list():
         except (ValueError, TypeError):
             continue
         icon, bg, color = _expense_category_visual(r['category'])
-        upcoming.append({'category': r['category'], 'vendor': r['vendor'], 'amount': r['amount'],
+        upcoming.append({'category': r['category'], 'vendor': r['vendor'], 'amount': (r['amount'] or 0) - r['allocated'],
                           'due_date': due, 'days_left': (dd - today).days,
                           'icon': icon, 'icon_bg': bg, 'icon_color': color})
     upcoming.sort(key=lambda u: u['days_left'])
@@ -2473,7 +2553,7 @@ def trips_list():
                             f_vehicle=vehicle_f, f_party=party_f, f_date_from=date_from, f_date_to=date_to,
                             f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f,
                             f_sort=sort_f, f_dir=dir_f,
-                            delete_error=request.args.get('error', ''), delete_error_amount=request.args.get('amount', ''),
+                            end_error=request.args.get('end_error', ''), delete_error=request.args.get('error', ''), delete_error_amount=request.args.get('amount', ''),
                             delete_error_lr=request.args.get('lr', ''), delete_error_toll_count=request.args.get('toll_count', ''),
                             active='trips')
 
@@ -2517,6 +2597,45 @@ def _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty=0)
         return fixed_rate_amount or 0
     billed_qty = guarantee_qty if guarantee_qty else quantity
     return (billed_qty or 0) * (rate or 0)
+
+_TRIP_MONEY_FIELDS = (
+    'quantity', 'guarantee_qty', 'rate', 'fixed_rate_amount', 'detention_charges', 'gps_cost', 'loading_charge',
+    'unloading_charge', 'police_charges', 'sim_tracking', 'union_charges', 'weight_charges', 'other_charges',
+    'brokerage', 'builty_commission', 'late_fees', 'material_damage', 'shortage_amount', 'shortage_qty', 'tds',
+    'other_deductions', 'fuel_amount', 'fuel_price', 'fuel_liters', 'driver_adv_amount', 'party_advance',
+    'payment_received', 'owner_rate', 'owner_fixed_amount', 'paid_to_owner', 'agent_commission', 'builty_expense',
+    'fine', 'labour_charges', 'parking', 'puncture', 'toll', 'urea', 'loading_expense', 'unloading_expense',
+    'weighbridge_charges', 'other_expense')
+_TRIP_FIELD_LABELS = {'tds': 'TDS', 'gps_cost': 'GPS cost', 'sim_tracking': 'SIM tracking', 'fuel_liters': 'Fuel liters'}
+
+def _trip_form_error(f, check_advance=True):
+    """Server-side check of a submitted trip form: every amount/quantity must be a real,
+    non-negative number (so 'abc' / '-10' / NaN can't crash the page or save a nonsense bill), the
+    computed bill can't be negative, and (on a NEW trip) the party advance can't exceed the bill — an
+    existing trip may legitimately end up with more received than billed after a rate/shortage
+    correction, so edits don't enforce that. Returns an error
+    message, or None when the form is fine."""
+    for key in _TRIP_MONEY_FIELDS:
+        _v, err = _parse_money(f.get(key), _TRIP_FIELD_LABELS.get(key, key.replace('_', ' ').capitalize()))
+        if err:
+            return err
+
+    def n(key):             # fields were validated above; use the exact typed value (quantity 7.333 must not be rounded to 7.33)
+        try:
+            return float((f.get(key) or '0').replace(',', '').strip() or 0)
+        except ValueError:
+            return 0.0
+    freight = _trip_freight(n('quantity'), n('rate'), f.get('rate_type'), n('fixed_rate_amount'), n('guarantee_qty'))
+    charges = sum(n(k) for k in ('detention_charges', 'gps_cost', 'loading_charge', 'unloading_charge', 'police_charges',
+                                  'sim_tracking', 'union_charges', 'weight_charges', 'other_charges'))
+    deductions = sum(n(k) for k in ('brokerage', 'builty_commission', 'late_fees', 'material_damage', 'shortage_amount',
+                                     'tds', 'other_deductions'))
+    billed = freight + charges - deductions
+    if billed < -0.005:
+        return 'Deductions are more than the freight — the trip bill would be negative.'
+    if check_advance and n('party_advance') > billed + 0.011:      # a paisa of slack: a bill of 4526.505 rounds its 100% advance up to 4526.51
+        return 'Party advance cannot be more than the trip bill.'
+    return None
 
 def _insert_trip_from_form(conn, f):
     """Builds and inserts one trips row from a submitted form — same field list, same computed
@@ -2680,15 +2799,16 @@ def add_trip():
     if request.method == 'POST':
         f = request.form
         dup = _duplicate_lr_trip(conn, f.get('lr_number'))
-        if dup:
+        form_error = None if dup else _trip_form_error(f)
+        if dup or form_error:
             conn.close()
             vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
             conn2 = get_db()
             employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
             vehicle_type_map = _vehicle_type_map(conn2)
             conn2.close()
-            error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
-                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+            error = form_error or (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
+                                    f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
             return render_template('trip_form.html', mode='add', t=f, custom_items=[],
                                     vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                                     employees=employees, vehicle_type_map=vehicle_type_map,
@@ -2759,10 +2879,7 @@ def _save_invoice_batch_items(conn, batch_id, form):
         desc = (desc or '').strip()
         if not desc:
             continue
-        try:
-            amount = float(amounts[i]) if i < len(amounts) and amounts[i] else 0
-        except ValueError:
-            amount = 0
+        amount = (_parse_money(amounts[i], 'Amount')[0] or 0) if i < len(amounts) and amounts[i] else 0
         item_type = types[i] if i < len(types) and types[i] in ('charge', 'deduction') else 'charge'
         vendor_name = (vendor_names[i].strip() if i < len(vendor_names) and vendor_names[i] else '')
         vendor_id = get_or_create_vendor(conn, vendor_name) if vendor_name else None
@@ -3177,23 +3294,28 @@ def _insert_urea_from_form(conn, f):
     date = f.get('date') or datetime.date.today().isoformat()
     location = f.get('location') or None
     notes = f.get('notes') or None
-    qty = float(f.get('quantity_l') or 0)
-    if qty <= 0:
-        return False, ('validation', 'Quantity (L) is required.')
+    qty, qty_err = _parse_money(f.get('quantity_l'), 'Quantity (L)', required=True, allow_zero=False)
+    if qty_err:
+        return False, ('validation', qty_err)
     # Quantity and Price are independent, deliberately not multiplied together — the form's
     # "Price" field (still the unit_price column/param for schema compatibility) is the real
     # total amount paid, typed directly off the invoice. Multiplying by Quantity used to mean a
     # slightly-off or missing Quantity silently corrupted the real total (even zeroed it out if
     # Quantity was left blank), when the actual paid amount was never in question.
-    unit_price = float(f.get('unit_price') or 0)
+    unit_price, price_err = _parse_money(f.get('unit_price'), 'Price')
+    if price_err:
+        return False, ('validation', price_err)
     total_value = round(unit_price, 2)
+    paid_in, paid_err = _parse_money(f.get('paid_amount'), 'Paid amount')
+    if paid_err:
+        return False, ('validation', paid_err)
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     if mode == 'stock_in':
         supplier_id = get_or_create_vendor(conn, f.get('supplier_name'))
         cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
                                 vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                              (date, None, 'Urea', total_value, float(f.get('paid_amount') or 0),
+                              (date, None, 'Urea', total_value, paid_in,
                                supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, supplier_id,
                         invoice_no, quantity_l, unit_price, total_value, location, notes, maintenance_id, created_at,
@@ -3213,8 +3335,11 @@ def _insert_urea_from_form(conn, f):
                 current_stock += t['quantity_l']
             elif t['source'] == 'stock':
                 current_stock -= t['quantity_l']
+        # Litres are kept to 0.01 L; compare at that precision so float noise (333.33 - 111.11 =
+        # 222.21999999999997) can't refuse taking out exactly what is left, or let 0.01 L extra through.
+        current_stock = round(current_stock, 2)
         if qty > current_stock:
-            return False, ('insufficient_stock', round(current_stock, 2))
+            return False, ('insufficient_stock', current_stock)
         vehicle_id = _get_or_create_vehicle_no_type(conn, f.get('vehicle_no'))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, batch_no, vehicle_id,
                         quantity_l, unit_price, total_value, location, odometer_km, notes, created_at, created_by)
@@ -3226,7 +3351,7 @@ def _insert_urea_from_form(conn, f):
         supplier_id = get_or_create_vendor(conn, f.get('supplier_name')) if f.get('supplier_name') else None
         cur_m = conn.execute("""INSERT INTO maintenance (date, vehicle_id, category, amount, paid_amount,
                                 vendor_id, notes, invoice_no, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                              (date, vehicle_id, 'Urea', total_value, float(f.get('paid_amount') or 0),
+                              (date, vehicle_id, 'Urea', total_value, paid_in,
                                supplier_id, notes, f.get('invoice_no'), session.get('user_id'), now))
         conn.execute("""INSERT INTO urea_transactions (date, txn_type, source, supplier_id, invoice_no,
                         vehicle_id, quantity_l, unit_price, total_value, location, odometer_km, notes,
@@ -4339,6 +4464,7 @@ def _update_service_from_form(conn, m_id, f):
          f.get('next_service_date') or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
          f.get('status') or 'Completed', checklist or None, session.get('user_id'),
          datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), m_id))
+    _enforce_maintenance_paid_floor(conn, m_id)
     _save_service_items(conn, m_id, f)
 
 @app.route('/maintenance/service/edit/<int:m_id>', methods=['POST'])
@@ -4436,6 +4562,7 @@ def edit_tyre(m_id):
          float(f.get('km_reading') or 0) or None, f.get('invoice_no') or None, f.get('invoice_date') or None,
          f.get('tyre_action') or None, f.get('tyre_id') or None, f.get('tyre_brand') or None,
          f.get('tyre_position') or None, session.get('user_id'), _now, m_id))
+    _enforce_maintenance_paid_floor(conn, m_id)
     # This maintenance row may be the installed side of a Tyre Stock purchase (add_tyre()'s own
     # stock_id branch and install_tyre_stock() both link one via tyre_stock.maintenance_id) — if
     # so, mirror the vehicle/position change there too, or "Vehicle Tyre Layout" (reads
@@ -4540,7 +4667,7 @@ def delete_tyre_stock(stock_id):
         # Child row before the parent maintenance row it references — see delete_battery()'s own
         # comment on why the reverse order is a real (if currently dormant) bug.
         conn.execute("DELETE FROM tyre_stock WHERE id=?", (stock_id,))
-        conn.execute("DELETE FROM maintenance WHERE id=?", (stock['maintenance_id'],))
+        _delete_maintenance_row(conn, stock['maintenance_id'])
         conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='tyres'))
@@ -4708,7 +4835,7 @@ def delete_battery(battery_id):
         conn.execute("DELETE FROM battery_checks WHERE battery_id=?", (battery_id,))
         conn.execute("DELETE FROM batteries WHERE id=?", (battery_id,))
         if battery['maintenance_id']:
-            conn.execute("DELETE FROM maintenance WHERE id=?", (battery['maintenance_id'],))
+            _delete_maintenance_row(conn, battery['maintenance_id'])
         conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='battery'))
@@ -4769,7 +4896,7 @@ def delete_urea(txn_id):
     # comment on why the reverse order is a real (if currently dormant) bug.
     conn.execute("DELETE FROM urea_transactions WHERE id=?", (txn_id,))
     if txn and txn['maintenance_id']:
-        conn.execute("DELETE FROM maintenance WHERE id=?", (txn['maintenance_id'],))
+        _delete_maintenance_row(conn, txn['maintenance_id'])
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='urea'))
@@ -4832,7 +4959,7 @@ def delete_toll(entry_id):
     # comment on why the reverse order is a real (if currently dormant) bug.
     conn.execute("DELETE FROM toll_entries WHERE id=?", (entry_id,))
     if e and e['maintenance_id']:
-        conn.execute("DELETE FROM maintenance WHERE id=?", (e['maintenance_id'],))
+        _delete_maintenance_row(conn, e['maintenance_id'])
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='toll'))
@@ -4893,7 +5020,7 @@ def delete_compliance_expense(entry_id):
     # comment on why the reverse order is a real (if currently dormant) bug.
     conn.execute("DELETE FROM compliance_expenses WHERE id=?", (entry_id,))
     if e and e['maintenance_id']:
-        conn.execute("DELETE FROM maintenance WHERE id=?", (e['maintenance_id'],))
+        _delete_maintenance_row(conn, e['maintenance_id'])
     conn.commit()
     conn.close()
     return redirect(url_for('maintenance_list', tab='compliance-expenses'))
@@ -5358,6 +5485,7 @@ def edit_insurance(policy_id):
         conn.execute("UPDATE maintenance SET date=?, vehicle_id=?, amount=?, paid_amount=?, vendor_id=?, notes=?, updated_by=?, updated_at=? WHERE id=?",
             (f.get('start_date'), vehicle_id, premium, paid_amount, insurer_id, f.get('notes') or None,
              session.get('user_id'), _now, policy['maintenance_id']))
+        _enforce_maintenance_paid_floor(conn, policy['maintenance_id'])
     if vehicle_id and f.get('expiry_date'):
         conn.execute("UPDATE vehicles SET insurance_expiry=?, updated_by=?, updated_at=? WHERE id=?",
                      (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
@@ -5374,7 +5502,7 @@ def delete_insurance(policy_id):
         # comment on why the reverse order is a real (if currently dormant) bug.
         conn.execute("DELETE FROM insurance_policies WHERE id=?", (policy_id,))
         if policy['maintenance_id']:
-            conn.execute("DELETE FROM maintenance WHERE id=?", (policy['maintenance_id'],))
+            _delete_maintenance_row(conn, policy['maintenance_id'])
         conn.commit()
     conn.close()
     return redirect(url_for('vehicles_list', tab='insurance'))
@@ -5451,15 +5579,8 @@ def _ledger_page_context(all_entries):
 def party_ledger(party_id):
     conn = get_db()
     party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
-    pending_trips_raw = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount,
-                                    (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) as pending
-                                    FROM trips WHERE party_id=?
-                                    AND (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) > 0.01
-                                    ORDER BY date""", (party_id,)).fetchall()
+    pending_trips = _party_pending_trips(conn, party_id)
     conn.close()
-    pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
-                       'to_loc': t['to_loc'], 'billed_amount': t['billed_amount'] or 0, 'pending': t['pending'],
-                       'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
     total_pending_trips = sum(t['pending'] for t in pending_trips)
     all_entries = _get_party_ledger_entries(party_id)
     final_balance = all_entries[0]['balance'] if all_entries else 0
@@ -5481,16 +5602,10 @@ def vendor_ledger(vendor_id):
     if vendor and vendor['linked_party_id']:
         conn.close()
         return redirect(url_for('party_ledger', party_id=vendor['linked_party_id']))
-    pending_trips_raw = conn.execute("""SELECT t.id, t.date, t.lr_number, t.from_loc, t.to_loc, v.vehicle_no,
-                                    (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END) as billed_amount,
-                                    (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) as pending
-                                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.owner_vendor_id=?
-                                    AND (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) > 0.01
-                                    ORDER BY t.date""", (vendor_id,)).fetchall()
+    pending_trips = _vendor_pending_trips(conn, vendor_id)
+    pending_maint_total = (sum(m['pending'] for m in _vendor_pending_maintenance(conn, vendor_id))
+                           + sum(o['pending'] for o in _vendor_pending_overheads(conn, vendor_id)))
     conn.close()
-    pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
-                       'to_loc': t['to_loc'], 'vehicle_no': t['vehicle_no'], 'billed_amount': t['billed_amount'] or 0,
-                       'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
     total_pending_trips = sum(t['pending'] for t in pending_trips)
     all_entries = _get_vendor_ledger_entries(vendor_id)
     final_balance = all_entries[0]['balance'] if all_entries else 0
@@ -5503,6 +5618,7 @@ def vendor_ledger(vendor_id):
                             opening_balance=vendor['opening_balance'], opening_balance_date=vendor['opening_balance_date'],
                             gstin=vendor['gstin'], category=vendor['category'], status=vendor['status'] or 'Active',
                             pending_trips=pending_trips, total_pending_trips=total_pending_trips,
+                            pending_maint_total=pending_maint_total,
                             return_to=request.full_path, active='accounts', **ctx)
 
 def _export_ledger_entries(name, entries):
@@ -5687,6 +5803,27 @@ def _get_vendor_ledger_entries(vendor_id, conn=None):
     for row in conn.execute("""SELECT pa.trip_id, SUM(pa.amount) as amt FROM payment_allocations pa
                                JOIN trips t ON pa.trip_id=t.id WHERE t.owner_vendor_id=? GROUP BY pa.trip_id""", (vendor_id,)).fetchall():
         trip_alloc[row['trip_id']] = row['amt'] or 0
+    # Same idea for maintenance bills: the part of m.paid_amount that came from a ledger payment is
+    # shown on that payment's own "Applied to" row, so the bill row only carries what was paid up front.
+    maint_alloc = {}
+    for row in conn.execute("""SELECT pa.maintenance_id, SUM(pa.amount) as amt FROM payment_allocations pa
+                               JOIN maintenance m ON pa.maintenance_id=m.id WHERE m.vendor_id=? GROUP BY pa.maintenance_id""", (vendor_id,)).fetchall():
+        maint_alloc[row['maintenance_id']] = row['amt'] or 0
+    # Expense bills (Expenses page) naming this vendor: a Pending bill is something we owe. Shown as a
+    # credit; the part settled by ledger payments is shown on that payment's own "Applied to" row, and
+    # a bill marked Paid by hand is shown as fully debited — so the bill, once settled either way,
+    # nets to zero and never leaves the vendor looking overpaid.
+    overhead_alloc = {}
+    for row in conn.execute("""SELECT pa.overhead_id, SUM(pa.amount) as amt FROM payment_allocations pa
+                               JOIN overheads o ON pa.overhead_id=o.id
+                               WHERE LOWER(TRIM(COALESCE(o.vendor,'')))=LOWER(TRIM(COALESCE((SELECT name FROM vendors WHERE id=?),'')))
+                               GROUP BY pa.overhead_id""", (vendor_id,)).fetchall():
+        overhead_alloc[row['overhead_id']] = row['amt'] or 0
+    vendor_overheads = conn.execute("""SELECT o.id, o.date, o.category, o.description, o.amount, COALESCE(o.status,'Paid') AS status, o.receipt_number
+                                       FROM overheads o
+                                       WHERE LOWER(TRIM(COALESCE(o.vendor,'')))=LOWER(TRIM(COALESCE((SELECT name FROM vendors WHERE id=?),'')))
+                                         AND TRIM(COALESCE(o.vendor,'')) != ''
+                                       ORDER BY o.date""", (vendor_id,)).fetchall()
     # Real invoice number for a trip, if one's been generated — same lookup the party side uses.
     # Fuel/Driver Advance/owner-hire rows below identify themselves by vehicle number first (the
     # more useful identifier day-to-day); when a trip has no vehicle logged, the invoice number is
@@ -5715,9 +5852,18 @@ def _get_vendor_ledger_entries(vendor_id, conn=None):
         if specific_ref:
             detail += f" ({specific_ref})"
         entries.append({'date': m['date'], 'detail': detail,
-                         'debit': m['paid_amount'] or 0, 'credit': m['amount'] or 0,
+                         'debit': max((m['paid_amount'] or 0) - maint_alloc.get(m['id'], 0), 0), 'credit': m['amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': m['invoice_no'] or '', 'vehicle_type': '',
                          'link': url_for('maintenance_view', m_id=m['id'])})
+    for o in vendor_overheads:
+        alloc_o = overhead_alloc.get(o['id'], 0)
+        if o['status'] != 'Pending' and alloc_o <= 0.004:
+            continue            # paid directly when it was entered — nothing owed, nothing to show here
+        label = o['category'] or 'Expense'
+        entries.append({'date': o['date'], 'detail': f"Expense: {label}" + (f" — {o['description']}" if o['description'] else ''),
+                         'debit': max((o['amount'] or 0) - alloc_o, 0) if o['status'] == 'Paid' else 0, 'credit': o['amount'] or 0,
+                         'kind': 'Expense Adj.', 'ref': o['receipt_number'] or '', 'vehicle_type': '',
+                         'link': url_for('overheads_list')})
     for f in fuel:
         detail = f"Trip: {_lr_label(f['lr_number'], f['id'])} — Fuel"
         entries.append({'date': f['date'], 'detail': detail, 'debit': 0, 'credit': f['fuel_amount'] or 0,
@@ -5794,6 +5940,19 @@ def _get_vendor_ledger_entries(vendor_id, conn=None):
             entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to {a['lr_number'] or 'trip'}",
                              'debit': a['amount'], 'credit': 0, 'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': '',
                              'link': url_for('payment_view', payment_id=p['id'])})
+        m_allocs = conn.execute("""SELECT m.category, m.service_type, m.tyre_action, pa.amount FROM payment_allocations pa
+                                   JOIN maintenance m ON pa.maintenance_id=m.id WHERE pa.payment_id=? ORDER BY pa.id""", (p['id'],)).fetchall()
+        for a in m_allocs:
+            entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to Maintenance: {_maintenance_label(a)}",
+                             'debit': a['amount'], 'credit': 0, 'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': '',
+                             'link': url_for('payment_view', payment_id=p['id'])})
+        o_allocs = conn.execute("""SELECT o.category, pa.amount FROM payment_allocations pa
+                                   JOIN overheads o ON pa.overhead_id=o.id WHERE pa.payment_id=? ORDER BY pa.id""", (p['id'],)).fetchall()
+        for a in o_allocs:
+            entries.append({'date': p['date'], 'detail': f"{base_detail} — Applied to Expense: {a['category'] or 'bill'}",
+                             'debit': a['amount'], 'credit': 0, 'kind': 'Payment Out', 'ref': p['reference_id'] or '', 'vehicle_type': '',
+                             'link': url_for('payment_view', payment_id=p['id'])})
+        allocs = list(allocs) + list(m_allocs) + list(o_allocs)
         leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
         if leftover > 0.004 or not allocs:
             entries.append({'date': p['date'], 'detail': base_detail, 'debit': max(leftover, 0), 'credit': 0,
@@ -5919,41 +6078,221 @@ def export_vendor_ledger_pdf(vendor_id):
     entries = _ledger_export_entries(entries)
     return _export_ledger_pdf(vendor['name'], entries, role='Vendor', contact=vendor['contact'] or '', email=vendor['email'] or '', address=vendor['address'] or '')
 
-def _insert_party_payment_from_form(conn, party_id, f):
-    """Builds and inserts one payment-received-from-party row, allocating it across the selected
-    pending trips (oldest first, matching submission order) — same fields/logic used by both
-    add_party_payment() (website) and app_add_party_payment() (mobile). Returns
-    (ok, error_message_or_None) — does not commit or close conn."""
-    if not f.get('date'):
-        return False, 'Payment Date is required.'
-    if not f.get('amount'):
-        return False, 'Payment Amount is required.'
-    if not (f.get('mode') or '').strip():
-        return False, 'Payment Mode is required.'
+# ---- shared money parsing + pending-item helpers (used by the payment engine and the popups) ----
+_MAX_MONEY = 10_000_000_000      # ₹1,000 crore — anything above is a typo, not a payment
 
-    total_amount = float(f.get('amount') or 0)
+def _parse_money(raw, label, required=False, allow_zero=True, allow_negative=False):
+    """One strict place that turns a typed amount into a number. Returns (value, error_or_None).
+    Rejects text, NaN/inf, 1e400, negatives (unless allowed), zero (unless allowed) and absurdly
+    large values, and rounds to paise — so a bad amount becomes a readable message, never a 500
+    and never a silently-recorded nonsense payment. Commas and a leading ₹ are tolerated."""
+    s = ('' if raw is None else str(raw)).strip().replace(',', '').replace('₹', '').strip()
+    if s == '':
+        return (None, f'{label} is required.') if required else (0.0, None)
+    try:
+        v = float(s)
+    except ValueError:
+        return None, f'{label} must be a number.'
+    if v != v or v in (float('inf'), float('-inf')):
+        return None, f'{label} must be a real number.'
+    v = round(v, 2)
+    if v < 0 and not allow_negative:
+        return None, f'{label} cannot be negative.'
+    if v == 0 and not allow_zero:
+        return None, f'{label} must be greater than zero.'
+    if abs(v) > _MAX_MONEY:
+        return None, f'{label} is too large.'
+    return v, None
+
+def _invoice_numbers_error(f):
+    """Loading/Other charges, TDS % and GST % typed on an invoice form: real non-negative numbers
+    (rates 0-100) or an error message — never a 500 and never a nonsense invoice."""
+    for key, label, cap in (('loading_charges', 'Loading charges', None), ('other_charges', 'Other charges', None),
+                            ('tds_rate', 'TDS %', 100), ('gst_rate', 'GST %', 100)):
+        v, err = _parse_money(f.get(key), label)
+        if err:
+            return err
+        if cap is not None and v > cap:
+            return f'{label} cannot be more than {cap}.'
+    return None
+
+_OWNER_OWED_SQL = "(CASE WHEN t.owner_rate_type='FIXED' THEN COALESCE(t.owner_fixed_amount,0) ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END)"
+# Fuel / driver advance the COMPANY paid on an owner-hire trip is deducted from what the owner is owed
+# (see _get_vendor_ledger_entries) — the payment popup has to net it too or it over-states the dues.
+_OWNER_COMPANY_PAID_SQL = ("(CASE WHEN COALESCE(t.fuel_vendor_id,0) != t.owner_vendor_id THEN COALESCE(t.fuel_amount,0) ELSE 0 END"
+                           " + CASE WHEN COALESCE(t.driver_adv_vendor_id,0) != t.owner_vendor_id THEN COALESCE(t.driver_adv_amount,0) ELSE 0 END)")
+
+def _party_pending_trips(conn, party_id):
+    """Trips this party still owes on, oldest first — the rows the Add Payment popup offers."""
+    rows = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount,
+                           (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) as pending
+                           FROM trips WHERE party_id=?
+                           AND (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) > 0.004
+                           ORDER BY date, id""", (party_id,)).fetchall()
+    return [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
+             'to_loc': t['to_loc'], 'vehicle_no': None, 'billed_amount': t['billed_amount'] or 0,
+             'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in rows]
+
+def _vendor_pending_trips(conn, vendor_id):
+    """Owner-hire trips this vendor is still owed on (net of what we already paid the owner and of
+    fuel/driver advance the company paid on his behalf), oldest first."""
+    rows = conn.execute(f"""SELECT t.id, t.date, t.lr_number, t.from_loc, t.to_loc, v.vehicle_no,
+                            {_OWNER_OWED_SQL} as billed_amount,
+                            ({_OWNER_OWED_SQL} - COALESCE(t.paid_to_owner,0) - {_OWNER_COMPANY_PAID_SQL}) as pending
+                            FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.owner_vendor_id=?
+                            AND ({_OWNER_OWED_SQL} - COALESCE(t.paid_to_owner,0) - {_OWNER_COMPANY_PAID_SQL}) > 0.004
+                            ORDER BY t.date, t.id""", (vendor_id,)).fetchall()
+    return [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
+             'to_loc': t['to_loc'], 'vehicle_no': t['vehicle_no'], 'billed_amount': t['billed_amount'] or 0,
+             'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in rows]
+
+def _vendor_pending_maintenance(conn, vendor_id):
+    """Maintenance / tyre / battery / service / insurance bills from this vendor that aren't fully paid."""
+    return conn.execute("""SELECT m.id, m.date, m.category, m.service_type, m.tyre_action, m.amount, m.paid_amount,
+                           (COALESCE(m.amount,0) - COALESCE(m.paid_amount,0)) as pending
+                           FROM maintenance m WHERE m.vendor_id=? AND (COALESCE(m.amount,0) - COALESCE(m.paid_amount,0)) > 0.004
+                           ORDER BY m.date, m.id""", (vendor_id,)).fetchall()
+
+def _overhead_alloc_sum(conn, o_id):
+    return conn.execute("SELECT COALESCE(SUM(amount),0) FROM payment_allocations WHERE overhead_id=?", (o_id,)).fetchone()[0]
+
+def _vendor_pending_overheads(conn, vendor_id):
+    """Expense bills (Expenses page) entered as Pending against this vendor's name that still have
+    something left to pay, oldest first. 'Left to pay' = amount minus whatever ledger payments were
+    already applied to the bill."""
+    v = conn.execute("SELECT name FROM vendors WHERE id=?", (vendor_id,)).fetchone()
+    if not v:
+        return []
+    rows = conn.execute("""SELECT o.id, o.date, o.category, o.description, o.amount,
+                           COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.overhead_id=o.id),0) AS allocated
+                           FROM overheads o
+                           WHERE COALESCE(o.status,'Paid')='Pending' AND LOWER(TRIM(COALESCE(o.vendor,'')))=LOWER(TRIM(?))
+                           ORDER BY o.date, o.id""", (v['name'],)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['pending'] = (d['amount'] or 0) - d['allocated']
+        if d['pending'] > 0.004:
+            out.append(d)
+    return out
+
+def _settle_overhead_status(conn, o_id):
+    """A bill whose ledger payments now cover its whole amount is Paid — keeps the Expenses page's
+    Pending Bills in step with the vendor's ledger."""
+    row = conn.execute("SELECT amount, COALESCE(status,'Paid') AS status FROM overheads WHERE id=?", (o_id,)).fetchone()
+    if row and row['status'] == 'Pending' and (row['amount'] or 0) > 0 and _overhead_alloc_sum(conn, o_id) >= row['amount'] - 0.004:
+        conn.execute("UPDATE overheads SET status='Paid', due_date=NULL WHERE id=?", (o_id,))
+
+def _delete_overhead_row(conn, o_id):
+    """Delete an expense without orphaning a ledger payment applied to it: the payment stays
+    recorded and simply becomes (part) unallocated again."""
+    for pa in conn.execute("SELECT payment_id, amount FROM payment_allocations WHERE overhead_id=?", (o_id,)).fetchall():
+        conn.execute("UPDATE payments SET allocated_amount = MAX(COALESCE(allocated_amount,0) - ?, 0) WHERE id=?",
+                     (pa['amount'], pa['payment_id']))
+    conn.execute("DELETE FROM payment_allocations WHERE overhead_id=?", (o_id,))
+    conn.execute("DELETE FROM overheads WHERE id=?", (o_id,))
+
+def _company_paid_on_hired_trip(t, kind):
+    """Fuel ('fuel') or driver advance ('driver_adv') the COMPANY paid on a hired-vehicle trip, i.e.
+    money to take off what the owner is owed. Counts when the recorded vendor is blank (the company
+    paid directly) or a third party (the company owes that vendor); it does NOT count when the
+    vendor is the owner himself — that is his own money, inside his freight. This is the single rule
+    the vendor ledger, the Add Payment popup and the owner (Freight Bill) invoice all follow."""
+    col = 'fuel' if kind == 'fuel' else 'driver_adv'
+    amount = t[f'{col}_amount'] or 0
+    if not amount:
+        return 0
+    return amount if t[f'{col}_vendor_id'] != t['owner_vendor_id'] else 0
+
+def _maintenance_label(row):
+    return row['service_type'] or row['tyre_action'] or row['category'] or 'Maintenance'
+
+def _delete_maintenance_row(conn, m_id):
+    """Delete a maintenance row without orphaning a ledger payment that was applied to it: the
+    payment stays recorded, it just becomes (part) unallocated again."""
+    for pa in conn.execute("SELECT payment_id, amount FROM payment_allocations WHERE maintenance_id=?", (m_id,)).fetchall():
+        conn.execute("UPDATE payments SET allocated_amount = MAX(COALESCE(allocated_amount,0) - ?, 0) WHERE id=?",
+                     (pa['amount'], pa['payment_id']))
+    conn.execute("DELETE FROM payment_allocations WHERE maintenance_id=?", (m_id,))
+    conn.execute("DELETE FROM maintenance WHERE id=?", (m_id,))
+
+def _enforce_maintenance_paid_floor(conn, m_id):
+    """After any edit of a maintenance row: paid_amount may be raised freely, but never left below
+    what ledger payments have already been applied to it (otherwise the same money is counted
+    twice — once as the payment, once as the bill being 'paid')."""
+    conn.execute("""UPDATE maintenance SET paid_amount = MAX(COALESCE(paid_amount,0),
+                       COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE maintenance_id=maintenance.id),0))
+                    WHERE id=?""", (m_id,))
+
+def _payment_is_duplicate(conn, column, entity_id, ptype, f, amount):
+    """The same payment (same party/vendor, date, amount, mode and reference) submitted again within
+    seconds is a double-click / double-tap, not a second payment."""
+    cutoff = (datetime.datetime.now() - datetime.timedelta(seconds=10)).strftime('%Y-%m-%d %H:%M:%S')
+    row = conn.execute(f"""SELECT id FROM payments WHERE {column}=? AND payment_type=? AND date=? AND amount=?
+                           AND COALESCE(mode,'')=? AND COALESCE(reference_id,'')=? AND created_at>=? LIMIT 1""",
+                       (entity_id, ptype, f.get('date'), amount, f.get('mode') or '', f.get('reference_id') or '', cutoff)).fetchone()
+    return row is not None
+
+def _validated_payment_basics(f):
+    """Date / amount / mode checks shared by both payment directions. Returns (amount, error)."""
+    d = (f.get('date') or '').strip()
+    if not d:
+        return None, 'Payment Date is required.'
+    try:
+        datetime.date.fromisoformat(d)
+    except ValueError:
+        return None, 'Payment Date is not a valid date.'
+    amount, err = _parse_money(f.get('amount'), 'Payment Amount', required=True, allow_zero=False)
+    if err:
+        return None, err
+    if not (f.get('mode') or '').strip():
+        return None, 'Payment Mode is required.'
+    return amount, None
+
+def _ticked_ids(f):
+    out, seen = [], set()
+    for raw in f.getlist('trip_ids'):
+        try:
+            tid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if tid not in seen:
+            seen.add(tid)
+            out.append(tid)
+    return out
+
+def _insert_party_payment_from_form(conn, party_id, f):
+    """Records one payment received from a party and applies it to the party's trips. Trips the
+    user ticked are paid first (in ticked order, capped at each trip's pending); whatever is left
+    — or the whole amount if nothing was ticked — then flows to the party's other pending trips,
+    oldest first, so the Trips screen and the Ledger can't drift apart. Only a genuine surplus
+    (more than every trip owes — e.g. an advance or an opening-balance settlement) stays
+    unallocated. Returns (ok, error_message_or_None) — does not commit or close conn."""
+    if not conn.execute("SELECT 1 FROM parties WHERE id=?", (party_id,)).fetchone():
+        return False, 'Party not found.'
+    total_amount, err = _validated_payment_basics(f)
+    if err:
+        return False, err
+    if _payment_is_duplicate(conn, 'party_id', party_id, 'received', f, total_amount):
+        return False, 'This exact payment was just recorded — not adding it twice.'
+
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, party_id, mode, reference_id, remarks, created_by, created_at)
                           VALUES (?,?,?,?,?,?,?,?,?)""",
                         (f.get('date'), 'received', total_amount, party_id, f.get('mode'),
                          f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
     payment_id = cur.lastrowid
-    # Pending is computed live (billed_amount - payment_received - party_advance) since it
-    # isn't a stored column; allocation fills each selected trip's balance in submitted
-    # order (oldest first) until the payment amount runs out.
-    trip_ids = f.getlist('trip_ids')
+    # Pending is computed live (billed_amount - payment_received - party_advance) since it isn't a
+    # stored column. Ticked trips must belong to THIS party; anything else is ignored.
+    pending = {t['id']: t['pending'] for t in _party_pending_trips(conn, party_id)}
+    order = [tid for tid in _ticked_ids(f) if tid in pending]
+    order += [tid for tid in pending if tid not in order]
     remaining = total_amount
     allocated_total = 0
-    for tid in trip_ids:
+    for tid in order:
         if remaining <= 0.004:
             break
-        trip = conn.execute("SELECT billed_amount, payment_received, party_advance FROM trips WHERE id=?", (tid,)).fetchone()
-        if not trip:
-            continue
-        pending = (trip['billed_amount'] or 0) - (trip['payment_received'] or 0) - (trip['party_advance'] or 0)
-        if pending <= 0.004:
-            continue
-        alloc = min(pending, remaining)
+        alloc = round(min(pending[tid], remaining), 2)
         conn.execute("UPDATE trips SET payment_received = COALESCE(payment_received,0) + ?, updated_by=?, updated_at=? WHERE id=?",
                      (alloc, session.get('user_id'), now, tid))
         conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
@@ -5964,55 +6303,81 @@ def _insert_party_payment_from_form(conn, party_id, f):
                  (allocated_total, session.get('user_id'), now, payment_id))
     return True, None
 
+def _redirect_payment_error(endpoint, error, **kw):
+    return redirect(url_for(endpoint, pay_error=error, **kw))
+
 @app.route('/payment/party/<int:party_id>', methods=['GET', 'POST'])
 def add_party_payment(party_id):
     conn = get_db()
     party = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
-    if request.method == 'POST':
-        _insert_party_payment_from_form(conn, party_id, request.form)
-        conn.commit()
+    if not party:
         conn.close()
+        return redirect(url_for('accounts'))
+    if request.method == 'POST':
+        ok, error = _insert_party_payment_from_form(conn, party_id, request.form)
+        if ok:
+            conn.commit()
+        conn.close()
+        if not ok:
+            return _redirect_payment_error('party_ledger', error, party_id=party_id)
         return redirect(url_for('party_ledger', party_id=party_id))
     conn.close()
     return render_template('add_payment.html', name=party['name'], role='Party', action_url=f'/payment/party/{party_id}', active='accounts')
 
 def _insert_vendor_payment_from_form(conn, vendor_id, f):
-    """Builds and inserts one payment-paid-to-vendor row, allocating it across the selected
-    pending trips — same fields/logic used by both add_vendor_payment() (website) and
-    app_add_vendor_payment() (mobile). Returns (ok, error_message_or_None) — does not commit or
+    """Records one payment made to a vendor and applies it: ticked owner-hire trips first (capped
+    at what is still owed on each, net of fuel/advance the company paid), then the vendor's other
+    pending owner-hire trips, then the vendor's unpaid maintenance / tyre / battery / service /
+    insurance bills, then the vendor's Pending expense bills (oldest first) — so Maintenance's
+    "unpaid", the Expenses page's "Pending Bills" and the Ledger all agree. Only a
+    genuine surplus stays unallocated. Returns (ok, error_message_or_None) — does not commit or
     close conn."""
-    if not f.get('date'):
-        return False, 'Payment Date is required.'
-    if not f.get('amount'):
-        return False, 'Payment Amount is required.'
-    if not (f.get('mode') or '').strip():
-        return False, 'Payment Mode is required.'
+    if not conn.execute("SELECT 1 FROM vendors WHERE id=?", (vendor_id,)).fetchone():
+        return False, 'Vendor not found.'
+    total_amount, err = _validated_payment_basics(f)
+    if err:
+        return False, err
+    if _payment_is_duplicate(conn, 'vendor_id', vendor_id, 'paid', f, total_amount):
+        return False, 'This exact payment was just recorded — not adding it twice.'
 
-    total_amount = float(f.get('amount') or 0)
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cur = conn.execute("""INSERT INTO payments (date, payment_type, amount, vendor_id, mode, reference_id, remarks, created_by, created_at)
                           VALUES (?,?,?,?,?,?,?,?,?)""",
                         (f.get('date'), 'paid', total_amount, vendor_id, f.get('mode'),
                          f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
     payment_id = cur.lastrowid
-    trip_ids = f.getlist('trip_ids')
+    pending = {t['id']: t['pending'] for t in _vendor_pending_trips(conn, vendor_id)}
+    order = [tid for tid in _ticked_ids(f) if tid in pending]
+    order += [tid for tid in pending if tid not in order]
     remaining = total_amount
     allocated_total = 0
-    for tid in trip_ids:
+    for tid in order:
         if remaining <= 0.004:
             break
-        trip = conn.execute("""SELECT (CASE WHEN owner_rate_type='FIXED' THEN owner_fixed_amount ELSE COALESCE(owner_rate,0)*COALESCE(quantity,0) END) as owed,
-                               paid_to_owner FROM trips WHERE id=?""", (tid,)).fetchone()
-        if not trip:
-            continue
-        pending = (trip['owed'] or 0) - (trip['paid_to_owner'] or 0)
-        if pending <= 0.004:
-            continue
-        alloc = min(pending, remaining)
+        alloc = round(min(pending[tid], remaining), 2)
         conn.execute("UPDATE trips SET paid_to_owner = COALESCE(paid_to_owner,0) + ?, updated_by=?, updated_at=? WHERE id=?",
                      (alloc, session.get('user_id'), now, tid))
         conn.execute("INSERT INTO payment_allocations (payment_id, trip_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
                      (payment_id, tid, alloc, session.get('user_id'), now))
+        remaining -= alloc
+        allocated_total += alloc
+    for m in _vendor_pending_maintenance(conn, vendor_id):
+        if remaining <= 0.004:
+            break
+        alloc = round(min(m['pending'], remaining), 2)
+        conn.execute("UPDATE maintenance SET paid_amount = COALESCE(paid_amount,0) + ?, updated_by=?, updated_at=? WHERE id=?",
+                     (alloc, session.get('user_id'), now, m['id']))
+        conn.execute("INSERT INTO payment_allocations (payment_id, maintenance_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (payment_id, m['id'], alloc, session.get('user_id'), now))
+        remaining -= alloc
+        allocated_total += alloc
+    for o in _vendor_pending_overheads(conn, vendor_id):
+        if remaining <= 0.004:
+            break
+        alloc = round(min(o['pending'], remaining), 2)
+        conn.execute("INSERT INTO payment_allocations (payment_id, overhead_id, amount, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (payment_id, o['id'], alloc, session.get('user_id'), now))
+        _settle_overhead_status(conn, o['id'])
         remaining -= alloc
         allocated_total += alloc
     conn.execute("UPDATE payments SET allocated_amount=?, updated_by=?, updated_at=? WHERE id=?",
@@ -6023,10 +6388,16 @@ def _insert_vendor_payment_from_form(conn, vendor_id, f):
 def add_vendor_payment(vendor_id):
     conn = get_db()
     vendor = conn.execute("SELECT * FROM vendors WHERE id=?", (vendor_id,)).fetchone()
-    if request.method == 'POST':
-        _insert_vendor_payment_from_form(conn, vendor_id, request.form)
-        conn.commit()
+    if not vendor:
         conn.close()
+        return redirect(url_for('accounts'))
+    if request.method == 'POST':
+        ok, error = _insert_vendor_payment_from_form(conn, vendor_id, request.form)
+        if ok:
+            conn.commit()
+        conn.close()
+        if not ok:
+            return _redirect_payment_error('vendor_ledger', error, vendor_id=vendor_id)
         return redirect(url_for('vendor_ledger', vendor_id=vendor_id))
     conn.close()
     return render_template('add_payment.html', name=vendor['name'], role='Vendor', action_url=f'/payment/vendor/{vendor_id}', active='accounts')
@@ -6056,6 +6427,16 @@ def payment_view(payment_id):
     allocations = conn.execute("""SELECT pa.amount, t.lr_number, t.id as trip_id, t.from_loc, t.to_loc
                                   FROM payment_allocations pa JOIN trips t ON pa.trip_id=t.id
                                   WHERE pa.payment_id=? ORDER BY pa.id""", (payment_id,)).fetchall()
+    allocations = [dict(a) for a in allocations]
+    for a in conn.execute("""SELECT pa.amount, m.category, m.service_type, m.tyre_action
+                             FROM payment_allocations pa JOIN maintenance m ON pa.maintenance_id=m.id
+                             WHERE pa.payment_id=? ORDER BY pa.id""", (payment_id,)).fetchall():
+        allocations.append({'amount': a['amount'], 'lr_number': 'Maintenance: ' + _maintenance_label(a),
+                            'trip_id': None, 'from_loc': '', 'to_loc': ''})
+    for a in conn.execute("""SELECT pa.amount, o.category FROM payment_allocations pa JOIN overheads o ON pa.overhead_id=o.id
+                             WHERE pa.payment_id=? ORDER BY pa.id""", (payment_id,)).fetchall():
+        allocations.append({'amount': a['amount'], 'lr_number': 'Expense: ' + (a['category'] or 'bill'),
+                            'trip_id': None, 'from_loc': '', 'to_loc': ''})
     conn.close()
     leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
     return render_template('payment_view.html', p=p, entity_name=entity_name, entity_type=entity_type,
@@ -6071,15 +6452,18 @@ def _insert_overhead_from_form(conn, f):
         return False, 'Date is required.'
     if not (f.get('category') or '').strip():
         return False, 'Category is required.'
-    if not f.get('amount'):
-        return False, 'Amount is required.'
+    amount, amt_err = _parse_money(f.get('amount'), 'Amount', required=True, allow_zero=False)
+    if amt_err:
+        return False, amt_err
 
     is_recurring = 1 if f.get('is_recurring') == 'on' else 0
     status = f.get('status') or 'Paid'
+    if status == 'Pending' and (f.get('vendor') or '').strip():
+        get_or_create_vendor(conn, f.get('vendor'))      # a bill we owe a vendor must have a ledger to land in
     cur = conn.execute("""INSERT INTO overheads (date, category, amount, notes, payment_mode, receipt_number,
                     vendor, description, status, is_recurring, recurring_frequency, due_date, created_by, created_at)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                 (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
+                 (f.get('date'), f.get('category'), amount, f.get('notes'),
                   f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
                   status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
                   f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
@@ -6090,10 +6474,11 @@ def _insert_overhead_from_form(conn, f):
 def add_overhead():
     conn = get_db()
     if request.method == 'POST':
-        _insert_overhead_from_form(conn, request.form)
-        conn.commit()
+        ok, error = _insert_overhead_from_form(conn, request.form)
+        if ok:
+            conn.commit()
         conn.close()
-        return redirect(url_for('overheads_list'))
+        return redirect(url_for('overheads_list', **({} if ok else {'exp_error': error})))
     conn.close()
     return render_template('add_overhead.html', active='overheads')
 
@@ -6101,26 +6486,45 @@ def _update_overhead_from_form(conn, o_id, f):
     """Shared by edit_overhead() (website) and app_edit_overhead() (mobile) — the exact same field
     set _insert_overhead_from_form() writes on create (date/category/amount/notes/payment_mode/
     receipt_number/vendor/description/status/is_recurring/recurring_frequency/due_date), so editing
-    an expense can never silently drop a field the create form itself collects. Does not commit or
-    close conn."""
+    an expense can never silently drop a field the create form itself collects. Returns
+    (ok, error_message_or_None); does not commit or close conn."""
+    amount, amt_err = _parse_money(f.get('amount'), 'Amount', required=True, allow_zero=False)
+    if amt_err:
+        return False, amt_err
+    existing = conn.execute("SELECT vendor FROM overheads WHERE id=?", (o_id,)).fetchone()
+    if not existing:
+        return False, 'Expense not found.'
+    paid_via_ledger = _overhead_alloc_sum(conn, o_id)
+    if paid_via_ledger > 0.004:
+        # ledger payments were applied to this bill under this vendor's name — changing the vendor
+        # or lowering the amount below what was paid would orphan that money
+        if (f.get('vendor') or '').strip().lower() != (existing['vendor'] or '').strip().lower():
+            return False, f"₹{paid_via_ledger:,.2f} of this bill was already paid from the vendor's ledger, so its vendor can't be changed."
+        if amount < paid_via_ledger - 0.004:
+            return False, f"₹{paid_via_ledger:,.2f} of this bill was already paid from the vendor's ledger, so the amount can't be lower than that."
     is_recurring = 1 if f.get('is_recurring') == 'on' else 0
     status = f.get('status') or 'Paid'
+    if status == 'Pending' and (f.get('vendor') or '').strip():
+        get_or_create_vendor(conn, f.get('vendor'))
     conn.execute("""UPDATE overheads SET date=?, category=?, amount=?, notes=?, payment_mode=?, receipt_number=?,
                     vendor=?, description=?, status=?, is_recurring=?, recurring_frequency=?, due_date=?,
                     updated_by=?, updated_at=? WHERE id=?""",
-                 (f.get('date'), f.get('category'), float(f.get('amount') or 0), f.get('notes'),
+                 (f.get('date'), f.get('category'), amount, f.get('notes'),
                   f.get('payment_mode'), f.get('receipt_number'), f.get('vendor'), f.get('description'),
                   status, is_recurring, f.get('recurring_frequency') if is_recurring else None,
                   f.get('due_date') if status == 'Pending' else None, session.get('user_id'),
                   datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), o_id))
+    _settle_overhead_status(conn, o_id)
+    return True, None
 
 @app.route('/overheads/edit/<int:o_id>', methods=['POST'])
 def edit_overhead(o_id):
     conn = get_db()
-    _update_overhead_from_form(conn, o_id, request.form)
-    conn.commit()
+    ok, error = _update_overhead_from_form(conn, o_id, request.form)
+    if ok:
+        conn.commit()
     conn.close()
-    return redirect(url_for('overheads_list'))
+    return redirect(url_for('overheads_list', **({} if ok else {'exp_error': error})))
 
 @app.route('/trips/delete/<int:trip_id>', methods=['POST'])
 def delete_trip(trip_id):
@@ -6171,14 +6575,26 @@ def _end_trip_from_form(conn, trip_id, f):
     if not f.get('end_date'):
         return False, 'End Date is required.'
 
+    values = {}
+    for key, label in (('freight_amount', 'Freight Amount'), ('shortage_qty', 'Shortage Qty'),
+                       ('shortage_amount', 'Shortage Amount'), ('actual_km', 'Actual KM')):
+        values[key], err = _parse_money(f.get(key), label)
+        if err:
+            return False, err
+
     def n(key):
-        return float(f.get(key) or 0)
+        return values[key] if key in values else float(f.get(key) or 0)
 
     end_date = f.get('end_date')
     freight_amount = n('freight_amount')
     shortage_qty = n('shortage_qty')
     shortage_amount = n('shortage_amount')
+    # The Freight Amount box is pre-filled with the trip's GROSS freight (the bill before any
+    # shortage — see trips_list.html / app/trip_detail.html), so the shortage is taken off exactly
+    # once, here.
     new_billed_amount = freight_amount - shortage_amount
+    if new_billed_amount < -0.005:
+        return False, 'Shortage is more than the freight — the trip bill would be negative.'
 
     conn.execute("""UPDATE trips SET end_date=?, end_time=?, actual_km=?, lr_received=?,
                     shortage_qty=?, shortage_unit=?, shortage_amount=?, shortage_date=?, shortage_remarks=?,
@@ -6195,14 +6611,17 @@ def _end_trip_from_form(conn, trip_id, f):
 @app.route('/trips/<int:trip_id>/end', methods=['POST'])
 def end_trip(trip_id):
     conn = get_db()
-    _end_trip_from_form(conn, trip_id, request.form)
+    ok, error = _end_trip_from_form(conn, trip_id, request.form)
     conn.close()
-    return redirect(url_for('trips_list', **request.args.to_dict()))
+    args = request.args.to_dict()
+    if not ok:
+        args['end_error'] = error
+    return redirect(url_for('trips_list', **args))
 
 @app.route('/maintenance/delete/<int:m_id>', methods=['POST'])
 def delete_maintenance(m_id):
     conn = get_db()
-    conn.execute("DELETE FROM maintenance WHERE id=?", (m_id,))
+    _delete_maintenance_row(conn, m_id)
     conn.execute("DELETE FROM maintenance_items WHERE maintenance_id=?", (m_id,))
     conn.commit()
     conn.close()
@@ -6225,6 +6644,7 @@ def edit_maintenance(m_id):
                      (f.get('date'), vehicle_id, f.get('category'), float(f.get('amount') or 0),
                       float(f.get('paid_amount') or 0), vendor_id, f.get('notes'),
                       session.get('user_id'), now, m_id))
+        _enforce_maintenance_paid_floor(conn, m_id)
         conn.commit()
         conn.close()
         return_to = f.get('return_to')
@@ -6298,10 +6718,16 @@ def add_employee_advance(employee_id):
     conn = get_db()
     f = request.form
     emp = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
-    if emp:
+    adv_amount, adv_err = _parse_money(f.get('amount'), 'Amount', required=True, allow_zero=False)
+    adv_date = (f.get('date') or '').strip() or datetime.date.today().isoformat()
+    try:
+        datetime.date.fromisoformat(adv_date)
+    except ValueError:
+        adv_err = adv_err or 'Date is not a valid date.'
+    if emp and not adv_err:
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         conn.execute("INSERT INTO advances (employee, date, amount, type, notes, created_at, created_by) VALUES (?,?,?,?,?,?,?)",
-                     (emp['name'], f.get('date') or datetime.date.today().isoformat(), float(f.get('amount') or 0),
+                     (emp['name'], adv_date, adv_amount,
                       f.get('type') if f.get('type') in ('given', 'repaid') else 'given', f.get('notes') or None,
                       now, session.get('user_id')))
         conn.commit()
@@ -6408,7 +6834,7 @@ def download_payslip(salary_id):
 @app.route('/overheads/delete/<int:o_id>', methods=['POST'])
 def delete_overhead(o_id):
     conn = get_db()
-    conn.execute("DELETE FROM overheads WHERE id=?", (o_id,))
+    _delete_overhead_row(conn, o_id)
     conn.commit()
     conn.close()
     return redirect(url_for('overheads_list'))
@@ -6929,11 +7355,16 @@ def _insert_employee_payment_from_form(conn, employee, f):
         return False, 'Type is required.'
     if not f.get('date'):
         return False, 'Date is required.'
-    if not f.get('amount'):
-        return False, 'Amount is required.'
-
-    tx_date = f.get('date')
-    amount = float(f.get('amount') or 0)
+    tx_date = f.get('date').strip()
+    try:
+        datetime.date.fromisoformat(tx_date)
+    except ValueError:
+        return False, 'Date is not a valid date.'
+    amount, err = _parse_money(f.get('amount'), 'Amount', required=True, allow_zero=False)
+    if err:
+        return False, err
+    if not conn.execute("SELECT 1 FROM employees WHERE name=? COLLATE NOCASE", (employee,)).fetchone():
+        return False, 'Employee not found.'
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     if entry_kind == 'salary':
         month_label = datetime.datetime.strptime(tx_date, '%Y-%m-%d').strftime('%b %Y') if tx_date else ''
@@ -6962,10 +7393,11 @@ def employee_ledger(employee):
     if request.method == 'POST':
         f = request.form
         from_tab = f.get('from_tab', 'overview')
-        _insert_employee_payment_from_form(conn, employee, f)
-        conn.commit()
+        ok, error = _insert_employee_payment_from_form(conn, employee, f)
+        if ok:
+            conn.commit()
         conn.close()
-        return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
+        return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab, **({} if ok else {'pay_error': error})))
 
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
@@ -6982,11 +7414,19 @@ def _update_employee_opening_balance_from_form(conn, employee, f):
     """Sets/replaces the carried-over opening advance balance for one employee — same logic used
     by both update_employee_opening_balance() (website) and app_update_employee_opening_balance()
     (mobile). Returns (ok, error_message_or_None) — does not commit or close conn."""
-    if not f.get('opening_balance'):
-        return False, 'Opening Advance Balance is required.'
+    ob, err = _parse_money(f.get('opening_balance'), 'Opening Advance Balance', required=True, allow_negative=True)
+    if err:
+        return False, err
+    ob_date = (f.get('opening_balance_date') or '').strip() or None
+    if ob_date:
+        try:
+            datetime.date.fromisoformat(ob_date)
+        except ValueError:
+            return False, 'As Of Date is not a valid date.'
+    if not conn.execute("SELECT 1 FROM employees WHERE name=? COLLATE NOCASE", (employee,)).fetchone():
+        return False, 'Employee not found.'
     conn.execute("UPDATE employees SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE name=? COLLATE NOCASE",
-                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
-                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee))
+                 (ob, ob_date, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee))
     return True, None
 
 @app.route('/employee/<employee>/opening-balance', methods=['POST'])
@@ -6994,10 +7434,11 @@ def update_employee_opening_balance(employee):
     conn = get_db()
     f = request.form
     from_tab = f.get('from_tab', 'overview')
-    _update_employee_opening_balance_from_form(conn, employee, f)
-    conn.commit()
+    ok, error = _update_employee_opening_balance_from_form(conn, employee, f)
+    if ok:
+        conn.commit()
     conn.close()
-    return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab))
+    return redirect(url_for('employee_ledger', employee=employee, from_tab=from_tab, **({} if ok else {'pay_error': error})))
 
 @app.route('/driver-performance')
 def driver_performance():
@@ -7325,6 +7766,9 @@ def _insert_employee_from_form(conn, f):
     if etype not in ('Driver', 'Staff'):
         return False, 'Type is required.'
 
+    basic_salary, err = _parse_money(f.get('basic_salary'), 'Basic salary')
+    if err:
+        return False, err
     existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
     if existing:
         return True, None
@@ -7338,7 +7782,7 @@ def _insert_employee_from_form(conn, f):
                          f.get('joining_date') or None, f.get('date_of_birth') or None,
                          f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
                          f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
-                         f.get('driving_license') or None, float(f.get('basic_salary') or 0),
+                         f.get('driving_license') or None, basic_salary,
                          session.get('user_id'), now))
     new_id = cur.lastrowid
     if not f.get('employee_code'):
@@ -7447,7 +7891,7 @@ def invoice_center():
         query = f"""SELECT t.id, t.lr_number, v.vehicle_no, t.from_loc, t.to_loc, t.date,
                    CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE t.owner_rate*t.quantity END as billed_amount,
                    {_CHARGE_COLS}
-                   t.owner_vendor_id
+                   t.fuel_vendor_id, t.driver_adv_vendor_id, t.owner_vendor_id
                    FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
                    WHERE t.owner_vendor_id=?"""
         params = [vendor_id]
@@ -7511,10 +7955,11 @@ def invoice_center():
             if amt:
                 charges.append({'key': key, 'label': label, 'amount': amt, 'kind': 'deduction', 'default': 'out'})
         if invoice_type == 'vehicle_owner':
-            if t['fuel_amount']:
-                charges.append({'key': 'fuel_deduction', 'label': 'Fuel Advance', 'amount': t['fuel_amount'], 'kind': 'owner_deduction', 'default': 'in'})
-            if t['driver_adv_amount']:
-                charges.append({'key': 'driver_adv_deduction', 'label': 'Driver Advance', 'amount': t['driver_adv_amount'], 'kind': 'owner_deduction', 'default': 'in'})
+            # only fuel / advance the company really paid is deducted from the owner (see _company_paid_on_hired_trip)
+            if _company_paid_on_hired_trip(t, 'fuel'):
+                charges.append({'key': 'fuel_deduction', 'label': 'Fuel Advance', 'amount': _company_paid_on_hired_trip(t, 'fuel'), 'kind': 'owner_deduction', 'default': 'in'})
+            if _company_paid_on_hired_trip(t, 'driver_adv'):
+                charges.append({'key': 'driver_adv_deduction', 'label': 'Driver Advance', 'amount': _company_paid_on_hired_trip(t, 'driver_adv'), 'kind': 'owner_deduction', 'default': 'in'})
         items = conn.execute("SELECT id, description, amount, item_type FROM invoice_items WHERE trip_id=?", (t['id'],)).fetchall()
         for it in items:
             charges.append({'key': f"item:{it['id']}", 'label': it['description'] or 'Other', 'amount': it['amount'] or 0, 'kind': it['item_type'], 'default': 'in'})
@@ -7560,23 +8005,27 @@ def invoice_center_review():
     elif party_id:
         entity = conn.execute("SELECT * FROM parties WHERE id=?", (party_id,)).fetchone()
 
-    bank_name = conn.execute("SELECT value FROM settings WHERE key='bank_name'").fetchone()['value']
-    account_number = conn.execute("SELECT value FROM settings WHERE key='account_number'").fetchone()['value']
-    ifsc_code = conn.execute("SELECT value FROM settings WHERE key='ifsc_code'").fetchone()['value']
-    account_holder = conn.execute("SELECT value FROM settings WHERE key='account_holder'").fetchone()['value']
-    rcm_clause = conn.execute("SELECT value FROM settings WHERE key='rcm_clause'").fetchone()['value']
+    _row_bank_name = conn.execute("SELECT value FROM settings WHERE key='bank_name'").fetchone()
+    bank_name = _row_bank_name['value'] if _row_bank_name else ''
+    _row_account_number = conn.execute("SELECT value FROM settings WHERE key='account_number'").fetchone()
+    account_number = _row_account_number['value'] if _row_account_number else ''
+    _row_ifsc_code = conn.execute("SELECT value FROM settings WHERE key='ifsc_code'").fetchone()
+    ifsc_code = _row_ifsc_code['value'] if _row_ifsc_code else ''
+    _row_account_holder = conn.execute("SELECT value FROM settings WHERE key='account_holder'").fetchone()
+    account_holder = _row_account_holder['value'] if _row_account_holder else ''
+    _row_rcm_clause = conn.execute("SELECT value FROM settings WHERE key='rcm_clause'").fetchone()
+    rcm_clause = _row_rcm_clause['value'] if _row_rcm_clause else ''
     conn.close()
 
     line_items = []
     for t in trips:
         if invoice_type == 'vehicle_owner':
             freight = t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT')=='FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
-            # The freight is a lump-sum contract price that already covers the owner's own fuel and
-            # driver costs — only actual cash paid to them reduces what's still owed. Fuel/driver
-            # advance recorded on the trip is the owner's own spending, not a company payment on
-            # their behalf, so it must never be netted against the freight (see CLAUDE.md/git log
-            # for the real-world confirmation of this — it was the reverse before, incorrectly).
-            net = freight - (t['paid_to_owner'] or 0)
+            # What is still owed to the owner = freight - cash already paid to him - fuel / driver
+            # advance the COMPANY paid on his trip. Fuel/advance the owner paid himself (vendor =
+            # the owner) is inside his freight and is never deducted. Same rule as the vendor ledger.
+            net = (freight - (t['paid_to_owner'] or 0)
+                   - _company_paid_on_hired_trip(t, 'fuel') - _company_paid_on_hired_trip(t, 'driver_adv'))
         else:
             freight = _trip_freight(t['quantity'], t['rate'], t['rate_type'], t['fixed_rate_amount'], t['guarantee_qty'])
             net = t['billed_amount'] or 0
@@ -7732,12 +8181,12 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             'trip_tds': _incl(tid, 'trip_tds', t['tds'] or 0),
             'other_deductions': _incl(tid, 'other_deductions', t['other_deductions'] or 0),
             # fuel_deduction/driver_adv_deduction only ever matter on a vehicle_owner invoice
-            # (they net off what's still owed to the owner) — excluding one there means "pay the
+            # (they net off what the company paid on the owner's behalf) — excluding one there means "pay the
             # owner in full for this trip, don't net this advance off". They're never part of
             # freight_and_charges/additional_charges on ANY invoice type, so leaving them at their
             # real value on a party invoice changes nothing a party ever sees.
-            'fuel_given': _incl(tid, 'fuel_deduction', t['fuel_amount'] or 0),
-            'driver_adv_given': _incl(tid, 'driver_adv_deduction', t['driver_adv_amount'] or 0),
+            'fuel_given': _incl(tid, 'fuel_deduction', _company_paid_on_hired_trip(t, 'fuel')),
+            'driver_adv_given': _incl(tid, 'driver_adv_deduction', _company_paid_on_hired_trip(t, 'driver_adv')),
             'paid_to_owner': t['paid_to_owner'] or 0,
         })
 
@@ -8289,10 +8738,15 @@ def invoice_center_generate():
     place_of_supply = f.get('place_of_supply') or ''
     remarks = f.get('remarks') or ''
     payment_status = f.get('payment_status') or 'PENDING'
-    extra_loading = float(f.get('loading_charges') or 0)
-    extra_other = float(f.get('other_charges') or 0)
-    tds_rate = float(f.get('tds_rate') or 0)
+    num_error = _invoice_numbers_error(f)
+    if num_error:
+        return redirect(url_for('invoice_center', invoice_type=invoice_type or 'party', inv_error=num_error))
+    extra_loading = _parse_money(f.get('loading_charges'), 'Loading charges')[0]
+    extra_other = _parse_money(f.get('other_charges'), 'Other charges')[0]
+    tds_rate = _parse_money(f.get('tds_rate'), 'TDS %')[0]
     gst_rate_input = f.get('gst_rate')
+    if gst_rate_input:
+        gst_rate_input = str(_parse_money(gst_rate_input, 'GST %')[0])
 
     conn = get_db()
     placeholders = ','.join('?' * len(trip_ids))
@@ -8324,10 +8778,7 @@ def invoice_center_generate():
         desc = (desc or '').strip()
         if not desc:
             continue
-        try:
-            amt = float(extra_amounts[i]) if i < len(extra_amounts) and extra_amounts[i] else 0
-        except ValueError:
-            amt = 0
+        amt = (_parse_money(extra_amounts[i], 'Amount')[0] or 0) if i < len(extra_amounts) and extra_amounts[i] else 0
         item_type = extra_types[i] if i < len(extra_types) and extra_types[i] in ('charge', 'deduction') else 'charge'
         new_items.append((desc, amt, item_type))
         extra_items.append({'desc': desc, 'amount': amt, 'item_type': item_type})
@@ -8424,13 +8875,17 @@ def invoice_batch_edit(batch_id):
     conn = get_db()
     if request.method == 'POST':
         f = request.form
+        num_error = _invoice_numbers_error(f)
+        if num_error:
+            conn.close()
+            return redirect(url_for('invoice_batch_edit', batch_id=batch_id, inv_error=num_error))
         conn.execute("""UPDATE invoice_batches SET invoice_date=?, due_date=?, payment_terms=?, place_of_supply=?,
                         remarks=?, payment_status=?, gst_rate=?, tds_rate=?, loading_charges=?, other_charges=?,
                         updated_by=?, updated_at=?
                         WHERE id=?""",
                      (f.get('invoice_date'), f.get('due_date'), f.get('payment_terms'), f.get('place_of_supply'),
-                      f.get('remarks'), f.get('payment_status'), float(f.get('gst_rate') or 0), float(f.get('tds_rate') or 0),
-                      float(f.get('loading_charges') or 0), float(f.get('other_charges') or 0),
+                      f.get('remarks'), f.get('payment_status'), _parse_money(f.get('gst_rate'), 'GST %')[0], _parse_money(f.get('tds_rate'), 'TDS %')[0],
+                      _parse_money(f.get('loading_charges'), 'Loading charges')[0], _parse_money(f.get('other_charges'), 'Other charges')[0],
                       session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), batch_id))
         _save_invoice_batch_items(conn, batch_id, f)
         conn.commit()
@@ -8454,10 +8909,14 @@ def invoice_batch_edit(batch_id):
 def invoice_batch_item_add(batch_id):
     conn = get_db()
     f = request.form
+    item_amount, item_err = _parse_money(f.get('amount'), 'Amount')
+    if item_err:
+        conn.close()
+        return redirect(url_for('invoice_batch_edit', batch_id=batch_id, inv_error=item_err))
     vendor_id = get_or_create_vendor(conn, f.get('vendor_name')) if f.get('vendor_name') else None
     conn.execute("""INSERT INTO invoice_batch_items (invoice_batch_id, description, amount, item_type, vendor_id, created_by, created_at)
                     VALUES (?,?,?,?,?,?,?)""",
-                 (batch_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type') or 'charge',
+                 (batch_id, f.get('description'), item_amount, f.get('item_type') or 'charge',
                   vendor_id, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
@@ -8646,9 +9105,13 @@ def invoice_edit(trip_id):
 def invoice_item_add(trip_id):
     conn = get_db()
     f = request.form
+    item_amount, item_err = _parse_money(f.get('amount'), 'Amount')
+    if item_err:
+        conn.close()
+        return redirect(url_for('invoice_edit', trip_id=trip_id, inv_error=item_err))
     conn.execute("""INSERT INTO invoice_items (trip_id, description, amount, item_type, created_by, created_at)
                     VALUES (?,?,?,?,?,?)""",
-                 (trip_id, f.get('description'), float(f.get('amount') or 0), f.get('item_type'),
+                 (trip_id, f.get('description'), item_amount, f.get('item_type'),
                   session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
@@ -8657,7 +9120,11 @@ def invoice_item_add(trip_id):
 @app.route('/invoices/items/<int:item_id>/delete', methods=['POST'])
 def invoice_item_delete(item_id):
     conn = get_db()
-    trip_id = conn.execute("SELECT trip_id FROM invoice_items WHERE id=?", (item_id,)).fetchone()[0]
+    row = conn.execute("SELECT trip_id FROM invoice_items WHERE id=?", (item_id,)).fetchone()
+    if not row:
+        conn.close()
+        return redirect(url_for('invoice_center'))
+    trip_id = row[0]
     conn.execute("DELETE FROM invoice_items WHERE id=?", (item_id,))
     conn.commit()
     conn.close()
@@ -8795,23 +9262,37 @@ def _update_ledger_opening_balance_from_form(conn, entity_type, entity_id, f):
     """Sets/replaces the carried-over opening balance for one party/vendor — same logic used by
     both update_opening_balance() (website) and app_update_ledger_opening_balance() (mobile).
     Returns (ok, error_message_or_None) — does not commit or close conn."""
-    if not f.get('opening_balance'):
-        return False, 'Opening Balance is required.'
+    if entity_type not in ('party', 'vendor'):
+        return False, 'Unknown account type.'
     table = 'parties' if entity_type == 'party' else 'vendors'
+    if not conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (entity_id,)).fetchone():
+        return False, 'Account not found.'
+    ob, err = _parse_money(f.get('opening_balance'), 'Opening Balance', required=True, allow_negative=True)
+    if err:
+        return False, err
+    ob_date = (f.get('opening_balance_date') or '').strip() or None
+    if ob_date:
+        try:
+            datetime.date.fromisoformat(ob_date)
+        except ValueError:
+            return False, 'As Of Date is not a valid date.'
     conn.execute(f"UPDATE {table} SET opening_balance=?, opening_balance_date=?, updated_by=?, updated_at=? WHERE id=?",
-                 (float(f.get('opening_balance') or 0), f.get('opening_balance_date') or None,
-                  session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entity_id))
+                 (ob, ob_date, session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), entity_id))
     return True, None
 
 @app.route('/ledger/<entity_type>/<int:entity_id>/opening-balance', methods=['POST'])
 def update_opening_balance(entity_type, entity_id):
     conn = get_db()
-    _update_ledger_opening_balance_from_form(conn, entity_type, entity_id, request.form)
-    conn.commit()
+    ok, error = _update_ledger_opening_balance_from_form(conn, entity_type, entity_id, request.form)
+    if ok:
+        conn.commit()
     conn.close()
+    if not ok and entity_type not in ('party', 'vendor'):
+        return redirect(url_for('accounts'))
+    kw = {} if ok else {'pay_error': error}
     if entity_type == 'party':
-        return redirect(url_for('party_ledger', party_id=entity_id))
-    return redirect(url_for('vendor_ledger', vendor_id=entity_id))
+        return redirect(url_for('party_ledger', party_id=entity_id, **kw))
+    return redirect(url_for('vendor_ledger', vendor_id=entity_id, **kw))
 
 def get_company_name(company_id=1):
     """company_id defaults to 1 — see the note on _get_invoice_settings above; same
@@ -8948,6 +9429,100 @@ def require_login():
             return redirect(url_for('app_login') if in_app_section else url_for('login'))
     session['last_activity'] = now.isoformat()
 
+    # ---- user access level, read from the database on EVERY request so that an admin changing someone
+    # to Read Only (or deactivating them) takes effect immediately, not at their next login.
+    _conn = get_db()
+    _u = _conn.execute("SELECT access_level, status FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    _conn.close()
+    if _u is None or (_u['status'] or 'Active') == 'Inactive':
+        session.clear()
+        return redirect(url_for('app_login') if in_app_section else url_for('login'))
+    g.access_level = _u['access_level'] or 'Full Access'
+    if g.access_level == 'Read Only' and request.method not in ('GET', 'HEAD', 'OPTIONS') and not _read_only_may_post():
+        return _read_only_denied()
+
+# ---- Read Only access: can see everything, can change nothing --------------------------------------
+# These POSTs only READ (or change the user's own password), so a Read Only user may still use them.
+_READ_ONLY_POST_ALLOWED = {
+    'app_change_password',        # their own password — not business data
+    'invoice_center_review',      # renders the review screen, writes nothing
+    'toll_excel_preview',         # previews an import file, writes nothing
+    'route_finder_extras',        # live map lookups
+}
+
+def _read_only_may_post():
+    if request.endpoint in _READ_ONLY_POST_ALLOWED:
+        return True
+    # Invoice Center: only the 'preview' mode is a pure look at the PDF; 'generate'/'draft' save a batch
+    # and consume an invoice number.
+    if request.endpoint == 'invoice_center_generate' and (request.form.get('mode') or '') == 'preview':
+        return True
+    return False
+
+def _read_only_denied():
+    message = 'Your account has view-only access. You can see everything, but you cannot add, change or delete anything.'
+    app.logger.info('Read Only user %s blocked from %s %s', session.get('user_id'), request.method, request.path)
+    wants_html = 'text/html' in (request.headers.get('Accept') or '')
+    if (request.path.startswith('/app/') and not wants_html) or 'application/json' in (request.headers.get('Accept') or ''):
+        return jsonify({'ok': False, 'error': message}), 403
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>View-only access</title><body style="font-family:system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1rem;line-height:1.5">'
+            f'<h2>View-only access</h2><p>{message}</p><p>If you need to make changes, ask an administrator to give you Full Access.</p>'
+            f'<p><a href="javascript:history.back()">&larr; Go back</a></p></body>', 403)
+
+@app.context_processor
+def inject_access_level():
+    """`read_only` is True for a Read Only user — templates can use it to hide write controls."""
+    level = getattr(g, 'access_level', None)
+    return {'access_level_now': level, 'read_only': level == 'Read Only'}
+
+_READ_ONLY_PAGE_SNIPPET = r'''
+<style id="ro-style">
+[data-ro-hide]{display:none !important}
+#ro-badge{position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#1b2a4a;color:#fff;font:600 12px/1 system-ui,sans-serif;padding:8px 12px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:.92;pointer-events:none}
+#ro-toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:2147483001;background:#b3261e;color:#fff;font:600 13px/1.4 system-ui,sans-serif;padding:10px 16px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:90vw;display:none}
+</style>
+<div id="ro-badge">&#128065; View-only access</div><div id="ro-toast" role="alert"></div>
+<script>
+(function(){
+  var MSG='View-only access: you can see everything, but you cannot add, change or delete anything.';
+  var ALLOW=/\/profile\/change-password|\/invoice-center\/review|\/invoice-center\/generate|\/toll\/excel\/preview|\/route-finder\//;
+  function toast(){var t=document.getElementById('ro-toast');if(!t)return;t.textContent=MSG;t.style.display='block';clearTimeout(window.__roT);window.__roT=setTimeout(function(){t.style.display='none'},3500);}
+  var f=window.fetch;
+  if(f){window.fetch=function(u,o){var m=((o&&o.method)||'GET').toUpperCase();var url=(typeof u==='string'?u:(u&&u.url)||'');
+    if(m!=='GET'&&m!=='HEAD'&&!ALLOW.test(url)){toast();return Promise.resolve(new Response(JSON.stringify({ok:false,error:MSG}),{status:403,headers:{'Content-Type':'application/json'}}));}
+    return f.apply(this,arguments);};}
+  document.addEventListener('submit',function(e){var fm=e.target;if(fm&&(fm.method||'get').toLowerCase()==='post'&&!ALLOW.test(fm.action||'')){e.preventDefault();e.stopPropagation();toast();}},true);
+  var WORDS=/^\s*(\+|\u2795|add\b|edit\b|delete\b|remove\b|update\b|save\b|end trip\b|record\b|import\b|approve\b|reject\b|deactivate\b|activate\b|mark\b|renew\b|give\b|install\b|sync\b|upload\b)/i;
+  var TITLES=/delete|remove|edit/i;
+  function sweep(root){(root||document).querySelectorAll('button,a,input[type=submit],input[type=button],[role=button]').forEach(function(el){
+    if(el.hasAttribute('data-ro-hide')||el.closest('#ro-toast'))return;
+    var txt=(el.tagName==='INPUT'?el.value:el.textContent)||'';txt=txt.trim().replace(/^[^A-Za-z0-9+]+/,'');   /* ignore a leading icon such as the pencil in 'Edit' */
+    var ttl=(el.getAttribute('title')||'')+' '+(el.getAttribute('aria-label')||'');
+    if(el.closest('form[method=get],form[method=GET]')&&el.type==='submit')return;
+    if((txt.length<40&&WORDS.test(txt))||(!txt&&TITLES.test(ttl))||(TITLES.test(ttl)&&txt.length<3)){el.setAttribute('data-ro-hide','1');}
+  });}
+  function run(){sweep();try{new MutationObserver(function(){sweep();}).observe(document.body,{childList:true,subtree:true});}catch(e){}}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',run);else run();
+})();
+</script>
+'''
+
+@app.after_request
+def _read_only_page_enhancements(response):
+    """For a Read Only user's HTML pages: show a "View-only access" badge, hide the obvious add / edit /
+    delete controls and politely block any write that is attempted anyway. This is a convenience layer —
+    the real enforcement is the server-side check in require_login()."""
+    try:
+        if (getattr(g, 'access_level', None) == 'Read Only' and response.mimetype == 'text/html'
+                and response.status_code == 200 and not response.direct_passthrough and not request.path.startswith('/static/')):
+            body = response.get_data(as_text=True)
+            if '</body>' in body:
+                response.set_data(body.replace('</body>', _READ_ONLY_PAGE_SNIPPET + '</body>', 1))
+    except Exception:
+        app.logger.exception('could not add the read-only page layer')
+    return response
+
 @app.after_request
 def _no_bfcache_for_dynamic_pages(response):
     """Every page here is server-rendered fresh from the live database on each request — with no
@@ -8971,7 +9546,7 @@ def login():
     error = None
     if request.method == 'POST':
         f = request.form
-        username = f.get('username') or ''
+        username = (f.get('username') or '').strip()
         if not _username_login_format_ok(username):
             return render_template('login.html', error='Username must be a valid Indian mobile number or email address.')
         conn = get_db()
@@ -9023,7 +9598,9 @@ def _send_otp_sms(s, phone, otp):
     client.messages.create(
         body=f"Your {s.get('company_name') or 'Fleet App'} login OTP is {otp}. Valid for 5 minutes.",
         from_=s['twilio_from_number'],
-        to=phone,
+        # Stored phones are the bare 10-digit Indian mobile (USERNAME_MOBILE_RE) — Twilio needs the
+        # full E.164 form, so add the +91 country code here at the one place that actually sends.
+        to=f'+91{phone}' if USERNAME_MOBILE_RE.match(phone or '') else phone,
     )
 
 @app.route('/login/otp/send', methods=['POST'])
@@ -9038,6 +9615,9 @@ def send_login_otp():
     if not phone:
         return render_template('login.html', otp_mode=True,
                                 otp_error='Enter a mobile number.')
+    if not USERNAME_MOBILE_RE.match(phone):
+        return render_template('login.html', otp_mode=True,
+                                otp_error='Enter a valid 10-digit Indian mobile number.')
     if not user:
         return render_template('login.html', otp_mode=True,
                                 otp_error='No account found with that mobile number.')
@@ -9305,6 +9885,11 @@ def edit_user(user_id):
     # phone-number username instead of a real name.
     if not full_name:
         return _render_settings_users_error(conn, 'Full Name is required.', reopen_edit_user_id=user_id)
+    # Mobile Number is mandatory and must be a real 10-digit Indian mobile — same rule add_user()
+    # and Sign Up enforce; the form's own `required` attribute alone isn't enough, since a direct
+    # POST skips it.
+    if not phone or not USERNAME_MOBILE_RE.match(phone):
+        return _render_settings_users_error(conn, 'Mobile Number must be a valid 10-digit Indian mobile number.', reopen_edit_user_id=user_id)
     dup = _duplicate_user_contact(conn, phone, email, exclude_user_id=user_id)
     if dup:
         return _render_settings_users_error(conn, dup, reopen_edit_user_id=user_id)
@@ -9327,6 +9912,9 @@ def edit_user(user_id):
 def update_user_phone(user_id):
     conn = get_db()
     phone = (request.form.get('phone') or '').strip() or None
+    if phone and not USERNAME_MOBILE_RE.match(phone):
+        conn.close()
+        return redirect(url_for('settings_page', tab='users'))
     if _duplicate_user_contact(conn, phone, None, exclude_user_id=user_id):
         conn.close()
         return redirect(url_for('settings_page', tab='users'))
@@ -9520,6 +10108,230 @@ def _route_rates_data(trips, from_f='', to_f=''):
         'fuel_lowest': fuel_lowest, 'fuel_average': fuel_average, 'fuel_highest': fuel_highest,
     }
 
+
+# ============================================================================
+# Route Finder — live route lookup on OpenStreetMap (providers/osm_routes.py).
+#
+# Type a From and a To, press Search, and get the routes a maps app would show: distance, drive
+# time, which highways (NH/SH) each uses, and — for the chosen route — the toll plazas and major
+# towns along it, drawn on a map. Everything is looked up on demand; NOTHING is stored in the
+# database (no new tables), only a short in-memory cache below so repeating a search, or flipping
+# between the alternatives, doesn't ask the free public OSM servers again. The cache is per web
+# worker, which is fine — a miss just means one more lookup.
+# ============================================================================
+_RF_CACHE = {}
+_RF_CACHE_LOCK = threading.Lock()
+_RF_CACHE_MAX = 300
+# At most this many lookups talk to OpenStreetMap at once, across all users of this worker.
+_RF_SLOTS = threading.BoundedSemaphore(3)
+_RF_BUSY_MSG = 'Several route searches are running right now — wait a few seconds and press Search again.'
+
+def _rf_cache_get(key):
+    with _RF_CACHE_LOCK:
+        hit = _RF_CACHE.get(key)
+        if hit and hit[0] > _time.time():
+            return hit[1]
+        _RF_CACHE.pop(key, None)
+    return None
+
+def _rf_cache_put(key, value, ttl):
+    with _RF_CACHE_LOCK:
+        if len(_RF_CACHE) >= _RF_CACHE_MAX:
+            now = _time.time()
+            for k in [k for k, (exp, _v) in _RF_CACHE.items() if exp <= now]:
+                del _RF_CACHE[k]
+            if len(_RF_CACHE) >= _RF_CACHE_MAX:
+                for k in sorted(_RF_CACHE, key=lambda k: _RF_CACHE[k][0])[:_RF_CACHE_MAX // 4]:
+                    del _RF_CACHE[k]
+        _RF_CACHE[key] = (_time.time() + ttl, value)
+
+def _rf_text(v):
+    return re.sub(r'\s+', ' ', (v or '').strip())[:120]
+
+def _rf_coord(lat, lng):
+    """(lat, lng) floats if both parse and are on Earth, else None."""
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    return (lat, lng) if -90 <= lat <= 90 and -180 <= lng <= 180 else None
+
+def _route_finder_texts(conn):
+    """Route Analytics clean key ("RSP") -> the best searchable text for it, so a row's map link
+    can prefill the Route Finder: the most common raw spelling in trips, cleaned of the doubled-up
+    "RSP RSP null" shape (see osm_routes.clean_search_text). Used ONLY to prefill links from
+    Route Analytics — the From/To boxes themselves search all of India as you type (see
+    route_finder_suggest), not a fixed list of your own trip places."""
+    rows = conn.execute("""SELECT from_loc AS loc, COUNT(*) AS n FROM trips
+                           WHERE from_loc IS NOT NULL AND TRIM(from_loc) != '' GROUP BY from_loc
+                           UNION ALL
+                           SELECT to_loc, COUNT(*) FROM trips
+                           WHERE to_loc IS NOT NULL AND TRIM(to_loc) != '' GROUP BY to_loc""").fetchall()
+    by_key = {}
+    for r in rows:
+        key = _clean_loc(r['loc'])
+        text = osm_routes.clean_search_text(r['loc'])
+        if key and text:
+            counts = by_key.setdefault(key, {})
+            counts[text] = counts.get(text, 0) + r['n']
+    return {k: max(v.items(), key=lambda kv: kv[1])[0] for k, v in by_key.items()}
+
+def _route_finder_ctx(conn):
+    return {'rf_texts': _route_finder_texts(conn),
+            'rf_from': _rf_text(request.args.get('rf_from')), 'rf_to': _rf_text(request.args.get('rf_to'))}
+
+def _route_history(conn, from_text, to_text):
+    """What your own trips on the same route recorded as toll — the one real, per-route toll
+    figure in the system (OpenStreetMap has no toll amounts at all). Matches on the same
+    cleaned From/To the Route Analytics page groups by; None when no trip has run this route."""
+    cf, ct = _clean_loc(from_text), _clean_loc(to_text)
+    if not cf or not ct:
+        return None
+    rows = conn.execute("""SELECT id, from_loc, to_loc, toll FROM trips
+                           WHERE from_loc IS NOT NULL AND to_loc IS NOT NULL
+                           AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')""").fetchall()
+    matched = [t for t in rows if _clean_loc(t['from_loc']) == cf and _clean_loc(t['to_loc']) == ct]
+    if not matched:
+        return None
+    toll_map = _toll_by_trip(conn, [t['id'] for t in matched])
+    tolls = [x for x in (_trip_toll(t, toll_map) for t in matched) if x > 0]
+    return {'trips': len(matched), 'trips_with_toll': len(tolls),
+            'avg_toll': round(sum(tolls) / len(tolls)) if tolls else 0,
+            'min_toll': round(min(tolls)) if tolls else 0, 'max_toll': round(max(tolls)) if tolls else 0,
+            'from_key': cf, 'to_key': ct}
+
+def _rf_geocode(text, bias_center=None):
+    bias_key = (round(bias_center[0]), round(bias_center[1])) if bias_center else None
+    key = ('geo', text.lower(), bias_key)
+    hit = _rf_cache_get(key)
+    if hit is not None:
+        return hit
+    cands = osm_routes.geocode_candidates(text, bias_center=bias_center)
+    if cands:
+        _rf_cache_put(key, cands, 24 * 3600)
+    return cands
+
+# Separate from _RF_SLOTS: suggestions fire while typing and are quick, so they must never be
+# starved by (or starve) the slower route lookups.
+_RF_SUGGEST_SLOTS = threading.BoundedSemaphore(4)
+
+@app.route('/route-finder/suggest')
+def route_finder_suggest():
+    """Type-ahead for the From/To boxes: places anywhere in India matching what's been typed so
+    far (3+ letters), from Photon over OpenStreetMap data. Server-side rather than called from the
+    browser so it's login-gated, cached and identifies this app to Photon. `lat`/`lon` (optional)
+    bias results towards the other end of the trip."""
+    q = _rf_text(request.args.get('q'))
+    if len(q) < osm_routes.SUGGEST_MIN_CHARS:
+        return jsonify({'ok': True, 'results': []})
+    bias = _rf_coord(request.args.get('lat'), request.args.get('lon'))
+    key = ('sug', q.lower(), (round(bias[0]), round(bias[1])) if bias else None)
+    hit = _rf_cache_get(key)
+    if hit is not None:
+        return jsonify({'ok': True, 'results': hit})
+    if not _RF_SUGGEST_SLOTS.acquire(blocking=False):
+        return jsonify({'ok': True, 'results': [], 'busy': True})
+    try:
+        results = osm_routes.suggest_places(q, bias_center=bias)
+    except osm_routes.RouteLookupError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 502
+    except Exception:
+        app.logger.exception('route_finder_suggest failed')
+        return jsonify({'ok': False, 'error': 'Place search hit a problem. You can still type the full place name and press Search.'}), 500
+    finally:
+        _RF_SUGGEST_SLOTS.release()
+    _rf_cache_put(key, results, 3600)
+    return jsonify({'ok': True, 'results': results})
+
+@app.route('/route-finder/search')
+def route_finder_search():
+    """JSON for one From/To search. `from`/`to` are place names; `from_lat`+`from_lng` (and
+    `to_*`) pin an end to a specific match the user picked from "Not the right place?", skipping
+    the name lookup for that end."""
+    ft, tt = _rf_text(request.args.get('from')), _rf_text(request.args.get('to'))
+    if not ft or not tt:
+        return jsonify({'ok': False, 'error': 'Enter both a From and a To place.'}), 400
+    pinned_from = _rf_coord(request.args.get('from_lat'), request.args.get('from_lng'))
+    pinned_to = _rf_coord(request.args.get('to_lat'), request.args.get('to_lng'))
+    if not _RF_SLOTS.acquire(blocking=False):
+        return jsonify({'ok': False, 'error': _RF_BUSY_MSG}), 429
+    try:
+        ends = {}
+        # From first, then To biased towards it — both ends of a trip are usually in one region,
+        # which settles ambiguous local names ("RSP", "IDC") without asking.
+        for side, text, pinned, other in (('from', ft, pinned_from, None), ('to', tt, pinned_to, None)):
+            if pinned:
+                name = _rf_text(request.args.get(f'{side}_name')) or text
+                ends[side] = {'text': text, 'candidates': [],
+                              'chosen': {'lat': pinned[0], 'lng': pinned[1], 'display_name': name}}
+                continue
+            bias = None
+            if side == 'to' and 'from' in ends:
+                c = ends['from']['chosen']
+                bias = (c['lat'], c['lng'])
+            cands = _rf_geocode(text, bias_center=bias)
+            if not cands:
+                return jsonify({'ok': False, 'error': f'Couldn\'t find "{text}" on the map. Try adding the town or state, e.g. "{text}, Odisha".'}), 404
+            ends[side] = {'text': text, 'candidates': cands, 'chosen': cands[0]}
+        a, b = ends['from']['chosen'], ends['to']['chosen']
+        straight = osm_routes.haversine_km(a['lat'], a['lng'], b['lat'], b['lng'])
+        if straight < 0.2:
+            return jsonify({'ok': False, 'error': 'From and To are the same place.'}), 400
+        rkey = ('route', round(a['lat'], 4), round(a['lng'], 4), round(b['lat'], 4), round(b['lng'], 4))
+        routes = _rf_cache_get(rkey)
+        if routes is None:
+            routes = osm_routes.search_routes(a, b)
+            _rf_cache_put(rkey, routes, 3600)
+    except osm_routes.RouteLookupError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 502
+    except Exception:
+        app.logger.exception('route_finder_search failed')
+        return jsonify({'ok': False, 'error': 'Something went wrong looking up that route. Please try again.'}), 500
+    finally:
+        _RF_SLOTS.release()
+    conn = get_db()
+    history = _route_history(conn, ft, tt)
+    conn.close()
+    return jsonify({'ok': True, 'from': ends['from'], 'to': ends['to'], 'straight_km': round(straight, 1),
+                    'routes': routes, 'history': history})
+
+@app.route('/route-finder/extras', methods=['POST'])
+def route_finder_extras():
+    """Toll plazas + major towns along ONE route, sent the route's own simplified path back (the
+    one /route-finder/search returned) so this works whichever web worker answers."""
+    data = request.get_json(silent=True) or {}
+    geom, dist, hws = data.get('geometry'), data.get('distance_km'), data.get('highways') or []
+    try:
+        dist = float(dist)
+        ok_geom = isinstance(geom, list) and 2 <= len(geom) <= 4000 and all(
+            isinstance(p, (list, tuple)) and len(p) == 2 and _rf_coord(p[0], p[1]) for p in geom)
+        ok_hw = isinstance(hws, list) and len(hws) <= 500 and all(
+            isinstance(h, dict) and isinstance(h.get('from_km'), (int, float)) and isinstance(h.get('km'), (int, float))
+            and (h.get('ref') is None or isinstance(h.get('ref'), str)) for h in hws)
+        if not (ok_geom and ok_hw and 0 < dist < 6000):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'That route could not be read.'}), 400
+    poly = [[float(p[0]), float(p[1])] for p in geom]
+    hws = [{'ref': h.get('ref'), 'km': float(h['km']), 'from_km': float(h['from_km'])} for h in hws]
+    key = ('extras', hashlib.sha1(json.dumps(poly).encode()).hexdigest(), round(dist, 1))
+    extras = _rf_cache_get(key)
+    if extras is None:
+        if not _RF_SLOTS.acquire(blocking=False):
+            return jsonify({'ok': False, 'error': _RF_BUSY_MSG}), 429
+        try:
+            extras = osm_routes.route_extras(poly, dist, hws)
+        except Exception:
+            app.logger.exception('route_finder_extras failed')
+            return jsonify({'ok': False, 'error': 'Something went wrong looking up toll plazas. Please try again.'}), 500
+        finally:
+            _RF_SLOTS.release()
+        if extras['extras_ok']:
+            _rf_cache_put(key, extras, 3600)   # failures aren't cached, so Retry really retries
+        else:
+            app.logger.warning('route_finder_extras: lookup failed: %s', extras['note'])
+    return jsonify(dict(extras, ok=True))
+
 @app.route('/route-analytics')
 def route_analytics():
     conn = get_db()
@@ -9607,6 +10419,7 @@ def route_analytics():
         svg_points = ' '.join(f"{x},{y}" for x, y in coords)
         svg_labels = [p['month'][5:] + '/' + p['month'][2:4] for p in trend_points]
 
+    rf_ctx = _route_finder_ctx(conn)
     conn.close()
 
     from urllib.parse import urlencode
@@ -9636,7 +10449,7 @@ def route_analytics():
         da_lowest=da_lowest, da_average=da_average, da_highest=da_highest,
         fuel_lowest=fuel_lowest, fuel_average=fuel_average, fuel_highest=fuel_highest,
         trend_points=trend_points, svg_points=svg_points, svg_labels=svg_labels,
-        active='route-analytics')
+        active='route-analytics', **rf_ctx)
 
 @app.route('/route-analytics/export')
 def export_route_analytics():
@@ -10002,12 +10815,15 @@ def edit_trip(trip_id):
         # Same duplicate-LR guard as add_trip (see the comment there) — excludes this trip's own
         # row so re-saving a trip without changing its LR Number doesn't trip over itself.
         lr_number = (f.get('lr_number') or '').strip()
+        dup = None
         if lr_number:
             dup = conn.execute("""SELECT t.id, t.date, v.vehicle_no FROM trips t
                                   LEFT JOIN vehicles v ON t.vehicle_id=v.id
                                   WHERE t.lr_number = ? COLLATE NOCASE AND TRIM(t.lr_number) != '' AND t.id != ?""",
                                (lr_number, trip_id)).fetchone()
-            if dup:
+        form_error = None if dup else _trip_form_error(f, check_advance=False)
+        if True:
+            if dup or form_error:
                 custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
                                                    FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
                                                    WHERE ii.trip_id=?""", (trip_id,)).fetchall()
@@ -10020,8 +10836,8 @@ def edit_trip(trip_id):
                 employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
                 vehicle_type_map = _vehicle_type_map(conn2)
                 conn2.close()
-                error = (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
-                         f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+                error = form_error or (f"LR Number \"{lr_number}\" is already used on trip #{dup['id']} "
+                                        f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
                 return render_template('trip_form.html', mode='edit', t=f, custom_items=custom_items,
                                         vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                                         employees=employees, vehicle_type_map=vehicle_type_map,
@@ -10187,7 +11003,11 @@ def _trip_detail_data(conn, trip_id):
     for it in custom_item_rows:
         deductions_total += (it['amount'] or 0) if it['item_type'] == 'deduction' else 0
         additions_total += (it['amount'] or 0) if it['item_type'] == 'charge' else 0
-    balance_due = (t.get('billed_amount') or 0) - (t.get('payment_received') or 0)
+    # Same formula the party ledger's own pending-trips list and the Trips list totals already
+    # use (e.g. _app_entity_ledger()'s pending_trips_raw query, trips_list()'s pending_total) —
+    # this one was missing party_advance entirely, so a trip with an advance on it showed its
+    # full billed amount as still due even before any payment was ever recorded against it.
+    balance_due = (t.get('billed_amount') or 0) - (t.get('payment_received') or 0) - (t.get('party_advance') or 0)
     return {'t': t, 'custom_items': custom_item_rows, 'is_hired': is_hired,
             'owner_amount': owner_amount, 'veh_rc': veh_rc, 'additions_total': additions_total,
             'deductions_total': deductions_total, 'balance_due': balance_due}
@@ -10789,7 +11609,7 @@ def app_login():
     error = None
     if request.method == 'POST':
         f = request.form
-        username = f.get('username') or ''
+        username = (f.get('username') or '').strip()
         if not _username_login_format_ok(username):
             return render_template('app/login.html', error='Username must be a valid Indian mobile number or email address.',
                                     year=datetime.date.today().year)
@@ -11081,8 +11901,13 @@ def app_dashboard():
     # Receivable stays a running, un-dated balance — same as the website's own dashboard(), which
     # also computes total_receivables from _accounts_rows(conn) with no date filter at all.
     acct_rows = _accounts_rows(conn)
-    total_receivables = sum(r['balance'] for r in acct_rows if r['balance'] > 0 and r['role'] == 'Party')
-    receivable_party_count = sum(1 for r in acct_rows if r['balance'] > 0.01 and r['role'] == 'Party')
+    # Split by balance sign only — exactly like the website Dashboard and the Ledger page: an
+    # overpaid vendor (balance > 0) is a real receivable and an overpaid party (balance < 0) is a
+    # real payable, so neither is dropped just because of its role.
+    total_receivables = sum(r['balance'] for r in acct_rows if r['balance'] > 0)
+    receivable_party_count = sum(1 for r in acct_rows if r['balance'] > 0.01)
+    total_payables = sum(-r['balance'] for r in acct_rows if r['balance'] < 0)
+    payable_count = sum(1 for r in acct_rows if r['balance'] < -0.01)
 
     dash_vehicles = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL ORDER BY vehicle_no").fetchall()
 
@@ -11178,6 +12003,7 @@ def app_dashboard():
         bo_revenue=dfin['total_revenue'], bo_revenue_growth=bo_revenue_growth,
         bo_expenses=dfin['total_expenses'], bo_expense_growth=bo_expense_growth,
         total_receivables=total_receivables, receivable_party_count=receivable_party_count,
+        total_payables=total_payables, payable_count=payable_count,
         revexp_trend=revexp_trend, revexp_max=revexp_max,
         top_routes=top_routes, more_routes_count=more_routes_count,
         top_expenses=top_expenses,
@@ -11205,7 +12031,8 @@ def app_add_trip():
     if request.method == 'POST':
         f = request.form
         dup = _duplicate_lr_trip(conn, f.get('lr_number'))
-        if dup:
+        form_error = None if dup else _trip_form_error(f)
+        if dup or form_error:
             conn.close()
             vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
             conn2 = get_db()
@@ -11213,8 +12040,8 @@ def app_add_trip():
             vehicle_type_map = _vehicle_type_map(conn2)
             location_options = _get_route_locations(conn2)
             conn2.close()
-            error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
-                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+            error = form_error or (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
+                                    f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
             return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles],
                                     combined_names=combined_names, employees=[e['name'] for e in employees],
                                     vehicle_type_map=vehicle_type_map, location_options=location_options,
@@ -11263,7 +12090,8 @@ def app_edit_trip(trip_id):
     if request.method == 'POST':
         f = request.form
         dup = _duplicate_lr_trip(conn, f.get('lr_number'), exclude_trip_id=trip_id)
-        if dup:
+        form_error = None if dup else _trip_form_error(f, check_advance=False)
+        if dup or form_error:
             custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
                                                FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
                                                WHERE ii.trip_id=?""", (trip_id,)).fetchall()
@@ -11271,8 +12099,8 @@ def app_edit_trip(trip_id):
                               'vendor_name': r['vendor_name'] or ''} for r in custom_item_rows]
             conn.close()
             vehicles, combined_names, employees, vehicle_type_map, location_options = _load_form_context()
-            error = (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
-                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
+            error = form_error or (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
+                                    f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
             return render_template('app/trip_add.html', t=f, vehicles=vehicles, combined_names=combined_names,
                                     employees=employees, vehicle_type_map=vehicle_type_map,
                                     location_options=location_options, error=error,
@@ -11362,14 +12190,27 @@ def app_maintenance():
             f_vehicle=d['f_vehicle'], f_workshop=d['f_workshop'], f_service_type=d['f_service_type'],
             f_status=d['f_status'], f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], f_search=d['f_search'])
 
+    # Overview month: last month by default, any of the previous 12 via ?month=YYYY-MM (the
+    # selector in the period bar) — the website tab offers a date range, so the app mustn't be
+    # stuck on one month.
     last_month_end = datetime.date.today().replace(day=1) - datetime.timedelta(days=1)
-    date_from, date_to = _month_bounds(last_month_end.year, last_month_end.month)
+    month_options = []
+    cur_m = datetime.date.today().replace(day=1)
+    for _ in range(13):
+        month_options.append({'value': cur_m.strftime('%Y-%m'), 'label': cur_m.strftime('%b %Y')})
+        cur_m = (cur_m - datetime.timedelta(days=1)).replace(day=1)
+    chosen = request.args.get('month', '')
+    if chosen not in [m['value'] for m in month_options]:
+        chosen = last_month_end.strftime('%Y-%m')
+    year_m, mon_m = int(chosen[:4]), int(chosen[5:7])
+    date_from, date_to = _month_bounds(year_m, mon_m)
     d = _maintenance_overview_data(conn, date_from, date_to)
     conn.close()
 
     return render_template('app/maintenance.html', user_initials=user_initials,
         notif_count=d['pending_count'] + len(d['actions']), active='maintenance', tab='overview',
         period_label=datetime.datetime.strptime(date_from, '%Y-%m-%d').strftime('%b %Y'),
+        month_options=month_options, chosen_month=chosen,
         total_fleet=d['total_fleet'], vehicles_serviced=d['vehicles_serviced'], pending_count=d['pending_count'],
         total_cost=d['total_cost'], total_unpaid=d['total_unpaid'],
         health_bands=d['health_bands'],
@@ -11824,7 +12665,10 @@ def app_edit_overhead(o_id):
     if not session.get('user_id'):
         return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
     conn = get_db()
-    _update_overhead_from_form(conn, o_id, request.form)
+    ok, error = _update_overhead_from_form(conn, o_id, request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': error}), 400
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_expenses')})
@@ -12326,7 +13170,7 @@ def app_analytics():
     ranges, the Route Rates table) is fully native."""
     conn = get_db()
     tab = request.args.get('tab', 'best')
-    if tab not in ('best', 'rates'):
+    if tab not in ('best', 'rates', 'finder'):
         tab = 'best'
     today = datetime.date.today()
     period = request.args.get('period', '')
@@ -12356,6 +13200,7 @@ def app_analytics():
     name_parts = [p for p in (display_name or '').split() if p]
     user_initials = ((name_parts[0][0] if name_parts else '') +
                       (name_parts[1][0] if len(name_parts) > 1 else (name_parts[0][1] if name_parts and len(name_parts[0]) > 1 else ''))).upper() or 'U'
+    rf_ctx = _route_finder_ctx(conn)
     conn.close()
 
     from urllib.parse import urlencode
@@ -12369,7 +13214,7 @@ def app_analytics():
         all_from_list=d['all_from_list'], all_to_list=d['all_to_list'],
         total_routes=d['total_routes'], total_trips_sel=d['total_trips_sel'], total_revenue_sel=d['total_revenue_sel'],
         avg_margin=d['avg_margin'], top5_by_margin=d['top5_by_margin'], top5_by_revenue=d['top5_by_revenue'],
-        most_trips_route=most_trips_route, avg_revenue_per_trip=avg_revenue_per_trip)
+        most_trips_route=most_trips_route, avg_revenue_per_trip=avg_revenue_per_trip, **rf_ctx)
     if rr is not None:
         rows = rr['rr_rows']
         ctx.update(rr_rows=rows[:rr_show], rr_total_count=rr['rr_total_count'], rr_show=rr_show,
@@ -12637,14 +13482,8 @@ def _app_entity_ledger(entity_type, entity_id):
         role_label = 'Party Ledger'
         # Real pending-trip rows, same query party_ledger() itself uses — needed for the native
         # Add Payment modal's trip-allocation table (app_add_party_payment()).
-        pending_trips_raw = conn.execute("""SELECT id, date, lr_number, from_loc, to_loc, billed_amount,
-                                        (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) as pending
-                                        FROM trips WHERE party_id=?
-                                        AND (billed_amount - COALESCE(payment_received,0) - COALESCE(party_advance,0)) > 0.01
-                                        ORDER BY date""", (entity_id,)).fetchall()
-        pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
-                           'to_loc': t['to_loc'], 'vehicle_no': None, 'billed_amount': t['billed_amount'] or 0,
-                           'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
+        pending_trips = _party_pending_trips(conn, entity_id)
+        pending_maint_total = 0
     else:
         row = conn.execute("SELECT * FROM vendors WHERE id=?", (entity_id,)).fetchone()
         if not row:
@@ -12657,15 +13496,9 @@ def _app_entity_ledger(entity_type, entity_id):
         notes = None  # vendors have no notes column at all — real schema difference, not a bug
         payment_url = f'/payment/vendor/{entity_id}'
         role_label = 'Vendor Ledger'
-        pending_trips_raw = conn.execute("""SELECT t.id, t.date, t.lr_number, t.from_loc, t.to_loc, v.vehicle_no,
-                                        (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END) as billed_amount,
-                                        (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) as pending
-                                        FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id WHERE t.owner_vendor_id=?
-                                        AND (CASE WHEN t.owner_rate_type='FIXED' THEN t.owner_fixed_amount ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END - COALESCE(t.paid_to_owner,0)) > 0.01
-                                        ORDER BY t.date""", (entity_id,)).fetchall()
-        pending_trips = [{'id': t['id'], 'date': t['date'], 'lr_number': t['lr_number'], 'from_loc': t['from_loc'],
-                           'to_loc': t['to_loc'], 'vehicle_no': t['vehicle_no'], 'billed_amount': t['billed_amount'] or 0,
-                           'pending': t['pending'], 'paid': (t['billed_amount'] or 0) - t['pending']} for t in pending_trips_raw]
+        pending_trips = _vendor_pending_trips(conn, entity_id)
+        pending_maint_total = (sum(m['pending'] for m in _vendor_pending_maintenance(conn, entity_id))
+                               + sum(o['pending'] for o in _vendor_pending_overheads(conn, entity_id)))
     total_pending_trips = sum(t['pending'] for t in pending_trips)
     conn.close()
 
@@ -12712,7 +13545,7 @@ def _app_entity_ledger(entity_type, entity_id):
         'entries': page_entries, 'total_count': total_count, 'show': show, 'has_more': has_more, 'f_tab': tab_f or 'all',
         'detail_url_all': detail_url_all, 'detail_url_receivables': detail_url_receivables,
         'detail_url_payables': detail_url_payables, 'detail_url_load_more': detail_url_load_more,
-        'pending_trips': pending_trips, 'total_pending_trips': total_pending_trips,
+        'pending_trips': pending_trips, 'total_pending_trips': total_pending_trips, 'pending_maint_total': pending_maint_total,
         'opening_balance_date': row['opening_balance_date'],
     }
 
@@ -12789,6 +13622,34 @@ def app_update_ledger_opening_balance(entity_type, entity_id):
     endpoint = 'app_party_ledger' if entity_type == 'party' else 'app_vendor_ledger'
     id_kwarg = {'party_id': entity_id} if entity_type == 'party' else {'vendor_id': entity_id}
     return jsonify({'ok': True, 'redirect': url_for(endpoint, **id_kwarg)})
+
+def _name_initials(name):
+    """Avatar initials from a display name — first letter of the first two words ("Abinash Lenka"
+    -> "AL"), or the first two letters of a single word ("Priyanka" -> "PR"). Same rule every
+    /app/ route's own inline copy of this uses (see _app_user_display())."""
+    parts = [p for p in (name or '').replace('_', ' ').replace('.', ' ').split() if p]
+    if not parts:
+        return 'U'
+    if len(parts) > 1:
+        return (parts[0][0] + parts[1][0]).upper()
+    return parts[0][:2].upper()
+
+@app.context_processor
+def _web_header_context():
+    """Website counterpart of _app_header_context() below (which is /app/-only): gives base.html's
+    top-right profile chip and sidebar "Signed in as" the user's real Full Name + initials instead
+    of session['username'] — which is now a mobile number/email, so showing it there put a phone
+    number in the avatar and name. Falls back to the username only for an account with no Full
+    Name saved at all (the old-style Priyanka/Prakash logins)."""
+    if request.path.startswith('/app/') or request.path.startswith('/static/') or not session.get('user_id'):
+        return {}
+    conn = get_db()
+    u = conn.execute("SELECT full_name, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    conn.close()
+    if not u:
+        return {}
+    name = (u['full_name'] or '').strip() or u['username']
+    return {'web_user_name': name, 'web_user_initials': _name_initials(name)}
 
 @app.context_processor
 def _app_header_context():
@@ -12923,6 +13784,8 @@ def app_login_otp():
 
         if not phone:
             return render_template('app/login_otp.html', error='Enter a mobile number.')
+        if not USERNAME_MOBILE_RE.match(phone):
+            return render_template('app/login_otp.html', error='Enter a valid 10-digit Indian mobile number.')
         if not user:
             return render_template('app/login_otp.html', error='No account found with that mobile number.')
         if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):

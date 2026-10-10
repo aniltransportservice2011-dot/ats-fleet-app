@@ -34,6 +34,9 @@
 </style>
 {% endblock %}
 {% block content %}
+{% if request.args.get('inv_error') %}
+<div role="alert" style="margin:12px 0;padding:11px 14px;border:1px solid #f3c1bb;background:#fdecea;color:#b3261e;border-radius:8px;font-size:0.88rem;font-weight:600;">Not saved — {{ request.args.get('inv_error') }}</div>
+{% endif %}
 <div class="wrap" style="max-width:none; width:100%;">
   <a class="back" href="/invoices/generated" onclick="return ibeConfirmLeave();">&larr; Back to Generated Invoices</a>
   <div class="ibe-head">

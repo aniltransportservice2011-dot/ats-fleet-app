@@ -16,6 +16,7 @@ real file is never touched.
 Usage:
     python3 test_phase2_ledger_trips_maintenance.py
 """
+from test_support import ensure_test_user
 import os
 import shutil
 import sys
@@ -66,7 +67,7 @@ def main():
     appmod.app.config['TESTING'] = True
     client = appmod.app.test_client()
     with client.session_transaction() as sess:
-        sess['user_id'] = 1
+        sess['user_id'] = ensure_test_user(TEST_DB)
 
     def raw():
         conn = sqlite3.connect(TEST_DB)
@@ -307,7 +308,7 @@ def main():
     })
     client.post('/maintenance/tyre/add', data={
         'date': '2029-09-10', 'vehicle_no': veh3['vehicle_no'],
-        'tyre_action': 'Replace', 'amount': '6000', 'paid_amount': '6000',
+        'tyre_action': 'Replace', 'amount': '6000', 'paid_amount': '6000', 'vendor_name': 'P2TyreVendor',   # vendor is a required field
     })
     client.post('/maintenance/toll/add', data={
         'date': '2029-09-01', 'vehicle_no': veh3['vehicle_no'], 'toll_plaza': 'VehRollupPlaza',

@@ -1,0 +1,85 @@
+<!-- Route Finder markup — shared by the website (Route Analytics > Route Finder tab) and the mobile
+     app (Route Analytics > Route Finder). Behaviour lives in static/route_finder.js (see
+     partials/_route_finder_scripts.html for how it's started); every piece below — search form,
+     map, summary tiles, stops timeline, legend — is filled in by that script from the real
+     /route-finder/* responses, nothing here is sample data. Context from the including page
+     (both analytics routes pass it via _route_finder_ctx() in app.py):
+       rf_from / rf_to — prefill + auto-search (a Route Analytics row's link sets these)
+     The From/To boxes search all of India as you type (3+ letters) via /route-finder/suggest. -->
+<link rel="stylesheet" href="{{ asset_v('route_finder.css') }}">
+
+<!-- Icon set (stroke icons, same family as the rest of the app); referenced as <use href="#rf-i-…"> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="rf-i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z" fill="currentColor" stroke="none"/><circle cx="12" cy="10" r="2.6" fill="#fff" stroke="none"/></symbol>
+  <symbol id="rf-i-swap" viewBox="0 0 24 24"><path d="M7 20V5M7 5 3.5 8.5M7 5l3.5 3.5M17 4v15M17 19l-3.5-3.5M17 19l3.5-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="rf-i-fuel" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16"/><path d="M3 21h12"/><path d="M6.5 8h5"/><path d="M14 10h1.8a2 2 0 0 1 2 2v4.5a1.6 1.6 0 0 0 3.2 0V8.2L18.5 5.5"/></g></symbol>
+  <symbol id="rf-i-toll" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V9.5L12 4l7 5.5V21"/><path d="M9.5 21v-6h5v6"/><path d="M8.5 11h7"/></g></symbol>
+  <symbol id="rf-i-road" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3 5 21M15.5 3 19 21"/><path d="M12 5v3M12 11v3M12 17v3"/></g></symbol>
+  <symbol id="rf-i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></g></symbol>
+  <symbol id="rf-i-map" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></g></symbol>
+  <symbol id="rf-i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="rf-i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="rf-i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="rf" id="rfRoot"
+     data-search-url="{{ url_for('route_finder_search') }}"
+     data-extras-url="{{ url_for('route_finder_extras') }}"
+     data-suggest-url="{{ url_for('route_finder_suggest') }}"
+     data-leaflet-base="{{ url_for('static', filename='vendor/leaflet/') }}"
+     data-from="{{ rf_from or '' }}" data-to="{{ rf_to or '' }}">
+
+  <form class="rf-form" autocomplete="off">
+    <div class="rf-field rf-f-from">
+      <label for="rfFrom">From</label>
+      <svg class="rf-pin" viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-pin"/></svg>
+      <input id="rfFrom" name="from" placeholder="Start typing a place…" maxlength="120" required>
+    </div>
+    <button type="button" class="rf-swap" aria-label="Swap From and To" title="Swap From and To"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-swap"/></svg></button>
+    <div class="rf-field rf-f-to">
+      <label for="rfTo">To</label>
+      <svg class="rf-pin" viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-pin"/></svg>
+      <input id="rfTo" name="to" placeholder="Start typing a place…" maxlength="120" required>
+    </div>
+    <button type="submit" class="rf-go">Search route</button>
+  </form>
+  <p class="rf-hint">Type 3 or more letters of any town, city, plant or landmark in India, pick it from the list, then press Search route.</p>
+
+  <div class="rf-status" role="status" aria-live="polite"></div>
+
+  <div class="rf-results" hidden>
+    <div class="rf-places"></div>
+    <div class="rf-routes" role="group" aria-label="Route options"></div>
+
+    <div class="rf-layout">
+      <div class="rf-mapcol">
+        <div class="rf-mapwrap">
+          <div class="rf-map" role="application" aria-label="Route map"></div>
+          <button type="button" class="rf-fs" aria-label="Expand map" title="Expand map"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-expand"/></svg></button>
+        </div>
+        <div class="rf-summary" aria-live="polite"></div>
+      </div>
+
+      <section class="rf-panel" aria-label="Route stops">
+        <div class="rf-panel-head">
+          <h3>Route Stops</h3>
+          <span class="rf-count"></span>
+          <button type="button" class="rf-fit"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-map"/></svg>View on Map</button>
+        </div>
+        <p class="rf-limit" hidden></p>
+        <ol class="rf-stops"></ol>
+        <div class="rf-legend">
+          <span class="rf-leg"><span class="rf-fac fuel"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-fuel"/></svg></span>Petrol pump</span>
+          <span class="rf-leg"><span class="rf-fac toll"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#rf-i-toll"/></svg></span>Toll plaza</span>
+          <span class="rf-leg"><span class="rf-nh">NH</span>National Highway</span>
+          <p>Facility counts are what OpenStreetMap has mapped between the previous stop and that one, so treat them as a minimum.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <p class="rf-foot">
+    Routes are OpenStreetMap <b>car</b> routes: trucks usually follow the same highways, but roads closed to heavy vehicles are not modelled, and drive times are for a car, not a loaded truck.
+    Place suggestions by Photon. Map data &copy; OpenStreetMap contributors.
+  </p>
+</div>
