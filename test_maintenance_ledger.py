@@ -10,6 +10,7 @@ Run end-to-end against a disposable copy of fleet.db; the real file is never tou
 Usage:
     python3 test_maintenance_ledger.py
 """
+from test_support import ensure_test_user
 import os
 import shutil
 import sys
@@ -62,7 +63,7 @@ def main():
     appmod.app.config['TESTING'] = True
     client = appmod.app.test_client()
     with client.session_transaction() as sess:
-        sess['user_id'] = 1
+        sess['user_id'] = ensure_test_user(TEST_DB)
 
     def raw():
         conn = sqlite3.connect(TEST_DB)
@@ -147,7 +148,7 @@ def main():
     print("=" * 72)
     batt_vendor = new_vendor('MLedgerBatteryVendor')
     client.post('/maintenance/battery/add', data={
-        'mode': 'install', 'vehicle_no': own_vehicle['vehicle_no'], 'purchase_date': '2029-02-06',
+        'mode': 'install', 'brand': 'Exide', 'capacity_ah': '150', 'battery_type': 'Lead Acid', 'install_date': '2029-02-06', 'warranty_months': '24', 'vehicle_no': own_vehicle['vehicle_no'], 'purchase_date': '2029-02-06',
         'purchase_price': '7000', 'paid_amount': '7000', 'vendor_name': 'MLedgerBatteryVendor',
     })
     bal = vendor_bal(batt_vendor)
@@ -158,7 +159,7 @@ def main():
 
     batt_vendor2 = new_vendor('MLedgerBatteryVendor2')
     client.post('/maintenance/battery/add', data={
-        'mode': 'install', 'vehicle_no': own_vehicle['vehicle_no'], 'purchase_date': '2029-02-06',
+        'mode': 'install', 'brand': 'Exide', 'capacity_ah': '150', 'battery_type': 'Lead Acid', 'install_date': '2029-02-06', 'warranty_months': '24', 'vehicle_no': own_vehicle['vehicle_no'], 'purchase_date': '2029-02-06',
         'purchase_price': '7000', 'paid_amount': '1000', 'vendor_name': 'MLedgerBatteryVendor2',
     })
     bal2 = vendor_bal(batt_vendor2)

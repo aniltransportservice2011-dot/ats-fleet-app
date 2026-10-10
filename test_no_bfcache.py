@@ -6,6 +6,7 @@ fleet.db; the real file is never touched.
 Usage:
     python3 test_no_bfcache.py
 """
+from test_support import ensure_test_user
 import os
 import shutil
 import sys
@@ -49,7 +50,7 @@ def main():
     appmod.app.config['TESTING'] = True
     client = appmod.app.test_client()
     with client.session_transaction() as sess:
-        sess['user_id'] = 1
+        sess['user_id'] = ensure_test_user(TEST_DB)
 
     print("=" * 72)
     print("Test 1: Dashboard carries Cache-Control: no-store")

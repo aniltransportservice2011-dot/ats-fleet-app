@@ -563,7 +563,7 @@
              Username duplicating whatever gets typed into Mobile Number right next to it.
              add_user() validates the format and uses this same value for both username and
              phone. -->
-        <div><label>Mobile Number *</label><input type="text" name="username" required placeholder="10-digit mobile number"></div>
+        <div><label>Mobile Number *</label><input type="text" name="username" required inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" title="10-digit Indian mobile number" placeholder="10-digit mobile number" data-mobile-input="strict"></div>
       </div>
       <div class="row2">
         <div><label>Email (Optional)</label><input type="email" name="email"></div>
@@ -618,7 +618,7 @@
         <div><label>Username</label><input type="text" value="{{ u['username'] }}" disabled style="background:var(--paper);"></div>
       </div>
       <div class="row2">
-        <div><label>Mobile Number *</label><input type="text" name="phone" value="{{ u['phone'] or '' }}" placeholder="+91XXXXXXXXXX" required></div>
+        <div><label>Mobile Number *</label><input type="text" name="phone" value="{{ u['phone'] or '' }}" inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" title="10-digit Indian mobile number" placeholder="10-digit mobile number" required data-mobile-input="strict"></div>
         <div><label>Email</label><input type="email" name="email" value="{{ u['email'] or '' }}"></div>
       </div>
       <div><label>Reset Password (Optional)</label><input type="password" name="password" placeholder="Leave blank to keep the current password" autocomplete="new-password"></div>
@@ -695,4 +695,5 @@ function urPickAccess(tile, prefix) {
   document.getElementById(prefix + 'ModuleGrid').classList.toggle('open', val === 'Limited Access');
 }
 </script>
+<script src="{{ asset_v('mobile_input.js') }}"></script>
 {% endblock %}

@@ -1,0 +1,17 @@
+<!-- Starts the Route Finder. Kept separate from the markup so the mobile app can put it in its
+     extra_scripts block (the app swaps page content without a reload, and only re-runs scripts from
+     there). route_finder.js may still be loading when the inline script below runs (a script tag
+     created by that swap loads asynchronously), hence the wait-and-retry. -->
+<script src="{{ asset_v('route_finder.js') }}"></script>
+<script>
+(function startRouteFinder() {
+  if (!window.RouteFinder) { return setTimeout(startRouteFinder, 40); }
+  var root = document.getElementById('rfRoot');
+  if (!root) { return; }
+  window.__rf = RouteFinder.mount(root);
+  // Inside a website tab panel it only starts once that panel is showing (the map needs a
+  // visible box to size itself); everywhere else it starts at once.
+  var panel = root.closest('.ra-tab-panel');
+  if (!panel || panel.classList.contains('active')) { window.__rf.activate(); }
+})();
+</script>

@@ -299,13 +299,14 @@ CREATE TABLE payment_allocations (
     payment_id     INTEGER NOT NULL REFERENCES payments(id),
     trip_id        INTEGER REFERENCES trips(id),
     maintenance_id INTEGER REFERENCES maintenance(id),
+    overhead_id    INTEGER REFERENCES overheads(id),
     amount         REAL NOT NULL,
     created_by INTEGER REFERENCES users(id),
     created_at TEXT,
     updated_by INTEGER REFERENCES users(id),
     updated_at TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1,
-    CHECK ((trip_id IS NOT NULL AND maintenance_id IS NULL) OR (trip_id IS NULL AND maintenance_id IS NOT NULL))
+    CHECK ((trip_id IS NOT NULL) + (maintenance_id IS NOT NULL) + (overhead_id IS NOT NULL) = 1)
 );
 
 -- ============================================================================

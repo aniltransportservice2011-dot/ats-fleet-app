@@ -1,0 +1,232 @@
+/* Route Finder — one stylesheet for the website (Route Analytics > Route Finder tab) and the mobile
+   app (/app/analytics?tab=finder). The two surfaces name their colour variables differently
+   (--ink vs --a-ink, ...), so everything below reads --rf-* tokens that fall back from one set to
+   the other; the website's dark theme re-points the same variables, so it keeps working.
+
+   Layout is driven by data-w on .rf (set by route_finder.js from the finder's OWN width, not the
+   window's — the website has a sidebar, so a 1280px window leaves the finder only ~1000px):
+     sm  < 700px  one column (phones, narrow tablets): map, summary, then the stops list
+     md  700-979  map 56% / stops 44%
+     lg  >= 980   map 65% / stops 35%                                                              */
+.rf {
+  --rf-accent: #E85B19;                                  /* RATH orange */
+  --rf-accent-soft: color-mix(in srgb, #E85B19 11%, var(--rf-white));
+  --rf-ink: var(--ink, var(--a-ink, #14213d));
+  --rf-steel: var(--steel, var(--a-steel, #5a6b8c));
+  --rf-line: var(--line, var(--a-line, #e6e9f0));
+  --rf-paper: var(--paper, var(--a-paper, #F5F6F9));
+  --rf-white: var(--white, var(--a-white, #ffffff));
+  --rf-green: var(--green, var(--a-green, #1a9c5b));
+  --rf-red: var(--red, var(--a-red, #e34948));
+  --rf-toll: #5B6BB5;                                    /* toll plaza indigo */
+  --rf-nh: #FBE3A1;                                      /* National Highway badge */
+  --rf-nh-ink: #6b4a00;
+  --rf-map-h: 520px;
+  color: var(--rf-ink);
+  font-size: 0.88rem;
+}
+.rf *, .rf *::before, .rf *::after { box-sizing: border-box; }
+.rf svg { flex-shrink: 0; }
+.rf [hidden] { display: none !important; }
+
+/* ===================== search form ===================== */
+.rf-form { display: grid; gap: 10px; align-items: end; background: var(--rf-white); border: 1px solid var(--rf-line);
+  border-radius: 14px; padding: 14px; box-shadow: 0 1px 2px rgba(20, 33, 61, .04);
+  grid-template-columns: minmax(0, 1fr) 46px; grid-template-areas: "from swap" "to swap" "go go"; }
+.rf-f-from { grid-area: from; } .rf-f-to { grid-area: to; }
+.rf-swap { grid-area: swap; align-self: center; width: 46px; height: 46px; border: 1px solid var(--rf-line); border-radius: 12px;
+  background: var(--rf-white); color: var(--rf-accent); cursor: pointer; display: grid; place-items: center; }
+.rf-swap svg { width: 22px; height: 22px; }
+.rf-swap:hover { background: var(--rf-accent-soft); border-color: var(--rf-accent); }
+.rf-go { grid-area: go; height: 46px; padding: 0 26px; border: 0; border-radius: 12px; background: var(--rf-accent); color: #fff;
+  font: inherit; font-weight: 700; font-size: 0.95rem; cursor: pointer; white-space: nowrap; }
+.rf-go:hover { filter: brightness(1.06); }
+.rf-go:disabled { opacity: .6; cursor: progress; }
+.rf[data-w="md"] .rf-form, .rf[data-w="lg"] .rf-form {
+  grid-template-columns: minmax(0, 1fr) 46px minmax(0, 1fr) auto; grid-template-areas: "from swap to go"; }
+.rf[data-w="md"] .rf-swap svg, .rf[data-w="lg"] .rf-swap svg { transform: rotate(90deg); }
+.rf-field { position: relative; }
+.rf-field label { display: block; font-size: 0.66rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--rf-steel); margin: 0 0 5px 2px; }
+.rf-field .rf-pin { position: absolute; left: 12px; bottom: 13px; width: 20px; height: 20px; color: var(--rf-accent); pointer-events: none; }
+.rf-field input { width: 100%; height: 46px; padding: 0 12px 0 40px; border: 1px solid var(--rf-line); border-radius: 12px;
+  background: var(--rf-paper); color: var(--rf-ink); font: inherit; font-size: 0.95rem; font-weight: 600; }
+.rf-field input::placeholder { font-weight: 400; color: var(--rf-steel); }
+.rf-field input:focus { outline: 2px solid var(--rf-accent); outline-offset: -1px; background: var(--rf-white); }
+.rf-field input.pinned { border-color: color-mix(in srgb, var(--rf-green) 50%, var(--rf-line)); }
+.rf-hint { margin: 8px 2px 0; color: var(--rf-steel); font-size: 0.78rem; }
+
+.rf-status { margin: 12px 0 0; padding: 10px 14px; border-radius: 10px; font-size: 0.86rem; display: none; }
+.rf-status.show { display: block; }
+.rf-status.busy { background: var(--rf-white); border: 1px solid var(--rf-line); color: var(--rf-steel); }
+.rf-status.err { background: color-mix(in srgb, var(--rf-red) 11%, var(--rf-white)); color: var(--rf-red); }
+
+/* ===================== ambiguity + route options ===================== */
+.rf-places { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 14px; }
+.rf-places:empty { display: none; }
+.rf-place { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; background: var(--rf-white); border: 1px solid var(--rf-line);
+  border-radius: 10px; padding: 8px 12px; font-size: 0.8rem; min-width: 0; max-width: 100%; }
+.rf-place .k { font-size: 0.64rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--rf-steel); }
+.rf-place .v { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 160px; }
+.rf-place select { flex: 1 1 200px; min-width: 0; max-width: 100%; width: 100%; padding: 6px 8px; border: 1px solid var(--rf-line); border-radius: 8px;
+  background: var(--rf-paper); color: var(--rf-ink); font: inherit; font-size: 0.78rem; }
+.rf-routes { display: flex; gap: 8px; margin-top: 14px; overflow-x: auto; padding-bottom: 2px; }
+.rf-routes:empty { display: none; }
+.rf-chip { flex: 0 0 auto; display: flex; flex-direction: column; text-align: left; gap: 1px; padding: 8px 14px; border: 1.5px solid var(--rf-line);
+  border-radius: 12px; background: var(--rf-white); color: var(--rf-ink); font: inherit; cursor: pointer; }
+.rf-chip .l { font-size: 0.64rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rf-accent); }
+.rf-chip .d { font-weight: 800; font-variant-numeric: tabular-nums; }
+.rf-chip .d i { font-style: normal; font-weight: 600; color: var(--rf-steel); margin-left: 6px; }
+.rf-chip.sel { border-color: var(--rf-accent); background: var(--rf-accent-soft); }
+
+/* ===================== map + summary | stops ===================== */
+.rf-layout { display: grid; gap: 14px; margin-top: 14px; align-items: start; grid-template-columns: minmax(0, 1fr); }
+.rf[data-w="md"] .rf-layout { grid-template-columns: minmax(0, 56fr) minmax(0, 44fr); }
+.rf[data-w="lg"] .rf-layout { grid-template-columns: minmax(0, 65fr) minmax(0, 35fr); }
+.rf[data-w="lg"] { --rf-map-h: clamp(460px, 66vh, 600px); }
+.rf[data-w="md"] { --rf-map-h: clamp(420px, 58vh, 540px); }
+.rf[data-w="sm"] { --rf-map-h: clamp(240px, 36vh, 340px); }
+.rf-mapwrap { position: relative; border: 1px solid var(--rf-line); border-radius: 14px; overflow: hidden; background: var(--rf-paper); }
+.rf-map { height: var(--rf-map-h); z-index: 0; }
+.rf-fs { position: absolute; top: 10px; right: 10px; z-index: 500; width: 40px; height: 40px; border: 0; border-radius: 10px; background: var(--rf-white);
+  color: var(--rf-ink); box-shadow: 0 1px 6px rgba(0, 0, 0, .3); display: grid; place-items: center; cursor: pointer; }
+.rf-fs svg { width: 20px; height: 20px; }
+.rf-mapwrap.full { position: fixed; inset: 0; z-index: 6000; border-radius: 0; border: 0; padding-top: env(safe-area-inset-top); }
+.rf-mapwrap.full .rf-map { height: 100%; }
+html.rf-noscroll, html.rf-noscroll body { overflow: hidden !important; }
+
+.rf-summary { margin-top: 12px; background: var(--rf-white); border: 1px solid var(--rf-line); border-radius: 14px; padding: 12px; }
+.rf-tiles { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rf[data-w="lg"] .rf-tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.rf[data-w="md"] .rf-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rf-tile { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.rf-tile .ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: #fff; flex-shrink: 0; }
+.rf-tile .ic svg { width: 19px; height: 19px; }
+.rf-tile .ic.dist { background: #F08A3E; } .rf-tile .ic.time { background: #3B82D9; } .rf-tile .ic.road { background: #8B5CF6; }
+.rf-tile .ic.toll { background: var(--rf-toll); } .rf-tile .ic.fuel { background: var(--rf-accent); }
+.rf-tile .k { font-size: 0.68rem; color: var(--rf-steel); line-height: 1.2; }
+.rf-tile .v { font-size: 1.05rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.rf-none { font-size: 0.74rem; font-weight: 600; color: var(--rf-steel); }
+.rf-history { margin-top: 12px; padding: 9px 12px; border-radius: 10px; background: color-mix(in srgb, var(--rf-green) 9%, var(--rf-white)); font-size: 0.8rem; line-height: 1.45; }
+
+.rf-panel { background: var(--rf-white); border: 1px solid var(--rf-line); border-radius: 14px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.rf[data-w="md"] .rf-panel, .rf[data-w="lg"] .rf-panel { max-height: calc(var(--rf-map-h) + 150px); }
+.rf-panel-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; flex-wrap: wrap; }
+.rf-panel-head h3 { margin: 0; font-size: 1.05rem; font-weight: 800; }
+.rf-count { color: var(--rf-steel); font-size: 0.78rem; margin-left: auto; }
+.rf-fit { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--rf-accent); font: inherit; font-weight: 700;
+  font-size: 0.82rem; cursor: pointer; padding: 4px 0; }
+.rf-fit svg { width: 18px; height: 18px; }
+
+/* ----- the stops timeline ----- */
+.rf-stops { list-style: none; margin: 0; padding: 0 6px 6px; position: relative; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.rf-stop { position: relative; border-radius: 12px; }
+.rf-stop::before { content: ''; position: absolute; left: 25px; top: 38px; bottom: -14px; width: 0; border-left: 2px dashed color-mix(in srgb, var(--rf-accent) 55%, var(--rf-white)); }
+.rf-stop:last-child::before { display: none; }
+.rf-stop.sel { background: var(--rf-accent-soft); }
+.rf-stop-main { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto 18px; gap: 2px 8px; align-items: start; width: 100%; padding: 11px 8px;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 12px; }
+.rf-stop-main:focus-visible { outline: 2px solid var(--rf-accent); outline-offset: -2px; }
+.rf-mkr { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 0.82rem;
+  background: var(--rf-accent); box-shadow: 0 0 0 3px var(--rf-white); position: relative; z-index: 1; margin-left: 2px; }
+.rf-mkr.start { background: var(--rf-green); } .rf-mkr.end { background: var(--rf-red); }
+.rf-stop.sel .rf-mkr { box-shadow: 0 0 0 3px var(--rf-accent-soft), 0 0 0 5px var(--rf-accent); }
+.rf-stop-txt { min-width: 0; }
+.rf-stop-txt .nm { display: block; font-weight: 700; font-size: 0.95rem; line-height: 1.25; overflow-wrap: anywhere; }
+.rf-stop-txt .sb { display: block; color: var(--rf-steel); font-size: 0.78rem; line-height: 1.3; overflow-wrap: anywhere; }
+.rf-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.rf-chips:empty { display: none; }
+.rf-stop-d { text-align: right; white-space: nowrap; }
+.rf-stop-d b { display: block; font-weight: 800; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.rf-stop-d i { display: block; font-style: normal; color: var(--rf-steel); font-size: 0.76rem; }
+.rf-chev { width: 18px; height: 18px; margin-top: 6px; color: var(--rf-steel); transition: transform .15s; }
+.rf-stop.open .rf-chev { transform: rotate(90deg); color: var(--rf-accent); }
+@media (prefers-reduced-motion: reduce) { .rf-chev { transition: none; } }
+
+.rf-nh { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--rf-nh); color: var(--rf-nh-ink); font-size: 0.7rem; font-weight: 800; letter-spacing: .02em; line-height: 1.4; }
+.rf-nh.sh { background: #DCE7F7; color: #274a7a; }
+.rf-fac { display: inline-flex; align-items: center; gap: 4px; font-weight: 800; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.rf-fac svg { width: 17px; height: 17px; }
+.rf-fac.fuel { color: var(--rf-accent); } .rf-fac.toll { color: var(--rf-toll); }
+.rf-fac.dim { color: var(--rf-steel); font-weight: 600; opacity: .8; }
+
+.rf-stop-more { padding: 2px 12px 14px 56px; font-size: 0.82rem; line-height: 1.5; }
+.rf-stop-more h4 { margin: 10px 0 4px; font-size: 0.66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--rf-steel); }
+.rf-stop-more h4:first-child { margin-top: 2px; }
+.rf-stop-more ul { list-style: none; margin: 0; padding: 0; }
+.rf-stop-more li { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
+.rf-stop-more li .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rf-stop-more li .m { color: var(--rf-steel); white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+.rf-stop-more .rf-fac svg { margin-top: 1px; }
+.rf-stop-more .empty { color: var(--rf-steel); font-size: 0.8rem; }
+.rf-stop-more .more { color: var(--rf-steel); font-size: 0.78rem; padding-left: 25px; }
+.rf-stop-more .rf-onmap { margin-top: 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--rf-line); background: var(--rf-white);
+  color: var(--rf-accent); border-radius: 9px; padding: 6px 12px; font: inherit; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
+.rf-stop-more .rf-onmap svg { width: 16px; height: 16px; }
+
+.rf-note { margin: 4px 8px 10px; padding: 10px 12px; border-radius: 10px; background: var(--rf-paper); color: var(--rf-steel); font-size: 0.8rem; line-height: 1.45; }
+.rf-note button { margin-left: 8px; padding: 3px 12px; border: 1px solid var(--rf-line); border-radius: 7px; background: var(--rf-white); color: var(--rf-accent); font: inherit; font-weight: 700; cursor: pointer; }
+.rf-skel li { list-style: none; display: grid; grid-template-columns: 38px 1fr; gap: 8px; padding: 11px 8px; }
+.rf-skel .c { width: 30px; height: 30px; border-radius: 50%; margin-left: 2px; }
+.rf-skel .l { height: 12px; border-radius: 6px; margin: 4px 0 8px; width: 55%; } .rf-skel .l.s { width: 35%; height: 10px; margin: 0; }
+.rf-sk, .rf-skel .c, .rf-skel .l { background: linear-gradient(90deg, var(--rf-paper) 25%, color-mix(in srgb, var(--rf-line) 70%, var(--rf-paper)) 50%, var(--rf-paper) 75%); background-size: 200% 100%; animation: rfshimmer 1.3s linear infinite; }
+.rf-sk { display: inline-block; width: 38px; height: 14px; border-radius: 6px; vertical-align: middle; }
+@keyframes rfshimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .rf-sk, .rf-skel .c, .rf-skel .l { animation: none; } }
+.rf-spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--rf-line); border-top-color: var(--rf-accent); border-radius: 50%; animation: rfspin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes rfspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .rf-spin { animation: none; } }
+
+.rf-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 14px 14px; border-top: 1px solid var(--rf-line); background: var(--rf-white); }
+.rf-leg { display: inline-flex; align-items: center; gap: 7px; font-size: 0.78rem; color: var(--rf-steel); }
+.rf-legend p { flex-basis: 100%; margin: 0; font-size: 0.72rem; color: var(--rf-steel); line-height: 1.4; }
+.rf-foot { margin: 14px 2px 0; color: var(--rf-steel); font-size: 0.72rem; line-height: 1.5; }
+
+/* ===================== map markers (Leaflet divIcons) ===================== */
+.rf-mk { display: grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 800; border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.4); }
+.rf-mk.a { background: #1a9c5b; width: 28px; height: 28px; font-size: 0.82rem; }
+.rf-mk.b { background: #e34948; width: 28px; height: 28px; font-size: 0.82rem; }
+.rf-mk.stop { background: #E85B19; width: 24px; height: 24px; font-size: 0.74rem; }
+.rf-mk.stop.sel { width: 32px; height: 32px; font-size: 0.9rem; box-shadow: 0 0 0 4px rgba(232, 91, 25, .35), 0 2px 8px rgba(0,0,0,.45); }
+.rf-mk.toll { background: #5B6BB5; width: 24px; height: 24px; }
+.rf-mk.fuel { background: #fff; color: #E85B19; border-color: #E85B19; width: 24px; height: 24px; }
+.rf-mk svg { width: 14px; height: 14px; }
+.rf-nh-tag { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; padding: 2px 8px; border-radius: 6px; background: #FBE3A1; color: #6b4a00;
+  font: 800 11px/1.4 system-ui, sans-serif; box-shadow: 0 1px 3px rgba(0,0,0,.35); pointer-events: none; }
+
+/* ===================== type-ahead suggestions under the From / To boxes ===================== */
+.rf-sug { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 1200; margin: 0; padding: 4px; list-style: none;
+  max-height: 340px; overflow-y: auto; background: var(--rf-white); border: 1px solid var(--rf-line); border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .18); }
+.rf-sug[hidden] { display: none; }
+.rf-sug li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+.rf-sug li.on, .rf-sug li:hover { background: var(--rf-paper); }
+.rf-sug li.msg { cursor: default; color: var(--rf-steel); font-size: 0.82rem; }
+.rf-sug li.msg:hover { background: transparent; }
+.rf-sug .tx { min-width: 0; flex: 1; }
+.rf-sug .nm { display: block; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-sug .dt { display: block; color: var(--rf-steel); font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-sug .kd { flex-shrink: 0; font-size: 0.66rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 99px; background: var(--rf-accent-soft); color: var(--rf-accent); }
+.rf-sug mark { background: transparent; color: var(--rf-accent); font-weight: 800; }
+/* From/To boxes are narrow when they share a row with Swap + Search, so on a wide layout the list may be
+   wider than its box (From's grows rightwards, To's leftwards) instead of chopping names to a few letters. */
+.rf[data-w="md"] .rf-sug, .rf[data-w="lg"] .rf-sug { min-width: 400px; }
+.rf[data-w="md"] .rf-sug.end, .rf[data-w="lg"] .rf-sug.end { left: auto; right: 0; }
+
+/* ===================== mobile app: compact page header (the finder is its own screen there) ===================== */
+.rf-pagehead { display: flex; align-items: center; gap: 12px; margin: 2px 0 14px; }
+.rf-pagehead h1 { margin: 0; font-size: 1.25rem; font-weight: 800; color: var(--a-ink, #14213d); line-height: 1.2; }
+.rf-pagehead p { margin: 2px 0 0; font-size: 0.82rem; color: var(--a-steel, #5a6b8c); }
+.rf-back { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--a-white, #fff); color: var(--a-ink, #14213d);
+  border: 1px solid var(--a-line, #e6e9f0); flex-shrink: 0; text-decoration: none; }
+.rf-back svg { width: 20px; height: 20px; }
+/* keep the last stops and the legend clear of the app's fixed bottom navigation */
+.rf-pagehead ~ .rf, .a-wrap > .rf { padding-bottom: 96px; }
+
+/* On a phone-sized map the highway tags crowd the numbered stop markers (the same highway is shown on every
+   stop row anyway), so they only appear on the map when it's wide enough, or expanded full screen. */
+.rf[data-w="sm"] .rf-mapwrap:not(.full) .rf-nh-tag { display: none; }
+
+/* shown only when the route passes more major places than the layout has room for */
+.rf-limit { margin: 0; padding: 0 14px 8px; font-size: 0.74rem; color: var(--rf-steel); line-height: 1.4; }

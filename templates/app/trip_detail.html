@@ -217,7 +217,7 @@
           <option value="No" {% if t.lr_received and t.lr_received != 'Yes' %}selected{% endif %}>No</option>
         </select>
       </div>
-      <div class="vam-field vam-field-full"><label>Freight Amount (₹)</label><input type="number" step="0.01" name="freight_amount" value="{{ t.billed_amount or 0 }}"></div>
+      <div class="vam-field vam-field-full"><label>Freight Amount (₹)</label><input type="number" step="0.01" name="freight_amount" value="{{ (t.billed_amount or 0) + (t.shortage_amount or 0) }}"></div>
     </div>
 
     <div class="vam-section-title">Shortage Details</div>

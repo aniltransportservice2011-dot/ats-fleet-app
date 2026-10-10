@@ -22,6 +22,9 @@
 {% block content %}
 <div class="wrap">
   <a class="back" href="/salaries?tab={{ from_tab }}">&larr; Back to Salaries</a>
+  {% if request.args.get('pay_error') %}
+  <div role="alert" style="margin:12px 0;padding:11px 14px;border:1px solid #f3c1bb;background:#fdecea;color:#b3261e;border-radius:8px;font-size:0.88rem;font-weight:600;">Not saved — {{ request.args.get('pay_error') }}</div>
+  {% endif %}
   <h1>{{ employee }} <button onclick="document.getElementById('addModal').classList.add('open')" class="add-btn">+ Add Payment</button></h1>
   <div style="font-size:12px;color:var(--steel);margin-bottom:14px;">Employee Ledger — Salary payments and advances, combined. Click any row for full details and notes.</div>
 

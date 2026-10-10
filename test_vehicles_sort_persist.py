@@ -6,6 +6,7 @@ disposable copy of fleet.db; the real file is never touched.
 Usage:
     python3 test_vehicles_sort_persist.py
 """
+from test_support import ensure_test_user
 import os
 import shutil
 import sys
@@ -49,7 +50,7 @@ def main():
     appmod.app.config['TESTING'] = True
     client = appmod.app.test_client()
     with client.session_transaction() as sess:
-        sess['user_id'] = 1
+        sess['user_id'] = ensure_test_user(TEST_DB)
 
     print("=" * 72)
     print("Test 1: first-ever bare /vehicles hit (no session state yet) just renders normally")

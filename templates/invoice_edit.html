@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Edit Invoice{% endblock %}
 {% block content %}
+{% if request.args.get('inv_error') %}
+<div role="alert" style="margin:12px 0;padding:11px 14px;border:1px solid #f3c1bb;background:#fdecea;color:#b3261e;border-radius:8px;font-size:0.88rem;font-weight:600;">Not saved — {{ request.args.get('inv_error') }}</div>
+{% endif %}
 <div class="wrap" style="max-width:650px;">
   <a class="back" href="/invoices/{{ trip_id }}">&larr; Back to invoice</a>
   <h1>Edit Invoice — {{ t['lr_number'] }}</h1>

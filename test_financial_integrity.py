@@ -27,6 +27,7 @@ What each group actually proves (not just "does it run without an error"):
      via _accounts_rows) exactly equals the sum of every individual party/vendor ledger balance —
      locks in that these can never silently drift apart into two different numbers.
 """
+from test_support import ensure_test_user
 import os
 import shutil
 import sys
@@ -76,7 +77,7 @@ def main():
     appmod.app.config['TESTING'] = True
     client = appmod.app.test_client()
     with client.session_transaction() as sess:
-        sess['user_id'] = 1
+        sess['user_id'] = ensure_test_user(TEST_DB)
 
     def raw():
         conn = sqlite3.connect(TEST_DB)

@@ -180,7 +180,7 @@
 
     {% if pending_trips %}
     <div class="vam-section-title">Allocate Payment To Trips</div>
-    <div style="font-size:0.76rem;color:var(--a-steel);margin:-6px 0 10px;">Outstanding: <b>₹{{ '{:,.0f}'.format(total_pending_trips) }}</b> · Select one or more pending trips — amount is adjusted automatically.</div>
+    <div style="font-size:0.76rem;color:var(--a-steel);margin:-6px 0 10px;">Outstanding: <b>₹{{ '{:,.0f}'.format(total_pending_trips) }}</b> · Tick the trips it is for, or tick none and it goes to the oldest pending trips first.</div>
     <div style="max-height:220px;overflow-y:auto;border:1px solid var(--a-line);border-radius:10px;">
       {% for pt in pending_trips %}
       <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--a-line);font-size:0.78rem;">

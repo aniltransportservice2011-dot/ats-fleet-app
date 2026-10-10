@@ -107,6 +107,9 @@
 {% macro kind_colors(k) %}{% if k=='Payment In' %}background:#e8f5ee;color:var(--green);{% elif k=='Payment Out' %}background:#fdecea;color:var(--red);{% elif k=='Trip Bill' %}background:#eaf1fb;color:#2a78d6;{% elif k=='Expense Adj.' %}background:rgba(74,58,167,0.1);color:#4a3aa7;{% else %}background:#f1f2f5;color:var(--steel);{% endif %}{% endmacro %}
 <div class="wrap" style="max-width:none; width:100%;">
   <a class="back" href="/accounts">&larr; Back to Ledger</a>
+  {% if request.args.get('pay_error') %}
+  <div role="alert" style="margin:12px 0;padding:11px 14px;border:1px solid #f3c1bb;background:#fdecea;color:#b3261e;border-radius:8px;font-size:0.88rem;font-weight:600;">Payment not saved — {{ request.args.get('pay_error') }}</div>
+  {% endif %}
 
   <div class="lg2-head">
     <div>
@@ -271,7 +274,7 @@
         <label style="margin:0;">Allocate Payment To Trips</label>
         <span class="out-amt">Outstanding Amount: <b>₹{{ '{:,.0f}'.format(total_pending_trips) }}</b></span>
       </div>
-      <div class="pm-hint" style="margin-bottom:8px;">Select one or more pending trips to allocate this payment. Amount will be adjusted automatically.</div>
+      <div class="pm-hint" style="margin-bottom:8px;">Tick the trips this payment is for (amount adjusts automatically). If you tick none — or the amount is more than the ticked trips need — the rest is applied to the oldest pending trips first.</div>
       <div class="alloc-table-wrap">
         <table id="pmTripTable">
           <tr><th style="width:22px;"></th><th>Vehicle</th><th>LR Number</th><th>Trip Date</th><th>From</th><th>To</th><th class="num">Trip Amount (₹)</th><th class="num">Paid (₹)</th><th class="num">Balance (₹)</th></tr>
@@ -308,6 +311,9 @@
           <div><span class="alloc-badge none" id="pmAllocBadge">Not Allocated</span></div>
         </div>
       </div>
+      {% endif %}
+      {% if pending_maint_total %}
+      <div class="pm-hint" style="margin:8px 0;">Unpaid maintenance bills from this vendor: <b>₹{{ '{:,.0f}'.format(pending_maint_total) }}</b> — any amount left after the trips is applied to them, oldest first.</div>
       {% endif %}
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px;">

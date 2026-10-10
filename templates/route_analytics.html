@@ -118,6 +118,7 @@
   <div class="ra-tabs">
     <button type="button" class="ra-tab {{ 'active' if tab=='best-routes' }}" id="tabBtn-best-routes" onclick="showRTab('best-routes', this)">&#127942; Best Routes</button>
     <button type="button" class="ra-tab {{ 'active' if tab=='route-rates' }}" id="tabBtn-route-rates" onclick="showRTab('route-rates', this)">&#128176; Route Rates</button>
+    <button type="button" class="ra-tab {{ 'active' if tab=='route-finder' }}" id="tabBtn-route-finder" onclick="showRTab('route-finder', this)">&#128506; Route Finder</button>
   </div>
 
   <!-- ===================== BEST ROUTES TAB ===================== -->
@@ -174,13 +175,14 @@
         <tr><th>Route</th><th class="num">Trips</th><th class="num">Total Revenue</th><th class="num">Total Cost</th><th class="num">Profit</th><th class="num">Margin %</th><th>Action</th></tr>
         {% for r in summary_rows %}
         <tr>
-          <td>{{ r.clean_from }} &rarr; {{ r.clean_to }}</td>
+          <td><a href="/route-analytics?tab=route-finder&rf_from={{ rf_texts.get(r.clean_from, r.clean_from)|urlencode }}&rf_to={{ rf_texts.get(r.clean_to, r.clean_to)|urlencode }}" title="Show this route on the map" style="color:inherit;font-weight:600;text-decoration:none;">{{ r.clean_from }} &rarr; {{ r.clean_to }}</a></td>
           <td class="num">{{ r.trips }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.revenue) }}</td>
           <td class="num">₹{{ '{:,.0f}'.format(r.cost) }}</td>
           <td class="num" style="color:{% if r.profit>=0 %}var(--green){% else %}var(--red){% endif %};">₹{{ '{:,.0f}'.format(r.profit) }}</td>
           <td class="num" style="font-weight:600;color:{% if r.margin>=0 %}var(--green){% else %}var(--red){% endif %};">{{ r.margin }}%</td>
-          <td><a href="/trips?from_loc={{ r.clean_from }}&to_loc={{ r.clean_to }}" title="View trips on this route" style="color:var(--accent);">&#128065;</a></td>
+          <td><a href="/trips?from_loc={{ r.clean_from }}&to_loc={{ r.clean_to }}" title="View trips on this route" style="color:var(--accent);">&#128065;</a>
+            <a href="/route-analytics?tab=route-finder&rf_from={{ rf_texts.get(r.clean_from, r.clean_from)|urlencode }}&rf_to={{ rf_texts.get(r.clean_to, r.clean_to)|urlencode }}" title="Show this route on the map" style="color:var(--accent);margin-left:8px;">&#128506;</a></td>
         </tr>
         {% endfor %}
       </table>
@@ -294,6 +296,11 @@
       </div>
     </div>
   </div>
+
+  <!-- ===================== ROUTE FINDER TAB ===================== -->
+  <div class="ra-tab-panel {{ 'active' if tab=='route-finder' }}" id="ra-route-finder">
+    {% include "partials/_route_finder.html" %}
+  </div>
 </div>
 
 <script>
@@ -303,6 +310,10 @@ function showRTab(which, btn) {
   document.getElementById('ra-' + which).classList.add('active');
   (btn || document.getElementById('tabBtn-' + which)).classList.add('active');
   document.getElementById('activeTabField').value = which;
+  // The From/To/date/vehicle filters above only apply to Best Routes and Route Rates — hide them on the live finder.
+  var ff = document.getElementById('raFilterForm');
+  if (ff) ff.style.display = (which === 'route-finder') ? 'none' : '';
+  if (which === 'route-finder' && window.__rf) { window.__rf.activate(); }
 }
 (function() {
   var initial = document.getElementById('activeTabField').value || 'best-routes';
@@ -313,4 +324,5 @@ function showRTab(which, btn) {
   }
 })();
 </script>
+{% include "partials/_route_finder_scripts.html" %}
 {% endblock %}
