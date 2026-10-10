@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, g, jsonify
 import sqlite3
+import sys
 import datetime
 import calendar
 import os
@@ -105,6 +106,86 @@ def get_db():
     if has_request_context():
         g.setdefault('_open_db_conns', []).append(wrapper)
     return wrapper
+
+# ---- self-applying schema step: payment_allocations.overhead_id ----------------------------------------
+# migrate_payment_allocation_overhead.sql is the documented, hand-runnable version of this. It is also
+# applied automatically, ONCE, the first time the app starts against a database that lacks the column,
+# so shipping the code before the database change can never take the site down (that is exactly what
+# happened on the first Render deploy). Safe by construction: a copy of the database file is saved first,
+# the whole change runs inside one BEGIN IMMEDIATE transaction (a second gunicorn worker starting at the
+# same moment simply waits, then sees the column and does nothing), and it re-checks for the column
+# inside the transaction.
+def _ensure_overhead_allocation_column(db_path=None):
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        probe = sqlite3.connect(path, timeout=30)
+        try:
+            has_table = probe.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payment_allocations'").fetchone()
+            cols = [r[1] for r in probe.execute("PRAGMA table_info(payment_allocations)").fetchall()] if has_table else []
+        finally:
+            probe.close()
+        if not has_table or 'overhead_id' in cols:
+            return 'already up to date'
+        backup = f"{path}.bak.before_overhead_alloc_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if not any(f.startswith(os.path.basename(path) + '.bak.before_overhead_alloc_') for f in os.listdir(os.path.dirname(os.path.abspath(path)) or '.')):
+            _src = sqlite3.connect(path, timeout=30)             # SQLite's own online backup: a consistent copy even if something is writing
+            _dst = sqlite3.connect(backup)
+            try:
+                _src.backup(_dst)
+            finally:
+                _dst.close()
+                _src.close()
+        conn = sqlite3.connect(path, timeout=60, isolation_level=None)
+        try:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("BEGIN IMMEDIATE")
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(payment_allocations)").fetchall()]
+            if 'overhead_id' in cols:                      # another worker got there first
+                conn.execute("ROLLBACK")
+                return 'already up to date'
+            conn.execute("""CREATE TABLE payment_allocations_new (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                payment_id     INTEGER NOT NULL REFERENCES payments(id),
+                trip_id        INTEGER REFERENCES trips(id),
+                maintenance_id INTEGER REFERENCES maintenance(id),
+                overhead_id    INTEGER REFERENCES overheads(id),
+                amount         REAL NOT NULL,
+                created_by INTEGER REFERENCES users(id),
+                created_at TEXT,
+                updated_by INTEGER REFERENCES users(id),
+                updated_at TEXT,
+                company_id            INTEGER NOT NULL DEFAULT 1,
+                CHECK ((trip_id IS NOT NULL) + (maintenance_id IS NOT NULL) + (overhead_id IS NOT NULL) = 1)
+            )""")
+            has_maint = 'maintenance_id' in cols
+            conn.execute(f"""INSERT INTO payment_allocations_new (id, payment_id, trip_id, maintenance_id, overhead_id, amount, created_by, created_at, updated_by, updated_at, company_id)
+                             SELECT id, payment_id, trip_id, {'maintenance_id' if has_maint else 'NULL'}, NULL, amount, created_by, created_at, updated_by, updated_at,
+                                    {'company_id' if 'company_id' in cols else '1'}
+                             FROM payment_allocations""")
+            before = conn.execute("SELECT COUNT(*), COALESCE(ROUND(SUM(amount),2),0) FROM payment_allocations").fetchone()
+            after = conn.execute("SELECT COUNT(*), COALESCE(ROUND(SUM(amount),2),0) FROM payment_allocations_new").fetchone()
+            if before != after:                            # never swap tables unless every row came across
+                conn.execute("ROLLBACK")
+                return f'aborted: row check failed {before} vs {after}'
+            conn.execute("DROP TABLE payment_allocations")
+            conn.execute("ALTER TABLE payment_allocations_new RENAME TO payment_allocations")
+            conn.execute("COMMIT")
+            return f'applied (backup: {os.path.basename(backup)}, {after[0]} allocations kept)'
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+    except Exception as e:                                 # never stop the app from starting
+        print(f'[schema] could not apply payment_allocations.overhead_id automatically: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[schema] payment_allocations.overhead_id:', _ensure_overhead_allocation_column(), file=sys.stderr)
 
 @app.errorhandler(ValueError)
 @app.errorhandler(OverflowError)
