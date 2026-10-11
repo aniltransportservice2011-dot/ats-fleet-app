@@ -23,6 +23,7 @@
 </div>
 <div class="a-greet-sub">Here's what's happening with your fleet.</div>
 
+{% if can('Trips') %}
 <!-- Today's Trips row (Current) — pure data points, no navigation (per instruction: routing is
      removed from every card except Action Required and Business Overview, which keep an
      icon-only route in their own header instead of a text link). Total Vehicles and On Trip
@@ -44,6 +45,9 @@
   </div>
 </div>
 
+{% endif %}
+
+{% if can('Vehicles') %}
 <!-- Fleet Status (Current) — always-live counts + a real 3-segment donut. -->
 <div class="a-card">
   <div class="a-card-head">
@@ -71,6 +75,9 @@
   </div>
 </div>
 
+{% endif %}
+
+{% if can('Vehicles') %}
 <!-- Action Required (Current) — Challans Pending (real vehicle_challans) + Documents
      Expired/Expiring Soon (real Insurance/Fitness/PUC/Permit expiry). Same red/orange severity
      split the website's own Vehicles page comp_colors scheme uses (Expired = red, Expiring
@@ -116,6 +123,9 @@
 </div>
 {% endif %}
 
+{% endif %}
+
+{% if can('Expenses') %}
 <!-- Top Expenses (Selected Period) — same real category breakdown as the website's own
      Expense Breakdown chart, sorted by size. -->
 <div class="a-card">
@@ -135,6 +145,9 @@
   {% endfor %}
 </div>
 
+{% endif %}
+
+{% if can('Reports') %}
 <!-- Business Overview (Selected Period) -->
 <div class="a-card">
   <div class="a-card-head">
@@ -198,6 +211,9 @@
   </div>
 </div>
 
+{% endif %}
+
+{% if can('Reports') %}
 <!-- Revenue vs Expenses (Selected Period) — trailing 6 months ending at the selected period's
      own end month. -->
 <div class="a-card">
@@ -222,6 +238,9 @@
   </div>
 </div>
 
+{% endif %}
+
+{% if can('Reports') %}
 <!-- Top Routes (Selected Period) — real per-route revenue rollup, same source as Route Analytics. -->
 <div class="a-card">
   <div class="a-card-head">
@@ -245,6 +264,9 @@
   {% endif %}
 </div>
 
+{% endif %}
+
+{% if can('Trips') %}
 <!-- Recent Activity (Current) -->
 <div class="a-card">
   <div class="a-card-head">
@@ -268,6 +290,8 @@
   <div style="color:var(--a-steel);font-size:0.85rem;text-align:center;padding:12px 0;">No recent activity.</div>
   {% endfor %}
 </div>
+
+{% endif %}
 
 <!-- Period sheet — Today/This Week/This Month/Last Month/FY 2026-27/FY 2025-26 as one-tap
      presets, computed server-side by _resolve_dashboard_period(); Custom Range below reveals a

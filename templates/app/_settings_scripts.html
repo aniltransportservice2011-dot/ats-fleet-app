@@ -1,14 +1,14 @@
 <script>
 // Every Administrator settings form posts to the same JSON endpoint the website's Settings page logic is shared with
 // (_save_settings_group in app.py). Success reloads this screen so it shows what is actually stored.
-function asPost(url, body, errBox, btn, doneLabel) {
+function asPost(url, body, errBox, btn, nextUrl) {
   var orig = btn ? btn.textContent : '';
   if (errBox) errBox.style.display = 'none';
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   return fetch(url, { method: 'POST', body: body, headers: { 'X-App-Request': '1', 'Accept': 'application/json' } })
     .then(function (res) { return res.json().then(function (d) { return { ok: res.ok && d.ok, d: d }; }); })
     .then(function (r) {
-      if (r.ok) { reloadWithFlag('saved'); return r.d; }
+      if (r.ok) { if (nextUrl) { window.location.href = nextUrl; } else { reloadWithFlag('saved'); } return r.d; }
       if (errBox) { errBox.textContent = r.d.error || 'Something went wrong. Please try again.'; errBox.style.display = 'block'; errBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
       if (btn) { btn.disabled = false; btn.textContent = orig; }
     })

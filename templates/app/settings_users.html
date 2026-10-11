@@ -1,7 +1,7 @@
 {% extends "app/base_app.html" %}
 {% from "app/_settings_macros.html" import head, field, toggle %}
 {% block title %}Users & Roles — {{ company_name }}{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}">{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}"><link rel="stylesheet" href="{{ asset_v('limited_access_picker.css') }}">{% endblock %}
 {% block content %}
 {{ head(page_title, page_sub) }}
 
@@ -135,9 +135,7 @@
         <button type="button" class="as-tile" data-val="Limited Access"><div class="tl">Limited</div><div class="ts">Selected<br>modules</div></button>
       </div>
       <input type="hidden" name="access_level" id="uAccess" value="Full Access">
-      <div class="as-modules" id="uModules">
-        {% for m in module_list %}<label><input type="checkbox" name="modules" value="{{ m }}">{{ m }}</label>{% endfor %}
-      </div>
+      <div id="uModules"></div>
     </div>
     <div class="fld"><label class="lbl">Status</label><select name="status" id="uStatus"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></div>
     <div class="vam-actions" style="flex-direction:column;">
@@ -145,15 +143,18 @@
         <button type="button" class="vam-btn-cancel" onclick="asCloseUser()">Cancel</button>
         <button type="submit" class="vam-btn-save" id="uSave">Save User</button>
       </div>
+      <button type="button" class="as-ghost" id="uMakeAdmin" style="display:none;">Make Administrator</button>
       <button type="button" class="as-danger" id="uDelete" style="display:none;margin-top:0;">Delete User</button>
     </div>
   </form>
 </div>
 {% endblock %}
 {% block extra_scripts %}
+<script src="{{ asset_v('limited_access_picker.js') }}"></script>
 {% include 'app/_settings_scripts.html' %}
 <script>
 var AS_USERS = {{ users|tojson }};
+LAPicker.mount(document.getElementById('uModules'), { initial: '', preview: false });
 var AS_ME = {{ my_user_id|tojson }};
 // tabs
 document.querySelectorAll('#asSeg button').forEach(function (b) {
@@ -175,7 +176,9 @@ var uEditId = null;
 function asPickAccess(val) {
   document.getElementById('uAccess').value = val;
   document.querySelectorAll('#uTiles .as-tile').forEach(function (t) { t.classList.toggle('active', t.dataset.val === val); });
-  document.getElementById('uModules').classList.toggle('open', val === 'Limited Access');
+  var box = document.getElementById('uModules');
+  box.classList.toggle('open', val === 'Limited Access');
+  if (box.laSet) { if (val === 'Limited Access') box.laSet(box.laValue() || 'Dashboard:v'); else box.querySelectorAll('input[name=modules]').forEach(function (i) { i.remove(); }); }
 }
 document.querySelectorAll('#uTiles .as-tile').forEach(function (t) { t.addEventListener('click', function () { asPickAccess(t.dataset.val); }); });
 function asOpenUser(id) {
@@ -191,11 +194,11 @@ function asOpenUser(id) {
   document.getElementById('uEmail').value = u ? (u.email || '') : '';
   document.getElementById('uRole').value = u ? (u.role || '') : '';
   document.getElementById('uStatus').value = u ? (u.status || 'Active') : 'Active';
-  var mods = u && u.module_access ? u.module_access.split(',') : [];
-  document.querySelectorAll('#uModules input').forEach(function (c) { c.checked = mods.indexOf(c.value) !== -1; });
+  document.getElementById('uModules').laSet(u && u.module_access ? u.module_access : '');
   asPickAccess(u ? (u.access_level || 'Full Access') : 'Full Access');
   var del = document.getElementById('uDelete');
   del.style.display = (u && u.id !== AS_ME) ? 'block' : 'none';
+  document.getElementById('uMakeAdmin').style.display = (u && u.id !== AS_ME && (u.role || '').trim().toLowerCase() !== 'administrator' && (u.status || 'Active') !== 'Inactive') ? 'block' : 'none';
   lockPageScroll();
   document.getElementById('uBackdrop').classList.add('open');
   document.getElementById('uModal').classList.add('open');
@@ -212,6 +215,11 @@ document.getElementById('uForm').addEventListener('submit', function (e) {
   fd.append(uEditId == null ? 'username' : 'phone', document.getElementById('uMobile').value.trim());
   var url = uEditId == null ? '/settings/users/add' : '/settings/users/' + uEditId + '/edit';
   asPost(url, fd, document.getElementById('uError'), document.getElementById('uSave'));
+});
+document.getElementById('uMakeAdmin').addEventListener('click', function () {
+  var u = AS_USERS.filter(function (x) { return x.id === uEditId; })[0];
+  if (!u || !confirm('Make ' + (u.full_name || u.username) + ' the Administrator?\n\nThey get full control of company settings and users, and you become a Manager. Only one Administrator can be active at a time.')) return;
+  asPost('/settings/users/' + uEditId + '/make-administrator', new FormData(), document.getElementById('uError'), null, '/app/profile');
 });
 document.getElementById('uDelete').addEventListener('click', function () {
   var u = AS_USERS.filter(function (x) { return x.id === uEditId; })[0];

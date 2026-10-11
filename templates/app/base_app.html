@@ -137,6 +137,81 @@
   {% block content %}{% endblock %}
 </main>
 
+{% if limited_nav %}
+{% from 'app/_nav_icons.html' import icon %}
+<nav class="a-bottom-nav">
+  {% for it in limited_nav.left %}
+  <a href="{{ it.url }}" class="a-bn-item {% if active==it.active %}active{% endif %}">{{ icon(it.icon) }}{{ it.label }}</a>
+  {% endfor %}
+  {% if limited_nav.fab %}
+  <div class="a-bn-fab-wrap">
+    <button type="button" class="a-bn-fab" id="fabToggle" onclick="toggleFabMenu()" aria-label="Quick add" aria-expanded="false">
+      <svg id="fabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <div class="fab-menu" id="fabMenu">
+      {% for f in limited_nav.fab %}
+      {% if f.maint %}<button type="button" class="fab-option" data-pos="{{ f.pos }}" onclick="showMaintFan()">{% else %}<a href="{{ f.url }}" class="fab-option" data-pos="{{ f.pos }}">{% endif %}
+        <span class="fab-option-ic" style="background:{{ f.bg }};color:{{ f.fg }};">{{ icon(f.icon) }}</span>
+        <span class="fab-option-label">{{ f.label }}</span>
+      {% if f.maint %}</button>{% else %}</a>{% endif %}
+      {% endfor %}
+    </div>
+    <div class="fab-menu maint-fan" id="maintFanMenu">
+      <!-- Ordered by label length, shortest at the outermost positions (pos1/pos6) and longest
+           toward the inner ones (pos3/pos4) — "Compliance" is the longest label here, and the
+           outermost stops sit closest to the screen edge, so it needed the position with the most
+           real horizontal room to not clip off-screen. All 6 (Service/Tyres/Battery/Urea/Toll/
+           Compliance) are native now, grouped left-then-right by original slot — only which
+           position WITHIN each side's group changed, not which side. -->
+      <a href="/app/tyres?add=1" class="fab-sub-option fab-sub-side-l" data-pos="1">
+        <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/></svg></span>
+        <span class="fab-sub-label">Tyres</span>
+      </a>
+      <a href="/app/maintenance?tab=service&add=1" class="fab-sub-option fab-sub-side-l" data-pos="2">
+        <span class="fab-sub-ic" style="background:#eaf1fb;color:var(--a-blue);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+        <span class="fab-sub-label">Service</span>
+      </a>
+      <a href="/app/battery?add=1" class="fab-sub-option fab-sub-side-l" data-pos="3">
+        <span class="fab-sub-ic" style="background:#fff6e8;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M7 7V5h2v2M15 7V5h2v2M7 13h4"/></svg></span>
+        <span class="fab-sub-label">Battery</span>
+      </a>
+      <a href="/app/compliance?add=1" class="fab-sub-option fab-sub-side-r" data-pos="4">
+        <span class="fab-sub-ic" style="background:#efeaff;color:var(--a-purple);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <span class="fab-sub-label">Compliance</span>
+      </a>
+      <a href="/app/urea?add=1" class="fab-sub-option fab-sub-side-r" data-pos="5">
+        <span class="fab-sub-ic" style="background:#e6f6f4;color:var(--a-teal);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M8 8h8l2 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L8 8Z"/></svg></span>
+        <span class="fab-sub-label">Urea</span>
+      </a>
+      <a href="/app/toll?add=1" class="fab-sub-option fab-sub-side-r" data-pos="6">
+        <span class="fab-sub-ic" style="background:#fdf3e0;color:var(--a-amber);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h6l8 8-8 8H6a2 2 0 0 1-2-2Z"/><circle cx="9" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+        <span class="fab-sub-label">Toll</span>
+      </a>
+    </div>
+  </div>
+  <div class="fab-backdrop" id="fabBackdrop" onclick="closeFabMenu()"></div>
+  {% endif %}
+  {% for it in limited_nav.right %}
+  <a href="{{ it.url }}" class="a-bn-item {% if active==it.active %}active{% endif %}">{{ icon(it.icon) }}{{ it.label }}</a>
+  {% endfor %}
+  {% if limited_nav.more %}
+  <div class="a-bn-more-wrap">
+    <button type="button" class="a-bn-item" id="moreToggle" onclick="toggleMoreSheet()" aria-label="More options" aria-expanded="false">
+      {{ icon('more') }}More
+    </button>
+    <div class="more-menu" id="moreMenu">
+      {% for it in limited_nav.more %}
+      <a href="{{ it.url }}" class="more-option" data-pos="{{ it.pos }}">
+        <span class="more-option-ic" style="background:{{ it.bg }};color:{{ it.fg }};">{{ icon(it.icon) }}</span>
+        <span class="more-option-label">{{ it.label }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="more-backdrop" id="moreBackdrop" onclick="closeMoreSheet()"></div>
+  {% endif %}
+</nav>
+{% else %}
 <nav class="a-bottom-nav">
   <a href="/app/dashboard" class="a-bn-item {% if active=='dashboard' %}active{% endif %}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>
@@ -269,6 +344,7 @@
   </div>
   <div class="more-backdrop" id="moreBackdrop" onclick="closeMoreSheet()"></div>
 </nav>
+{% endif %}
 
 <!-- Shared success/error toast — any /app/ page can call showToast('message') (e.g. after an
      Add-Vehicle-style modal saves and redirects with ?added=1 in the URL). One shared component
@@ -925,24 +1001,26 @@
     window.location.href = path + '?' + params.toString();
   }
 
+  // A Limited Access user may have no + button or no More menu at all, so these helpers tolerate missing elements.
+  var _navNoop = { classList: { add: function () {}, remove: function () {}, contains: function () { return false; } }, setAttribute: function () {} };
   function openFabMenu() {
     closeMoreSheet(); lockPageScroll();
-    document.getElementById('fabMenu').classList.add('open');
-    document.getElementById('fabBackdrop').classList.add('open');
-    document.getElementById('fabToggle').classList.add('open');
-    document.getElementById('fabToggle').setAttribute('aria-expanded', 'true');
+    (document.getElementById('fabMenu') || _navNoop).classList.add('open');
+    (document.getElementById('fabBackdrop') || _navNoop).classList.add('open');
+    (document.getElementById('fabToggle') || _navNoop).classList.add('open');
+    (document.getElementById('fabToggle') || _navNoop).setAttribute('aria-expanded', 'true');
   }
   function closeFabMenu() {
     unlockPageScroll();
-    document.getElementById('fabMenu').classList.remove('open');
-    document.getElementById('maintFanMenu').classList.remove('open');
-    document.getElementById('fabMenu').classList.remove('drilled');
-    document.getElementById('fabBackdrop').classList.remove('open');
-    document.getElementById('fabToggle').classList.remove('open');
-    document.getElementById('fabToggle').setAttribute('aria-expanded', 'false');
+    (document.getElementById('fabMenu') || _navNoop).classList.remove('open');
+    (document.getElementById('maintFanMenu') || _navNoop).classList.remove('open');
+    (document.getElementById('fabMenu') || _navNoop).classList.remove('drilled');
+    (document.getElementById('fabBackdrop') || _navNoop).classList.remove('open');
+    (document.getElementById('fabToggle') || _navNoop).classList.remove('open');
+    (document.getElementById('fabToggle') || _navNoop).setAttribute('aria-expanded', 'false');
   }
   function toggleFabMenu() {
-    if (document.getElementById('fabMenu').classList.contains('open')) closeFabMenu();
+    if ((document.getElementById('fabMenu') || _navNoop).classList.contains('open')) closeFabMenu();
     else openFabMenu();
   }
   // "Add Maintenance" drills the FAB into a second 6-item arc from the same anchor point (see the
@@ -950,8 +1028,8 @@
   // FAB itself, so it reads as one menu fanning into another rather than a separate popup.
   // closeFabMenu() above always clears both classes, so the FAB starts at level 1 again next time.
   function showMaintFan() {
-    document.getElementById('fabMenu').classList.add('drilled');
-    document.getElementById('maintFanMenu').classList.add('open');
+    (document.getElementById('fabMenu') || _navNoop).classList.add('drilled');
+    (document.getElementById('maintFanMenu') || _navNoop).classList.add('open');
   }
 
   // "More" speed-dial — same mechanism as the FAB (+) above, just anchored bottom-right and
@@ -960,20 +1038,20 @@
   // (and is closed by it) so only one is ever open at a time.
   function openMoreSheet() {
     closeFabMenu(); lockPageScroll();
-    document.getElementById('moreMenu').classList.add('open');
-    document.getElementById('moreBackdrop').classList.add('open');
-    document.getElementById('moreToggle').classList.add('active');
-    document.getElementById('moreToggle').setAttribute('aria-expanded', 'true');
+    (document.getElementById('moreMenu') || _navNoop).classList.add('open');
+    (document.getElementById('moreBackdrop') || _navNoop).classList.add('open');
+    (document.getElementById('moreToggle') || _navNoop).classList.add('active');
+    (document.getElementById('moreToggle') || _navNoop).setAttribute('aria-expanded', 'true');
   }
   function closeMoreSheet() {
     unlockPageScroll();
-    document.getElementById('moreMenu').classList.remove('open');
-    document.getElementById('moreBackdrop').classList.remove('open');
-    document.getElementById('moreToggle').classList.remove('active');
-    document.getElementById('moreToggle').setAttribute('aria-expanded', 'false');
+    (document.getElementById('moreMenu') || _navNoop).classList.remove('open');
+    (document.getElementById('moreBackdrop') || _navNoop).classList.remove('open');
+    (document.getElementById('moreToggle') || _navNoop).classList.remove('active');
+    (document.getElementById('moreToggle') || _navNoop).setAttribute('aria-expanded', 'false');
   }
   function toggleMoreSheet() {
-    if (document.getElementById('moreMenu').classList.contains('open')) closeMoreSheet();
+    if ((document.getElementById('moreMenu') || _navNoop).classList.contains('open')) closeMoreSheet();
     else openMoreSheet();
   }
 

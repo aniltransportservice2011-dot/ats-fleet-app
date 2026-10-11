@@ -68,12 +68,12 @@
 
   <div class="mp-card">
     <h2>Change password</h2>
-    <div class="sub">At least 6 characters. You need your current password.</div>
+    <div class="sub">At least 8 characters. You need your current password.</div>
     <form method="POST" action="/settings/my-password" class="mp-form">
       <label>Current password</label><input type="password" name="current_password" required autocomplete="current-password">
       <div class="row2">
-        <div><label>New password</label><input type="password" name="new_password" required minlength="6" autocomplete="new-password"></div>
-        <div><label>Confirm new password</label><input type="password" name="confirm_password" required minlength="6" autocomplete="new-password"></div>
+        <div><label>New password</label><input type="password" name="new_password" required minlength="8" autocomplete="new-password"></div>
+        <div><label>Confirm new password</label><input type="password" name="confirm_password" required minlength="8" autocomplete="new-password"></div>
       </div>
       <button type="submit" class="mp-btn">Change password</button>
     </form>

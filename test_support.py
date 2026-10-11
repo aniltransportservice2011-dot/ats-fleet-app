@@ -9,6 +9,9 @@ def ensure_test_user(db_path, user_id=900001):
     c = sqlite3.connect(db_path)
     try:
         if not c.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+            # a copy of the real database already has its one active Administrator, and only one is allowed at a time —
+            # in this DISPOSABLE copy, make them a Manager so the test runner can be the Administrator
+            c.execute("UPDATE users SET role='Manager' WHERE LOWER(TRIM(COALESCE(role,'')))='administrator'")
             c.execute("INSERT INTO users (id, username, password_hash, role, is_admin, full_name, access_level, status, phone, created_at) "
                       "VALUES (?, 'test_runner', 'x', 'Administrator', 1, 'Test Runner', 'Full Access', 'Active', '9000000000', '2026-01-01')", (user_id,))
             c.commit()

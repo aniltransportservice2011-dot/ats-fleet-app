@@ -22,6 +22,15 @@ app = Flask(__name__)
 # a leaked/guessable secret key lets someone forge login sessions.
 app.secret_key = os.environ.get('SECRET_KEY', 'fleet-local-app-anil-transport-secret-key-2026')
 app.permanent_session_lifetime = datetime.timedelta(days=30)
+# Security defaults. SameSite=Lax stops a cookie being sent with a cross-site POST (the usual forged-form attack);
+# Secure (https only) is switched on when running on Render, which always serves https; the upload cap stops one
+# giant request filling memory. Behind Render's proxy the real visitor address comes from X-Forwarded-For — needed so
+# the login throttle counts the visitor, not Render's proxy.
+_ON_RENDER = bool(os.environ.get('RENDER'))
+app.config.update(SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=_ON_RENDER, MAX_CONTENT_LENGTH=16 * 1024 * 1024)
+if _ON_RENDER:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # Was a bare relative path ('fleet.db') — only resolves correctly if the process happens to be
 # started from exactly this directory, which is an easy thing to get wrong under a process
 # manager (systemd/gunicorn) on a real server. Getting it wrong wouldn't even error — sqlite3
@@ -287,6 +296,180 @@ def _ensure_wal_mode(db_path=None):
         return f'failed: {e!r}'
 
 print('[schema] ', _ensure_wal_mode(), file=sys.stderr)
+
+# ---------------------------------------------------------------------------------------------------------------
+# Security: server-side one-time codes, login throttling, and a secret key that is not in the source code.
+# ---------------------------------------------------------------------------------------------------------------
+def _ensure_auth_tables(db_path=None):
+    """login_otps / auth_attempts — created once, never touches existing tables (CREATE ... IF NOT EXISTS), so it is
+    safe to run on every start, from several workers at once."""
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            conn.executescript("""
+            CREATE TABLE IF NOT EXISTS login_otps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                phone TEXT NOT NULL,
+                otp_hash TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                used INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                company_id INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_login_otps_user ON login_otps(user_id, used);
+            CREATE TABLE IF NOT EXISTS auth_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                key TEXT NOT NULL,
+                at REAL NOT NULL,
+                company_id INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_auth_attempts_lookup ON auth_attempts(kind, key, at);
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+        return 'ready'
+    except Exception as e:
+        print(f'[schema] could not create auth tables: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[schema] auth tables:', _ensure_auth_tables(), file=sys.stderr)
+
+def _ensure_secret_key(db_path=None):
+    """Session cookies are signed with app.secret_key — anyone who knows it can forge a login. Use the SECRET_KEY
+    environment variable when set (best); otherwise generate a random key ONCE and keep it in the database settings, so it
+    is private to this installation and shared by every gunicorn worker. The old fixed key that used to be written in
+    this file is never used any more."""
+    import secrets
+    if os.environ.get('SECRET_KEY'):
+        return 'from SECRET_KEY'
+    path = db_path or DB
+    try:
+        if os.path.exists(path):
+            conn = sqlite3.connect(path, timeout=60)
+            try:
+                conn.execute("INSERT OR IGNORE INTO settings (key, value, company_id) VALUES ('_auto_secret_key', ?, 1)", (secrets.token_hex(32),))
+                conn.commit()
+                row = conn.execute("SELECT value FROM settings WHERE key='_auto_secret_key'").fetchone()
+            finally:
+                conn.close()
+            if row and row[0]:
+                app.secret_key = row[0]
+                return 'generated once and kept in the database (set SECRET_KEY to use your own)'
+    except Exception as e:
+        print(f'[security] could not keep a generated secret key: {e!r}', file=sys.stderr)
+    app.secret_key = secrets.token_hex(32)
+    return 'random for this process only (no database yet)'
+
+print('[security] secret key:', _ensure_secret_key(), file=sys.stderr)
+
+def _ensure_single_admin_index(db_path=None):
+    """Database-level guarantee behind the "only one active Administrator" rule: a partial unique index, so even a bug or
+    two simultaneous requests cannot create a second one. Skipped (with a warning, never a crash) if the data already
+    has more than one active Administrator — resolve that first, the index is created at the next start."""
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_one_active_administrator ON users(company_id)
+                            WHERE LOWER(TRIM(COALESCE(role,'')))='administrator' AND COALESCE(status,'Active')!='Inactive'""")
+            conn.commit()
+            return 'enforced'
+        except sqlite3.IntegrityError:
+            return 'SKIPPED — more than one active Administrator already exists; make all but one a Manager, then restart'
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[schema] could not create the single-Administrator index: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[security] one active Administrator:', _ensure_single_admin_index(), file=sys.stderr)
+
+# How many failures / requests are allowed in a window: (limit, seconds)
+_AUTH_LIMITS = {'login_fail_user': (5, 15 * 60), 'login_fail_ip': (30, 15 * 60),
+                'otp_send_phone': (3, 15 * 60), 'otp_send_ip': (10, 60 * 60)}
+
+def _client_ip():
+    return (request.remote_addr or 'unknown')[:64]
+
+def _auth_wait_seconds(conn, kind, key):
+    """0 if allowed, else how many seconds until the oldest counted attempt leaves the window."""
+    limit, window = _AUTH_LIMITS[kind]
+    now = datetime.datetime.now().timestamp()
+    rows = conn.execute("SELECT at FROM auth_attempts WHERE kind=? AND key=? AND at>? ORDER BY at", (kind, key, now - window)).fetchall()
+    if len(rows) < limit:
+        return 0
+    return max(1, int(rows[len(rows) - limit]['at'] + window - now))
+
+def _auth_record(conn, kind, key):
+    now = datetime.datetime.now().timestamp()
+    conn.execute("INSERT INTO auth_attempts (kind, key, at) VALUES (?,?,?)", (kind, key, now))
+    if int(now) % 50 == 0:   # housekeeping: forget anything older than a day
+        conn.execute("DELETE FROM auth_attempts WHERE at<?", (now - 86400,))
+
+def _auth_clear(conn, kind, key):
+    conn.execute("DELETE FROM auth_attempts WHERE kind=? AND key=?", (kind, key))
+
+def _wait_text(seconds):
+    m = (seconds + 59) // 60
+    return f'{m} minute{"s" if m != 1 else ""}'
+
+def _login_throttle_message(conn, username):
+    """Message to show instead of checking the password when this username or this address has failed too often."""
+    w = max(_auth_wait_seconds(conn, 'login_fail_user', username.lower()), _auth_wait_seconds(conn, 'login_fail_ip', _client_ip()))
+    return f'Too many failed sign-in attempts. Please try again in {_wait_text(w)}.' if w else None
+
+def _login_failed(conn, username):
+    _auth_record(conn, 'login_fail_user', username.lower())
+    _auth_record(conn, 'login_fail_ip', _client_ip())
+    conn.commit()
+
+def _otp_hash(otp_id, code):
+    import hmac, hashlib
+    return hmac.new(app.secret_key.encode(), f'{otp_id}:{code}'.encode(), hashlib.sha256).hexdigest()
+
+OTP_MAX_WRONG = 5
+
+def _otp_issue(conn, user, phone):
+    """Creates a one-time code for `user` and stores only its keyed hash, server side (a cookie holding the hash
+    could be read and the 6 digits worked out offline). Returns (code, row_id). Commits."""
+    import secrets
+    now = datetime.datetime.now().timestamp()
+    conn.execute("UPDATE login_otps SET used=1 WHERE user_id=? AND used=0", (user['id'],))
+    cur = conn.execute("INSERT INTO login_otps (user_id, phone, otp_hash, expires_at, created_at) VALUES (?,?,?,?,?)",
+                       (user['id'], phone, '', now + 300, now))
+    otp_id = cur.lastrowid
+    code = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("UPDATE login_otps SET otp_hash=? WHERE id=?", (_otp_hash(otp_id, code), otp_id))
+    conn.commit()
+    return code, otp_id
+
+def _otp_check(conn, otp_id, phone, code):
+    """(user_id, None) when the code is right; otherwise (None, message). At most OTP_MAX_WRONG wrong tries per code."""
+    import hmac
+    row = conn.execute("SELECT * FROM login_otps WHERE id=?", (otp_id,)).fetchone() if otp_id else None
+    if not row or row['used'] or row['phone'] != phone:
+        return None, 'Session expired. Please request a new OTP.'
+    if datetime.datetime.now().timestamp() > row['expires_at']:
+        return None, 'OTP expired. Please request a new one.'
+    # count the try first (atomically) so parallel guesses can't beat the limit
+    cur = conn.execute("UPDATE login_otps SET attempts=attempts+1 WHERE id=? AND attempts<?", (otp_id, OTP_MAX_WRONG))
+    conn.commit()
+    if cur.rowcount == 0:
+        return None, 'Too many incorrect codes. Please request a new OTP.'
+    if not hmac.compare_digest(row['otp_hash'], _otp_hash(otp_id, code)):
+        return None, 'Incorrect OTP. Please try again.'
+    conn.execute("UPDATE login_otps SET used=1 WHERE id=?", (otp_id,))
+    conn.commit()
+    return row['user_id'], None
 
 @app.errorhandler(ValueError)
 @app.errorhandler(OverflowError)
@@ -5663,7 +5846,7 @@ def add_insurance():
                      (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
     conn.commit()
     conn.close()
-    return redirect(request.form.get('return_to') or url_for('vehicles_list'))
+    return redirect(_safe_next(request.form.get('return_to'), url_for('vehicles_list')))
 
 @app.route('/maintenance/insurance/<int:policy_id>/edit', methods=['POST'])
 def edit_insurance(policy_id):
@@ -5706,7 +5889,7 @@ def edit_insurance(policy_id):
                      (f.get('expiry_date'), session.get('user_id'), _now, vehicle_id))
     conn.commit()
     conn.close()
-    return redirect(request.form.get('return_to') or url_for('vehicles_list'))
+    return redirect(_safe_next(request.form.get('return_to'), url_for('vehicles_list')))
 
 @app.route('/maintenance/insurance/<int:policy_id>/delete', methods=['POST'])
 def delete_insurance(policy_id):
@@ -7489,7 +7672,7 @@ def vehicle_compliance_renew(vehicle_id, ctype):
     # list, and the vehicle detail page's Edit Fitness & Permit modal) — return_to lets each
     # one send the user back to where they actually were, instead of always landing on the
     # list, which is what made a save on the detail page look like it hadn't done anything.
-    return redirect(request.form.get('return_to') or url_for('vehicles_list', tab='all'))
+    return redirect(_safe_next(request.form.get('return_to'), url_for('vehicles_list', tab='all')))
 
 @app.route('/vehicles/<int:vehicle_id>/compliance/sync', methods=['POST'])
 def vehicle_compliance_sync(vehicle_id):
@@ -9631,6 +9814,9 @@ def inject_challan_alerts():
     dismissal to this specific login, so it shows again on the next one rather than forever."""
     if 'user_id' not in session:
         return {'challan_alert_vehicles': [], 'challan_alert_count': 0, 'login_token': '', 'fleet_warning_marker': ''}
+    if getattr(g, 'access_level', None) == 'Limited Access' and not _module_level('Vehicles'):
+        # vehicle challan / expiry alerts are Vehicles data — a user without that screen doesn't get them in the bell
+        return {'challan_alert_vehicles': [], 'challan_alert_count': 0, 'login_token': session.get('login_at', ''), 'fleet_warning_marker': ''}
     try:
         conn = get_db()
         rows = conn.execute("""SELECT id, vehicle_no, challan_count, challan_amount FROM vehicles
@@ -9653,8 +9839,218 @@ def inject_challan_alerts():
 
 IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero requests, any request resets it
 
+
+# ---------------------------------------------------------------------------------------------------------------
+# Limited Access: which screens a user may open, and whether they may change anything there.
+# users.module_access holds e.g. "Trips:e,Ledger:v"  (e = Edit, v = View only). Old rows ("Trips,Ledger") count as Edit.
+# ---------------------------------------------------------------------------------------------------------------
+_MODULE_ALIASES = {'Payments': 'Ledger'}
+_MODULE_ENDPOINTS = {
+    'Dashboard': ['home', 'dashboard', 'app_dashboard'],
+    'Trips': ['trips_list', 'trip_view', 'add_trip', 'edit_trip', 'delete_trip', 'end_trip', 'export_trips', 'export_trips_pdf',
+              'app_trips', 'app_trip_detail', 'app_edit_trip', 'app_end_trip', 'app_add_trip'],
+    'Vehicles': ['vehicles_list', 'vehicle_detail', 'vehicle_challan_detail', 'vehicle_rc_lookup', 'vehicle_rc_download', 'vehicle_sync_now',
+                 'vehicle_compliance_renew', 'vehicle_compliance_sync', 'vehicles_compliance_sync_all', 'add_vehicle', 'edit_vehicle',
+                 'delete_vehicle', 'toggle_vehicle_status', 'app_vehicles', 'app_vehicle_detail', 'app_add_vehicle', 'app_compliance',
+                 'app_add_compliance'],
+    'Maintenance': ['maintenance_list', 'maintenance_view', 'add_maintenance', 'edit_maintenance', 'delete_maintenance', 'export_maintenance',
+                    'export_maintenance_pdf', 'check_battery', 'mark_battery_dead', 'delete_battery', 'install_battery', 'add_battery',
+                    'delete_compliance_expense', 'add_compliance_expense', 'delete_insurance', 'edit_insurance', 'add_insurance',
+                    'add_service', 'edit_service', 'approve_toll', 'delete_toll', 'reject_toll', 'add_toll', 'toll_excel_import',
+                    'toll_excel_preview', 'sync_fastag_toll', 'toll_excel_template', 'add_tyre', 'edit_tyre', 'delete_tyre_stock',
+                    'install_tyre_stock', 'scrap_tyre_stock', 'add_tyre_stock', 'delete_urea', 'edit_urea', 'add_urea', 'app_maintenance',
+                    'app_edit_service', 'app_add_service', 'app_battery', 'app_install_battery', 'app_add_battery', 'app_tyres',
+                    'app_add_tyre', 'app_install_tyre_stock', 'app_add_tyre_stock', 'app_urea', 'app_add_urea', 'app_toll', 'app_add_toll'],
+    'Ledger': ['accounts', 'toggle_account_status', 'add_account', 'export_accounts', 'party_ledger', 'vendor_ledger', 'export_party_ledger',
+               'export_party_ledger_pdf', 'export_vendor_ledger', 'export_vendor_ledger_pdf', 'update_contact', 'update_opening_balance',
+               'add_party_payment', 'add_vendor_payment', 'payment_view', 'app_ledger', 'app_update_ledger_opening_balance',
+               'app_add_account', 'app_party_ledger', 'app_vendor_ledger', 'app_add_party_payment', 'app_add_vendor_payment'],
+    'Invoices': ['invoice_center', 'invoice_center_generate', 'invoice_center_review', 'invoices_search', 'invoice_preview', 'invoice_edit',
+                 'invoice_item_add', 'invoice_pdf', 'invoice_batches_list', 'invoice_batch_delete', 'invoice_batch_edit',
+                 'invoice_batch_item_add', 'invoice_batch_pdf', 'invoice_batch_pdf_preview', 'invoice_batch_item_delete', 'invoice_item_delete'],
+    'Expenses': ['overheads_list', 'add_overhead', 'delete_overhead', 'edit_overhead', 'export_overheads', 'app_expenses', 'app_edit_overhead',
+                 'app_add_overhead'],
+    'Salaries': ['salaries_list', 'download_payslip', 'delete_salary', 'advances_list', 'add_advance', 'employee_ledger',
+                 'update_employee_opening_balance', 'add_employee_advance', 'deactivate_employee', 'edit_employee', 'add_employee',
+                 'bulk_mark_attendance', 'mark_attendance', 'app_employee_ledger', 'app_add_employee_payment',
+                 'app_update_employee_opening_balance', 'app_salary', 'app_add_employee', 'app_salary_attendance'],
+    'Reports': ['business_performance', 'export_business_performance', 'driver_performance', 'performance', 'export_performance',
+                'route_analytics', 'export_route_analytics', 'fleet_utilization', 'export_fleet_utilization', 'empty_runs', 'idle_tracker',
+                'route_finder_search', 'route_finder_suggest', 'route_finder_extras', 'app_analysis', 'app_analytics',
+                'app_business_performance', 'app_fleet_utilization', 'app_performance'],
+}
+_ENDPOINT_MODULE = {ep: m for m, eps in _MODULE_ENDPOINTS.items() for ep in eps}
+# open to every signed-in user (own profile, password, sign-in/out, static files)
+_COMMON_ENDPOINTS = {'settings_page', 'website_change_password', 'website_update_my_profile', 'app_profile', 'app_change_password',
+                     'app_update_profile', 'logout', 'static', 'app_manifest'}
+# the whole-database Excel export is for Full Access users only (Limited users never get it)
+_FULL_ACCESS_ONLY_ENDPOINTS = {'export_excel'}
+# where each screen opens: (website, app)
+_MODULE_LANDING = {'Dashboard': ('/dashboard', '/app/dashboard'), 'Trips': ('/trips', '/app/trips'), 'Vehicles': ('/vehicles', '/app/vehicles'),
+                   'Maintenance': ('/maintenance', '/app/maintenance'), 'Ledger': ('/accounts', '/app/ledger'),
+                   'Invoices': ('/invoice-center', None), 'Expenses': ('/overheads', '/app/expenses'), 'Salaries': ('/salaries', '/app/salary'),
+                   'Reports': ('/route-analytics', '/app/analysis')}
+
+def _parse_modules(text):
+    """'Trips:e,Ledger:v' (or legacy 'Trips,Ledger') -> {'Trips': 'e', 'Ledger': 'v'}; unknown names are dropped."""
+    out = {}
+    for part in (text or '').split(','):
+        part = part.strip()
+        if not part:
+            continue
+        name, _, lvl = part.partition(':')
+        name = _MODULE_ALIASES.get(name.strip(), name.strip())
+        if name in MODULE_LIST:
+            lvl = 'v' if lvl.strip().lower() in ('v', 'view') else 'e'
+            if out.get(name) != 'e':        # Edit wins if a name appears twice (e.g. Payments + Ledger)
+                out[name] = lvl
+    return out
+
+def _format_modules(mods):
+    return ','.join(f'{m}:{mods[m]}' for m in MODULE_LIST if m in mods)
+
+def _modules_from_form(form, access_level):
+    """(module_access text or None, error or None) from the add/edit user form — values arrive as 'Trips:e' / 'Ledger:v'."""
+    if access_level != 'Limited Access':
+        return None, None
+    mods = _parse_modules(','.join(form.getlist('modules')))
+    if not mods:
+        return None, 'Choose at least one screen for Limited Access.'
+    return _format_modules(mods), None
+
+def _module_level(module):
+    """'e' (may change things), 'v' (view only) or '' (no access) for the signed-in user on `module`."""
+    lvl = getattr(g, 'access_level', None)
+    if lvl == 'Limited Access':
+        return (getattr(g, 'modules', None) or {}).get(module, '')
+    if lvl == 'Read Only':
+        return 'v'
+    return 'e'
+
+def _first_allowed_url(app_side):
+    for m in MODULE_LIST:
+        if _module_level(m):
+            site, mobile = _MODULE_LANDING[m]
+            url = mobile if app_side else site
+            if url:
+                return url
+    return '/app/profile' if app_side else '/settings'
+
+def _limited_denied(module, view_only=False):
+    msg = (f'Your access to {module} is view-only. Ask your Administrator if you need to make changes.' if view_only
+           else (f'You don\'t have access to {module}. Ask your Administrator to add it.' if module else 'This screen isn\'t available for your access level.'))
+    app_side = request.path.startswith('/app/')
+    home = _first_allowed_url(app_side)
+    if (app_side and 'text/html' not in (request.headers.get('Accept') or '')) or 'application/json' in (request.headers.get('Accept') or '') or request.method != 'GET':
+        return jsonify({'ok': False, 'error': msg}), 403
+    import html as _html
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No access</title>'
+            f'<body style="font-family:system-ui,sans-serif;background:#f5f6f9;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center">'
+            f'<div style="background:#fff;border-radius:18px;padding:28px 24px;max-width:24rem;margin:16px;text-align:center;box-shadow:0 2px 12px rgba(20,33,61,.08)">'
+            f'<div style="font-size:2.2rem">&#128274;</div><h2 style="margin:8px 0 6px;color:#14213d">{_html.escape(module or "This screen")}</h2>'
+            f'<p style="color:#5a6b8c;line-height:1.5;margin:0 0 18px">{_html.escape(msg)}</p>'
+            f'<a href="{home}" style="display:inline-block;background:#c05621;color:#fff;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:12px">Go to my screens</a>'
+            f'</div></body>', 403)
+
+def _limited_block():
+    """Enforcement for Limited Access users: None if the request may proceed, else the response to send instead."""
+    ep = request.endpoint
+    if ep is None or ep in _COMMON_ENDPOINTS:
+        return None
+    if ep in _FULL_ACCESS_ONLY_ENDPOINTS:
+        return _limited_denied(None)
+    module = _ENDPOINT_MODULE.get(ep)
+    level = (g.modules or {}).get(module) if module else None
+    if not level:
+        if ep in _MODULE_ENDPOINTS['Dashboard'] and request.method == 'GET':
+            dest = _first_allowed_url(request.path.startswith('/app/'))
+            if dest != request.path:
+                return redirect(dest)
+        return _limited_denied(module)
+    if level == 'v':
+        if request.method not in ('GET', 'HEAD', 'OPTIONS') and not _read_only_may_post():
+            return _limited_denied(module, view_only=True)
+        g.page_view_only = True      # shows the same "View-only access" layer a Read Only user gets, on this screen only
+    return None
+
+_APP_NAV_ITEMS = [   # module, label, url, icon, active-key, colours for the More menu
+    ('Dashboard', 'Home', '/app/dashboard', 'home', 'dashboard', None, None),
+    ('Trips', 'Trips', '/app/trips', 'trips', 'trips', None, None),
+    ('Ledger', 'Ledger', '/app/ledger', 'ledger', 'ledger', None, None),
+    ('Maintenance', 'Maintenance', '/app/maintenance', 'maintenance', 'maintenance', '#efeaff', 'var(--a-purple)'),
+    ('Vehicles', 'Vehicles', '/app/vehicles', 'vehicles', 'vehicles', '#e8f5ee', 'var(--a-green)'),
+    ('Expenses', 'Expenses', '/app/expenses', 'expenses', 'expenses', '#fdecea', 'var(--a-red)'),
+    ('Salaries', 'Salary', '/app/salary', 'salary', 'salary', '#e6f6f4', 'var(--a-teal)'),
+    ('Reports', 'Business Overview', '/app/analysis', 'analysis', 'analysis', '#fdf3e0', 'var(--a-amber)'),
+]
+_APP_FAB_ITEMS = [   # module needing Edit, label, url, icon, colours, opens the maintenance sub-menu?
+    ('Trips', 'Add Trip', '/app/trips/add', 'add_trip', '#fdecea', 'var(--a-red)', False),
+    ('Maintenance', 'Add Maintenance', '#', 'maintenance', '#eaf1fb', 'var(--a-blue)', True),
+    ('Expenses', 'Add Expense', '/app/expenses?add=1', 'expenses', '#efeaff', 'var(--a-purple)', False),
+    ('Vehicles', 'Add Vehicle', '/app/vehicles?add=1', 'vehicles', '#e8f5ee', 'var(--a-green)', False),
+]
+_FAB_POSITIONS = {1: [2], 2: [2, 3], 3: [1, 2, 3], 4: [1, 2, 3, 4]}
+
+def _limited_nav():
+    """What the mobile app's bottom bar, quick-add (+) fan and More menu show for a Limited Access user: only the screens
+    they were given, packed into the same layout (first three in the bar, the rest under More, + only if they can add
+    something). Full / Read Only users keep the standard fixed layout."""
+    allowed = [dict(module=m, label=lb, url=u, icon=ic, active=ak, bg=bg, fg=fg)
+               for (m, lb, u, ic, ak, bg, fg) in _APP_NAV_ITEMS if _module_level(m)]
+    bar, more = allowed[:3], allowed[3:]
+    fab = [dict(label=lb, url=u, icon=ic, bg=bg, fg=fg, maint=mf) for (m, lb, u, ic, bg, fg, mf) in _APP_FAB_ITEMS if _module_level(m) == 'e']
+    for item, pos in zip(fab, _FAB_POSITIONS.get(len(fab), [])):
+        item['pos'] = pos
+    for i, item in enumerate(more, 1):
+        item['pos'] = i
+    return {'left': bar[:2], 'right': bar[2:], 'more': more, 'fab': fab, 'maint_fan': any(f['maint'] for f in fab),
+            'view_only_all': bool(allowed) and not fab}
+
+def _safe_next(raw, default):
+    """Only ever send the user to a page on this site — never to an address supplied in a form."""
+    raw = (raw or '').strip()
+    if raw.startswith('/') and not raw.startswith('//') and '\\' not in raw and '\n' not in raw and '\r' not in raw:
+        return raw
+    return default
+
+def _signup_open():
+    return os.environ.get('ALLOW_SELF_SIGNUP') == '1'
+
+@app.context_processor
+def inject_security_flags():
+    return {'signup_open': _signup_open()}
+
+# Uploaded business documents (insurance papers, toll receipts) sit under /static/, which has no login check of its own —
+# without this, anyone holding a file's address could open it. Logos stay public (the login page may show one).
+_PRIVATE_UPLOAD_PREFIXES = ('/static/uploads/insurance/', '/static/uploads/toll_receipts/')
+
+@app.before_request
+def reject_cross_site_posts():
+    """A form on another website must not be able to act as a logged-in user. Browsers state where a POST came from
+    (Origin, or Referer as a fallback); if it names a different site than the one being used, refuse. Requests with
+    neither header (scripts, the test client) are unaffected. Set DISABLE_ORIGIN_CHECK=1 only to rule this check out
+    while debugging a proxy/host problem."""
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and os.environ.get('DISABLE_ORIGIN_CHECK') != '1':
+        from urllib.parse import urlparse
+        src = request.headers.get('Origin') or request.headers.get('Referer') or ''
+        host = urlparse(src).netloc if src else ''
+        if host and host != request.host:
+            app.logger.warning('Blocked cross-site %s to %s from %s', request.method, request.path, src)
+            return jsonify({'ok': False, 'error': 'This request came from another website and was blocked.'}), 403
+
+@app.after_request
+def add_security_headers(resp):
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    if request.is_secure:
+        resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
+    return resp
+
 @app.before_request
 def require_login():
+    if request.endpoint == 'static' and request.path.startswith(_PRIVATE_UPLOAD_PREFIXES) and not session.get('user_id'):
+        return ('Please sign in to open this document.', 403)
     exempt = ['login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick',
               'app_login_otp', 'app_verify_login_otp', 'app_manifest']
     if request.endpoint in exempt:
@@ -9684,7 +10080,7 @@ def require_login():
     # ---- user access level, read from the database on EVERY request so that an admin changing someone
     # to Read Only (or deactivating them) takes effect immediately, not at their next login.
     _conn = get_db()
-    _u = _conn.execute("SELECT access_level, status, role FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    _u = _conn.execute("SELECT access_level, status, role, module_access FROM users WHERE id=?", (session['user_id'],)).fetchone()
     _conn.close()
     if _u is None or (_u['status'] or 'Active') == 'Inactive':
         session.clear()
@@ -9698,6 +10094,13 @@ def require_login():
         return _admin_only_denied()
     if g.access_level == 'Read Only' and request.method not in ('GET', 'HEAD', 'OPTIONS') and not _read_only_may_post():
         return _read_only_denied()
+    g.modules = {}
+    if g.access_level == 'Limited Access':
+        g.modules = _parse_modules(_u['module_access'])
+        blocked = _limited_block()
+        if blocked is not None:
+            return blocked
+
 
 # ---- Read Only access: can see everything, can change nothing --------------------------------------
 # These POSTs only READ (or change the user's own password), so a Read Only user may still use them.
@@ -9711,7 +10114,7 @@ _READ_ONLY_POST_ALLOWED = {
 
 # Only an Administrator may touch these: the user list, user create/edit/delete/export, and company settings.
 _ADMIN_ONLY_ENDPOINTS = {'add_user', 'edit_user', 'update_user_phone', 'delete_user', 'export_users', 'upload_company_logo',
-                         'app_settings_save', 'app_settings_company', 'app_settings_banking', 'app_settings_invoice',
+                         'make_administrator', 'app_settings_save', 'app_settings_company', 'app_settings_banking', 'app_settings_invoice',
                          'app_settings_tax', 'app_settings_users'}
 
 def _admin_only_denied():
@@ -9749,8 +10152,13 @@ def inject_access_level():
     """`read_only` is True for a Read Only user — templates can use it to hide write controls."""
     level = getattr(g, 'access_level', None)
     role = getattr(g, 'user_role', '') or ''
+    limited = level == 'Limited Access'
     return {'access_level_now': level, 'read_only': level == 'Read Only',
-            'is_administrator': bool(getattr(g, 'is_administrator', False)), 'user_role_label': role or 'Staff'}
+            'is_administrator': bool(getattr(g, 'is_administrator', False)), 'user_role_label': role or 'Staff',
+            # can('Ledger') -> may this user open that screen at all; can('Ledger', edit=True) -> may they change things there
+            'can': (lambda module, edit=False: bool(_module_level(module)) if not edit else _module_level(module) == 'e'),
+            'limited_access': limited,
+            'limited_nav': _limited_nav() if (limited and request.path.startswith('/app/')) else None}
 
 _READ_ONLY_PAGE_SNIPPET = r'''
 <style id="ro-style">
@@ -9761,6 +10169,7 @@ _READ_ONLY_PAGE_SNIPPET = r'''
 <div id="ro-badge">&#128065; View-only access</div><div id="ro-toast" role="alert"></div>
 <script>
 (function(){
+  var b=document.getElementById('ro-badge'); if(b&&document.querySelector('.a-bottom-nav')) b.style.bottom='92px';   /* in the app, sit above the bottom bar instead of covering it */
   var MSG='View-only access: you can see everything, but you cannot add, change or delete anything.';
   var ALLOW=/\/profile\/change-password|\/settings\/my-password|\/invoice-center\/review|\/invoice-center\/generate|\/toll\/excel\/preview|\/route-finder\//;
   function toast(){var t=document.getElementById('ro-toast');if(!t)return;t.textContent=MSG;t.style.display='block';clearTimeout(window.__roT);window.__roT=setTimeout(function(){t.style.display='none'},3500);}
@@ -9790,7 +10199,7 @@ def _read_only_page_enhancements(response):
     delete controls and politely block any write that is attempted anyway. This is a convenience layer —
     the real enforcement is the server-side check in require_login()."""
     try:
-        if (getattr(g, 'access_level', None) == 'Read Only' and response.mimetype == 'text/html'
+        if ((getattr(g, 'access_level', None) == 'Read Only' or getattr(g, 'page_view_only', False)) and response.mimetype == 'text/html'
                 and response.status_code == 200 and not response.direct_passthrough and not request.path.startswith('/static/')):
             body = response.get_data(as_text=True)
             if '</body>' in body:
@@ -9826,11 +10235,16 @@ def login():
         if not _username_login_format_ok(username):
             return render_template('login.html', error='Username must be a valid Indian mobile number or email address.')
         conn = get_db()
+        blocked = _login_throttle_message(conn, username)
+        if blocked:
+            conn.close()
+            return render_template('login.html', error=blocked), 429
         user = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
         if user and check_password_hash(user['password_hash'], f.get('password') or ''):
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
                 return render_template('login.html', error='This account has been deactivated. Contact an administrator.')
+            _auth_clear(conn, 'login_fail_user', username.lower())
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -9844,6 +10258,7 @@ def login():
             conn.commit()
             conn.close()
             return redirect(url_for('dashboard'))
+        _login_failed(conn, username)
         conn.close()
         error = 'Invalid username or password.'
     return render_template('login.html', error=error)
@@ -9881,79 +10296,91 @@ def _send_otp_sms(s, phone, otp):
 
 @app.route('/login/otp/send', methods=['POST'])
 def send_login_otp():
-    import random, datetime, hashlib
     phone = (request.form.get('phone') or '').strip()
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
-    s = _get_all_settings(conn, session.get('company_id', 1))
-    conn.close()
-
     if not phone:
-        return render_template('login.html', otp_mode=True,
-                                otp_error='Enter a mobile number.')
+        return render_template('login.html', otp_mode=True, otp_error='Enter a mobile number.')
     if not USERNAME_MOBILE_RE.match(phone):
-        return render_template('login.html', otp_mode=True,
-                                otp_error='Enter a valid 10-digit Indian mobile number.')
-    if not user:
-        return render_template('login.html', otp_mode=True,
-                                otp_error='No account found with that mobile number.')
-    if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
-        return render_template('login.html', otp_mode=True,
-                                otp_error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
+        return render_template('login.html', otp_mode=True, otp_error='Enter a valid 10-digit Indian mobile number.')
+    err = _start_otp_login(phone)
+    if err:
+        return render_template('login.html', otp_mode=True, otp_error=err), (429 if err.startswith('Too many') else 200)
+    return render_template('login.html', otp_mode=True, otp_sent=True, otp_phone=phone)
 
-    otp = f"{random.randint(0, 999999):06d}"
-    session['otp_user_id'] = user['id']
-    session['otp_phone'] = phone
-    session['otp_hash'] = hashlib.sha256(otp.encode()).hexdigest()
-    session['otp_expires'] = (datetime.datetime.now() + datetime.timedelta(minutes=5)).timestamp()
-
-    try:
-        _send_otp_sms(s, phone, otp)
-    except Exception as e:
-        return render_template('login.html', otp_mode=True,
-                                otp_error=f'Could not send OTP: {e}')
-
-    return render_template('login.html', otp_mode=True,
-                            otp_sent=True, otp_phone=phone)
-
-@app.route('/login/otp/verify', methods=['POST'])
-def verify_login_otp():
-    import hashlib, datetime
-    code = (request.form.get('otp') or '').strip()
-    phone = request.form.get('phone') or ''
-
-    if not session.get('otp_user_id') or session.get('otp_phone') != phone:
-        return render_template('login.html', otp_mode=True,
-                                otp_error='Session expired. Please request a new OTP.')
-    if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
-        return render_template('login.html', otp_mode=True,
-                                otp_error='OTP expired. Please request a new one.')
-    if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
-        return render_template('login.html', otp_mode=True,
-                                otp_sent=True, otp_phone=phone, otp_error='Incorrect OTP.')
-
+def _start_otp_login(phone):
+    """Shared by the website and the app: rate-limits, creates a code and sends it. Returns an error message or None.
+    The reply is the same whether or not the number belongs to an account, so the form cannot be used to find out
+    who has one."""
     conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id=?", (session['otp_user_id'],)).fetchone()
-    for key in ('otp_user_id', 'otp_phone', 'otp_hash', 'otp_expires'):
+    s = _get_all_settings(conn, session.get('company_id', 1))
+    if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
+        conn.close()
+        return "SMS login isn't configured yet. Ask an admin to add Twilio details in Settings."
+    wait = max(_auth_wait_seconds(conn, 'otp_send_phone', phone), _auth_wait_seconds(conn, 'otp_send_ip', _client_ip()))
+    if wait:
+        conn.close()
+        return f'Too many codes requested. Please try again in {_wait_text(wait)}.'
+    _auth_record(conn, 'otp_send_phone', phone)
+    _auth_record(conn, 'otp_send_ip', _client_ip())
+    conn.commit()
+    user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+    session.pop('otp_row', None)
+    for key in ('otp_user_id', 'otp_hash', 'otp_expires'):   # leftovers from the old cookie-based flow
         session.pop(key, None)
+    if user and (user['status'] or 'Active') != 'Inactive':
+        code, otp_id = _otp_issue(conn, user, phone)
+        session['otp_row'] = otp_id
+        session['otp_phone'] = phone
+        try:
+            _send_otp_sms(s, phone, code)
+        except Exception:
+            app.logger.exception('Could not send login OTP SMS')
+            conn.execute("UPDATE login_otps SET used=1 WHERE id=?", (otp_id,))
+            conn.commit()
+            conn.close()
+            return 'Could not send the code right now. Please try again in a few minutes.'
+    else:
+        session['otp_phone'] = phone     # nothing is sent, but the screen behaves the same
+    conn.close()
+    return None
+
+def _finish_otp_login(phone, code):
+    """(user_row, None) once logged in, else (None, message)."""
+    conn = get_db()
+    user_id, err = _otp_check(conn, session.get('otp_row'), (phone or ''), code) if session.get('otp_phone') == phone else (None, 'Session expired. Please request a new OTP.')
+    if err:
+        conn.close()
+        return None, err
+    session.pop('otp_row', None); session.pop('otp_phone', None)
+    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if not user:
         conn.close()
-        return redirect(url_for('login'))
+        return None, 'Session expired. Please request a new OTP.'
     if (user['status'] or 'Active') == 'Inactive':
         conn.close()
-        return render_template('login.html',
-                                error='This account has been deactivated. Contact an administrator.')
+        return None, 'This account has been deactivated. Contact an administrator.'
     session['user_id'] = user['id']
     session['username'] = user['username']
     session['is_admin'] = user['is_admin']
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     session['login_at'] = now  # lets dismissed-warning state reset on every fresh login, see inject_challan_alerts
     session['show_zoom_tip'] = True  # one-shot — shown at most once, then popped by base.html on the next render
-    conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?",
-                 (now, user['id'], now, user['id']))
+    conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?", (now, user['id'], now, user['id']))
     conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login (OTP)', now))
     conn.commit()
     conn.close()
+    return user, None
+
+@app.route('/login/otp/verify', methods=['POST'])
+def verify_login_otp():
+    code = (request.form.get('otp') or '').strip()
+    phone = request.form.get('phone') or ''
+    user, err = _finish_otp_login(phone, code)
+    if err:
+        if err.startswith('Incorrect'):
+            return render_template('login.html', otp_mode=True, otp_sent=True, otp_phone=phone, otp_error=err)
+        if err.startswith('This account'):
+            return render_template('login.html', error=err)
+        return render_template('login.html', otp_mode=True, otp_error=err)
     return redirect(url_for('dashboard'))
 
 ALL_SETTING_KEYS = [
@@ -9968,8 +10395,9 @@ ALL_SETTING_KEYS = [
     'rc_lookup_api_key', 'rc_sync_interval_days', 'challan_sync_interval_days'
 ]
 
-MODULE_LIST = ['Dashboard', 'Trips', 'Maintenance', 'Vehicles', 'Invoices', 'Payments',
-               'Ledger', 'Reports', 'Settings', 'User Management', 'Expenses', 'Salaries']
+# The screens an Administrator can give to a "Limited Access" user (Settings and Users are never listed — they stay with the
+# Administrator). Payments live inside Ledger. Each can be granted as View or Edit.
+MODULE_LIST = ['Dashboard', 'Trips', 'Vehicles', 'Maintenance', 'Ledger', 'Invoices', 'Expenses', 'Salaries', 'Reports']
 ROLE_SUGGESTIONS = ['Administrator', 'Manager', 'Operations Head', 'Accountant', 'Supervisor', 'Driver']
 
 def _update_own_profile(conn, user_id, f):
@@ -9999,8 +10427,8 @@ def _change_own_password(conn, user_id, f):
         return False, 'All fields are required.'
     if new_pw != confirm_pw:
         return False, 'New password and confirmation do not match.'
-    if len(new_pw) < 6:
-        return False, 'New password must be at least 6 characters.'
+    if len(new_pw) < 8:
+        return False, 'New password must be at least 8 characters.'
     user = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
     if not user or not check_password_hash(user['password_hash'], current_pw):
         return False, 'Current password is incorrect.'
@@ -10035,6 +10463,26 @@ def _administrator_count(conn, exclude_user_id=None):
     if exclude_user_id is not None:
         q += " AND id != ?"; p.append(exclude_user_id)
     return conn.execute(q, p).fetchone()[0]
+
+_ONE_ADMIN_MSG = ('Only one Administrator can be active at a time. To hand the role to someone else, open that user and choose '
+                  '"Make Administrator" — you will become a Manager.')
+
+def _is_admin_role(role):
+    return (role or '').strip().lower() == 'administrator'
+
+def _other_active_administrator(conn, exclude_user_id=None):
+    """The active Administrator other than `exclude_user_id`, or None. There may be at most ONE active Administrator."""
+    q = "SELECT id, full_name, username FROM users WHERE LOWER(TRIM(COALESCE(role,'')))='administrator' AND COALESCE(status,'Active')!='Inactive'"
+    p = []
+    if exclude_user_id is not None:
+        q += " AND id != ?"; p.append(exclude_user_id)
+    return conn.execute(q + " LIMIT 1", p).fetchone()
+
+def _role_suggestions(conn):
+    """Role picker suggestions — 'Administrator' is only offered while nobody holds it (it is a single seat)."""
+    if _other_active_administrator(conn):
+        return [r for r in ROLE_SUGGESTIONS if not _is_admin_role(r)]
+    return list(ROLE_SUGGESTIONS)
 
 def _users_with_stats(conn):
     rows = conn.execute("""SELECT * FROM users ORDER BY
@@ -10157,6 +10605,7 @@ def settings_page():
                                   LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
     s = _get_all_settings(conn, session.get('company_id', 1))
     recent_sync_log = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 8").fetchall()
+    role_sugg = _role_suggestions(conn)
     conn.close()
 
     active_settings_tab = request.args.get('tab', 'company')
@@ -10164,7 +10613,7 @@ def settings_page():
     return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
                             users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                             limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
-                            access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
+                            access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=role_sugg,
                             s=s, invoice_example=invoice_example, recent_sync_log=recent_sync_log,
                             active='settings', active_settings_tab=active_settings_tab)
 
@@ -10232,11 +10681,12 @@ def _render_settings_users_error(conn, error, reopen_add_user=False, reopen_edit
                                   LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
     s = _get_all_settings(conn, session.get('company_id', 1))
     invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
+    role_sugg = _role_suggestions(conn)
     conn.close()
     return render_template('settings.html', company_name=s.get('company_name') or get_company_name(session.get('company_id', 1)),
                             users=users, total_users=total_users, admin_users=admin_users, readonly_users=readonly_users,
                             limited_users=limited_users, inactive_users=inactive_users, role_counts=role_counts,
-                            access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS,
+                            access_logs=access_logs, module_list=MODULE_LIST, role_suggestions=role_sugg,
                             s=s, invoice_example=invoice_example, active='settings', active_settings_tab='users',
                             user_error=error, reopen_add_user=reopen_add_user, reopen_edit_user_id=reopen_edit_user_id)
 
@@ -10247,7 +10697,9 @@ def add_user():
     f = request.form
     conn = get_db()
     access_level = f.get('access_level') or 'Read Only'
-    modules = ','.join(request.form.getlist('modules')) if access_level == 'Limited Access' else None
+    modules, modules_err = _modules_from_form(request.form, access_level)
+    if modules_err:
+        return _render_settings_users_error(conn, modules_err, reopen_add_user=True)
     # A password is optional — leave it blank and the user signs in with mobile OTP only;
     # set one here and they can also sign in the normal username+password way.
     pw = f.get('password') or ''
@@ -10264,6 +10716,10 @@ def add_user():
     # phone number as its "name" everywhere until someone went back and filled this in by hand.
     if not full_name:
         return _render_settings_users_error(conn, 'Full Name is required.', reopen_add_user=True)
+    if pw and len(pw) < 8:
+        return _render_settings_users_error(conn, 'Password must be at least 8 characters (or leave it blank for OTP-only login).', reopen_add_user=True)
+    if _is_admin_role(f.get('role')) and (f.get('status') or 'Active') != 'Inactive' and _other_active_administrator(conn):
+        return _render_settings_users_error(conn, _ONE_ADMIN_MSG, reopen_add_user=True)
     if not USERNAME_MOBILE_RE.match(username):
         return _render_settings_users_error(conn, 'Mobile Number must be a valid 10-digit Indian mobile number.', reopen_add_user=True)
     phone = username
@@ -10291,7 +10747,9 @@ def edit_user(user_id):
     f = request.form
     conn = get_db()
     access_level = f.get('access_level') or 'Read Only'
-    modules = ','.join(request.form.getlist('modules')) if access_level == 'Limited Access' else None
+    modules, modules_err = _modules_from_form(request.form, access_level)
+    if modules_err:
+        return _render_settings_users_error(conn, modules_err, reopen_edit_user_id=user_id)
     full_name = (f.get('full_name') or '').strip()
     phone = (f.get('phone') or '').strip() or None
     email = (f.get('email') or '').strip() or None
@@ -10300,6 +10758,8 @@ def edit_user(user_id):
     # phone-number username instead of a real name.
     if not full_name:
         return _render_settings_users_error(conn, 'Full Name is required.', reopen_edit_user_id=user_id)
+    if (f.get('password') or '') and len(f.get('password')) < 8:
+        return _render_settings_users_error(conn, 'Password must be at least 8 characters.', reopen_edit_user_id=user_id)
     # Mobile Number is mandatory and must be a real 10-digit Indian mobile — same rule add_user()
     # and Sign Up enforce; the form's own `required` attribute alone isn't enough, since a direct
     # POST skips it.
@@ -10308,8 +10768,11 @@ def edit_user(user_id):
     dup = _duplicate_user_contact(conn, phone, email, exclude_user_id=user_id)
     if dup:
         return _render_settings_users_error(conn, dup, reopen_edit_user_id=user_id)
-    old = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
+    old = conn.execute("SELECT role, status FROM users WHERE id=?", (user_id,)).fetchone()
     new_is_admin = (f.get('role') or '').strip().lower() == 'administrator' and (f.get('status') or 'Active') != 'Inactive'
+    was_active_admin = bool(old) and _is_admin_role(old['role']) and (old['status'] or 'Active') != 'Inactive'
+    if new_is_admin and not was_active_admin and _other_active_administrator(conn, exclude_user_id=user_id):
+        return _render_settings_users_error(conn, _ONE_ADMIN_MSG, reopen_edit_user_id=user_id)
     if old and (old['role'] or '').strip().lower() == 'administrator' and not new_is_admin and _administrator_count(conn, exclude_user_id=user_id) == 0:
         return _render_settings_users_error(conn, "This is the last active Administrator — keep their role as Administrator and Active, or make someone else an Administrator first.", reopen_edit_user_id=user_id)
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -10323,6 +10786,29 @@ def edit_user(user_id):
     if new_pw:
         conn.execute("UPDATE users SET password_hash=?, updated_by=?, updated_at=? WHERE id=?",
                      (generate_password_hash(new_pw), session.get('user_id'), _now, user_id))
+    conn.commit()
+    conn.close()
+    return _users_done()
+
+@app.route('/settings/users/<int:user_id>/make-administrator', methods=['POST'])
+def make_administrator(user_id):
+    """Hands the single Administrator seat to another ACTIVE user in one step: that user becomes the Administrator and the
+    current Administrator becomes a Manager (Full Access) — so there is never a moment with two Administrators or none.
+    Administrator-only (see _ADMIN_ONLY_ENDPOINTS)."""
+    conn = get_db()
+    me = session.get('user_id')
+    target = conn.execute("SELECT id, full_name, username, status FROM users WHERE id=?", (user_id,)).fetchone()
+    if not target:
+        return _render_settings_users_error(conn, 'That user no longer exists.')
+    if user_id == me:
+        return _render_settings_users_error(conn, 'You are already the Administrator.')
+    if (target['status'] or 'Active') == 'Inactive':
+        return _render_settings_users_error(conn, 'Make this user Active first — an inactive user cannot be the Administrator.')
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # demote first, then promote, in one transaction (the database allows only one active Administrator)
+    conn.execute("UPDATE users SET role='Manager', access_level='Full Access', module_access=NULL, is_admin=1, updated_by=?, updated_at=? WHERE id=?", (me, _now, me))
+    conn.execute("UPDATE users SET role='Administrator', access_level='Full Access', module_access=NULL, is_admin=1, status='Active', updated_by=?, updated_at=? WHERE id=?", (me, _now, user_id))
+    conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (me, f"Administrator role handed to {target['full_name'] or target['username']}", _now))
     conn.commit()
     conn.close()
     return _users_done()
@@ -11960,12 +12446,17 @@ def app_login():
             return render_template('app/login.html', error='Username must be a valid Indian mobile number or email address.',
                                     year=datetime.date.today().year)
         conn = get_db()
+        blocked = _login_throttle_message(conn, username)
+        if blocked:
+            conn.close()
+            return render_template('app/login.html', error=blocked, year=datetime.date.today().year), 429
         user = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
         if user and check_password_hash(user['password_hash'], f.get('password') or ''):
             if (user['status'] or 'Active') == 'Inactive':
                 conn.close()
                 return render_template('app/login.html', error='This account has been deactivated. Contact an administrator.',
                                         year=datetime.date.today().year)
+            _auth_clear(conn, 'login_fail_user', username.lower())
             session.permanent = bool(f.get('remember_me'))
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -11979,6 +12470,7 @@ def app_login():
             conn.commit()
             conn.close()
             return redirect(url_for('app_dashboard'))
+        _login_failed(conn, username)
         conn.close()
         error = 'Invalid username or password.'
     return render_template('app/login.html', error=error, year=datetime.date.today().year)
@@ -12000,6 +12492,11 @@ def app_signup():
     keep working without asking for the same information twice."""
     from werkzeug.security import generate_password_hash
     import sqlite3
+    if not _signup_open():
+        # Self-registration gave any stranger a working login that could read every screen. Accounts are now created only
+        # by an Administrator (Profile & Settings > Users). Set ALLOW_SELF_SIGNUP=1 to switch it back on deliberately.
+        return render_template('app/login.html', error='Sign-up is closed. Ask an Administrator to create your account.',
+                                year=datetime.date.today().year), 403
     error = None
     form_values = {}
     if request.method == 'POST':
@@ -14095,7 +14592,7 @@ def app_settings_users():
                                                'module_access', 'status', 'last_login')} for u in users]
         return dict(users=users_public, total_users=total, admin_users=admin_n, readonly_users=readonly_n, limited_users=limited_n,
                     inactive_users=inactive_n, role_counts=role_counts, access_logs=logs, recent_sync_log=sync,
-                    module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS)
+                    module_list=MODULE_LIST, role_suggestions=_role_suggestions(conn))
     return _app_settings_page('app/settings_users.html', 'users', 'Users & Roles', 'Manage team access and permissions', loader=load)
 
 @app.route('/app/settings/save', methods=['POST'])
@@ -14165,86 +14662,29 @@ def app_change_password():
 
 @app.route('/app/login/otp', methods=['GET', 'POST'])
 def app_login_otp():
-    """Mobile Login-with-Mobile-OTP — deliberate near-duplicate of send_login_otp() (same phone
-    lookup, same OTP generation/hash/session storage, same Twilio call via _send_otp_sms()) for
-    the same reason app_login() duplicates login() rather than refactoring it: this renders a
-    completely different template (no desktop hero panel) and, on success, shows the app's own
-    Verify OTP screen instead of re-rendering the website's login.html inline. GET just shows the
-    phone-entry form; the real send_login_otp()/verify_login_otp() are POST-only with no GET page
-    of their own (the website handles that state inline within login.html), so a dedicated GET
-    view is new here, not a duplicate of anything.
-    """
-    import random, hashlib
+    """Mobile Login-with-Mobile-OTP. Same rules as the website's (see _start_otp_login / _finish_otp_login): code kept
+    server side, 5 wrong tries per code, limits on how many codes can be requested, same reply for unknown numbers."""
     if request.method == 'POST':
         phone = (request.form.get('phone') or '').strip()
-        conn = get_db()
-        user = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
-        s = _get_all_settings(conn, session.get('company_id', 1))
-        conn.close()
-
         if not phone:
             return render_template('app/login_otp.html', error='Enter a mobile number.')
         if not USERNAME_MOBILE_RE.match(phone):
             return render_template('app/login_otp.html', error='Enter a valid 10-digit Indian mobile number.')
-        if not user:
-            return render_template('app/login_otp.html', error='No account found with that mobile number.')
-        if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
-            return render_template('app/login_otp.html',
-                                    error="SMS login isn't configured yet. Ask an admin to add Twilio details in Settings.")
-
-        otp = f"{random.randint(0, 999999):06d}"
-        session['otp_user_id'] = user['id']
-        session['otp_phone'] = phone
-        session['otp_hash'] = hashlib.sha256(otp.encode()).hexdigest()
-        session['otp_expires'] = (datetime.datetime.now() + datetime.timedelta(minutes=5)).timestamp()
-
-        try:
-            _send_otp_sms(s, phone, otp)
-        except Exception as e:
-            return render_template('app/login_otp.html', error=f'Could not send OTP: {e}')
-
+        err = _start_otp_login(phone)
+        if err:
+            return render_template('app/login_otp.html', error=err), (429 if err.startswith('Too many') else 200)
         return render_template('app/verify_otp.html', phone=phone, error=None)
     return render_template('app/login_otp.html', error=None)
 
 @app.route('/app/login/otp/verify', methods=['POST'])
 def app_verify_login_otp():
-    """Verifies the same session-stored OTP hash send_login_otp()/app_login_otp() set — identical
-    checks (session match, 5-minute expiry, hash match) — then redirects to app_dashboard instead
-    of dashboard on success, and back to the app's own Verify OTP screen (not login.html) on
-    failure."""
-    import hashlib
     code = (request.form.get('otp') or '').strip()
     phone = request.form.get('phone') or ''
-
-    if not session.get('otp_user_id') or session.get('otp_phone') != phone:
-        return render_template('app/login_otp.html', error='Session expired. Please request a new OTP.')
-    if datetime.datetime.now().timestamp() > session.get('otp_expires', 0):
-        return render_template('app/login_otp.html', error='OTP expired. Please request a new one.')
-    if hashlib.sha256(code.encode()).hexdigest() != session.get('otp_hash'):
-        return render_template('app/verify_otp.html', phone=phone, error='Incorrect OTP. Please try again.')
-
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE id=?", (session['otp_user_id'],)).fetchone()
-    for key in ('otp_user_id', 'otp_phone', 'otp_hash', 'otp_expires'):
-        session.pop(key, None)
-    if not user:
-        conn.close()
-        return redirect(url_for('app_login'))
-    if (user['status'] or 'Active') == 'Inactive':
-        conn.close()
-        return render_template('app/login_otp.html',
-                                error='This account has been deactivated. Contact an administrator.')
-    session['user_id'] = user['id']
-    session['username'] = user['username']
-    session['is_admin'] = user['is_admin']
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    session['login_at'] = now
-    session['show_zoom_tip'] = True
-    conn.execute("UPDATE users SET last_login=?, updated_by=?, updated_at=? WHERE id=?",
-                 (now, user['id'], now, user['id']))
-    conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (user['id'], 'Login (OTP)', now))
-    conn.commit()
-    conn.close()
+    user, err = _finish_otp_login(phone, code)
+    if err:
+        if err.startswith('Incorrect'):
+            return render_template('app/verify_otp.html', phone=phone, error=err)
+        return render_template('app/login_otp.html', error=err)
     return redirect(url_for('app_dashboard'))
 
 if __name__ == '__main__':
