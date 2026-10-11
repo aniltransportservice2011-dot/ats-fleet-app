@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Profile & Settings{% endblock %}
 {% block extra_head %}
+<link rel="stylesheet" href="{{ asset_v('limited_access_picker.css') }}">
 <style>
   .settings-tabs { display:flex; gap:4px; background:var(--white); border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:20px; overflow-x:auto; }
   .settings-tab { padding:10px 16px; border-radius:6px; font-size:0.85rem; font-weight:600; color:var(--steel); cursor:pointer; white-space:nowrap; border:none; background:none; border-bottom:2px solid transparent; }
@@ -65,9 +66,6 @@
   .ur-access-tile .ic { font-size:1.2rem; margin-bottom:4px; }
   .ur-access-tile .lbl { font-weight:700; font-size:0.8rem; }
   .ur-access-tile .sub { font-size:0.66rem; color:var(--steel); }
-  .ur-module-grid { display:none; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0 4px; }
-  .ur-module-grid.open { display:grid; }
-  .ur-module-grid label { display:flex; align-items:center; gap:6px; font-size:0.8rem; font-weight:400; text-transform:none; }
 </style>
 {% endblock %}
 {% block content %}
@@ -584,12 +582,8 @@
       </div>
       <input type="hidden" name="access_level" id="addAccessLevel" value="Full Access">
 
-      <label style="font-size:0.72rem;color:var(--steel);display:block;margin-top:10px;">Module Access (For Limited Access)</label>
-      <div class="ur-module-grid" id="addModuleGrid">
-        {% for m in module_list %}
-        <label><input type="checkbox" name="modules" value="{{ m }}">{{ m }}</label>
-        {% endfor %}
-      </div>
+      <label style="font-size:0.72rem;color:var(--steel);display:block;margin-top:10px;">Screens this user can open (Limited Access)</label>
+      <div class="la-mount" id="addModuleGrid" data-initial="Dashboard:v" data-preview="1"></div>
 
       <div style="margin-top:14px;max-width:220px;"><label class="ur-section-lbl">3. Status *</label><select name="status" style="margin-top:6px;"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></div>
 
@@ -603,7 +597,6 @@
 
 <!-- EDIT USER (per row) -->
 {% for u in users %}
-{% set user_modules = (u['module_access'] or '').split(',') %}
 <div class="modal-overlay {{ 'open' if reopen_edit_user_id == u['id'] }}" id="editUserModal{{ u['id'] }}">
   <div class="modal-box ur-modal-box">
     <button type="button" class="modal-close-x" onclick="document.getElementById('editUserModal{{ u['id'] }}').classList.remove('open')">&#10005;</button>
@@ -634,12 +627,8 @@
       </div>
       <input type="hidden" name="access_level" id="edit{{ u['id'] }}AccessLevel" value="{{ u['access_level'] or 'Full Access' }}">
 
-      <label style="font-size:0.72rem;color:var(--steel);display:block;margin-top:10px;">Module Access (For Limited Access)</label>
-      <div class="ur-module-grid {{ 'open' if u['access_level']=='Limited Access' }}" id="edit{{ u['id'] }}ModuleGrid">
-        {% for m in module_list %}
-        <label><input type="checkbox" name="modules" value="{{ m }}" {% if m in user_modules %}checked{% endif %}>{{ m }}</label>
-        {% endfor %}
-      </div>
+      <label style="font-size:0.72rem;color:var(--steel);display:block;margin-top:10px;">Screens this user can open (Limited Access)</label>
+      <div class="la-mount {{ 'open' if u['access_level']=='Limited Access' }}" id="edit{{ u['id'] }}ModuleGrid" data-initial="{{ u['module_access'] or '' }}" data-preview="1"></div>
 
       <div style="margin-top:14px;max-width:220px;">
         <label class="ur-section-lbl">Status</label>
@@ -654,6 +643,13 @@
         <button type="submit" style="height:38px;padding:0 18px;background:var(--accent);color:#fff;border:none;border-radius:999px;font-size:0.85rem;font-weight:600;cursor:pointer;">Save Changes</button>
       </div>
     </form>
+    {% if (u['role'] or '')|trim|lower != 'administrator' and u['id'] != session.get('user_id') and (u['status'] or 'Active') != 'Inactive' %}
+    <form method="POST" action="/settings/users/{{ u['id'] }}/make-administrator" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);"
+          onsubmit="return confirm('Make {{ (u['full_name'] or u['username'])|e }} the Administrator?\n\nThey will get full control of company settings and users, and YOU will become a Manager. Only one Administrator can be active at a time.');">
+      <div style="font-size:0.75rem;color:var(--steel);margin-bottom:8px;">There can be only one active Administrator. Hand the role over to this user — you become a Manager.</div>
+      <button type="submit" style="height:36px;padding:0 16px;background:none;border:1.5px solid var(--accent);color:var(--accent);border-radius:999px;font-size:0.82rem;font-weight:700;cursor:pointer;">Make Administrator</button>
+    </form>
+    {% endif %}
   </div>
 </div>
 {% endfor %}
@@ -692,8 +688,16 @@ function urPickAccess(tile, prefix) {
   tile.classList.add('active');
   var val = tile.dataset.val;
   document.getElementById(prefix + 'AccessLevel').value = val;
-  document.getElementById(prefix + 'ModuleGrid').classList.toggle('open', val === 'Limited Access');
+  var grid = document.getElementById(prefix + 'ModuleGrid');
+  grid.classList.toggle('open', val === 'Limited Access');
+  if (val !== 'Limited Access') { grid.querySelectorAll('input[name=modules]').forEach(function(i) { i.remove(); }); } else if (grid.laSet) { grid.laSet(grid.laValue() || 'Dashboard:v'); }
 }
+</script>
+<script src="{{ asset_v('limited_access_picker.js') }}"></script>
+<script>
+document.querySelectorAll('.la-mount').forEach(function (el) {
+  LAPicker.mount(el, { initial: el.dataset.initial, preview: el.dataset.preview === '1' });
+});
 </script>
 <script src="{{ asset_v('mobile_input.js') }}"></script>
 {% endblock %}

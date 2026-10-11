@@ -812,6 +812,33 @@ CREATE TABLE sync_log (
     company_id            INTEGER NOT NULL DEFAULT 1
 );
 
+-- Also created at start-up by _ensure_single_admin_index() in app.py (not listed as DDL here because the test harness
+-- builds scratch databases from this file with several Administrators on purpose):
+--   CREATE UNIQUE INDEX uq_one_active_administrator ON users(company_id)
+--     WHERE LOWER(TRIM(COALESCE(role,'')))='administrator' AND COALESCE(status,'Active')!='Inactive';
+
+-- Sign-in security (created at start-up by _ensure_auth_tables in app.py).
+CREATE TABLE login_otps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    phone TEXT NOT NULL,
+    otp_hash TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    company_id INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX idx_login_otps_user ON login_otps(user_id, used);
+CREATE TABLE auth_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    at REAL NOT NULL,
+    company_id INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX idx_auth_attempts_lookup ON auth_attempts(kind, key, at);
+
 -- ============================================================================
 -- Performance indexes (also created automatically at app start by _ensure_performance_indexes)
 -- ============================================================================

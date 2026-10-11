@@ -2746,7 +2746,7 @@ def run_roles_scenario(env, F, sc):
             run.check('APP_UNKNOWN_FORM_REFUSED', r.status_code == 400, 'unknown form_type', '400', r.status_code)
             r = a.post('/settings/users/add', data={'username': '9200000004', 'full_name': 'App Added', 'role': 'Accountant', 'access_level': 'Limited Access', 'modules': ['Trips', 'Ledger'], 'status': 'Active'}, headers=H)
             row = env.one("SELECT id,role,access_level,module_access FROM users WHERE username='9200000004'")
-            run.check('APP_ADD_USER_JSON', r.status_code == 200 and (r.get_json() or {}).get('ok') and row is not None and row['module_access'] == 'Trips,Ledger', 'add user from the app', 'created with modules', r.status_code)
+            run.check('APP_ADD_USER_JSON', r.status_code == 200 and (r.get_json() or {}).get('ok') and row is not None and row['module_access'] == 'Trips:e,Ledger:e', 'add user from the app', 'created with modules', r.status_code)
             r = a.post('/settings/users/add', data={'username': '9200000004', 'full_name': 'Dup', 'role': 'Manager', 'access_level': 'Full Access'}, headers=H)
             run.check('APP_ADD_DUPLICATE_MOBILE_JSON_ERROR', r.status_code == 400 and 'already' in (r.get_json() or {}).get('error', ''), 'duplicate mobile', '400 JSON message', r.status_code)
             r = a.post(f"/settings/users/{row['id']}/edit", data={'full_name': 'App Edited', 'phone': '9200000004', 'role': 'Manager', 'access_level': 'Read Only', 'status': 'Inactive'}, headers=H)
@@ -2755,6 +2755,187 @@ def run_roles_scenario(env, F, sc):
             run.check('APP_DELETE_USER_JSON', r.status_code == 200 and env.one('SELECT id FROM users WHERE id=?', row['id']) is None, 'delete user from the app', 'deleted', r.status_code)
             r = a.post('/settings/users/10/delete', data={}, headers=H)
             run.check('APP_CANNOT_DELETE_SELF', r.status_code == 400 and env.one('SELECT id FROM users WHERE id=10') is not None, 'delete own account from the app', '400', r.status_code)
+        elif case == 'single_admin':
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            env.exec("UPDATE users SET role='Manager' WHERE id IN (1, 15)")          # exactly one active Administrator: user 10
+            n_admins = lambda: env.one("SELECT COUNT(*) AS n FROM users WHERE LOWER(TRIM(role))='administrator' AND COALESCE(status,'Active')!='Inactive'")['n']
+            a = clients[10]
+            r = a.post('/settings/users/add', data={'username': '9577000001', 'full_name': 'Second Admin', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('SECOND_ACTIVE_ADMIN_REFUSED_ON_ADD', r.status_code == 400 and 'one Administrator' in (r.get_json() or {}).get('error', '') and n_admins() == 1, 'add a user with role Administrator while one is active', '400 + message, still 1', (r.status_code, n_admins()))
+            r = a.post('/settings/users/add', data={'username': '9577000002', 'full_name': 'Sneaky', 'role': '  administrator ', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('ADD_ADMIN_SPELLING_VARIANTS_REFUSED', r.status_code == 400 and n_admins() == 1, 'role typed as "  administrator "', '400', r.status_code)
+            r = a.post('/settings/users/11/edit', data={'full_name': 'Person 11', 'phone': '9100000011', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('PROMOTE_TO_SECOND_ADMIN_REFUSED_ON_EDIT', r.status_code == 400 and env.one('SELECT role FROM users WHERE id=11')['role'] == 'Manager' and n_admins() == 1, 'edit a Manager to Administrator', 'refused', r.status_code)
+            r = a.post('/settings/users/add', data={'username': '9577000003', 'full_name': 'Dormant Admin', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Inactive'}, headers=H)
+            dormant = env.one("SELECT id FROM users WHERE username='9577000003'")
+            run.check('INACTIVE_ADMIN_MAY_BE_ADDED', r.status_code == 200 and dormant is not None and n_admins() == 1, 'add an INACTIVE Administrator', 'allowed, still 1 active', r.status_code)
+            r = a.post(f"/settings/users/{dormant['id']}/edit", data={'full_name': 'Dormant Admin', 'phone': '9577000003', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('REACTIVATE_ADMIN_REFUSED_WHILE_ANOTHER_ACTIVE', r.status_code == 400 and env.one('SELECT status FROM users WHERE id=?', dormant['id'])['status'] == 'Inactive' and n_admins() == 1, 'activate the inactive Administrator', 'refused', r.status_code)
+            r = a.post('/settings/users/10/edit', data={'full_name': 'Person 10 renamed', 'phone': '9100000010', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('ADMIN_CAN_STILL_EDIT_THEMSELVES', r.status_code == 200 and n_admins() == 1, 'the Administrator edits their own details', '200', r.status_code)
+            r = a.post('/settings/users/10/make-administrator', data={}, headers=H)
+            run.check('TRANSFER_TO_SELF_REFUSED', r.status_code == 400, 'hand the role to yourself', '400', r.status_code)
+            env.exec("UPDATE users SET status='Inactive' WHERE id=11")
+            r = a.post('/settings/users/11/make-administrator', data={}, headers=H)
+            run.check('TRANSFER_TO_INACTIVE_REFUSED', r.status_code == 400 and n_admins() == 1 and env.one('SELECT role FROM users WHERE id=10')['role'] == 'Administrator', 'hand the role to an inactive user', 'refused, nothing changed', r.status_code)
+            env.exec("UPDATE users SET status='Active' WHERE id=11")
+            r = clients[12].post('/settings/users/13/make-administrator', data={}, headers=H)
+            run.check('NON_ADMIN_CANNOT_TRANSFER', r.status_code == 403 and n_admins() == 1, 'a Manager tries to make someone Administrator', '403', r.status_code)
+            r = a.post('/settings/users/11/make-administrator', data={}, headers=H)
+            r10 = env.one('SELECT role,access_level,status FROM users WHERE id=10'); r11 = env.one('SELECT role,access_level,status FROM users WHERE id=11')
+            run.check('TRANSFER_WORKS_ONE_ADMIN_AFTER', r.status_code == 200 and n_admins() == 1 and r11['role'] == 'Administrator' and r10['role'] == 'Manager' and r10['access_level'] == 'Full Access', 'hand the role to an active Manager', 'new Administrator, old becomes Manager, exactly one', (r.status_code, dict(r10), dict(r11)))
+            r = clients[10].post('/settings/users/add', data={'username': '9577000004', 'full_name': 'X', 'role': 'Manager', 'access_level': 'Read Only'}, headers=H)
+            run.check('OLD_ADMIN_LOSES_POWER_IMMEDIATELY', r.status_code == 403, 'previous Administrator adds a user', '403', r.status_code)
+            r = clients[11].post('/settings/users/10/edit', data={'full_name': 'Person 10', 'phone': '9100000010', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('OLD_ADMIN_CANNOT_COME_BACK_WHILE_NEW_ACTIVE', r.status_code == 400 and n_admins() == 1, 'make the previous Administrator Administrator again', 'refused', r.status_code)
+            r = clients[11].post('/settings/users/11/edit', data={'full_name': 'Person 11', 'phone': '9100000011', 'role': 'Manager', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('LAST_ADMIN_CANNOT_STEP_DOWN_WITHOUT_TRANSFER', r.status_code == 400 and n_admins() == 1, 'the only Administrator demotes themselves', 'refused', r.status_code)
+        elif case == 'limited_access':
+            appmod = env.appmod
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            # --- every route is classified (a route added later without a screen would be refused for Limited users)
+            exempt = {'login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick', 'app_login_otp', 'app_verify_login_otp', 'app_manifest'}
+            known = set(appmod._ENDPOINT_MODULE) | appmod._COMMON_ENDPOINTS | appmod._ADMIN_ONLY_ENDPOINTS | exempt | appmod._FULL_ACCESS_ONLY_ENDPOINTS
+            live = {r.endpoint for r in appmod.app.url_map.iter_rules()}
+            run.check('EVERY_ROUTE_HAS_A_SCREEN', not (live - known), 'all routes', 'each belongs to a screen / common / admin-only', sorted(live - known))
+            run.check('NO_STALE_ROUTE_NAMES_IN_MAP', not (set(appmod._ENDPOINT_MODULE) - live), 'map vs real routes', 'all exist', sorted(set(appmod._ENDPOINT_MODULE) - live))
+            for uid, mods in ((20, 'Dashboard:v,Ledger:e,Invoices:e,Expenses:e,Reports:v'), (21, 'Trips:e,Vehicles:v'), (22, 'Trips,Payments'), (23, '')):
+                env.exec("INSERT INTO users (id,username,password_hash,role,is_admin,full_name,access_level,module_access,status,phone,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         uid, f'91000000{uid}', 'x', 'Staff', 0, f'Limited {uid}', 'Limited Access', mods, 'Active', f'91000000{uid}', '2026-01-01')
+            cl = {uid: _client_for(env, uid) for uid in (20, 21, 22, 23)}
+            def code(uid, method, url, **kw):
+                r = cl[uid].open(url, method=method, headers=kw.pop('headers', {'Accept': 'text/html'}), **kw)
+                return r.status_code
+            # accountant-style user: screens in, others out
+            for url in ('/accounts', '/overheads', '/invoice-center', '/performance', '/dashboard', '/app/ledger', '/app/expenses'):
+                run.check('LIMITED_ALLOWED_SCREEN_OPENS', code(20, 'GET', url) == 200, f'user with Ledger/Invoices/Expenses/Reports/Dashboard: GET {url}', 200, code(20, 'GET', url))
+            for url in ('/trips', '/vehicles', '/maintenance', '/salaries', '/app/trips', '/app/vehicles', '/app/maintenance', '/app/salary', '/trips/export', '/export'):
+                c_ = code(20, 'GET', url)
+                run.check('LIMITED_OTHER_SCREEN_BLOCKED', c_ == 403, f'accountant-style user: GET {url}', 403, c_)
+            for url in ('/settings/users/export',):
+                run.check('LIMITED_NEVER_ADMIN_SCREENS', code(20, 'GET', url) == 403, f'GET {url}', 403, code(20, 'GET', url))
+            # View vs Edit
+            for method, url in (('POST', '/trips/add'), ('POST', '/vehicles/add'), ('POST', '/trips/delete/1')):
+                run.check('LIMITED_EDIT_ON_OTHER_SCREEN_BLOCKED', code(21, 'POST', url, data={}) in (200, 302, 400) if url == '/trips/add' else code(21, 'POST', url, data={}) == 403 if url != '/trips/delete/1' else code(21, 'POST', url, data={}) in (200, 302, 404), f'Trips:e Vehicles:v user: {method} {url}', 'Trips ok, Vehicles blocked', code(21, 'POST', url, data={}))
+            run.check('LIMITED_VIEW_ONLY_BLOCKS_WRITES', code(21, 'POST', '/vehicles/add', data={'vehicle_no': 'X'}) == 403, 'Vehicles is View only: POST /vehicles/add', 403, code(21, 'POST', '/vehicles/add', data={}))
+            run.check('LIMITED_VIEW_ONLY_BLOCKS_DELETE', code(21, 'POST', '/vehicles/delete/1', data={}) == 403, 'Vehicles is View only: delete', 403, code(21, 'POST', '/vehicles/delete/1', data={}))
+            run.check('LIMITED_VIEW_ONLY_STILL_READS', code(21, 'GET', '/vehicles') == 200, 'Vehicles is View only: GET /vehicles', 200, code(21, 'GET', '/vehicles'))
+            body = cl[21].get('/vehicles').data.decode('utf-8', 'ignore')
+            run.check('LIMITED_VIEW_ONLY_SCREEN_SHOWS_BADGE', 'ro-badge' in body, 'view-only screen', 'view-only layer present', 'missing')
+            body = cl[21].get('/trips').data.decode('utf-8', 'ignore')
+            run.check('LIMITED_EDIT_SCREEN_HAS_NO_BADGE', 'ro-badge' not in body, 'edit screen', 'no view-only layer', 'present')
+            # legacy values, no screens
+            run.check('LIMITED_LEGACY_MODULES_STILL_WORK', code(22, 'GET', '/trips') == 200 and code(22, 'GET', '/accounts') == 200 and code(22, 'GET', '/vehicles') == 403, "old-format 'Trips,Payments'", 'Trips + Ledger (edit)', (code(22, 'GET', '/trips'), code(22, 'GET', '/accounts')))
+            run.check('LIMITED_NO_SCREENS_ONLY_PROFILE', code(23, 'GET', '/trips') == 403 and code(23, 'GET', '/settings') == 200, 'no screens chosen', 'only own profile', (code(23, 'GET', '/trips'), code(23, 'GET', '/settings')))
+            # landing: Dashboard missing -> first allowed screen
+            r = cl[21].get('/dashboard'); r2 = cl[21].get('/app/dashboard')
+            run.check('LIMITED_LANDS_ON_FIRST_ALLOWED_SCREEN', r.status_code == 302 and r.headers['Location'].endswith('/trips') and r2.status_code == 302 and r2.headers['Location'].endswith('/app/trips'), 'no Dashboard: open /dashboard and /app/dashboard', 'redirect to Trips', (r.status_code, r.headers.get('Location'), r2.headers.get('Location')))
+            # friendly page, JSON for the app
+            r = cl[21].get('/salaries', headers={'Accept': 'text/html'})
+            run.check('LIMITED_BLOCKED_PAGE_IS_FRIENDLY', r.status_code == 403 and b'Ask your Administrator' in r.data, 'blocked screen in the browser', 'friendly 403 page', r.status_code)
+            r = cl[21].post('/app/trips/add', data={}, headers={'Accept': 'application/json'}); r2 = cl[21].get('/app/salary', headers={'Accept': 'application/json'})
+            run.check('LIMITED_APP_GETS_JSON_ERRORS', r2.status_code == 403 and (r2.get_json() or {}).get('ok') is False, 'blocked app screen via fetch', 'JSON 403', r2.status_code)
+            # navigation shows only what is allowed
+            side = cl[20].get('/accounts').data.decode('utf-8', 'ignore')
+            run.check('SIDEBAR_HIDES_BLOCKED_SCREENS', 'href="/accounts"' in side and 'href="/trips"' not in side and 'href="/salaries"' not in side and 'href="/vehicles"' not in side, 'website sidebar for the accountant-style user', 'only allowed items', 'wrong items')
+            side = cl[21].get('/trips').data.decode('utf-8', 'ignore')
+            run.check('SIDEBAR_HIDES_EMPTY_GROUPS', 'nav-label">Finance' not in side and 'nav-label">Analysis' not in side, 'Trips/Vehicles user', 'no Finance / Analysis groups', 'shown')
+            appnav = cl[20].get('/app/ledger').data.decode('utf-8', 'ignore')
+            run.check('APP_NAV_ONLY_ALLOWED', 'href="/app/trips"' not in appnav and 'href="/app/vehicles' not in appnav and 'href="/app/salary"' not in appnav and 'href="/app/ledger"' in appnav and 'href="/app/expenses' in appnav, 'app bottom bar / fan / More for the accountant-style user', 'only allowed screens', 'extra items')
+            run.check('APP_FAB_ONLY_OFFERS_ALLOWED_ADDS', 'fab-option-label">Add Expense' in appnav and 'fab-option-label">Add Trip' not in appnav and 'fab-option-label">Add Vehicle' not in appnav, 'quick-add (+)', 'Add Expense only', 'wrong')
+            appnav = cl[21].get('/app/trips').data.decode('utf-8', 'ignore')
+            run.check('APP_FAB_HIDES_ADD_VEHICLE_WHEN_VIEW_ONLY', 'fab-option-label">Add Trip' in appnav and 'fab-option-label">Add Vehicle' not in appnav, 'Trips edit + Vehicles view', 'Add Trip only', 'wrong')
+            # dashboard shows only cards for allowed screens
+            dash = cl[20].get('/dashboard').data.decode('utf-8', 'ignore')
+            run.check('DASHBOARD_ONLY_ALLOWED_CARDS', 'Total Revenue' in dash and 'Payables' in dash and 'Total Trips' not in dash and 'Maintenance Cost' not in dash, 'dashboard for accountant-style user', 'money cards yes, trips/maintenance no', 'wrong')
+            # full / read only unaffected
+            for uid, lvl in ((11, 'Full Access'), (13, 'Read Only')):
+                for url in ('/trips', '/accounts', '/salaries', '/maintenance', '/performance'):
+                    run.check('FULL_AND_READ_ONLY_UNAFFECTED', code(uid, 'GET', url) == 200 if False else _client_for(env, uid).get(url).status_code == 200, f'{lvl}: GET {url}', 200, _client_for(env, uid).get(url).status_code)
+            full_app = _client_for(env, 11).get('/app/ledger').data.decode('utf-8', 'ignore')
+            run.check('FULL_ACCESS_APP_NAV_UNCHANGED', 'href="/app/trips"' in full_app and 'href="/app/vehicles' in full_app and 'fab-option-label">Add Vehicle' in full_app, 'Full Access app nav', 'standard layout', 'changed')
+            # admin: saving screens through the editor routes
+            a = clients[10]
+            r = a.post('/settings/users/add', data={'username': '9588000001', 'full_name': 'Picked Screens', 'role': 'Accountant', 'access_level': 'Limited Access', 'modules': ['Ledger:e', 'Reports:v', 'Bogus:e'], 'status': 'Active'}, headers=H)
+            row = env.one("SELECT module_access FROM users WHERE username='9588000001'")
+            run.check('ADMIN_SAVES_SCREENS_WITH_VIEW_EDIT', r.status_code == 200 and row and row['module_access'] == 'Ledger:e,Reports:v', 'add Limited user with Ledger:e, Reports:v, junk', 'Ledger:e,Reports:v', (r.status_code, row and row['module_access']))
+            r = a.post('/settings/users/add', data={'username': '9588000002', 'full_name': 'No Screens', 'role': 'Accountant', 'access_level': 'Limited Access', 'status': 'Active'}, headers=H)
+            run.check('LIMITED_NEEDS_AT_LEAST_ONE_SCREEN', r.status_code == 400 and env.one("SELECT id FROM users WHERE username='9588000002'") is None, 'Limited with nothing ticked', '400', r.status_code)
+            uid_new = env.one("SELECT id FROM users WHERE username='9588000001'")['id']
+            r = a.post(f'/settings/users/{uid_new}/edit', data={'full_name': 'Picked Screens', 'phone': '9588000001', 'role': 'Accountant', 'access_level': 'Full Access', 'status': 'Active'}, headers=H)
+            run.check('SWITCHING_AWAY_FROM_LIMITED_CLEARS_SCREENS', r.status_code == 200 and env.one('SELECT module_access FROM users WHERE id=?', uid_new)['module_access'] is None, 'Limited -> Full Access', 'screens cleared', r.status_code)
+            page = a.get('/settings?tab=users').data.decode('utf-8', 'ignore')
+            run.check('EDITOR_SHOWS_PICKER_NOT_CHECKBOXES', 'la-mount' in page and 'limited_access_picker.js' in page, 'website user editor', 'screen picker', 'old grid')
+            page = a.get('/app/settings/users').data.decode('utf-8', 'ignore')
+            run.check('APP_EDITOR_SHOWS_PICKER', 'limited_access_picker.js' in page and 'uModules' in page, 'app user editor', 'screen picker', 'old grid')
+        elif case == 'security':
+            import os, base64, zlib, json as _json, hashlib as _h
+            appmod = env.appmod
+            for k in ('twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'):
+                env.exec("INSERT OR REPLACE INTO settings (key,value,company_id) VALUES (?,?,1)", k, 'fake')
+            sent = []
+            real_sms = appmod._send_otp_sms
+            appmod._send_otp_sms = lambda s_, phone, otp: sent.append(otp)       # nothing is ever sent for real
+            try:
+                # A1 sign-up is closed
+                anon = appmod.app.test_client()
+                r = anon.post('/app/signup', data={'full_name': 'Stranger', 'username': '9555555555', 'password': 'abcdefgh', 'confirm_password': 'abcdefgh'})
+                run.check('SIGNUP_CLOSED', r.status_code == 403 and env.one("SELECT id FROM users WHERE username='9555555555'") is None, 'a stranger signs up', '403, no account', r.status_code)
+                run.check('NO_CREATE_ACCOUNT_LINK', b'Create Account' not in anon.get('/app/login').data, 'app login page', 'no link', 'link shown')
+                # A3 the old key in the source code no longer works
+                from itsdangerous import URLSafeTimedSerializer
+                from flask.sessions import session_json_serializer
+                old = URLSafeTimedSerializer('fleet-local-app-anil-transport-secret-key-2026', salt='cookie-session', serializer=session_json_serializer, signer_kwargs={'key_derivation': 'hmac', 'digest_method': _h.sha1})
+                forged = appmod.app.test_client(); forged.set_cookie('session', old.dumps({'user_id': 10, 'username': 'x'}))
+                r = forged.get('/settings')
+                run.check('OLD_SECRET_KEY_REJECTED', r.status_code == 302, 'cookie forged with the key that used to be in the source', 'redirect to login', r.status_code)
+                # A2 one-time code: not in the cookie, 5 wrong tries lock it, reuse refused, unknown number looks the same, sends limited
+                c = appmod.app.test_client()
+                c.post('/login/otp/send', data={'phone': '9100000010'})
+                cookie = c.get_cookie('session').value
+                comp = cookie.startswith('.'); payload = cookie.lstrip('.').split('.')[0]
+                raw = base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)); raw = zlib.decompress(raw) if comp else raw
+                run.check('OTP_NOT_IN_COOKIE', not any('hash' in k or 'otp_code' in k for k in _json.loads(raw)), 'read the session cookie after requesting a code', 'no code hash', sorted(_json.loads(raw)))
+                code = sent[-1]
+                wrong = [x for x in ('000000', '111111', '222222', '333333', '444444', '555555') if x != code][:5]
+                for g in wrong:
+                    c.post('/login/otp/verify', data={'phone': '9100000010', 'otp': g})
+                r = c.post('/login/otp/verify', data={'phone': '9100000010', 'otp': code})
+                run.check('OTP_LOCKED_AFTER_5_WRONG', r.status_code != 302 and b'Too many incorrect' in r.data, 'correct code after 5 wrong ones', 'locked', r.status_code)
+                c2 = appmod.app.test_client(); sent.clear()
+                c2.post('/app/login/otp', data={'phone': '9100000011'})
+                r = c2.post('/app/login/otp/verify', data={'phone': '9100000011', 'otp': sent[-1]})
+                run.check('OTP_APP_LOGIN_WORKS', r.status_code == 302 and '/app/dashboard' in r.headers.get('Location', ''), 'app: real code', 'logged in', r.status_code)
+                r = c2.post('/app/login/otp/verify', data={'phone': '9100000011', 'otp': sent[-1]})
+                run.check('OTP_NOT_REUSABLE', r.status_code != 302, 'same code again', 'refused', r.status_code)
+                n = len(sent); r = appmod.app.test_client().post('/login/otp/send', data={'phone': '9000011111'})
+                run.check('OTP_UNKNOWN_NUMBER_SAME_REPLY', r.status_code == 200 and b'OTP sent to' in r.data and len(sent) == n, 'number with no account', 'same screen, nothing sent', r.status_code)
+                cx = appmod.app.test_client(); statuses = [cx.post('/login/otp/send', data={'phone': '9100000013'}).status_code for _ in range(5)]
+                run.check('OTP_SEND_LIMITED', statuses[:3] == [200, 200, 200] and statuses[3] == 429, '5 code requests in a row for one number', '429 from the 4th', statuses)
+            finally:
+                appmod._send_otp_sms = real_sms
+            # A4 password guessing
+            c = appmod.app.test_client(); st = [c.post('/login', data={'username': '9100000012', 'password': f'bad{i}'}).status_code for i in range(7)]
+            run.check('LOGIN_LOCKOUT', st[:5] == [200] * 5 and st[5] == 429, '7 wrong passwords in a row', '429 from the 6th', st)
+            c = appmod.app.test_client(); st = [c.post('/app/login', data={'username': '9100000014', 'password': f'bad{i}'}).status_code for i in range(7)]
+            run.check('APP_LOGIN_LOCKOUT', st[5] == 429, 'same on the app login', '429 from the 6th', st)
+            # A5 documents
+            os.makedirs(os.path.join(os.path.dirname(os.path.abspath(appmod.__file__)), 'static', 'uploads', 'insurance', '1'), exist_ok=True)
+            probe = os.path.join(os.path.dirname(os.path.abspath(appmod.__file__)), 'static', 'uploads', 'insurance', '1', '_audit_probe.txt')
+            open(probe, 'w').write('x')
+            try:
+                run.check('DOCS_NEED_LOGIN', appmod.app.test_client().get('/static/uploads/insurance/1/_audit_probe.txt').status_code == 403, 'anonymous opens an insurance document link', '403', 'opened')
+                run.check('DOCS_OPEN_WHEN_SIGNED_IN', clients[11].get('/static/uploads/insurance/1/_audit_probe.txt').status_code == 200, 'signed-in user', '200', 'blocked')
+            finally:
+                os.remove(probe)
+            # B: other-site form posts, headers, redirects, upload cap
+            r = clients[11].post('/settings/my-profile', data={'full_name': 'Evil'}, headers={'Origin': 'https://evil.example'})
+            run.check('CROSS_SITE_POST_BLOCKED', r.status_code == 403, 'a form on another website', '403', r.status_code)
+            r = clients[11].get('/dashboard')
+            run.check('SECURITY_HEADERS', r.headers.get('X-Frame-Options') == 'SAMEORIGIN' and r.headers.get('X-Content-Type-Options') == 'nosniff', 'response headers', 'present', dict(r.headers))
+            run.check('OPEN_REDIRECT_BLOCKED', env.appmod._safe_next('https://evil.example', '/x') == '/x' and env.appmod._safe_next('//evil.example', '/x') == '/x' and env.appmod._safe_next('/vehicles', '/x') == '/vehicles', 'return_to values', 'only local paths', 'accepted')
+            r = clients[10].post('/settings/users/add', data={'username': '9566666666', 'full_name': 'Short Pw', 'role': 'Manager', 'access_level': 'Read Only', 'password': 'abc123'})
+            run.check('SHORT_PASSWORD_REFUSED_ON_ADD_USER', env.one("SELECT id FROM users WHERE username='9566666666'") is None, 'admin sets a 6-character password', 'refused', r.status_code)
     except Exception as e:
         F.check('SCENARIO_CRASH', False, sc, 'exception', 'no exception', repr(e)[:160], note=traceback.format_exc()[-500:], severity='CRASH')
     return run
@@ -2762,7 +2943,7 @@ def run_roles_scenario(env, F, sc):
 
 def gen_roles(quick=False):
     return [{'id': f'Q{i:04d}', 'stage': 'roles', 'case': c, 'tag': f'roles/{c}'} for i, c in
-            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens'], 1)]
+            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens', 'security', 'single_admin', 'limited_access'], 1)]
 
 
 # --------------------------------------------------------------------------------------------------

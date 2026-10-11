@@ -867,6 +867,34 @@ CREATE TABLE sync_log (
 );
 CREATE INDEX idx_sync_log_company ON sync_log(company_id);
 
+-- Only ONE active Administrator per company (also created at start-up in the SQLite app by _ensure_single_admin_index).
+CREATE UNIQUE INDEX uq_one_active_administrator ON users(company_id)
+    WHERE lower(trim(coalesce(role,''))) = 'administrator' AND coalesce(status,'Active') <> 'Inactive';
+
+-- Sign-in security: server-side one-time codes and login/OTP throttling.
+CREATE TABLE login_otps (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    phone       TEXT NOT NULL,
+    otp_hash    TEXT NOT NULL,
+    expires_at  DOUBLE PRECISION NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    used        INTEGER NOT NULL DEFAULT 0,
+    created_at  DOUBLE PRECISION NOT NULL,
+    company_id  INTEGER NOT NULL REFERENCES companies(id)
+);
+CREATE INDEX idx_login_otps_company ON login_otps(company_id);
+CREATE INDEX idx_login_otps_user ON login_otps(user_id, used);
+CREATE TABLE auth_attempts (
+    id          SERIAL PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    at          DOUBLE PRECISION NOT NULL,
+    company_id  INTEGER NOT NULL REFERENCES companies(id)
+);
+CREATE INDEX idx_auth_attempts_company ON auth_attempts(company_id);
+CREATE INDEX idx_auth_attempts_lookup ON auth_attempts(kind, key, at);
+
 -- ============================================================================
 -- Deferred foreign keys — for columns whose target table is defined later above than the
 -- column itself (Postgres requires the referenced table to exist already; SQLite didn't
@@ -966,7 +994,7 @@ BEGIN
             'trips','invoices','invoice_items','invoice_batches','invoice_batch_trips',
             'invoice_batch_items','maintenance','maintenance_items','urea_transactions',
             'toll_entries','employees','salaries','salary_items','advances','attendance',
-            'overheads','users','access_logs','settings','sync_log'
+            'overheads','users','access_logs','settings','sync_log','login_otps','auth_attempts'
         ])
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);

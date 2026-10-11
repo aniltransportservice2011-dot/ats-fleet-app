@@ -79,14 +79,19 @@
   </form>
 
   <div class="kpi-row">
+{% if can('Trips') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:#eaf1fb;color:#2a78d6;">&#128666;</div>
       <div><div class="label">Total Trips</div><div class="value">{{ trip_count }}</div></div>
     </div>
+{% endif %}
+{% if can('Reports') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:#e8f5ee;color:#1a9c5b;">&#8377;</div>
       <div><div class="label">Total Revenue</div><div class="value">₹{{ '{:,.0f}'.format(total_revenue) }}</div></div>
     </div>
+{% endif %}
+{% if can('Reports') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:{% if total_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if total_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128200;</div>
       <div><div class="label">Total Profit</div>
@@ -97,11 +102,15 @@
       {% endif %}
       </div>
     </div>
+{% endif %}
+{% if can('Reports') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:#eaf1fb;color:#7a5ad6;">&#128666;</div>
       <div><div class="label">Own Vehicle Revenue</div><div class="value">₹{{ '{:,.0f}'.format(own_vehicle_turnover) }}</div>
       </div>
     </div>
+{% endif %}
+{% if can('Reports') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:{% if hired_vehicle_profit >= 0 %}#e8f5ee{% else %}#fdecea{% endif %};color:{% if hired_vehicle_profit >= 0 %}var(--green){% else %}var(--red){% endif %};">&#128176;</div>
       <div><div class="label">Hired Vehicle Profit</div>
@@ -112,17 +121,23 @@
       {% endif %}
       <div class="sub">{{ hired_trip_count }} trips</div></div>
     </div>
+{% endif %}
+{% if can('Expenses') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:#fdecea;color:#e34948;">&#9981;</div>
       <div><div class="label">Fuel Expense</div><div class="value">₹{{ '{:,.0f}'.format(fuel_total) }}</div></div>
     </div>
+{% endif %}
+{% if can('Maintenance') %}
     <div class="kpi">
       <div class="kpi-icon" style="background:#fff6e8;color:#eda100;">&#128295;</div>
       <div><div class="label">Maintenance Cost</div><div class="value">₹{{ '{:,.0f}'.format(maint_total) }}</div></div>
     </div>
+{% endif %}
   </div>
 
   <div class="grid-3">
+{% if can('Reports') %}
     <div class="panel">
       <h3>Freight Revenue Trend <a href="/performance" style="float:right;font-size:0.78rem;color:var(--accent);">View Details &rarr;</a></h3>
       <div style="display:flex;gap:16px;margin-bottom:6px;">
@@ -146,7 +161,9 @@
         {% endif %}
       </svg>
     </div>
+{% endif %}
 
+{% if can('Expenses') %}
     <div class="panel">
       <h3>Expense Breakdown</h3>
       {% for e in exp_breakdown %}
@@ -157,7 +174,9 @@
       </div>
       {% endfor %}
     </div>
+{% endif %}
 
+{% if can('Trips') %}
     <div class="panel">
       <h3>Recent Activities</h3>
       {% for a in activities %}
@@ -169,9 +188,11 @@
       <div style="color:var(--steel);font-size:0.85rem;">No recent activity.</div>
       {% endfor %}
     </div>
+{% endif %}
   </div>
 
   <div class="grid-3" style="grid-template-columns:0.82fr 0.82fr 1.36fr;">
+{% if can('Trips') %}
     <div class="panel" style="text-align:center;">
       <h3 style="text-align:left;">Trip Status <a href="/trips" style="float:right;font-size:0.78rem;color:var(--accent);">View All &rarr;</a></h3>
       {% set tp1 = trip_status.completed_pct %}
@@ -185,7 +206,9 @@
         <div class="legend-item"><span class="legend-dot" style="background:#eda100;"></span>Upcoming ({{ trip_status.upcoming }})</div>
       </div>
     </div>
+{% endif %}
 
+{% if can('Ledger') %}
     <div class="panel">
       <h3>Payables &amp; Receivables <a href="/accounts" style="float:right;font-size:0.78rem;color:var(--accent);">View Ledger &rarr;</a></h3>
       <div class="bal-box recv">
@@ -199,7 +222,9 @@
         {% if overdue_payables %}<div style="font-size:0.72rem;color:var(--red);margin-top:2px;">₹{{ '{:,.0f}'.format(overdue_payables) }} overdue (30+ days)</div>{% endif %}
       </div>
     </div>
+{% endif %}
 
+{% if can('Reports') %}
     <div class="panel">
       <h3>Top Performing Vehicles <a href="/performance" style="float:right;font-size:0.78rem;color:var(--accent);">View All &rarr;</a></h3>
       <table style="width:100%;font-size:0.8rem;">
@@ -215,6 +240,7 @@
         {% endfor %}
       </table>
     </div>
+{% endif %}
   </div>
 </div>
 {% endblock %}
