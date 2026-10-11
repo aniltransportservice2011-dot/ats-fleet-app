@@ -2698,13 +2698,63 @@ def run_roles_scenario(env, F, sc):
                 run.check('APP_SHOWS_REAL_ROLE', ROLE_USERS[uid][1] in body and ('>Administrator<' not in body), f'{ROLE_USERS[uid][1]}: role label', ROLE_USERS[uid][1], 'wrong label')
             r = clients[10].get('/app/profile')
             body = r.data.decode('utf-8', 'ignore')
-            run.check('APP_ADMIN_HAS_ADMIN_LINKS', '/settings?tab=company' in body and '/settings?tab=users' in body, 'Administrator: mobile profile page', 'admin links', 'missing')
+            run.check('APP_ADMIN_HAS_ADMIN_LINKS', all(x in body for x in ('/app/settings/company', '/app/settings/banking', '/app/settings/invoice', '/app/settings/tax', '/app/settings/users')), 'Administrator: mobile profile page', 'all five settings screens linked', 'missing')
             r = clients[11].post('/app/profile/update', data={'full_name': 'App Renamed', 'email': '', 'phone': '9100000011'})
             run.check('APP_OWN_PROFILE_UPDATE', r.status_code == 200 and env.one('SELECT full_name FROM users WHERE id=11')['full_name'] == 'App Renamed', 'update own profile in the app', 'saved', r.status_code)
             r = clients[11].post('/app/profile/update', data={'full_name': 'X', 'email': '', 'phone': '9100000012'})
             run.check('APP_DUPLICATE_MOBILE_REFUSED', r.status_code == 400, 'app: take another user\'s mobile', '400', r.status_code)
             hdr = clients[11].get('/dashboard').data.decode('utf-8', 'ignore')
             run.check('WEBSITE_HEADER_SHOWS_REAL_ROLE', 'Manager' in hdr and '<div class="role">Administrator</div>' not in hdr, 'Manager with Full Access: top-right role', 'Manager', 'Administrator shown')
+        elif case == 'app_admin_screens':
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            pages = ['/app/settings/company', '/app/settings/banking', '/app/settings/invoice', '/app/settings/tax', '/app/settings/users']
+            env.exec("INSERT INTO settings (key,value,company_id) VALUES ('rc_lookup_api_key','SECRET-RC-KEY-9',1)")
+            before = _db_fingerprint(env)
+            for uid in non_admins:
+                for url in pages:
+                    r = clients[uid].get(url, headers={'Accept': 'text/html'})
+                    run.check('APP_SETTINGS_PAGE_BLOCKED_FOR_NON_ADMIN', r.status_code == 403, f'{ROLE_USERS[uid][1]} / {ROLE_USERS[uid][2]}: GET {url}', 403, r.status_code)
+                for method, url, data in (('POST', '/app/settings/save', {'form_type': 'company', 'company_name': 'HACK'}),
+                                          ('POST', '/settings/users/add', {'username': '9200000003', 'full_name': 'N', 'role': 'Administrator', 'access_level': 'Full Access'})):
+                    r = clients[uid].post(url, data=data, headers=H)
+                    run.check('APP_SETTINGS_WRITE_BLOCKED_FOR_NON_ADMIN', r.status_code == 403, f'{ROLE_USERS[uid][1]}: {method} {url} (JSON)', 403, r.status_code)
+            run.check('APP_NON_ADMIN_CHANGED_NOTHING', _db_fingerprint(env) == before, 'after blocked app requests', 'database identical', 'changed')
+            for uid in admins:
+                for url in pages:
+                    r = clients[uid].get(url)
+                    run.check('APP_ADMIN_PAGES_OPEN', r.status_code == 200, f'{ROLE_USERS[uid][1]}: GET {url}', 200, r.status_code)
+            a = clients[10]
+            r = a.get('/app/settings/users'); body = r.data.decode('utf-8', 'ignore')
+            run.check('APP_USERS_PAGE_NO_SECRETS', 'pbkdf2:' not in body and 'scrypt:' not in body and 'SECRET-RC-KEY-9' not in body and 'SECRET-TOKEN' not in body, 'user list page source', 'no password hashes / API keys / tokens', 'leaked')
+            r = a.post('/app/settings/save', data={'form_type': 'tax', 'cgst_rate': 'abc', 'sgst_rate': '2.5', 'igst_rate': '5', 'tds_rate_default': '1', 'round_off_limit': '1'}, headers=H)
+            run.check('APP_TAX_TEXT_RATE_REFUSED', r.status_code == 400 and 'CGST' in (r.get_json() or {}).get('error', ''), 'CGST rate "abc"', '400 with message', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'tax', 'cgst_rate': '', 'sgst_rate': '2.5', 'igst_rate': '5', 'tds_rate_default': '1', 'round_off_limit': '1'}, headers=H)
+            run.check('APP_TAX_BLANK_RATE_REFUSED', r.status_code == 400, 'CGST rate left blank', '400', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'tax', 'cgst_rate': '150', 'sgst_rate': '2.5', 'igst_rate': '5', 'tds_rate_default': '1', 'round_off_limit': '1'}, headers=H)
+            run.check('APP_TAX_RATE_OVER_100_REFUSED', r.status_code == 400, 'CGST 150%', '400', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'tax', 'cgst_rate': '2.5', 'sgst_rate': '2.5', 'igst_rate': '5', 'tds_rate_default': '1', 'round_off_limit': '1', 'tds_applicable': 'on'}, headers=H)
+            run.check('APP_TAX_SAVE_WORKS', r.status_code == 200 and env.one("SELECT value FROM settings WHERE key='cgst_rate'")['value'] == '2.5' and env.one("SELECT value FROM settings WHERE key='tds_applicable'")['value'] == '1' and env.one("SELECT value FROM settings WHERE key='eway_bill_mandatory'")['value'] == '0', 'valid tax settings (toggle on / off)', 'saved', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'company', 'company_name': '  '}, headers=H)
+            run.check('APP_COMPANY_NAME_REQUIRED', r.status_code == 400, 'blank company name', '400', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'invoice_numbering', 'invoice_prefix': 'ATS', 'next_invoice_number': '0'}, headers=H)
+            run.check('APP_NEXT_INVOICE_NUMBER_MIN_1', r.status_code == 400, 'next invoice number 0', '400', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'invoice_numbering', 'invoice_prefix': 'ATS', 'next_invoice_number': '42'}, headers=H)
+            run.check('APP_INVOICE_NUMBERING_SAVE_WORKS', r.status_code == 200 and env.one("SELECT value FROM settings WHERE key='next_invoice_number'")['value'] == '42', 'valid numbering', 'saved', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'rc_lookup', 'rc_lookup_api_key': ''}, headers=H)
+            run.check('APP_BLANK_API_KEY_KEEPS_SAVED_ONE', r.status_code == 200 and env.one("SELECT value FROM settings WHERE key='rc_lookup_api_key'")['value'] == 'SECRET-RC-KEY-9', 'RC key box left blank', 'saved key kept', 'wiped')
+            r = a.post('/app/settings/save', data={'form_type': 'drop_table'}, headers=H)
+            run.check('APP_UNKNOWN_FORM_REFUSED', r.status_code == 400, 'unknown form_type', '400', r.status_code)
+            r = a.post('/settings/users/add', data={'username': '9200000004', 'full_name': 'App Added', 'role': 'Accountant', 'access_level': 'Limited Access', 'modules': ['Trips', 'Ledger'], 'status': 'Active'}, headers=H)
+            row = env.one("SELECT id,role,access_level,module_access FROM users WHERE username='9200000004'")
+            run.check('APP_ADD_USER_JSON', r.status_code == 200 and (r.get_json() or {}).get('ok') and row is not None and row['module_access'] == 'Trips,Ledger', 'add user from the app', 'created with modules', r.status_code)
+            r = a.post('/settings/users/add', data={'username': '9200000004', 'full_name': 'Dup', 'role': 'Manager', 'access_level': 'Full Access'}, headers=H)
+            run.check('APP_ADD_DUPLICATE_MOBILE_JSON_ERROR', r.status_code == 400 and 'already' in (r.get_json() or {}).get('error', ''), 'duplicate mobile', '400 JSON message', r.status_code)
+            r = a.post(f"/settings/users/{row['id']}/edit", data={'full_name': 'App Edited', 'phone': '9200000004', 'role': 'Manager', 'access_level': 'Read Only', 'status': 'Inactive'}, headers=H)
+            run.check('APP_EDIT_USER_JSON', r.status_code == 200 and env.one('SELECT access_level,status FROM users WHERE id=?', row['id'])['status'] == 'Inactive', 'edit user from the app', 'saved', r.status_code)
+            r = a.post(f"/settings/users/{row['id']}/delete", data={}, headers=H)
+            run.check('APP_DELETE_USER_JSON', r.status_code == 200 and env.one('SELECT id FROM users WHERE id=?', row['id']) is None, 'delete user from the app', 'deleted', r.status_code)
+            r = a.post('/settings/users/10/delete', data={}, headers=H)
+            run.check('APP_CANNOT_DELETE_SELF', r.status_code == 400 and env.one('SELECT id FROM users WHERE id=10') is not None, 'delete own account from the app', '400', r.status_code)
     except Exception as e:
         F.check('SCENARIO_CRASH', False, sc, 'exception', 'no exception', repr(e)[:160], note=traceback.format_exc()[-500:], severity='CRASH')
     return run
@@ -2712,7 +2762,7 @@ def run_roles_scenario(env, F, sc):
 
 def gen_roles(quick=False):
     return [{'id': f'Q{i:04d}', 'stage': 'roles', 'case': c, 'tag': f'roles/{c}'} for i, c in
-            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile'], 1)]
+            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens'], 1)]
 
 
 # --------------------------------------------------------------------------------------------------

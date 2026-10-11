@@ -1,0 +1,56 @@
+{% extends "app/base_app.html" %}
+{% from "app/_settings_macros.html" import head, field, toggle %}
+{% block title %}Company Profile — {{ company_name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}">{% endblock %}
+{% block content %}
+{{ head(page_title, page_sub) }}
+
+<div class="as-card">
+  <h2>Company Logo</h2>
+  <div class="as-logo">
+    <div class="box">{% if s['logo_path'] %}<img src="/static/{{ s['logo_path'] }}" alt="Company logo" id="asLogoImg">{% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17M15 9h4a1 1 0 0 1 1 1v11M9 7h2M9 11h2M9 15h2"/></svg>{% endif %}</div>
+    <div>
+      <button type="button" class="pill" onclick="document.getElementById('asLogoFile').click()">{{ 'Change Logo' if s['logo_path'] else 'Upload Logo' }}</button>
+      <div class="hint">PNG, JPG, GIF or WEBP. Shown top-left on every invoice PDF.</div>
+    </div>
+    <input type="file" id="asLogoFile" accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none;">
+  </div>
+  <div class="as-error" id="asLogoErr"></div>
+</div>
+
+<form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="company">
+  <h2>Company Details</h2>
+  <div class="as-error"></div>
+  {{ field('Company Name', 'company_name', s['company_name'], req=True) }}
+  <div class="two">
+    {{ field('GSTIN', 'gstin', s['gstin'], attrs='autocapitalize="characters" maxlength="15"') }}
+    {{ field('PAN', 'pan', s['pan'], attrs='autocapitalize="characters" maxlength="10"') }}
+  </div>
+  {{ field('Address', 'address', s['address']) }}
+  <div class="two">
+    {{ field('State', 'state', s['state']) }}
+    {{ field('Business Type', 'business_type', s['business_type']) }}
+  </div>
+  <div class="two">
+    {{ field('Company Since', 'company_since', s['company_since'], type='date') }}
+    {{ field('Currency', 'currency', s['currency']) }}
+  </div>
+  <div class="group-title" style="font-size:.82rem;font-weight:800;margin:14px 0 10px;">Contact Details</div>
+  <div class="two">
+    {{ field('Phone', 'phone', s['phone'], type='tel') }}
+    {{ field('Email', 'email', s['email'], type='email') }}
+  </div>
+  <button type="submit" class="as-save">Save Changes</button>
+</form>
+{% endblock %}
+{% block extra_scripts %}
+{% include 'app/_settings_scripts.html' %}
+<script>
+document.getElementById('asLogoFile').addEventListener('change', function () {
+  if (!this.files.length) return;
+  var fd = new FormData(); fd.append('logo', this.files[0]);
+  asPost('/settings/logo/upload', fd, document.getElementById('asLogoErr'), null);
+});
+</script>
+{% endblock %}

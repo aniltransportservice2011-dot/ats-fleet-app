@@ -1,0 +1,43 @@
+{% extends "app/base_app.html" %}
+{% from "app/_settings_macros.html" import head, field, toggle %}
+{% block title %}Invoice Settings — {{ company_name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}">{% endblock %}
+{% block content %}
+{{ head(page_title, page_sub) }}
+
+<form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="invoice_numbering">
+  <h2>Invoice Numbering</h2>
+  <div class="as-error"></div>
+  <div class="two">
+    {{ field('Invoice Prefix', 'invoice_prefix', s['invoice_prefix'], req=True, attrs='autocapitalize="characters"') }}
+    {{ field('Next Invoice Number', 'next_invoice_number', s['next_invoice_number'], type='number', req=True, attrs='min="1" step="1" inputmode="numeric"') }}
+  </div>
+  <div class="fld"><label class="lbl">Example</label><div class="as-preview">{{ invoice_example or '—' }}</div></div>
+  <button type="submit" class="as-save">Save Numbering</button>
+</form>
+
+<form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="invoice_prefs">
+  <h2>Invoice Preferences</h2>
+  <div class="as-error"></div>
+  <div class="fld"><label class="lbl">Default Invoice Type</label>
+    <select name="default_invoice_type">
+      <option value="party" {% if s['default_invoice_type']=='party' %}selected{% endif %}>Party Invoice</option>
+      <option value="vehicle_owner" {% if s['default_invoice_type']=='vehicle_owner' %}selected{% endif %}>Freight Bill</option>
+      <option value="tax" {% if s['default_invoice_type']=='tax' %}selected{% endif %}>Tax Invoice (With GST)</option>
+      <option value="bill" {% if s['default_invoice_type']=='bill' %}selected{% endif %}>Bill Invoice</option>
+    </select></div>
+  {{ field('Payment Terms', 'default_payment_terms', s['default_payment_terms']) }}
+  <div class="two">
+    {{ field('Place of Supply', 'default_place_of_supply', s['default_place_of_supply']) }}
+    {{ field('Default Due Days', 'default_due_days', s['default_due_days'], type='number', attrs='min="0" step="1" inputmode="numeric"') }}
+  </div>
+  {{ toggle('show_company_logo', 'Show Company Logo on Invoice', s['show_company_logo']=='1') }}
+  {{ toggle('show_bank_details', 'Show Bank Details', s['show_bank_details']=='1') }}
+  {{ toggle('show_signatory', 'Show Authorised Signatory', s['show_signatory']=='1') }}
+  {{ toggle('print_amount_words', 'Print Amount in Words', s['print_amount_words']=='1') }}
+  <button type="submit" class="as-save">Save Preferences</button>
+</form>
+{% endblock %}
+{% block extra_scripts %}{% include 'app/_settings_scripts.html' %}{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "app/base_app.html" %}
+{% from "app/_settings_macros.html" import head, field, toggle %}
+{% block title %}Tax & Compliance — {{ company_name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}">{% endblock %}
+{% block content %}
+{{ head(page_title, page_sub) }}
+
+<form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="tax">
+  <h2>GST &amp; Tax Settings</h2>
+  <div class="as-error"></div>
+  <div class="group-title">GST Rates</div>
+  <div class="two">
+    {{ field('CGST Rate (%)', 'cgst_rate', s['cgst_rate'], type='number', req=True, attrs='step="0.01" min="0" max="100" inputmode="decimal"') }}
+    {{ field('SGST Rate (%)', 'sgst_rate', s['sgst_rate'], type='number', req=True, attrs='step="0.01" min="0" max="100" inputmode="decimal"') }}
+  </div>
+  {{ field('IGST Rate (%)', 'igst_rate', s['igst_rate'], type='number', req=True, attrs='step="0.01" min="0" max="100" inputmode="decimal"') }}
+  <div class="group-title">Reverse Charge</div>
+  {{ toggle('reverse_charge_applicable', 'Reverse Charge Applicable', s['reverse_charge_applicable']=='1') }}
+  {{ toggle('rcm_on_transport', 'RCM on Transport (Goods)', s['rcm_on_transport']=='1') }}
+  <div class="group-title">TDS Settings</div>
+  {{ toggle('tds_applicable', 'TDS Applicable', s['tds_applicable']=='1') }}
+  <div style="height:10px"></div>
+  {{ field('TDS Rate (%)', 'tds_rate_default', s['tds_rate_default'], type='number', req=True, attrs='step="0.01" min="0" max="100" inputmode="decimal"') }}
+  <div class="group-title">Other Settings</div>
+  {{ toggle('eway_bill_mandatory', 'E-Way Bill Mandatory', s['eway_bill_mandatory']=='1') }}
+  <div style="height:10px"></div>
+  {{ field('Round Off Limit (₹)', 'round_off_limit', s['round_off_limit'], type='number', req=True, attrs='step="0.01" min="0" inputmode="decimal"') }}
+  <button type="submit" class="as-save">Save Changes</button>
+</form>
+
+<form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="rcm">
+  <h2>RCM Clause (Tax Invoices)</h2>
+  <div class="as-error"></div>
+  <div class="fld"><label class="lbl">Text printed on every Tax Invoice</label><textarea name="rcm_clause" rows="4">{{ s['rcm_clause'] }}</textarea></div>
+  <button type="submit" class="as-save">Save RCM Clause</button>
+</form>
+{% endblock %}
+{% block extra_scripts %}{% include 'app/_settings_scripts.html' %}{% endblock %}

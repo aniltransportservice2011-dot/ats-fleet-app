@@ -1,0 +1,45 @@
+<!-- Edit Profile modal — Full Name/Email/Phone only, posts to app_update_profile(). Role/Access
+     Level/Status are deliberately not here: those are admin-assigned permissions (User
+     Management's job), not something to self-service from your own profile. -->
+<div class="vam-backdrop" id="epBackdrop" onclick="closeEditProfileModal()"></div>
+<div class="vam-modal" id="epModal" role="dialog" aria-modal="true" aria-label="Edit Profile">
+  <div class="vam-head">
+    <h2>Edit Profile</h2>
+    <button type="button" class="vam-close" onclick="closeEditProfileModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="epError" style="display:none; margin:0 18px 14px;"></div>
+  <form id="epForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Full Name <span class="req">*</span></label><input type="text" id="epFullName" name="full_name" value="{{ full_name }}" autocapitalize="characters" required></div>
+      <div class="vam-field"><label>Email</label><input type="email" name="email" value="{{ email }}"></div>
+      <div class="vam-field"><label>Phone</label><input type="tel" name="phone" value="{{ phone }}"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeEditProfileModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Save Changes</button>
+    </div>
+  </form>
+</div>
+
+<!-- Change Password modal — real current-password verification (app_change_password() in
+     app.py), same check_password_hash safeguard login() itself uses. -->
+<div class="vam-backdrop" id="cpBackdrop" onclick="closeChangePasswordModal()"></div>
+<div class="vam-modal" id="cpModal" role="dialog" aria-modal="true" aria-label="Change Password">
+  <div class="vam-head">
+    <h2>Change Password</h2>
+    <button type="button" class="vam-close" onclick="closeChangePasswordModal()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="cpError" style="display:none; margin:0 18px 14px;"></div>
+  <form id="cpForm" class="vam-form">
+    <div class="vam-grid">
+      <div class="vam-field vam-field-full"><label>Current Password <span class="req">*</span></label><input type="password" name="current_password" autocomplete="current-password" required></div>
+      <div class="vam-field vam-field-full"><label>New Password <span class="req">*</span></label><input type="password" name="new_password" autocomplete="new-password" minlength="6" required></div>
+      <div class="vam-field vam-field-full"><label>Confirm New Password <span class="req">*</span></label><input type="password" name="confirm_password" autocomplete="new-password" minlength="6" required></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="closeChangePasswordModal()">Cancel</button>
+      <button type="submit" class="vam-btn-save">Update Password</button>
+    </div>
+  </form>
+</div>
+
