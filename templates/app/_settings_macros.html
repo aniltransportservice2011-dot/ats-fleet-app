@@ -1,0 +1,16 @@
+{% macro head(page_title, page_sub, back='/app/profile') %}
+<div class="as-pagehead">
+  <a class="as-back" href="{{ back }}" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></a>
+  <div><h1>{{ page_title }}</h1><div class="sub">{{ page_sub }}</div></div>
+</div>
+{% endmacro %}
+
+{% macro field(label, name, value='', type='text', req=False, attrs='') %}
+<div class="fld"><label class="lbl">{{ label }}{% if req %} <span class="req">*</span>{% endif %}</label>
+  <input type="{{ type }}" name="{{ name }}" value="{{ value if value is not none else '' }}" {% if req %}required{% endif %} {{ attrs|safe }}></div>
+{% endmacro %}
+
+{% macro toggle(name, title, checked, sub='') %}
+<div class="as-toggle"><div><div class="tt">{{ title }}</div>{% if sub %}<div class="ts">{{ sub }}</div>{% endif %}</div>
+  <label class="as-sw"><input type="checkbox" name="{{ name }}" {% if checked %}checked{% endif %}><span></span></label></div>
+{% endmacro %}

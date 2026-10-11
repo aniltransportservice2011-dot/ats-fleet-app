@@ -8311,10 +8311,12 @@ def upload_company_logo():
     Insurance's document uploads."""
     f = request.files.get('logo')
     conn = get_db()
+    _logo_error = 'Choose a PNG, JPG, GIF or WEBP image.'
     if f and f.filename:
         filename = secure_filename(f.filename)
         ext = os.path.splitext(filename)[1].lower()
         if ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
+            _logo_error = None
             company_id = session.get('company_id', 1)
             unique = f"logo_{int(datetime.datetime.now().timestamp() * 1000)}{ext}"
             company_dir = os.path.join(LOGO_UPLOAD_DIR, str(company_id))
@@ -8322,11 +8324,15 @@ def upload_company_logo():
             f.save(os.path.join(company_dir, unique))
             rel_path = f"uploads/logo/{company_id}/{unique}"
             _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            conn.execute("""INSERT OR REPLACE INTO settings (key, value, created_by, created_at, updated_by, updated_at)
-                            VALUES ('logo_path', ?, ?, ?, ?, ?)""",
-                         (rel_path, session.get('user_id'), _now, session.get('user_id'), _now))
+            conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
+                            VALUES ('logo_path', ?, ?, ?, ?, ?, ?)""",
+                         (rel_path, company_id, session.get('user_id'), _now, session.get('user_id'), _now))
             conn.commit()
     conn.close()
+    if _wants_json():
+        if _logo_error:
+            return jsonify({'ok': False, 'error': _logo_error}), 400
+        return jsonify({'ok': True, 'logo_url': '/static/' + rel_path})
     return redirect(url_for('settings_page', tab='company'))
 
 
@@ -9704,7 +9710,9 @@ _READ_ONLY_POST_ALLOWED = {
 }
 
 # Only an Administrator may touch these: the user list, user create/edit/delete/export, and company settings.
-_ADMIN_ONLY_ENDPOINTS = {'add_user', 'edit_user', 'update_user_phone', 'delete_user', 'export_users', 'upload_company_logo'}
+_ADMIN_ONLY_ENDPOINTS = {'add_user', 'edit_user', 'update_user_phone', 'delete_user', 'export_users', 'upload_company_logo',
+                         'app_settings_save', 'app_settings_company', 'app_settings_banking', 'app_settings_invoice',
+                         'app_settings_tax', 'app_settings_users'}
 
 def _admin_only_denied():
     message = 'Only an Administrator can do this. You can view and update your own profile from Profile & Settings.'
@@ -10040,6 +10048,96 @@ def _users_with_stats(conn):
     inactive_n = sum(1 for u in users if u['status'] == 'Inactive')
     return users, total, admin_n, readonly_n, limited_n, inactive_n
 
+_SETTINGS_FIELD_GROUPS = {
+    'company': ['company_name', 'address', 'state', 'phone', 'email', 'gstin', 'pan', 'business_type', 'company_since', 'currency'],
+    'banking': ['bank_name', 'account_holder', 'account_number', 'ifsc_code', 'branch', 'account_type'],
+    'invoice_prefs': ['default_invoice_type', 'default_payment_terms', 'default_place_of_supply', 'default_due_days',
+                      'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words'],
+    'invoice_numbering': ['invoice_prefix', 'next_invoice_number'],
+    'tax': ['cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
+            'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit'],
+    'rcm': ['rcm_clause'],
+    'sms': ['twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'],
+    'rc_lookup': ['rc_lookup_api_key'],
+    'sync_schedule': ['rc_sync_interval_days', 'challan_sync_interval_days'],
+}
+_SETTINGS_CHECKBOX_KEYS = {'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words',
+                           'reverse_charge_applicable', 'rcm_on_transport', 'tds_applicable', 'eway_bill_mandatory'}
+
+def _save_settings_group(conn, form_type, form):
+    """Saves one Settings form (company / banking / invoice / tax / ...) — the single writer used by BOTH the website's
+    Settings page and the mobile app's Administrator screens, so the two can never drift apart. Returns True if
+    form_type is a known group. Commits."""
+    if form_type not in _SETTINGS_FIELD_GROUPS:
+        return False
+    # INSERT OR REPLACE, not a plain UPDATE — a bare UPDATE silently does nothing when no
+    # row exists yet for that key (no error, no rows affected), which is exactly how a
+    # setting could look "saved" (200 OK, page reloads fine) while never actually taking
+    # effect. This is the same pattern already used correctly for logo_path in upload_company_logo.
+    _settings_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for key in _SETTINGS_FIELD_GROUPS[form_type]:
+        if key in _SETTINGS_CHECKBOX_KEYS:
+            val = '1' if form.get(key) == 'on' else '0'
+        else:
+            val = form.get(key, '')
+        conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     (key, val, session.get('company_id', 1), session.get('user_id'), _settings_now,
+                      session.get('user_id'), _settings_now))
+    conn.commit()
+    return True
+
+def _settings_form_error(form_type, form):
+    """Readable validation message for the app's Settings forms (None = fine). The website form has always accepted
+    anything; the app form checks the obvious things so a typo can't put "abc%" into a GST rate."""
+    def num(key, label, lo=0, hi=None, integer=False):
+        raw = (form.get(key) or '').strip()
+        if raw == '':
+            return None
+        try:
+            v = float(raw)
+        except ValueError:
+            return f'{label} must be a number.'
+        if v != v or v in (float('inf'), float('-inf')):
+            return f'{label} must be a number.'
+        if integer and v != int(v):
+            return f'{label} must be a whole number.'
+        if v < lo:
+            return f'{label} cannot be less than {lo:g}.'
+        if hi is not None and v > hi:
+            return f'{label} cannot be more than {hi:g}.'
+        return None
+    checks = []
+    if form_type == 'company':
+        if not (form.get('company_name') or '').strip():
+            return 'Company Name is required.'
+        em = (form.get('email') or '').strip()
+        if em and ('@' not in em or ' ' in em):
+            return 'Enter a valid email address.'
+    elif form_type == 'tax':
+        for key, label in (('cgst_rate', 'CGST Rate'), ('sgst_rate', 'SGST Rate'), ('igst_rate', 'IGST Rate'),
+                           ('tds_rate_default', 'TDS Rate'), ('round_off_limit', 'Round Off Limit')):
+            if not (form.get(key) or '').strip():
+                return f'{label} is required (enter 0 if it does not apply).'
+        checks = [('cgst_rate', 'CGST Rate', 0, 100), ('sgst_rate', 'SGST Rate', 0, 100), ('igst_rate', 'IGST Rate', 0, 100),
+                  ('tds_rate_default', 'TDS Rate', 0, 100), ('round_off_limit', 'Round Off Limit', 0, 1000)]
+    elif form_type == 'invoice_prefs':
+        checks = [('default_due_days', 'Default Due Days', 0, 3650, True)]
+    elif form_type == 'invoice_numbering':
+        if not (form.get('invoice_prefix') or '').strip():
+            return 'Invoice Prefix is required.'
+        if not (form.get('next_invoice_number') or '').strip():
+            return 'Next Invoice Number is required.'
+        checks = [('next_invoice_number', 'Next Invoice Number', 1, 99999999, True)]
+    elif form_type == 'sync_schedule':
+        checks = [('rc_sync_interval_days', 'RC / Compliance Sync days', 1, 365, True),
+                  ('challan_sync_interval_days', 'eChallan Sync days', 1, 365, True)]
+    for c in checks:
+        err = num(*c[:4], integer=(len(c) > 4 and c[4]))
+        if err:
+            return err
+    return None
+
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_page():
     conn = get_db()
@@ -10048,37 +10146,7 @@ def settings_page():
         # user list or user log (a POST from a non-administrator is refused in require_login()).
         return _render_my_profile(conn)
     if request.method == 'POST':
-        form_type = request.form.get('form_type')
-        field_groups = {
-            'company': ['company_name', 'address', 'state', 'phone', 'email', 'gstin', 'pan', 'business_type', 'company_since', 'currency'],
-            'banking': ['bank_name', 'account_holder', 'account_number', 'ifsc_code', 'branch', 'account_type'],
-            'invoice_prefs': ['default_invoice_type', 'default_payment_terms', 'default_place_of_supply', 'default_due_days',
-                               'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words'],
-            'invoice_numbering': ['invoice_prefix', 'next_invoice_number'],
-            'tax': ['cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
-                    'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit'],
-            'rcm': ['rcm_clause'],
-            'sms': ['twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'],
-            'rc_lookup': ['rc_lookup_api_key'],
-            'sync_schedule': ['rc_sync_interval_days', 'challan_sync_interval_days'],
-        }
-        if form_type in field_groups:
-            # INSERT OR REPLACE, not a plain UPDATE — a bare UPDATE silently does nothing when no
-            # row exists yet for that key (no error, no rows affected), which is exactly how a
-            # setting could look "saved" (200 OK, page reloads fine) while never actually taking
-            # effect. This is the same pattern already used correctly for logo_path just below.
-            _settings_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            for key in field_groups[form_type]:
-                if key in ['show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words',
-                           'reverse_charge_applicable', 'rcm_on_transport', 'tds_applicable', 'eway_bill_mandatory']:
-                    val = '1' if request.form.get(key) == 'on' else '0'
-                else:
-                    val = request.form.get(key, '')
-                conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                             (key, val, session.get('company_id', 1), session.get('user_id'), _settings_now,
-                              session.get('user_id'), _settings_now))
-            conn.commit()
+        _save_settings_group(conn, request.form.get('form_type'), request.form)
 
     users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
     role_counts = {}
@@ -10137,6 +10205,14 @@ def _duplicate_user_contact(conn, phone, email, exclude_user_id=None):
             return f'Email "{email}" is already used by another account ("{row["username"]}").'
     return None
 
+def _wants_json():
+    """The mobile app's Administrator screens call the same user/settings routes with fetch() and this header, and get JSON
+    back instead of the website's redirect / re-rendered page."""
+    return request.headers.get('X-App-Request') == '1'
+
+def _users_done():
+    return jsonify({'ok': True}) if _wants_json() else redirect(url_for('settings_page', tab='users'))
+
 def _render_settings_users_error(conn, error, reopen_add_user=False, reopen_edit_user_id=None):
     """Shared re-render for every Settings > Users form's validation-failure path (username
     taken, duplicate phone/email, ...) — one place building the same users/stats/access_logs
@@ -10144,6 +10220,9 @@ def _render_settings_users_error(conn, error, reopen_add_user=False, reopen_edit
     checks don't each re-duplicate that block. Closes `conn`. reopen_add_user/reopen_edit_user_id
     tell settings.html which modal (if any) to pop back open with `error` shown inside it, instead
     of the admin's in-progress edit silently vanishing behind a page reload."""
+    if _wants_json():
+        conn.close()
+        return jsonify({'ok': False, 'error': error}), 400
     users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
     role_counts = {}
     for u in users:
@@ -10204,7 +10283,7 @@ def add_user():
         conn.close()
     except sqlite3.IntegrityError:
         return _render_settings_users_error(conn, f"Mobile Number \"{username}\" is already taken.", reopen_add_user=True)
-    return redirect(url_for('settings_page', tab='users'))
+    return _users_done()
 
 @app.route('/settings/users/<int:user_id>/edit', methods=['POST'])
 def edit_user(user_id):
@@ -10246,7 +10325,7 @@ def edit_user(user_id):
                      (generate_password_hash(new_pw), session.get('user_id'), _now, user_id))
     conn.commit()
     conn.close()
-    return redirect(url_for('settings_page', tab='users'))
+    return _users_done()
 
 @app.route('/settings/users/<int:user_id>/phone', methods=['POST'])
 def update_user_phone(user_id):
@@ -10276,7 +10355,7 @@ def delete_user(user_id):
     conn.execute("DELETE FROM access_logs WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
-    return redirect(url_for('settings_page', tab='users'))
+    return _users_done()
 
 @app.route('/settings/users/export')
 def export_users():
@@ -13962,12 +14041,85 @@ def app_profile():
             member_since = datetime.datetime.strptime(u['created_at'][:19], '%Y-%m-%d %H:%M:%S').strftime('%d %b %Y')
         except ValueError:
             member_since = u['created_at']
-    return render_template('app/profile.html', company_name=company_name, user_initials=user_initials,
+    # Administrators get the full "Profile & Settings" hub (company, banking, invoice, tax, users — same options as the
+    # website); every other role keeps the simple profile page below, unchanged.
+    return render_template('app/profile_admin.html' if g.is_administrator else 'app/profile.html',
+        company_name=company_name, user_initials=user_initials,
         active='profile', notif_count=0,
         full_name=u['full_name'] or u['username'].upper(), username=u['username'], phone=u['phone'] or '',
         email=u['email'] or '', role_label=(u['role'] or '').strip() or 'Staff',
         access_level=u['access_level'] or '', status=u['status'] or 'Active', member_since=member_since,
         is_admin=bool(getattr(g, 'is_administrator', False)))
+
+def _app_settings_page(template_name, section, title, subtitle, **extra):
+    """Shared shell for the Administrator-only mobile Settings screens (gate: _ADMIN_ONLY_ENDPOINTS in require_login)."""
+    conn = get_db()
+    company_name, user_initials = _app_user_display(conn)
+    s = _get_all_settings(conn, session.get('company_id', 1))
+    payload = extra.pop('loader', lambda c: {})(conn)
+    conn.close()
+    invoice_example = f"{s['invoice_prefix']}/2026/{int(s['next_invoice_number'] or 1):04d}" if s['invoice_prefix'] else ''
+    return render_template(template_name, company_name=s.get('company_name') or company_name, user_initials=user_initials,
+                           active='profile', notif_count=0, s=s, section=section, page_title=title, page_sub=subtitle,
+                           invoice_example=invoice_example, my_user_id=session['user_id'], **payload, **extra)
+
+@app.route('/app/settings/company')
+def app_settings_company():
+    return _app_settings_page('app/settings_company.html', 'company', 'Company Profile', 'Manage your business information')
+
+@app.route('/app/settings/banking')
+def app_settings_banking():
+    return _app_settings_page('app/settings_banking.html', 'banking', 'Banking Details', 'Bank account shown on Tax Invoices')
+
+@app.route('/app/settings/invoice')
+def app_settings_invoice():
+    return _app_settings_page('app/settings_invoice.html', 'invoice', 'Invoice Settings', 'Configure invoice preferences')
+
+@app.route('/app/settings/tax')
+def app_settings_tax():
+    return _app_settings_page('app/settings_tax.html', 'tax', 'Tax & Compliance', 'GST, TDS, reverse charge and tax settings')
+
+@app.route('/app/settings/users')
+def app_settings_users():
+    def load(conn):
+        users, total, admin_n, readonly_n, limited_n, inactive_n = _users_with_stats(conn)
+        role_counts = {}
+        for u in users:
+            r = u['role'] or 'Unassigned'
+            role_counts[r] = role_counts.get(r, 0) + 1
+        logs = conn.execute("""SELECT al.date, al.event, u.username, u.full_name FROM access_logs al
+                               LEFT JOIN users u ON al.user_id=u.id ORDER BY al.id DESC LIMIT 50""").fetchall()
+        sync = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 8").fetchall()
+        # whitelisted fields only — the raw rows carry password hashes and must never be serialised into the page
+        users_public = [{k: u.get(k) for k in ('id', 'username', 'full_name', 'phone', 'email', 'role', 'access_level',
+                                               'module_access', 'status', 'last_login')} for u in users]
+        return dict(users=users_public, total_users=total, admin_users=admin_n, readonly_users=readonly_n, limited_users=limited_n,
+                    inactive_users=inactive_n, role_counts=role_counts, access_logs=logs, recent_sync_log=sync,
+                    module_list=MODULE_LIST, role_suggestions=ROLE_SUGGESTIONS)
+    return _app_settings_page('app/settings_users.html', 'users', 'Users & Roles', 'Manage team access and permissions', loader=load)
+
+@app.route('/app/settings/save', methods=['POST'])
+def app_settings_save():
+    """JSON twin of the website Settings page's POST — same field groups, same writer (_save_settings_group), plus
+    readable validation. Administrator-only."""
+    form_type = request.form.get('form_type')
+    if form_type not in _SETTINGS_FIELD_GROUPS:
+        return jsonify({'ok': False, 'error': 'Unknown settings form.'}), 400
+    form = request.form.to_dict()
+    err = _settings_form_error(form_type, form)
+    if err:
+        return jsonify({'ok': False, 'error': err}), 400
+    conn = get_db()
+    # The app never echoes the Twilio auth token / RC API key back into a form field, so a blank box means "keep the
+    # saved one" (the website form pre-fills them, which is why it doesn't need this).
+    company_id = session.get('company_id', 1)
+    for secret in {'sms': ['twilio_auth_token'], 'rc_lookup': ['rc_lookup_api_key']}.get(form_type, []):
+        if not (form.get(secret) or '').strip():
+            row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (secret, company_id)).fetchone()
+            form[secret] = row['value'] if row else ''
+    _save_settings_group(conn, form_type, form)
+    conn.close()
+    return jsonify({'ok': True})
 
 @app.route('/app/profile/update', methods=['POST'])
 def app_update_profile():

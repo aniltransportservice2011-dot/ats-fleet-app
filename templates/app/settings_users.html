@@ -1,0 +1,222 @@
+{% extends "app/base_app.html" %}
+{% from "app/_settings_macros.html" import head, field, toggle %}
+{% block title %}Users & Roles — {{ company_name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}">{% endblock %}
+{% block content %}
+{{ head(page_title, page_sub) }}
+
+<div class="as-seg" id="asSeg">
+  <button type="button" class="active" data-panel="p-users">Users</button>
+  <button type="button" data-panel="p-roles">Roles</button>
+  <button type="button" data-panel="p-logs">Access Logs</button>
+  <button type="button" data-panel="p-integ">Integrations</button>
+</div>
+
+<!-- USERS -->
+<div class="as-panel active" id="p-users">
+  <div class="as-kpis">
+    <div class="as-kpi"><div class="v">{{ total_users }}</div><div class="l">Total</div></div>
+    <div class="as-kpi"><div class="v" style="color:var(--a-green);">{{ admin_users }}</div><div class="l">Full Access</div></div>
+    <div class="as-kpi"><div class="v" style="color:var(--a-blue);">{{ readonly_users }}</div><div class="l">Read Only</div></div>
+    <div class="as-kpi"><div class="v" style="color:var(--a-purple);">{{ limited_users }}</div><div class="l">Limited</div></div>
+    <div class="as-kpi"><div class="v" style="color:{{ 'var(--a-red)' if inactive_users else 'inherit' }};">{{ inactive_users }}</div><div class="l">Inactive</div></div>
+  </div>
+  <div class="as-search"><input type="search" id="asUserSearch" placeholder="Search users…" autocomplete="off"></div>
+  <button type="button" class="as-adduser" onclick="asOpenUser(null)">+ Add User</button>
+  <div id="asUserList">
+    {% for u in users %}
+    <button type="button" class="as-user {{ 'inactive' if (u['status'] or 'Active') == 'Inactive' }}" data-id="{{ u['id'] }}"
+            data-search="{{ ((u['full_name'] or '') ~ ' ' ~ u['username'] ~ ' ' ~ (u['phone'] or '') ~ ' ' ~ (u['role'] or ''))|lower }}" onclick="asOpenUser({{ u['id'] }})">
+      <div class="a-avatar">{{ (u['full_name'] or u['username'])[:2]|upper }}</div>
+      <div class="who">
+        <div class="name">{{ u['full_name'] or u['username'] }}</div>
+        <div class="mail">{{ u['email'] or u['phone'] or u['username'] }}</div>
+        <span class="as-chip {{ 'orange' if (u['role'] or '')|lower == 'administrator' else 'blue' }}">{{ u['role'] or 'No role' }}</span><span class="as-chip {{ 'green' if u['access_level']=='Full Access' else ('purple' if u['access_level']=='Limited Access' else 'grey') }}">{{ u['access_level'] or 'Read Only' }}</span>{% if (u['status'] or 'Active') == 'Inactive' %}<span class="as-chip red">Inactive</span>{% endif %}
+      </div>
+      <svg class="as-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+    {% endfor %}
+    <div id="asNoUsers" style="display:none;text-align:center;color:var(--a-steel);padding:24px;font-size:.84rem;">No users match your search.</div>
+  </div>
+  <a class="as-export" href="/settings/users/export">Export users (Excel)</a>
+</div>
+
+<!-- ROLES -->
+<div class="as-panel" id="p-roles">
+  <div class="as-card">
+    <h2>Roles in use</h2>
+    {% for r, c in role_counts.items() %}
+    <div class="as-logrow" style="display:flex;justify-content:space-between;"><span>{{ r }}</span><b>{{ c }}</b></div>
+    {% else %}<div style="color:var(--a-steel);font-size:.82rem;">No roles assigned yet.</div>{% endfor %}
+  </div>
+  <div class="as-card">
+    <h2>Access levels</h2>
+    <div class="as-logrow"><span class="as-chip green" style="margin:0 0 4px;">Full Access</span><div class="d">All modules · can add, edit, delete and take all actions</div></div>
+    <div class="as-logrow"><span class="as-chip grey" style="margin:0 0 4px;">Read Only</span><div class="d">All modules · can only view data, no changes</div></div>
+    <div class="as-logrow"><span class="as-chip purple" style="margin:0 0 4px;">Limited Access</span><div class="d">Selected modules only · custom permissions</div></div>
+    <div class="as-note">Only users with the <b>Administrator</b> role can see company settings, other users and these logs.</div>
+  </div>
+</div>
+
+<!-- LOGS -->
+<div class="as-panel" id="p-logs">
+  <div class="as-card">
+    <h2>Access Logs</h2>
+    <div class="as-note" style="margin:-6px 0 8px;">Recent sign-ins across all users, most recent first.</div>
+    {% for l in access_logs %}
+    <div class="as-logrow"><b>{{ l['full_name'] or l['username'] or 'Unknown' }}</b> · {{ l['event'] }}<div class="d">{{ l['date'] }}</div></div>
+    {% else %}<div style="color:var(--a-steel);font-size:.82rem;padding:14px 0;">No sign-ins recorded yet.</div>{% endfor %}
+  </div>
+</div>
+
+<!-- INTEGRATIONS (same three settings the website keeps under Users & Roles) -->
+<div class="as-panel" id="p-integ">
+  <form class="as-card as-form" data-as-save>
+    <input type="hidden" name="form_type" value="sms">
+    <h2>Mobile OTP Login (SMS)</h2>
+    <div class="as-error"></div>
+    <div class="as-note" style="margin:-6px 0 12px;">Lets staff sign in with just their phone number and a one-time code. Requires a Twilio account; each OTP sent is billed by Twilio.
+      <span class="as-chip {{ 'green' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'grey' }}">{{ 'Configured' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'Not configured' }}</span></div>
+    {{ field('Account SID', 'twilio_account_sid', s['twilio_account_sid'], attrs='autocomplete="off" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"') }}
+    {{ field('Auth Token', 'twilio_auth_token', '', type='password', attrs='autocomplete="new-password" placeholder="' ~ ('Saved — leave blank to keep' if s['twilio_auth_token'] else 'Not set') ~ '"') }}
+    {{ field('From Number (Twilio number)', 'twilio_from_number', s['twilio_from_number'], attrs='placeholder="+1XXXXXXXXXX"') }}
+    <button type="submit" class="as-save">Save SMS Settings</button>
+  </form>
+
+  <form class="as-card as-form" data-as-save>
+    <input type="hidden" name="form_type" value="rc_lookup">
+    <h2>Vehicle RC Lookup (eChallan API)</h2>
+    <div class="as-error"></div>
+    <div class="as-note" style="margin:-6px 0 12px;">Backs the Vehicles page's RC details, compliance dates and eChallan data.
+      <span class="as-chip {{ 'green' if s['rc_lookup_api_key'] else 'grey' }}">{{ 'Configured' if s['rc_lookup_api_key'] else 'Not configured' }}</span></div>
+    {{ field('API Key', 'rc_lookup_api_key', '', type='password', attrs='autocomplete="new-password" placeholder="' ~ (('Saved ••••' ~ s['rc_lookup_api_key'][-4:] ~ ' — leave blank to keep') if s['rc_lookup_api_key'] else 'Not set') ~ '"') }}
+    <button type="submit" class="as-save">Save API Key</button>
+  </form>
+
+  <form class="as-card as-form" data-as-save>
+    <input type="hidden" name="form_type" value="sync_schedule">
+    <h2>Sync Schedule</h2>
+    <div class="as-error"></div>
+    <div class="as-note" style="margin:-6px 0 12px;">How often the RC cache and eChallan data refresh in the background. Takes effect on the next scheduled check.</div>
+    <div class="two">
+      {{ field('RC / Compliance (days)', 'rc_sync_interval_days', s['rc_sync_interval_days'] or 15, type='number', attrs='min="1" step="1" inputmode="numeric"') }}
+      {{ field('eChallan (days)', 'challan_sync_interval_days', s['challan_sync_interval_days'] or 3, type='number', attrs='min="1" step="1" inputmode="numeric"') }}
+    </div>
+    <button type="submit" class="as-save">Save Schedule</button>
+    {% if recent_sync_log %}
+    <div class="group-title" style="margin-top:18px;">Recent sync runs</div>
+    {% for l in recent_sync_log %}
+    <div class="as-logrow">{{ 'RC / Compliance' if l['job_name']=='rc_sync' else 'eChallan' }} · <b>{{ l['synced_count'] }}</b> synced{% if l['failed_count'] %} · <b style="color:var(--a-red);">{{ l['failed_count'] }} failed</b>{% endif %}<div class="d">{{ l['started_at'] }}</div></div>
+    {% endfor %}
+    {% else %}<div class="as-note">No sync has run yet.</div>{% endif %}
+  </form>
+</div>
+
+<!-- ADD / EDIT USER sheet — posts to the website's own add_user / edit_user / delete_user routes (same validation,
+     same last-Administrator protection), asking for JSON back. -->
+<datalist id="asRoleList">{% for r in role_suggestions %}<option value="{{ r }}">{% endfor %}</datalist>
+<div class="vam-backdrop" id="uBackdrop" onclick="asCloseUser()"></div>
+<div class="vam-modal" id="uModal" role="dialog" aria-modal="true" aria-label="User">
+  <div class="vam-head">
+    <h2 id="uTitle">Add User</h2>
+    <button type="button" class="vam-close" onclick="asCloseUser()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <form id="uForm" class="vam-form as-form" autocomplete="off">
+    <div class="as-error" id="uError"></div>
+    <div class="fld"><label class="lbl">Full Name <span class="req">*</span></label><input type="text" name="full_name" id="uFull" required></div>
+    <div class="fld"><label class="lbl">Mobile Number <span class="req">*</span></label><input type="tel" id="uMobile" required inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" placeholder="10-digit mobile number"></div>
+    <div class="fld"><label class="lbl">Email (optional)</label><input type="email" name="email" id="uEmail"></div>
+    <div class="fld"><label class="lbl" id="uPwLbl">Password (optional)</label><input type="password" name="password" id="uPw" autocomplete="new-password" placeholder="Leave blank for OTP-only login"></div>
+    <div class="fld"><label class="lbl">Role <span class="req">*</span></label><input type="text" name="role" id="uRole" list="asRoleList" required placeholder="Select or type a role"></div>
+    <div class="fld"><label class="lbl">Access Level</label>
+      <div class="as-access-tiles" id="uTiles">
+        <button type="button" class="as-tile" data-val="Full Access"><div class="tl">Full Access</div><div class="ts">All modules<br>All actions</div></button>
+        <button type="button" class="as-tile" data-val="Read Only"><div class="tl">Read Only</div><div class="ts">View all data<br>No actions</div></button>
+        <button type="button" class="as-tile" data-val="Limited Access"><div class="tl">Limited</div><div class="ts">Selected<br>modules</div></button>
+      </div>
+      <input type="hidden" name="access_level" id="uAccess" value="Full Access">
+      <div class="as-modules" id="uModules">
+        {% for m in module_list %}<label><input type="checkbox" name="modules" value="{{ m }}">{{ m }}</label>{% endfor %}
+      </div>
+    </div>
+    <div class="fld"><label class="lbl">Status</label><select name="status" id="uStatus"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></div>
+    <div class="vam-actions" style="flex-direction:column;">
+      <div style="display:flex;gap:10px;">
+        <button type="button" class="vam-btn-cancel" onclick="asCloseUser()">Cancel</button>
+        <button type="submit" class="vam-btn-save" id="uSave">Save User</button>
+      </div>
+      <button type="button" class="as-danger" id="uDelete" style="display:none;margin-top:0;">Delete User</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+{% include 'app/_settings_scripts.html' %}
+<script>
+var AS_USERS = {{ users|tojson }};
+var AS_ME = {{ my_user_id|tojson }};
+// tabs
+document.querySelectorAll('#asSeg button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('#asSeg button').forEach(function (x) { x.classList.toggle('active', x === b); });
+    document.querySelectorAll('.as-panel').forEach(function (p) { p.classList.toggle('active', p.id === b.dataset.panel); });
+  });
+});
+// search
+document.getElementById('asUserSearch').addEventListener('input', function () {
+  var q = this.value.trim().toLowerCase(), shown = 0;
+  document.querySelectorAll('#asUserList .as-user').forEach(function (r) {
+    var ok = !q || r.dataset.search.indexOf(q) !== -1; r.style.display = ok ? '' : 'none'; if (ok) shown++;
+  });
+  document.getElementById('asNoUsers').style.display = shown ? 'none' : 'block';
+});
+// add / edit sheet
+var uEditId = null;
+function asPickAccess(val) {
+  document.getElementById('uAccess').value = val;
+  document.querySelectorAll('#uTiles .as-tile').forEach(function (t) { t.classList.toggle('active', t.dataset.val === val); });
+  document.getElementById('uModules').classList.toggle('open', val === 'Limited Access');
+}
+document.querySelectorAll('#uTiles .as-tile').forEach(function (t) { t.addEventListener('click', function () { asPickAccess(t.dataset.val); }); });
+function asOpenUser(id) {
+  var u = id == null ? null : AS_USERS.filter(function (x) { return x.id === id; })[0];
+  uEditId = u ? u.id : null;
+  var f = document.getElementById('uForm'); f.reset();
+  document.getElementById('uError').style.display = 'none';
+  document.getElementById('uTitle').textContent = u ? 'Edit User' : 'Add User';
+  document.getElementById('uPwLbl').textContent = u ? 'Reset Password (optional)' : 'Password (optional)';
+  document.getElementById('uPw').placeholder = u ? 'Leave blank to keep the current password' : 'Leave blank for OTP-only login';
+  document.getElementById('uFull').value = u ? (u.full_name || '') : '';
+  document.getElementById('uMobile').value = u ? (u.phone || '') : '';
+  document.getElementById('uEmail').value = u ? (u.email || '') : '';
+  document.getElementById('uRole').value = u ? (u.role || '') : '';
+  document.getElementById('uStatus').value = u ? (u.status || 'Active') : 'Active';
+  var mods = u && u.module_access ? u.module_access.split(',') : [];
+  document.querySelectorAll('#uModules input').forEach(function (c) { c.checked = mods.indexOf(c.value) !== -1; });
+  asPickAccess(u ? (u.access_level || 'Full Access') : 'Full Access');
+  var del = document.getElementById('uDelete');
+  del.style.display = (u && u.id !== AS_ME) ? 'block' : 'none';
+  lockPageScroll();
+  document.getElementById('uBackdrop').classList.add('open');
+  document.getElementById('uModal').classList.add('open');
+}
+function asCloseUser() {
+  unlockPageScroll();
+  document.getElementById('uBackdrop').classList.remove('open');
+  document.getElementById('uModal').classList.remove('open');
+}
+document.getElementById('uForm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var fd = new FormData(this);
+  // the website routes expect the mobile number as `username` when adding and as `phone` when editing
+  fd.append(uEditId == null ? 'username' : 'phone', document.getElementById('uMobile').value.trim());
+  var url = uEditId == null ? '/settings/users/add' : '/settings/users/' + uEditId + '/edit';
+  asPost(url, fd, document.getElementById('uError'), document.getElementById('uSave'));
+});
+document.getElementById('uDelete').addEventListener('click', function () {
+  var u = AS_USERS.filter(function (x) { return x.id === uEditId; })[0];
+  if (!u || !confirm('Remove ' + (u.full_name || u.username) + '\'s access? This cannot be undone.')) return;
+  asPost('/settings/users/' + uEditId + '/delete', new FormData(), document.getElementById('uError'), null);
+});
+</script>
+{% endblock %}

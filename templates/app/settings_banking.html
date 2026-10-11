@@ -1,0 +1,42 @@
+{% extends "app/base_app.html" %}
+{% from "app/_settings_macros.html" import head, field, toggle %}
+{% block title %}Banking Details — {{ company_name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{{ asset_v('app_settings.css') }}">{% endblock %}
+{% block content %}
+{{ head(page_title, page_sub) }}
+
+{% if s['bank_name'] or s['account_number'] %}
+<div class="as-card">
+  <div class="as-bank">
+    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 21h18"/></svg></span>
+    <div>
+      <div class="bn">{{ s['bank_name'] or 'Bank account' }}{% if s['account_type'] %} <span class="as-chip grey">{{ s['account_type'] }}</span>{% endif %}</div>
+      <div class="line">{{ s['account_holder'] or '—' }}</div>
+      <div class="line">A/c {{ s['account_number'] or '—' }} · IFSC {{ s['ifsc_code'] or '—' }}</div>
+      {% if s['branch'] %}<div class="line">{{ s['branch'] }}</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="banking">
+  <h2>{{ 'Edit Bank Account' if (s['bank_name'] or s['account_number']) else 'Add Bank Account' }}</h2>
+  <div class="as-error"></div>
+  {{ field('Bank Name', 'bank_name', s['bank_name']) }}
+  {{ field('Account Holder Name', 'account_holder', s['account_holder']) }}
+  {{ field('Account Number', 'account_number', s['account_number'], attrs='inputmode="numeric" autocomplete="off"') }}
+  <div class="two">
+    {{ field('IFSC Code', 'ifsc_code', s['ifsc_code'], attrs='autocapitalize="characters" maxlength="11"') }}
+    {{ field('Account Type', 'account_type', s['account_type']) }}
+  </div>
+  {{ field('Branch', 'branch', s['branch']) }}
+  <button type="submit" class="as-save">Save Account</button>
+</form>
+
+<div class="as-info">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+  <div>This account is printed on Tax Invoices (when "Show Bank Details" is on in Invoice Settings).</div>
+</div>
+{% endblock %}
+{% block extra_scripts %}{% include 'app/_settings_scripts.html' %}{% endblock %}

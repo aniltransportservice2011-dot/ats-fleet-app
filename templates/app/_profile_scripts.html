@@ -1,0 +1,119 @@
+<script>
+// Uppercases the whole name as the user types — autocapitalize="characters" on the input covers
+// mobile virtual keyboards, but desktop browsers largely ignore that attribute, so this listener
+// is what actually makes it work when typing (or pasting) on a laptop/desktop. Preserves cursor
+// position so typing doesn't jump.
+(function () {
+  var epFullName = document.getElementById('epFullName');
+  if (!epFullName) return;
+  epFullName.addEventListener('input', function () {
+    var start = epFullName.selectionStart, end = epFullName.selectionEnd;
+    var capped = epFullName.value.toUpperCase();
+    if (capped !== epFullName.value) {
+      epFullName.value = capped;
+      epFullName.setSelectionRange(start, end);
+    }
+  });
+})();
+
+function openEditProfileModal() {
+  lockPageScroll();
+  document.getElementById('epError').style.display = 'none';
+  document.getElementById('epBackdrop').classList.add('open');
+  document.getElementById('epModal').classList.add('open');
+}
+function closeEditProfileModal() {
+  unlockPageScroll();
+  document.getElementById('epBackdrop').classList.remove('open');
+  document.getElementById('epModal').classList.remove('open');
+}
+var epForm = document.getElementById('epForm');
+if (epForm) {
+  epForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = epForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('epError');
+    errBox.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    fetch("{{ url_for('app_update_profile') }}", { method: 'POST', body: new FormData(epForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          reloadWithFlag('updated', r.data.redirect || "{{ url_for('app_profile') }}");
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+
+function openChangePasswordModal() {
+  lockPageScroll();
+  document.getElementById('cpError').style.display = 'none';
+  document.getElementById('cpForm').reset();
+  document.getElementById('cpBackdrop').classList.add('open');
+  document.getElementById('cpModal').classList.add('open');
+}
+function closeChangePasswordModal() {
+  unlockPageScroll();
+  document.getElementById('cpBackdrop').classList.remove('open');
+  document.getElementById('cpModal').classList.remove('open');
+}
+var cpForm = document.getElementById('cpForm');
+if (cpForm) {
+  cpForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = cpForm.querySelector('.vam-btn-save');
+    var origText = btn.textContent;
+    var errBox = document.getElementById('cpError');
+    errBox.style.display = 'none';
+    var newPw = cpForm.querySelector('[name="new_password"]').value;
+    var confirmPw = cpForm.querySelector('[name="confirm_password"]').value;
+    if (newPw !== confirmPw) {
+      errBox.textContent = 'New password and confirmation do not match.';
+      errBox.style.display = 'block';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Updating…';
+    fetch("{{ url_for('app_change_password') }}", { method: 'POST', body: new FormData(cpForm) })
+      .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+      .then(function (r) {
+        if (r.data.ok) {
+          closeChangePasswordModal();
+          showToast('Password updated successfully');
+        } else {
+          errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = origText;
+        }
+      })
+      .catch(function () {
+        errBox.textContent = 'Network error — please check your connection and try again.';
+        errBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = origText;
+      });
+  });
+}
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('updated') === '1') {
+    showToast('Profile updated successfully');
+    params.delete('updated');
+    history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+  }
+})();
+</script>
