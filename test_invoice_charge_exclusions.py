@@ -127,7 +127,7 @@ def main():
     print("=" * 72)
     excluded = [f"{trip_id}:gps", f"{trip_id}:item:{item_id}"]
     resp = client.post('/invoice-center/generate', data={
-        'mode': 'generate', 'trip_ids': [str(trip_id)], 'invoice_type': 'party', 'party_id': str(party_id),
+        'mode': 'generate', 'trip_ids': [str(trip_id)], 'reviewed_trip_ids': [str(trip_id)], 'invoice_type': 'party', 'party_id': str(party_id),
         'vendor_id': '', 'invoice_date': '2029-10-05', 'excluded_charge_keys': excluded,
         'gst_rate': '0', 'tds_rate': '0', 'loading_charges': '0', 'other_charges': '0',
     })
@@ -261,7 +261,7 @@ def main():
 
     # 6c: explicitly opt IN both fields via included_charge_keys and confirm they change the total.
     resp6c = client.post('/invoice-center/generate', data={
-        'mode': 'generate', 'trip_ids': [str(trip2_id)], 'invoice_type': 'party', 'party_id': str(party_id),
+        'mode': 'generate', 'trip_ids': [str(trip2_id)], 'reviewed_trip_ids': [str(trip2_id)], 'invoice_type': 'party', 'party_id': str(party_id),
         'vendor_id': '', 'invoice_date': '2029-11-05',
         'included_charge_keys': [f"{trip2_id}:detention", f"{trip2_id}:brokerage"],
         'gst_rate': '0', 'tds_rate': '0', 'loading_charges': '0', 'other_charges': '0',

@@ -342,18 +342,27 @@ function twToggleEmpty() {
   else { document.getElementById('twParty').required = true; }
 }
 
+function twNormVehicle(v) { return (v || '').toUpperCase().replace(/[\s.\-]/g, ''); }
+var VEHICLE_TYPE_NORM = {};
+Object.keys(VEHICLE_TYPE_MAP).forEach(function (k) { VEHICLE_TYPE_NORM[twNormVehicle(k)] = VEHICLE_TYPE_MAP[k]; });
+
 function twSyncVehicleType() {
-  var vno = document.getElementById('twVehicleNo').value.trim();
+  var vno = document.getElementById('twVehicleNo').value;
   var sel = document.getElementById('twTypeSelect');
   var hidden = document.getElementById('twTypeHidden');
-  var known = VEHICLE_TYPE_MAP[vno];
+  var known = VEHICLE_TYPE_NORM[twNormVehicle(vno)];      // ignores case, spaces, dots and hyphens
   if (known) {
     sel.value = known; sel.disabled = true; hidden.value = known;
   } else {
+    if (sel.disabled) sel.value = 'own';      // coming from a locked (known) vehicle: start from the default, not the last vehicle's type
     sel.disabled = false; hidden.value = sel.value;
   }
   twToggleOwnerSection();
 }
+// A vehicle picked from the list, pasted or autofilled doesn't always fire 'input' — listen for the others too.
+['change', 'blur', 'keyup'].forEach(function (evt) {
+  document.getElementById('twVehicleNo').addEventListener(evt, twSyncVehicleType);
+});
 
 function twToggleOwnerSection() {
   var type = document.getElementById('twTypeHidden').value;

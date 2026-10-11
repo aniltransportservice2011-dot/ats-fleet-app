@@ -358,15 +358,44 @@ var tfVehicleTypeMap = {{ vehicle_type_map|tojson }};
 var VEHICLE_TYPE_OWN = {{ VEHICLE_TYPE_OWN|tojson }};
 var VEHICLE_TYPE_HIRED = {{ VEHICLE_TYPE_HIRED|tojson }};
 
+// Matching ignores case, spaces, dots and hyphens ("od 11 ab 1234" finds OD11AB1234), so a vehicle picked or typed
+// in any style still reflects its real own/hired type.
+function tfNormVehicle(v) { return (v || '').toUpperCase().replace(/[\s.\-]/g, ''); }
+var tfVehicleTypeNorm = {};
+Object.keys(tfVehicleTypeMap).forEach(function(k) { tfVehicleTypeNorm[tfNormVehicle(k)] = tfVehicleTypeMap[k]; });
+
 function tfSyncVehicleType() {
-  var vno = document.getElementById('tfVehicleNo').value.trim();
-  var type = tfVehicleTypeMap[vno] || VEHICLE_TYPE_OWN;
+  var raw = document.getElementById('tfVehicleNo').value;
+  var known = tfVehicleTypeNorm[tfNormVehicle(raw)];
   var select = document.getElementById('tfTypeSelect');
-  select.value = type;
-  select.disabled = true;
-  document.getElementById('tfTypeHidden').value = type;
+  var hidden = document.getElementById('tfTypeHidden');
+  if (known) {
+    // an existing vehicle: its type comes from its own record and cannot be changed here
+    select.value = known;
+    select.disabled = true;
+    hidden.value = known;
+  } else if (raw.trim()) {
+    // a brand-new vehicle number typed in: nothing to copy from, so the type can be chosen (it becomes that vehicle's type)
+    if (select.disabled) select.value = VEHICLE_TYPE_OWN;    // coming from a locked (known) vehicle: start from the default, not the last vehicle's type
+    select.disabled = false;
+    hidden.value = select.value;
+  } else {
+    select.value = VEHICLE_TYPE_OWN;
+    select.disabled = true;
+    hidden.value = VEHICLE_TYPE_OWN;
+  }
   tfRecalc();
 }
+document.getElementById('tfTypeSelect').addEventListener('change', function() {
+  document.getElementById('tfTypeHidden').value = this.value;
+  tfRecalc();
+});
+// A vehicle chosen from the drop-down list, pasted or autofilled doesn't always fire 'input' (some browsers only fire 'change'),
+// so listen for all of them — otherwise the Type box stays on the previous value.
+['input', 'change', 'blur', 'keyup'].forEach(function(evt) {
+  document.getElementById('tfVehicleNo').addEventListener(evt, tfSyncVehicleType);
+});
+document.getElementById('tfVehicleNo').addEventListener('paste', function() { setTimeout(tfSyncVehicleType, 0); });
 
 function tfRowHtml(idx, desc, type, rate, qty, vendor) {
   return '<tr data-idx="' + idx + '">' +

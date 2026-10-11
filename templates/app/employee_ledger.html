@@ -32,7 +32,7 @@
   </div>
   <div class="ld-kpi-card">
     <div class="ld-kpi-top">
-      <div><div class="ld-kpi-lbl">Advance Outstanding</div><div class="ld-kpi-val" style="color:{{ 'var(--a-red)' if advance_balance > 0 else 'var(--a-green)' }};">₹{{ '{:,.0f}'.format(advance_balance) }}</div><div class="ld-kpi-sub">{{ 'To recover' if advance_balance > 0 else 'Settled' }}</div></div>
+      <div><div class="ld-kpi-lbl">Advance Outstanding</div><div class="ld-kpi-val" style="color:{{ 'var(--a-red)' if advance_balance > 0 else 'var(--a-green)' }};">₹{{ '{:,.0f}'.format(advance_balance) }}</div><div class="ld-kpi-sub">{{ 'To recover' if advance_balance > 0 else 'Settled' }}{% if f_date_from %} · ₹{{ '{:,.0f}'.format(brought_forward) }} brought forward{% endif %}</div></div>
       <div class="ld-kpi-icon" style="background:#fdecea;color:var(--a-red);">💳</div>
     </div>
   </div>

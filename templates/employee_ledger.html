@@ -39,6 +39,7 @@
   <div class="summary-strip">
     <span>Total salary paid (in this range): <b>₹{{ '{:,.0f}'.format(total_salary_paid) }}</b></span>
     <span>Advance outstanding: <b style="color:{% if advance_balance > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(advance_balance) }}</b></span>
+    {% if f_date_from %}<span>Advance brought forward (before {{ f_date_from }}): <b>₹{{ '{:,.0f}'.format(brought_forward) }}</b></span>{% endif %}
     {% if opening_balance %}
     <span>Opening balance: <b>₹{{ '{:,.0f}'.format(opening_balance|abs) }}{% if opening_balance < 0 %} (credit){% endif %}</b>{% if opening_balance_date %} as of {{ opening_balance_date }}{% endif %}</span>
     {% endif %}

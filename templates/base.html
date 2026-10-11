@@ -397,7 +397,7 @@
         </div>
         <div class="topbar-user">
           <div class="avatar">{{ web_user_initials or session.get('username','?')[:2]|upper }}</div>
-          <div class="info"><div class="name">{{ web_user_name or session.get('username','Guest') }}</div><div class="role">{{ 'Administrator' if session.get('is_admin') else 'Staff' }}</div></div>
+          <div class="info"><div class="name">{{ web_user_name or session.get('username','Guest') }}</div><div class="role">{{ user_role_label }}</div></div>
         </div>
       </div>
     </div>
