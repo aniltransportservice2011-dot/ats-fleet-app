@@ -75,7 +75,7 @@ def _make_db(path):
     c = sqlite3.connect(path)
     c.executescript(SCHEMA)
     c.execute("INSERT INTO users (username,password_hash,role,is_admin,full_name,access_level,status,phone,created_at) "
-              "VALUES ('audit','x','Admin',1,'Audit Admin','Full Access','Active','9000000001','2026-01-01')")
+              "VALUES ('audit','x','Administrator',1,'Audit Admin','Full Access','Active','9000000001','2026-01-01')")
     c.commit()
     c.close()
 
@@ -1712,6 +1712,30 @@ def run_employee_scenario(env, F, sc):
             opening = float(sc['then_opening'])
             env.post(f'/employee/{name}/opening-balance', {'opening_balance': num(opening), 'opening_balance_date': '2026-02-01'})
             check('after replacing the opening advance')
+        # a date filter must only limit the ROWS and the salary total — never change the advance balance itself
+        hist = [(f'2026-06-{10 + i:02d}', kind, amt) for i, (kind, amt, _surface) in enumerate(sc['ops'])]
+        for lo, hi in (('2026-06-11', '2026-06-12'), ('2026-06-10', '2026-06-10'), ('2026-07-01', '2026-07-31'), ('2026-05-01', '2026-06-10')):
+            closing = r2(opening + sum(a if k == 'given' else -a for d, k, a in hist if k in ('given', 'repaid') and d <= hi))
+            bf = r2(opening + sum(a if k == 'given' else -a for d, k, a in hist if k in ('given', 'repaid') and d < lo))
+            sal_in = sum(a for d, k, a in hist if k == 'salary' and lo <= d <= hi)
+            step = f'date filter {lo} → {hi}'
+            txt = soup(env.get(f'/employee/{name}', date_from=lo, date_to=hi)).get_text(' ', strip=True)
+            m = re.search(r'Advance outstanding:\s*₹\s*([-\d,\.]+)', txt)
+            ms = re.search(r'Total salary paid[^₹]*₹\s*([-\d,\.]+)', txt)
+            run.check('EMP_FILTERED_ADVANCE_IS_TRUE_BALANCE', m is not None and same_display(closing, money(m.group(1))), step, closing, m.group(1) if m else None,
+                      note='website employee ledger with a date range: Advance outstanding must be the real balance as of the end date')
+            run.check('EMP_FILTERED_SALARY_TOTAL', ms is not None and same_display(sal_in, money(ms.group(1))), step, sal_in, ms.group(1) if ms else None)
+            if hi >= '2026-06-10' and lo > '2026-02-01':
+                mb = re.search(r'brought forward[^₹]*₹\s*([-\d,\.]+)', txt)
+                run.check('EMP_FILTERED_BROUGHT_FORWARD', mb is not None and same_display(bf, money(mb.group(1))), step, bf, mb.group(1) if mb else None)
+            ap = soup(env.get(f'/app/employee/{name}', date_from=lo, date_to=hi))
+            av = (label_values(ap, 'Advance Outstanding') or [None])[0]
+            run.check('EMP_APP_FILTERED_ADVANCE_IS_TRUE_BALANCE', av is not None and same_display(closing, av), step, closing, av, note='mobile employee ledger with a date range')
+        # and one salary payment must leave the advance exactly where it was
+        before = emp_screens(env, name)['web_adv']
+        env.post(f'/employee/{name}', {'entry_kind': 'salary', 'date': '2026-06-30', 'amount': '12345', 'payment_mode': 'Cash'})
+        after = emp_screens(env, name)['web_adv']
+        run.check('EMP_SALARY_DOES_NOT_CHANGE_ADVANCE', before is not None and after == before, 'after paying a salary', before, after)
     except Exception as e:
         F.check('SCENARIO_CRASH', False, sc, 'exception', 'no exception', repr(e)[:160], note=traceback.format_exc()[-500:], severity='CRASH')
     return run
@@ -2396,7 +2420,7 @@ def gen_ownerinv(quick=False):
 # --------------------------------------------------------------------------------------------------
 # STAGE: access levels — Full Access can do everything, Read Only can see everything and change nothing
 # --------------------------------------------------------------------------------------------------
-READ_ONLY_ALLOWED_POSTS = {'app_change_password', 'invoice_center_review', 'toll_excel_preview', 'route_finder_extras'}
+READ_ONLY_ALLOWED_POSTS = {'app_change_password', 'website_change_password', 'invoice_center_review', 'toll_excel_preview', 'route_finder_extras'}
 
 
 def _db_fingerprint(env):
@@ -2523,7 +2547,7 @@ def gen_access(quick=False):
     pages = ['/dashboard', '/trips', '/accounts', '/ledger/party/1', '/ledger/vendor/1', '/maintenance', '/overheads', '/salaries', '/invoices/generated', '/invoice-center',
              '/business-performance', '/route-analytics', '/vehicles', '/settings', '/app/dashboard', '/app/trips', '/app/ledger', '/app/expenses', '/app/maintenance', '/app/salary',
              '/trips/1/view', '/payments/1/view']
-    exports = ['/trips/export', '/accounts/export', '/ledger/party/1/export', '/ledger/party/1/export/pdf', '/overheads/export', '/maintenance/export', '/settings/users/export']
+    exports = ['/trips/export', '/accounts/export', '/ledger/party/1/export', '/ledger/party/1/export/pdf', '/overheads/export', '/maintenance/export']   # (the user-list export is Administrators-only now)
     cases = [('read_only_blocked_everywhere', {}), ('read_only_can_view', {'urls': pages}), ('exports_work', {'urls': exports}), ('full_access_can_write', {}),
              ('denial_shapes', {}), ('allowed_posts', {}), ('level_change_is_immediate', {}), ('inactive_user_locked_out', {}), ('limited_access_note', {})]
     out = []
@@ -2533,9 +2557,168 @@ def gen_access(quick=False):
 
 
 # --------------------------------------------------------------------------------------------------
+# STAGE: invoice review gate — Generate / Save as Draft only after every selected trip's LR link was reviewed
+# --------------------------------------------------------------------------------------------------
+def run_invreview_scenario(env, F, sc):
+    run = Run(env, sc, F)
+    tag = sc['id']
+    try:
+        ids = []
+        for i in range(sc['n_trips']):
+            form, _ = trip_form(f'{tag}-T{i}', f'{tag}Pty', 'permt', 1.0, 0, 0, day=10 + i)
+            env.post('/trips/add', form)
+            ids.append(env.one('SELECT id FROM trips WHERE lr_number=?', f'{tag}-T{i}')['id'])
+        pid = env.one('SELECT id FROM parties WHERE name=?', f'{tag}Pty')['id']
+        base = {'invoice_type': 'party', 'party_id': str(pid), 'invoice_date': '2026-06-01', 'trip_ids': [str(i) for i in ids]}
+        reviewed = [str(ids[j]) for j in sc['reviewed']]
+        n0 = env.one('SELECT COUNT(*) c FROM invoice_batches')['c']
+        seq0 = env.one("SELECT value FROM settings WHERE key='next_invoice_number'")
+        r = env.post('/invoice-center/generate', {**base, 'mode': sc['mode'], 'reviewed_trip_ids': reviewed})
+        n1 = env.one('SELECT COUNT(*) c FROM invoice_batches')['c']
+        all_reviewed = set(reviewed) >= set(base['trip_ids'])
+        if sc['mode'] == 'preview':
+            run.check('PREVIEW_ALWAYS_ALLOWED', r.status_code == 200 and r.data[:4] == b'%PDF' and n1 == n0, f"preview with {len(reviewed)}/{sc['n_trips']} reviewed",
+                      'a PDF, nothing saved', f'HTTP {r.status_code}, batches {n0}->{n1}')
+        elif all_reviewed:
+            ok = (r.status_code == 200 and sc['mode'] == 'generate') or (r.status_code in (301, 302) and sc['mode'] == 'draft')
+            run.check('GENERATE_ALLOWED_AFTER_FULL_REVIEW', ok and n1 == n0 + 1, f"{sc['mode']} with all {sc['n_trips']} reviewed", 'saved', f'HTTP {r.status_code}, batches {n0}->{n1}')
+        else:
+            loc = r.headers.get('Location', '')
+            run.check('GENERATE_BLOCKED_UNTIL_REVIEWED', r.status_code in (301, 302) and 'inv_error' in loc and n1 == n0, f"{sc['mode']} with {len(reviewed)}/{sc['n_trips']} reviewed",
+                      'refused with an error message, nothing saved', f'HTTP {r.status_code} {loc[:80]}, batches {n0}->{n1}')
+            seq1 = env.one("SELECT value FROM settings WHERE key='next_invoice_number'")
+            run.check('BLOCKED_ATTEMPT_DOES_NOT_CONSUME_INVOICE_NUMBER', (seq0 and seq0['value']) == (seq1 and seq1['value']), 'invoice counter', seq0 and seq0['value'], seq1 and seq1['value'])
+    except Exception as e:
+        F.check('SCENARIO_CRASH', False, sc, 'exception', 'no exception', repr(e)[:160], note=traceback.format_exc()[-500:], severity='CRASH')
+    return run
+
+
+def gen_invreview(quick=False):
+    out = []
+    counter = itertools.count(1)
+    for mode in ('generate', 'draft', 'preview'):
+        for n_trips, reviewed in ((1, []), (1, [0]), (3, []), (3, [0]), (3, [0, 1]), (3, [1, 2]), (3, [0, 1, 2]), (5, [0, 1, 2, 3])):
+            n = next(counter)
+            out.append({'id': f'V{n:04d}', 'stage': 'invreview', 'mode': mode, 'n_trips': n_trips, 'reviewed': reviewed, 'tag': f'invreview/{mode}/{len(reviewed)}of{n_trips}'})
+    return out
+
+
+# --------------------------------------------------------------------------------------------------
+# STAGE: roles — only an Administrator sees / changes company settings, users and the user log
+# --------------------------------------------------------------------------------------------------
+ROLE_USERS = {   # id: (username, role, access level)
+    10: ('9100000010', 'Administrator', 'Full Access'),
+    11: ('9100000011', 'Manager', 'Full Access'),
+    12: ('9100000012', 'Operations Head', 'Full Access'),
+    13: ('9100000013', 'Staff', 'Read Only'),
+    14: ('9100000014', 'Manager', 'Limited Access'),
+    15: ('9100000015', 'administrator', 'Read Only'),     # an Administrator who happens to be view-only
+}
+
+
+def run_roles_scenario(env, F, sc):
+    run = Run(env, sc, F)
+    try:
+        for uid, (uname, role, lvl) in ROLE_USERS.items():
+            env.exec("INSERT INTO users (id,username,password_hash,role,is_admin,full_name,access_level,status,phone,email,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     uid, uname, 'x', role, 1 if lvl == 'Full Access' else 0, f'Person {uid}', lvl, 'Active', uname, f'p{uid}@x.example', '2026-01-01')
+        env.exec("INSERT INTO settings (key,value,company_id) VALUES ('bank_name','SECRET-BANK-XYZ',1)")
+        env.exec("INSERT INTO settings (key,value,company_id) VALUES ('twilio_auth_token','SECRET-TOKEN-ABC',1)")
+        env.exec("INSERT INTO access_logs (user_id,event,date) VALUES (10,'Login','2026-06-01')")
+        clients = {uid: _client_for(env, uid) for uid in ROLE_USERS}
+        case = sc['case']
+        non_admins = [11, 12, 13, 14]
+        admins = [10, 15]
+        if case == 'settings_page_content':
+            for uid in non_admins:
+                r = clients[uid].get('/settings')
+                body = r.data.decode('utf-8', 'ignore')
+                leaks = [x for x in ('SECRET-BANK-XYZ', 'SECRET-TOKEN-ABC', 'Person 10', 'Person 12', '9100000010', 'Access Log', 'twilio') if x.lower() in body.lower() and x not in (f'Person {uid}',)]
+                own_ok = f'Person {uid}' in body
+                run.check('NON_ADMIN_SEES_ONLY_OWN_PROFILE', r.status_code == 200 and own_ok and not leaks, f'{ROLE_USERS[uid][1]} / {ROLE_USERS[uid][2]}: open Profile & Settings',
+                          'own details only', f'HTTP {r.status_code}, leaked: {leaks}')
+            for uid in admins:
+                r = clients[uid].get('/settings')
+                body = r.data.decode('utf-8', 'ignore')
+                run.check('ADMIN_SEES_EVERYTHING', r.status_code == 200 and 'SECRET-BANK-XYZ' in body and 'Person 11' in body, f'{ROLE_USERS[uid][1]}: open Profile & Settings', 'company + users + logs', f'HTTP {r.status_code}')
+        elif case == 'admin_only_endpoints':
+            before = _db_fingerprint(env)
+            targets = [('POST', '/settings', {'form_type': 'company', 'company_name': 'HACKED'}), ('POST', '/settings/users/add', {'username': '9200000001', 'full_name': 'New', 'access_level': 'Full Access', 'role': 'Administrator'}),
+                       ('POST', '/settings/users/11/edit', {'full_name': 'X', 'phone': '9100000011', 'role': 'Administrator', 'access_level': 'Full Access'}),
+                       ('POST', '/settings/users/11/phone', {'phone': '9300000000'}), ('POST', '/settings/users/12/delete', {}),
+                       ('POST', '/settings/logo/upload', {}), ('GET', '/settings/users/export', {})]
+            for uid in non_admins:
+                for method, url, data in targets:
+                    r = clients[uid].open(url, method=method, data=data if method == 'POST' else None)
+                    run.check('NON_ADMIN_BLOCKED', r.status_code == 403, f'{ROLE_USERS[uid][1]} / {ROLE_USERS[uid][2]}: {method} {url}', 'HTTP 403', f'HTTP {r.status_code}')
+            run.check('NON_ADMIN_CHANGED_NOTHING', _db_fingerprint(env) == before, 'after all blocked requests', 'database identical', 'database changed')
+            r = clients[10].post('/settings', data={'form_type': 'company', 'company_name': 'ACME REAL CO'})
+            run.check('ADMIN_CAN_SAVE_SETTINGS', r.status_code == 200 and env.one("SELECT value FROM settings WHERE key='company_name'") is not None, 'Administrator saves company details', 'saved', f'HTTP {r.status_code}')
+            r = clients[10].post('/settings/users/add', data={'username': '9200000002', 'full_name': 'Added By Admin', 'access_level': 'Full Access', 'role': 'Manager'})
+            run.check('ADMIN_CAN_ADD_USER', env.one("SELECT id FROM users WHERE username='9200000002'") is not None, 'Administrator adds a user', 'created', f'HTTP {r.status_code}')
+            r = clients[10].get('/settings/users/export')
+            run.check('ADMIN_CAN_EXPORT_USERS', r.status_code == 200, 'Administrator exports the user list', 200, r.status_code)
+        elif case == 'own_profile':
+            r = clients[11].post('/settings/my-profile', data={'full_name': 'Manager Renamed', 'email': 'mgr.new@x.example', 'phone': '9100000011', 'role': 'Administrator', 'access_level': 'Full Access'})
+            row = env.one('SELECT full_name,email,role,access_level FROM users WHERE id=11')
+            run.check('OWN_PROFILE_UPDATE_WORKS', row['full_name'] == 'Manager Renamed' and row['email'] == 'mgr.new@x.example', 'Manager edits their own details', 'saved', dict(row))
+            run.check('CANNOT_PROMOTE_SELF', row['role'] == 'Manager' and row['access_level'] == 'Full Access', 'Manager tries to post role=Administrator', 'role unchanged', dict(row))
+            r = clients[11].post('/settings/my-profile', data={'full_name': 'M', 'phone': '9100000012', 'email': 'x@y.co'})
+            run.check('CANNOT_TAKE_ANOTHER_USERS_MOBILE', env.one('SELECT phone FROM users WHERE id=11')['phone'] == '9100000011' and b'already used' in r.data, 'duplicate mobile', 'refused with a message', 'accepted')
+            r = clients[11].post('/settings/my-profile', data={'full_name': 'M', 'phone': '12345', 'email': ''})
+            run.check('BAD_MOBILE_REFUSED', b'10-digit' in r.data, 'mobile "12345"', 'refused', r.status_code)
+            r = clients[11].post('/settings/my-profile', data={'full_name': '', 'phone': '', 'email': ''})
+            run.check('NAME_REQUIRED', b'Full Name is required' in r.data, 'blank name', 'refused', r.status_code)
+            r = clients[13].post('/settings/my-profile', data={'full_name': 'Hacked', 'phone': '', 'email': ''})
+            run.check('READ_ONLY_CANNOT_EDIT_OWN_DETAILS', r.status_code == 403 and env.one('SELECT full_name FROM users WHERE id=13')['full_name'] == 'Person 13', 'view-only user edits own details', '403', r.status_code)
+            from werkzeug.security import generate_password_hash
+            env.exec("UPDATE users SET password_hash=? WHERE id IN (11,13)", generate_password_hash('oldpass1'))
+            r = clients[11].post('/settings/my-password', data={'current_password': 'wrong', 'new_password': 'newpass1', 'confirm_password': 'newpass1'})
+            run.check('WRONG_CURRENT_PASSWORD_REFUSED', b'incorrect' in r.data, 'wrong current password', 'refused', r.status_code)
+            r = clients[11].post('/settings/my-password', data={'current_password': 'oldpass1', 'new_password': 'newpass1', 'confirm_password': 'newpass1'})
+            run.check('PASSWORD_CHANGE_WORKS', b'Password changed' in r.data, 'correct current password', 'changed', r.status_code)
+            r = clients[13].post('/settings/my-password', data={'current_password': 'oldpass1', 'new_password': 'newpass1', 'confirm_password': 'newpass1'})
+            run.check('READ_ONLY_CAN_CHANGE_OWN_PASSWORD', b'Password changed' in r.data, 'view-only user changes own password', 'allowed', r.status_code)
+        elif case == 'last_administrator':
+            env.exec("UPDATE users SET role='Manager' WHERE id IN (1, 15)")              # leave exactly one Administrator: user 10
+            r = clients[10].post('/settings/users/10/delete', data={})
+            run.check('CANNOT_DELETE_LAST_ADMIN_OR_SELF', env.one('SELECT id FROM users WHERE id=10') is not None, 'delete the only Administrator (self)', 'refused', f'HTTP {r.status_code}')
+            r = clients[10].post('/settings/users/10/edit', data={'full_name': 'Person 10', 'phone': '9100000010', 'role': 'Manager', 'access_level': 'Full Access', 'status': 'Active'})
+            run.check('CANNOT_DEMOTE_LAST_ADMIN', env.one('SELECT role FROM users WHERE id=10')['role'] == 'Administrator', 'demote the only Administrator', 'refused', env.one('SELECT role FROM users WHERE id=10')['role'])
+            r = clients[10].post('/settings/users/10/edit', data={'full_name': 'Person 10', 'phone': '9100000010', 'role': 'Administrator', 'access_level': 'Full Access', 'status': 'Inactive'})
+            run.check('CANNOT_DEACTIVATE_LAST_ADMIN', env.one('SELECT status FROM users WHERE id=10')['status'] == 'Active', 'deactivate the only Administrator', 'refused', env.one('SELECT status FROM users WHERE id=10')['status'])
+            env.exec("UPDATE users SET role='Administrator' WHERE id=15")                # now two administrators
+            r = clients[10].post('/settings/users/15/delete', data={})
+            run.check('CAN_DELETE_ADMIN_WHEN_ANOTHER_EXISTS', env.one('SELECT id FROM users WHERE id=15') is None, 'delete one of two Administrators', 'deleted', f'HTTP {r.status_code}')
+        elif case == 'app_profile':
+            for uid in (11, 12, 13):
+                r = clients[uid].get('/app/profile')
+                body = r.data.decode('utf-8', 'ignore')
+                run.check('APP_NON_ADMIN_HAS_NO_ADMIN_LINKS', r.status_code == 200 and '/settings?tab=company' not in body and '/settings?tab=users' not in body, f'{ROLE_USERS[uid][1]}: mobile profile page', 'no admin links', r.status_code)
+                run.check('APP_SHOWS_REAL_ROLE', ROLE_USERS[uid][1] in body and ('>Administrator<' not in body), f'{ROLE_USERS[uid][1]}: role label', ROLE_USERS[uid][1], 'wrong label')
+            r = clients[10].get('/app/profile')
+            body = r.data.decode('utf-8', 'ignore')
+            run.check('APP_ADMIN_HAS_ADMIN_LINKS', '/settings?tab=company' in body and '/settings?tab=users' in body, 'Administrator: mobile profile page', 'admin links', 'missing')
+            r = clients[11].post('/app/profile/update', data={'full_name': 'App Renamed', 'email': '', 'phone': '9100000011'})
+            run.check('APP_OWN_PROFILE_UPDATE', r.status_code == 200 and env.one('SELECT full_name FROM users WHERE id=11')['full_name'] == 'App Renamed', 'update own profile in the app', 'saved', r.status_code)
+            r = clients[11].post('/app/profile/update', data={'full_name': 'X', 'email': '', 'phone': '9100000012'})
+            run.check('APP_DUPLICATE_MOBILE_REFUSED', r.status_code == 400, 'app: take another user\'s mobile', '400', r.status_code)
+            hdr = clients[11].get('/dashboard').data.decode('utf-8', 'ignore')
+            run.check('WEBSITE_HEADER_SHOWS_REAL_ROLE', 'Manager' in hdr and '<div class="role">Administrator</div>' not in hdr, 'Manager with Full Access: top-right role', 'Manager', 'Administrator shown')
+    except Exception as e:
+        F.check('SCENARIO_CRASH', False, sc, 'exception', 'no exception', repr(e)[:160], note=traceback.format_exc()[-500:], severity='CRASH')
+    return run
+
+
+def gen_roles(quick=False):
+    return [{'id': f'Q{i:04d}', 'stage': 'roles', 'case': c, 'tag': f'roles/{c}'} for i, c in
+            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile'], 1)]
+
+
+# --------------------------------------------------------------------------------------------------
 # running + reporting
 # --------------------------------------------------------------------------------------------------
-STAGES = {'party': gen_party, 'vendor': gen_vendor, 'edge': gen_edge, 'maint': gen_maint, 'expense': gen_expenses, 'employee': gen_employees, 'empedge': gen_employee_edge, 'acct': gen_acct, 'invoice': gen_invoices, 'invinput': gen_invoice_inputs, 'fuzz': gen_fuzz, 'urea': gen_urea, 'xbill': gen_xbills, 'ownerinv': gen_ownerinv, 'access': gen_access}
+STAGES = {'party': gen_party, 'vendor': gen_vendor, 'edge': gen_edge, 'maint': gen_maint, 'expense': gen_expenses, 'employee': gen_employees, 'empedge': gen_employee_edge, 'acct': gen_acct, 'invoice': gen_invoices, 'invinput': gen_invoice_inputs, 'fuzz': gen_fuzz, 'urea': gen_urea, 'xbill': gen_xbills, 'ownerinv': gen_ownerinv, 'access': gen_access, 'invreview': gen_invreview, 'roles': gen_roles}
 
 
 def run_batch(args):
@@ -2547,9 +2730,9 @@ def run_batch(args):
     runs = []
     try:
         for sc in scenarios:
-            if sc['stage'] in ('edge', 'maint', 'expense', 'employee', 'empedge', 'acct', 'invoice', 'invinput', 'fuzz', 'urea', 'xbill', 'ownerinv', 'access'):
+            if sc['stage'] in ('edge', 'maint', 'expense', 'employee', 'empedge', 'acct', 'invoice', 'invinput', 'fuzz', 'urea', 'xbill', 'ownerinv', 'access', 'invreview', 'roles'):
                 env.reset()
-            runner = {'party': run_party_scenario, 'vendor': run_vendor_scenario, 'edge': run_edge_scenario, 'maint': run_maint_scenario, 'expense': run_expense_scenario, 'employee': run_employee_scenario, 'empedge': run_employee_edge, 'acct': run_acct_scenario, 'invoice': run_invoice_scenario, 'invinput': run_invoice_input_scenario, 'fuzz': run_fuzz_scenario, 'urea': run_urea_scenario, 'xbill': run_xbill_scenario, 'ownerinv': run_ownerinv_scenario, 'access': run_access_scenario}[sc['stage']]
+            runner = {'party': run_party_scenario, 'vendor': run_vendor_scenario, 'edge': run_edge_scenario, 'maint': run_maint_scenario, 'expense': run_expense_scenario, 'employee': run_employee_scenario, 'empedge': run_employee_edge, 'acct': run_acct_scenario, 'invoice': run_invoice_scenario, 'invinput': run_invoice_input_scenario, 'fuzz': run_fuzz_scenario, 'urea': run_urea_scenario, 'xbill': run_xbill_scenario, 'ownerinv': run_ownerinv_scenario, 'access': run_access_scenario, 'invreview': run_invreview_scenario, 'roles': run_roles_scenario}[sc['stage']]
             run = runner(env, F, sc)
             runs.append(run)
             if any(i['scenario'] == sc['id'] for i in F.items[-60:]):
@@ -2573,7 +2756,7 @@ def signature(item):
         return (item['code'], note)
     if item['code'] in ('PAID_IN_FULL_BUT_TRIPS_STILL_PENDING',):
         return (item['code'], '')
-    if item['scenario'][0] in 'EMXNYAIJFUBWR':
+    if item['scenario'][0] in 'EMXNYAIJFUBWRVQ':
         return (item['code'], item['step'] if item['code'].startswith(('PAYMENT_', 'TRIP_', 'OPENING')) else note)
     return (item['code'], re.sub(r'P\d{4}Z?-T\d', 'LR', re.sub(r'[-\d.,]+', '#', note))[:60])
 

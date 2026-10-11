@@ -41,7 +41,7 @@
       <td><span class="mt-type-badge" style="background:#e8f5ee;color:var(--green);">{{ r.attendance_pct ~ '%' if r.attendance_pct is not none else '—' }}</span></td>
       <td>{% if r.salary_status=='paid' %}<span class="mt-type-badge" style="background:#e8f5ee;color:var(--green);">Paid</span>
           {% else %}<span class="mt-type-badge" style="background:var(--paper);color:var(--steel);">No Payment</span>{% endif %}</td>
-      <td class="num">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
+      <td class="num" style="font-weight:600;color:{% if r.outstanding > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
       <td onclick="event.stopPropagation();">
         <a href="/employee/{{ r.name|urlencode }}?from_tab=overview" title="Open Ledger" style="color:var(--steel);">&#128220;</a>
       </td>
@@ -167,7 +167,7 @@
           <div><div class="lbl">Monthly Basic Salary</div>{% if r.basic_salary_raw %}₹{{ '{:,.0f}'.format(r.basic_salary_raw) }}{% else %}—{% endif %}</div>
           <div><div class="lbl">Attendance</div>{{ r.attendance_pct ~ '%' if r.attendance_pct is not none else '—' }}</div>
           <div><div class="lbl">Salary Status</div>{{ 'Paid' if r.salary_status=='paid' else 'No Payment' }}</div>
-          <div><div class="lbl">Outstanding Advance</div>₹{{ '{:,.0f}'.format(r.outstanding) }}</div>
+          <div><div class="lbl">Outstanding Advance</div><span style="font-weight:600;color:{% if r.outstanding > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(r.outstanding) }}</span></div>
         </div>
       </div>
 

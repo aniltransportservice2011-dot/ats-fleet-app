@@ -41,7 +41,7 @@
       <td class="num"><b>₹{{ '{:,.0f}'.format(r.total_paid) }}</b></td>
       <td class="num">{{ r.payment_count }}</td>
       <td>{{ r.last_paid_date or '—' }}</td>
-      <td class="num">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
+      <td class="num" style="font-weight:600;color:{% if r.outstanding > 0 %}var(--red){% else %}var(--green){% endif %};">₹{{ '{:,.0f}'.format(r.outstanding) }}</td>
       <td onclick="event.stopPropagation();">
         <a href="/employee/{{ r.name|urlencode }}?from_tab=salary" title="Open Ledger — Pay Salary / Give Advance / Record Repayment" style="color:var(--accent);font-weight:600;text-decoration:none;font-size:0.78rem;">&#128220; Ledger</a>
       </td>

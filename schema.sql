@@ -811,3 +811,43 @@ CREATE TABLE sync_log (
     note          TEXT,
     company_id            INTEGER NOT NULL DEFAULT 1
 );
+
+-- ============================================================================
+-- Performance indexes (also created automatically at app start by _ensure_performance_indexes)
+-- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_trips_party ON trips(party_id);
+CREATE INDEX IF NOT EXISTS idx_trips_vehicle ON trips(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_trips_date ON trips(date);
+CREATE INDEX IF NOT EXISTS idx_trips_owner_vendor ON trips(owner_vendor_id);
+CREATE INDEX IF NOT EXISTS idx_trips_fuel_vendor ON trips(fuel_vendor_id);
+CREATE INDEX IF NOT EXISTS idx_trips_adv_vendor ON trips(driver_adv_vendor_id);
+CREATE INDEX IF NOT EXISTS idx_trips_misc_vendor ON trips(misc_vendor_id);
+CREATE INDEX IF NOT EXISTS idx_trips_lr ON trips(lr_number);
+CREATE INDEX IF NOT EXISTS idx_payments_party ON payments(party_id);
+CREATE INDEX IF NOT EXISTS idx_payments_vendor ON payments(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(date);
+CREATE INDEX IF NOT EXISTS idx_payalloc_payment ON payment_allocations(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payalloc_trip ON payment_allocations(trip_id);
+CREATE INDEX IF NOT EXISTS idx_payalloc_maint ON payment_allocations(maintenance_id) WHERE maintenance_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_payalloc_overhead ON payment_allocations(overhead_id) WHERE overhead_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_maint_vendor ON maintenance(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_maint_vehicle ON maintenance(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_maint_date ON maintenance(date);
+CREATE INDEX IF NOT EXISTS idx_maint_category ON maintenance(category);
+CREATE INDEX IF NOT EXISTS idx_overheads_date ON overheads(date);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_trip ON invoice_items(trip_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_vendor ON invoice_items(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_trip ON invoices(trip_id);
+CREATE INDEX IF NOT EXISTS idx_ibt_batch ON invoice_batch_trips(invoice_batch_id);
+CREATE INDEX IF NOT EXISTS idx_ibt_trip ON invoice_batch_trips(trip_id);
+CREATE INDEX IF NOT EXISTS idx_ibi_batch ON invoice_batch_items(invoice_batch_id);
+CREATE INDEX IF NOT EXISTS idx_ibi_vendor ON invoice_batch_items(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_salaries_employee_id ON salaries(employee_id);
+CREATE INDEX IF NOT EXISTS idx_salaries_date ON salaries(date);
+CREATE INDEX IF NOT EXISTS idx_vendors_linked_party ON vendors(linked_party_id);
+CREATE INDEX IF NOT EXISTS idx_toll_trip ON toll_entries(trip_id);
+CREATE INDEX IF NOT EXISTS idx_urea_vehicle ON urea_transactions(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_batteries_vehicle ON batteries(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_insurance_vehicle ON insurance_policies(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_advances_employee_nocase ON advances(employee COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_salaries_employee_nocase ON salaries(employee COLLATE NOCASE);

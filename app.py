@@ -6,7 +6,6 @@ import calendar
 import os
 import json
 import re
-import requests
 import hashlib
 import threading
 import time as _time
@@ -93,8 +92,11 @@ def _username_login_format_ok(username):
     return bool(USERNAME_MOBILE_RE.match(username or '') or USERNAME_EMAIL_RE.match(username or ''))
 
 def get_db():
-    conn = sqlite3.connect(DB)
+    # timeout=30: wait up to 30 s for a lock instead of SQLite's default 5 s, so two people saving at the
+    # same moment queue up briefly instead of one getting a "database is locked" 500 error.
+    conn = sqlite3.connect(DB, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA synchronous=NORMAL")      # safe with WAL (see _ensure_wal_mode); far fewer disk syncs per save
     # Wrapped so a future database swap (see db.py's docstring) only ever means changing what
     # happens in this one function — every one of the ~475 call sites elsewhere that just do
     # conn.execute(sql, params) stay exactly as they are. Zero behavior change today: db.Connection
@@ -186,6 +188,105 @@ def _ensure_overhead_allocation_column(db_path=None):
         return f'failed: {e!r}'
 
 print('[schema] payment_allocations.overhead_id:', _ensure_overhead_allocation_column(), file=sys.stderr)
+
+# ---- speed: database indexes -----------------------------------------------------------------------------
+# The tables had no indexes beyond a few dates, so every "this party's trips" / "this vendor's payments" lookup
+# read the whole table (12,000 trips: ~0.4 ms each, times ~9,000 lookups on the Dashboard). These are created with
+# IF NOT EXISTS the first time the app starts (instant when they already exist) and are also in schema.sql.
+# Partial indexes (WHERE ... IS NOT NULL) are used for allocation columns that are mostly empty.
+_PERFORMANCE_INDEXES = [
+    ('idx_trips_party', 'trips(party_id)'),
+    ('idx_trips_vehicle', 'trips(vehicle_id)'),
+    ('idx_trips_date', 'trips(date)'),
+    ('idx_trips_owner_vendor', 'trips(owner_vendor_id)'),
+    ('idx_trips_fuel_vendor', 'trips(fuel_vendor_id)'),
+    ('idx_trips_adv_vendor', 'trips(driver_adv_vendor_id)'),
+    ('idx_trips_misc_vendor', 'trips(misc_vendor_id)'),
+    ('idx_trips_lr', 'trips(lr_number)'),
+    ('idx_payments_party', 'payments(party_id)'),
+    ('idx_payments_vendor', 'payments(vendor_id)'),
+    ('idx_payments_date', 'payments(date)'),
+    ('idx_payalloc_payment', 'payment_allocations(payment_id)'),
+    ('idx_payalloc_trip', 'payment_allocations(trip_id)'),
+    ('idx_payalloc_maint', 'payment_allocations(maintenance_id) WHERE maintenance_id IS NOT NULL'),
+    ('idx_payalloc_overhead', 'payment_allocations(overhead_id) WHERE overhead_id IS NOT NULL'),
+    ('idx_maint_vendor', 'maintenance(vendor_id)'),
+    ('idx_maint_vehicle', 'maintenance(vehicle_id)'),
+    ('idx_maint_date', 'maintenance(date)'),
+    ('idx_maint_category', 'maintenance(category)'),
+    ('idx_overheads_date', 'overheads(date)'),
+    ('idx_invoice_items_trip', 'invoice_items(trip_id)'),
+    ('idx_invoice_items_vendor', 'invoice_items(vendor_id)'),
+    ('idx_invoices_trip', 'invoices(trip_id)'),
+    ('idx_ibt_batch', 'invoice_batch_trips(invoice_batch_id)'),
+    ('idx_ibt_trip', 'invoice_batch_trips(trip_id)'),
+    ('idx_ibi_batch', 'invoice_batch_items(invoice_batch_id)'),
+    ('idx_ibi_vendor', 'invoice_batch_items(vendor_id)'),
+    ('idx_salaries_employee_id', 'salaries(employee_id)'),
+    ('idx_salaries_date', 'salaries(date)'),
+    ('idx_vendors_linked_party', 'vendors(linked_party_id)'),
+    ('idx_toll_trip', 'toll_entries(trip_id)'),
+    ('idx_urea_vehicle', 'urea_transactions(vehicle_id)'),
+    ('idx_batteries_vehicle', 'batteries(vehicle_id)'),
+    ('idx_insurance_vehicle', 'insurance_policies(vehicle_id)'),
+    ('idx_advances_employee_nocase', 'advances(employee COLLATE NOCASE)'),
+    ('idx_salaries_employee_nocase', 'salaries(employee COLLATE NOCASE)'),
+]
+
+def _ensure_performance_indexes(db_path=None):
+    path = db_path or DB
+    made = 0
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+            for name, definition in _PERFORMANCE_INDEXES:
+                table = definition.split('(')[0]
+                if name in existing or table not in tables:
+                    continue
+                try:
+                    conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {definition}")
+                    made += 1
+                except sqlite3.OperationalError:
+                    pass                      # e.g. a column an older database does not have — skip, never fail startup
+            if made:
+                conn.execute("ANALYZE")
+            conn.commit()
+        finally:
+            conn.close()
+        return f'{made} created' if made else 'already in place'
+    except Exception as e:
+        print(f'[schema] could not create performance indexes: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[schema] performance indexes:', _ensure_performance_indexes(), file=sys.stderr)
+
+def _ensure_wal_mode(db_path=None):
+    """Switch the database to WAL journaling (a persistent setting of the file). In the default mode a long
+    read (a 0.5 s dashboard) blocks every writer and writers block readers, so under a dozen people the
+    saves started failing with 'database is locked'. In WAL mode readers never block the writer and the
+    writer never blocks readers. Note for backups: the database is then the .db file PLUS its -wal file; copy it
+    with SQLite's backup (sqlite3 file '.backup x') or after the app has stopped."""
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(mode).lower() != 'wal':
+                mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            return f'journal mode {mode}'
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[schema] could not switch to WAL: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[schema] ', _ensure_wal_mode(), file=sys.stderr)
 
 @app.errorhandler(ValueError)
 @app.errorhandler(OverflowError)
@@ -661,8 +762,11 @@ def _resolve_trip_type(conn, vehicle_id, posted_type):
     row = conn.execute("SELECT type FROM vehicles WHERE id=?", (vehicle_id,)).fetchone()
     return row['type'] if row and row['type'] else posted_type
 
-def _accounts_rows(conn):
-    """Shared party+vendor balance list used by the Ledger page, its export, Dashboard, and
+def _accounts_rows_by_entries(conn):
+    """The ORIGINAL per-entity implementation of _accounts_rows(): builds every party's and vendor's full
+    ledger and sums it (about 9,000 queries for 250 accounts). Kept only so the test suite can prove the
+    fast bulk version below returns exactly the same numbers. Same docstring as the fast one:
+    Shared party+vendor balance list used by the Ledger page, its export, Dashboard, and
     Business Performance. Each row's balance is computed by running the exact same transactional
     entries the individual ledger detail page uses (_get_party_ledger_entries /
     _get_vendor_ledger_entries) — not a separate hand-written SQL aggregate. That used to be two
@@ -695,6 +799,128 @@ def _accounts_rows(conn):
     for v in vendors:
         balance = _entry_balance(_get_vendor_ledger_entries(v['id'], conn=conn))
         rows.append({'id': v['id'], 'name': v['name'], 'role': 'Vendor', 'balance': balance,
+                      'contact': v['contact'], 'email': v['email'], 'address': v['address'], 'credit_limit': v['credit_limit'],
+                      'group': v['category'] or '', 'gstin': v['gstin'], 'status': v['status'] or 'Active'})
+    rows.sort(key=lambda r: r['name'])
+    return rows
+
+def _bulk_balances(conn):
+    """Every party's and vendor's closing balance in a handful of queries instead of ~35 per account.
+    This is a straight re-statement of the arithmetic in _get_party_ledger_entries() /
+    _get_vendor_ledger_entries() (debit - credit summed over every entry), computed from whole tables
+    grouped in Python. test_balance_audit.py and test_load_equivalence compare it with the original
+    per-entity code, so the two can never drift apart unnoticed. Returns ({party_id: balance}, {vendor_id: balance});
+    a vendor linked to a party is included in the vendor dict AND added into that party's balance, exactly as the
+    party ledger merges it."""
+    def groups(sql, key, params=()):
+        out = {}
+        for r in conn.execute(sql, params).fetchall():
+            out.setdefault(r[key], []).append(r)
+        return out
+
+    trip_alloc = {r['trip_id']: r['amt'] or 0 for r in conn.execute(
+        "SELECT pa.trip_id, SUM(pa.amount) AS amt FROM payment_allocations pa JOIN trips t ON pa.trip_id=t.id GROUP BY pa.trip_id").fetchall()}
+    maint_alloc = {r['maintenance_id']: r['amt'] or 0 for r in conn.execute(
+        "SELECT pa.maintenance_id, SUM(pa.amount) AS amt FROM payment_allocations pa JOIN maintenance m ON pa.maintenance_id=m.id GROUP BY pa.maintenance_id").fetchall()}
+    over_alloc = {r['overhead_id']: r['amt'] or 0 for r in conn.execute(
+        "SELECT pa.overhead_id, SUM(pa.amount) AS amt FROM payment_allocations pa JOIN overheads o ON pa.overhead_id=o.id GROUP BY pa.overhead_id").fetchall()}
+    # per payment: what was applied to trips / maintenance / expenses (only rows whose target still exists, like the ledger's JOINs)
+    pay_trip = {r['payment_id']: (r['amt'] or 0, r['n']) for r in conn.execute(
+        "SELECT pa.payment_id, SUM(pa.amount) AS amt, COUNT(*) AS n FROM payment_allocations pa JOIN trips t ON pa.trip_id=t.id GROUP BY pa.payment_id").fetchall()}
+    pay_maint = {r['payment_id']: (r['amt'] or 0, r['n']) for r in conn.execute(
+        "SELECT pa.payment_id, SUM(pa.amount) AS amt, COUNT(*) AS n FROM payment_allocations pa JOIN maintenance m ON pa.maintenance_id=m.id GROUP BY pa.payment_id").fetchall()}
+    pay_over = {r['payment_id']: (r['amt'] or 0, r['n']) for r in conn.execute(
+        "SELECT pa.payment_id, SUM(pa.amount) AS amt, COUNT(*) AS n FROM payment_allocations pa JOIN overheads o ON pa.overhead_id=o.id GROUP BY pa.payment_id").fetchall()}
+
+    # ---------------- vendors
+    vendors = {r['id']: r for r in conn.execute("SELECT id, name, opening_balance, linked_party_id FROM vendors").fetchall()}
+    vbal = {vid: (v['opening_balance'] or 0) for vid, v in vendors.items()}      # opening: debit max(ob,0) - credit max(-ob,0) == ob
+    for m in conn.execute("SELECT id, vendor_id, amount, paid_amount FROM maintenance WHERE vendor_id IS NOT NULL").fetchall():
+        if m['vendor_id'] in vbal:
+            vbal[m['vendor_id']] += max((m['paid_amount'] or 0) - maint_alloc.get(m['id'], 0), 0) - (m['amount'] or 0)
+    for t in conn.execute("""SELECT id, owner_vendor_id, fuel_vendor_id, fuel_amount, driver_adv_vendor_id, driver_adv_amount, owner_rate_type,
+                                    owner_fixed_amount, owner_rate, quantity, paid_to_owner FROM trips
+                             WHERE owner_vendor_id IS NOT NULL OR fuel_vendor_id IS NOT NULL OR driver_adv_vendor_id IS NOT NULL""").fetchall():
+        owner, fv, av = t['owner_vendor_id'], t['fuel_vendor_id'], t['driver_adv_vendor_id']
+        if fv in vbal and (owner is None or owner != fv):          # fuel paid out of the owner's own freight is already inside his Trip Bill
+            vbal[fv] -= (t['fuel_amount'] or 0)
+        if av in vbal and (owner is None or owner != av):
+            vbal[av] -= (t['driver_adv_amount'] or 0)
+        if owner in vbal:
+            owed = (t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0))
+            if owed:
+                vbal[owner] += max((t['paid_to_owner'] or 0) - trip_alloc.get(t['id'], 0), 0) - owed
+                if fv != owner and t['fuel_amount']:
+                    vbal[owner] += t['fuel_amount']
+                if av != owner and t['driver_adv_amount']:
+                    vbal[owner] += t['driver_adv_amount']
+    for r in conn.execute("SELECT ii.vendor_id, ii.amount FROM invoice_items ii JOIN trips t ON ii.trip_id=t.id WHERE ii.vendor_id IS NOT NULL").fetchall():
+        if r['vendor_id'] in vbal:
+            vbal[r['vendor_id']] -= (r['amount'] or 0)
+    for r in conn.execute("SELECT ibi.vendor_id, ibi.amount FROM invoice_batch_items ibi JOIN invoice_batches ib ON ibi.invoice_batch_id=ib.id WHERE ibi.vendor_id IS NOT NULL").fetchall():
+        if r['vendor_id'] in vbal:
+            vbal[r['vendor_id']] -= (r['amount'] or 0)
+    by_name = {}
+    for vid, v in vendors.items():
+        by_name.setdefault((v['name'] or '').strip().lower(), []).append(vid)
+    for o in conn.execute("SELECT id, vendor, amount, COALESCE(status,'Paid') AS status FROM overheads WHERE TRIM(COALESCE(vendor,'')) != ''").fetchall():
+        alloc_o = over_alloc.get(o['id'], 0)
+        if o['status'] != 'Pending' and alloc_o <= 0.004:
+            continue
+        for vid in by_name.get((o['vendor'] or '').strip().lower(), []):
+            vbal[vid] += (max((o['amount'] or 0) - alloc_o, 0) if o['status'] == 'Paid' else 0) - (o['amount'] or 0)
+    for p in conn.execute("SELECT id, vendor_id, amount, allocated_amount FROM payments WHERE vendor_id IS NOT NULL AND payment_type='paid'").fetchall():
+        if p['vendor_id'] not in vbal:
+            continue
+        at, nt = pay_trip.get(p['id'], (0, 0))
+        am, nm = pay_maint.get(p['id'], (0, 0))
+        ao, no = pay_over.get(p['id'], (0, 0))
+        vbal[p['vendor_id']] += at + am + ao
+        leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
+        if leftover > 0.004 or (nt + nm + no) == 0:
+            vbal[p['vendor_id']] += max(leftover, 0)
+
+    # ---------------- parties
+    parties = {r['id']: r for r in conn.execute("SELECT id, opening_balance FROM parties").fetchall()}
+    pbal = {pid: (p['opening_balance'] or 0) for pid, p in parties.items()}
+    for t in conn.execute("SELECT id, party_id, billed_amount, payment_received, party_advance FROM trips WHERE party_id IS NOT NULL").fetchall():
+        if t['party_id'] in pbal:
+            original_received = max((t['payment_received'] or 0) - trip_alloc.get(t['id'], 0), 0)
+            pbal[t['party_id']] += (t['billed_amount'] or 0) - (original_received + (t['party_advance'] or 0))
+    for p in conn.execute("SELECT id, party_id, amount, allocated_amount FROM payments WHERE party_id IS NOT NULL AND payment_type='received'").fetchall():
+        if p['party_id'] not in pbal:
+            continue
+        at, nt = pay_trip.get(p['id'], (0, 0))
+        leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
+        credit = at + (max(leftover, 0) if (leftover > 0.004 or nt == 0) else 0)
+        pbal[p['party_id']] -= credit
+    linked = {}
+    for vid, v in vendors.items():
+        if v['linked_party_id'] is not None and v['linked_party_id'] not in linked:
+            linked[v['linked_party_id']] = vid
+    for pid, vid in linked.items():
+        if pid in pbal:
+            pbal[pid] += vbal[vid]
+    return pbal, vbal
+
+def _accounts_rows(conn):
+    """Shared party+vendor balance list used by the Ledger page, its export, Dashboard, and Business
+    Performance — the same numbers each party's / vendor's own ledger page ends on, now computed for
+    everyone at once by _bulk_balances() (a few queries) instead of building ~250 full ledgers (about
+    9,000 queries, ~4 s with 12,000 trips). _accounts_rows_by_entries() is the original slow
+    implementation, kept so tests can prove the two agree."""
+    parties = conn.execute("""SELECT id, name, contact, email, address, credit_limit, category, gstin, status
+        FROM parties ORDER BY name""").fetchall()
+    vendors = conn.execute("""SELECT id, name, contact, email, address, credit_limit, category, gstin, status
+        FROM vendors WHERE linked_party_id IS NULL ORDER BY name""").fetchall()
+    pbal, vbal = _bulk_balances(conn)
+    rows = []
+    for p in parties:
+        rows.append({'id': p['id'], 'name': p['name'], 'role': 'Party', 'balance': pbal.get(p['id'], 0),
+                      'contact': p['contact'], 'email': p['email'], 'address': p['address'], 'credit_limit': p['credit_limit'],
+                      'group': p['category'] or '', 'gstin': p['gstin'], 'status': p['status'] or 'Active'})
+    for v in vendors:
+        rows.append({'id': v['id'], 'name': v['name'], 'role': 'Vendor', 'balance': vbal.get(v['id'], 0),
                       'contact': v['contact'], 'email': v['email'], 'address': v['address'], 'credit_limit': v['credit_limit'],
                       'group': v['category'] or '', 'gstin': v['gstin'], 'status': v['status'] or 'Active'})
     rows.sort(key=lambda r: r['name'])
@@ -951,7 +1177,7 @@ def dashboard():
     total_revenue, trip_count = dfin['total_revenue'], dfin['trip_count']
     fuel_total, driveradv_total = dfin['fuel_total'], dfin['driveradv_total']
     total_charges_paid, adj_revenue = dfin['total_charges_paid'], dfin['adj_revenue']
-    maint_total, salaries_total, overheads_total = dfin['maint_total'], dfin['salaries_total'], dfin['overheads_total']
+    maint_total, salaries_total = dfin['maint_total'], dfin['salaries_total']
     total_expenses, total_profit = dfin['total_expenses'], dfin['total_profit']
     running_count, idle_count = dfin['running_count'], dfin['idle_count']
     own_vehicle_count, own_idle_count = dfin['own_vehicle_count'], dfin['own_idle_count']
@@ -1616,73 +1842,6 @@ def _rc_cache_ref(vehicle_row, field):
         return None
     return data.get(field)
 
-def _vehicles_permit_fitness_tab(conn):
-    """Vehicle-centric Fitness & Permit compliance tab — same read-only-view-then-edit row
-    interaction as the Insurance tab, but backed by vehicle_compliance (compliance_service.py)
-    instead of a dedicated policies table, and reusing the existing manual-renew route
-    (vehicle_compliance_renew) that already keeps vehicle_compliance and vehicles.*_expiry in
-    sync — so editing here never creates a second, disagreeing source of truth."""
-    vehicle_f = request.args.get('vehicle', '')
-    status_f = request.args.get('status', '')
-
-    veh_rows = conn.execute("""SELECT id, vehicle_no, type, fitness_expiry, permit_valid_upto,
-                               rc_synced_data, rc_last_synced FROM vehicles
-                               WHERE type IS NOT NULL AND type = 'own' ORDER BY vehicle_no""").fetchall()
-    comp_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
-
-    # 'Cancelled' is Insurance-only (refresh_compliance()'s own status_override check — see that
-    # function's comment) but lives in this one shared dict since every *_colors lookup below is
-    # keyed by whatever status string a compliance type's own status happens to be; Fitness/PUC/
-    # Permit never produce 'Cancelled' today, so this entry is simply never reached for those.
-    comp_colors = {'Valid': ('#e8f5ee', 'var(--green)'), 'Expiring Soon': ('#fff3e8', 'var(--accent)'),
-                   'Expired': ('#fdecea', 'var(--red)'), 'Cancelled': ('#fdecea', 'var(--red)'),
-                   'Unknown': ('var(--paper)', 'var(--steel)')}
-
-    rows = []
-    for v in veh_rows:
-        comp = comp_by_vehicle.get(v['id'])
-        fitness = comp['fitness'] if comp else {'status': 'Unknown', 'expiry': v['fitness_expiry'], 'days_left': None, 'document_number': None}
-        permit = comp['permit'] if comp else {'status': 'Unknown', 'expiry': v['permit_valid_upto'], 'days_left': None, 'document_number': None, 'permit_subtype': None}
-        worst_status = 'Expired' if 'Expired' in (fitness['status'], permit['status']) else \
-                       'Expiring Soon' if 'Expiring Soon' in (fitness['status'], permit['status']) else \
-                       fitness['status'] if fitness['status'] == permit['status'] else 'Unknown'
-        rows.append({
-            'id': v['id'], 'vehicle_no': v['vehicle_no'], 'type': v['type'],
-            'fitness': fitness, 'permit': permit, 'worst_status': worst_status,
-            'rc_fit_upto': _rc_cache_ref(v, 'rc_fit_upto'), 'rc_permit_valid_upto': _rc_cache_ref(v, 'rc_permit_valid_upto'),
-            'rc_last_synced': v['rc_last_synced'],
-        })
-
-    if vehicle_f:
-        rows = [r for r in rows if r['vehicle_no'] == vehicle_f]
-    if status_f:
-        rows = [r for r in rows if r['worst_status'] == status_f]
-
-    total_count = len(veh_rows)
-    fitness_expiring = sum(1 for r in rows if r['fitness']['status'] == 'Expiring Soon')
-    permit_expiring = sum(1 for r in rows if r['permit']['status'] == 'Expiring Soon')
-    expired_count = sum(1 for r in rows if r['worst_status'] == 'Expired')
-
-    all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
-
-    total_pages_count = len(rows)
-    page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_pages_count,
-                                             per_page_options=(10, 25, 50, 100), default_per_page=10)
-    page_rows = rows[(page - 1) * per_page: page * per_page]
-    page_tokens = _page_tokens(page, total_pages)
-    from urllib.parse import urlencode
-    base_params = request.args.to_dict()
-    base_params.pop('page', None)
-    base_params.pop('per_page', None)
-    base_qs = urlencode(base_params)
-
-    conn.close()
-    return render_template('vehicles_list.html', tab='permit', rows=page_rows, comp_colors=comp_colors,
-                            f_vehicle=vehicle_f, f_status=status_f, all_vehicle_nos=all_vehicle_nos,
-                            active='vehicles', total_vehicles_tracked=total_count,
-                            fitness_expiring=fitness_expiring, permit_expiring=permit_expiring, expired_count=expired_count,
-                            page=page, per_page=per_page, total_pages=total_pages, page_tokens=page_tokens, base_qs=base_qs)
-
 @app.route('/vehicles')
 def vehicles_list():
     # The old Insurance / Permit & Fitness sub-tabs on this list page are gone — that detail
@@ -1886,9 +2045,6 @@ def _employee_attendance_stats(conn, employee_id, date_from, date_to):
     pct = round((present + 0.5 * half) / working * 100, 1) if working else None
     return {'present': present, 'absent': absent, 'leave': leave, 'half_day': half,
             'working_days': working, 'pct': pct}
-
-def _current_month_key():
-    return datetime.date.today().strftime('%Y-%m')
 
 def _employee_month_calendar(conn, employee_id, month_key):
     """Weeks of 7 day-cells (Mon-Sun, blank-padded) for the attendance drawer's calendar grid,
@@ -2102,16 +2258,6 @@ def _employees_salary_tab(conn):
         page=page, total_pages=total_pages, per_page=per_page, page_tokens=page_tokens, base_qs=base_qs,
         f_date_from=d['f_date_from'], f_date_to=d['f_date_to'], roles=d['roles'], f_role=d['f_role'], f_search=d['f_search'],
         active='salaries')
-
-def _recent_month_keys(n):
-    out = []
-    y, m = datetime.date.today().year, datetime.date.today().month
-    for i in range(n):
-        mm = m - i; yy = y
-        while mm <= 0:
-            mm += 12; yy -= 1
-        out.append({'key': f"{yy:04d}-{mm:02d}", 'label': f"{calendar.month_name[mm]} {yy}"})
-    return out
 
 def _employees_attendance_tab(conn):
     default_from = datetime.date.today().replace(day=1).isoformat()
@@ -4275,18 +4421,6 @@ def _insurance_status(p):
     if (exp - today).days <= 30:
         return 'Expiring Soon'
     return 'Active'
-
-def _insurance_enrich(p):
-    d = dict(p)
-    d['status'] = _insurance_status(p)
-    d['days_to_expiry'] = None
-    if p['expiry_date']:
-        try:
-            exp = datetime.datetime.strptime(p['expiry_date'], '%Y-%m-%d').date()
-            d['days_to_expiry'] = (exp - datetime.date.today()).days
-        except ValueError:
-            pass
-    return d
 
 def _save_insurance_doc(file_storage, prefix, company_id=1):
     """company_id defaults to 1 — see the note on _save_toll_receipt above, same reasoning."""
@@ -7373,25 +7507,16 @@ def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
     formula the standalone Employee Ledger page has always used, now reusable from the Employees
     module's drawers too instead of only living on that separate page."""
     date_from, date_to = _normalized_date_range(date_from, date_to)
+    # The WHOLE history is always read, so every row's running "Advance Balance" and the "Advance outstanding"
+    # figure are true balances. Only the rows SHOWN (and the salary total) are limited to the date range.
+    # (It used to read only the rows inside the range, so a one-month view restarted the balance from the
+    # opening balance and disagreed with the Salary tab: e.g. 9,000 for March when 13,000 was really outstanding.)
     # COALESCE(date, payment_date, substr(created_at,1,10)) rather than a bare `date` column --
     # a salary row can have a NULL `date` (e.g. one left over from the old bulk-generate flow
-    # that's since been removed) while still genuinely being paid on a real payment_date. A plain
-    # `date >= ? AND date <= ?` filter never matches SQL NULL, so a real paid salary with a NULL
-    # `date` would silently vanish from any date-range-filtered view of this ledger -- this
-    # coalesce is the fix, applied to both the WHERE filter and the value returned as 'date' below
-    # so filtering and display always agree on which real date a row is treated as falling on.
-    sal_query = ("SELECT COALESCE(date, payment_date, substr(created_at,1,10)) as date, amount, created_at "
-                 "FROM salaries WHERE employee=? COLLATE NOCASE")
-    sal_params = [employee_name]
-    if date_from: sal_query += " AND COALESCE(date, payment_date, substr(created_at,1,10)) >= ?"; sal_params.append(date_from)
-    if date_to: sal_query += " AND COALESCE(date, payment_date, substr(created_at,1,10)) <= ?"; sal_params.append(date_to)
-    salaries = conn.execute(sal_query, sal_params).fetchall()
-
-    adv_query = "SELECT date, amount, type, notes, created_at FROM advances WHERE employee=? COLLATE NOCASE"
-    adv_params = [employee_name]
-    if date_from: adv_query += " AND date >= ?"; adv_params.append(date_from)
-    if date_to: adv_query += " AND date <= ?"; adv_params.append(date_to)
-    advances = conn.execute(adv_query, adv_params).fetchall()
+    # that's since been removed) while still genuinely being paid on a real payment_date.
+    salaries = conn.execute("SELECT COALESCE(date, payment_date, substr(created_at,1,10)) as date, amount, created_at "
+                            "FROM salaries WHERE employee=? COLLATE NOCASE", (employee_name,)).fetchall()
+    advances = conn.execute("SELECT date, amount, type, notes, created_at FROM advances WHERE employee=? COLLATE NOCASE", (employee_name,)).fetchall()
     emp_row = conn.execute("SELECT opening_balance, opening_balance_date FROM employees WHERE name=? COLLATE NOCASE",
                            (employee_name,)).fetchone()
 
@@ -7401,10 +7526,12 @@ def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
         entries.append({'date': emp_row['opening_balance_date'] or '', 'entry_type': 'Opening Balance',
                          'debit': max(ob, 0), 'credit': max(-ob, 0), 'notes': 'Carried over balance',
                          'created_at': '', 'affects_advance': True})
-    for s in salaries:
-        if s['amount']:
-            entries.append({'date': s['date'], 'entry_type': 'Salary Paid', 'debit': 0, 'credit': s['amount'] or 0,
-                             'notes': '', 'created_at': s['created_at'], 'affects_advance': False})
+    # Salary is a payment of wages — it NEVER changes the advance balance (affects_advance=False). Only the
+    # opening balance, "Advance Given" and "Advance Repaid" move it.
+    for s_ in salaries:
+        if s_['amount']:
+            entries.append({'date': s_['date'], 'entry_type': 'Salary Paid', 'debit': 0, 'credit': s_['amount'] or 0,
+                             'notes': '', 'created_at': s_['created_at'], 'affects_advance': False})
     for a in advances:
         if a['type'] == 'given':
             entries.append({'date': a['date'], 'entry_type': 'Advance Given', 'debit': a['amount'] or 0, 'credit': 0,
@@ -7415,14 +7542,25 @@ def _employee_ledger_entries(conn, employee_name, date_from='', date_to=''):
     entries.sort(key=lambda e: e['date'] or '')
 
     advance_balance = 0
+    brought_forward = 0
+    closing = 0
     for e in entries:
         if e['affects_advance']:
             advance_balance += e['debit'] - e['credit']
         e['running_advance_balance'] = advance_balance
-    entries.reverse()
+        d = e['date'] or ''
+        if e['affects_advance'] and date_from and d < date_from:
+            brought_forward = advance_balance
+        if e['affects_advance'] and (not date_to or d <= date_to):
+            closing = advance_balance
 
-    total_salary_paid = sum(e['credit'] for e in entries if e['entry_type'] == 'Salary Paid')
-    return {'entries': entries, 'advance_balance': advance_balance, 'total_salary_paid': total_salary_paid,
+    def in_range(e):
+        d = e['date'] or ''
+        return (not date_from or d >= date_from) and (not date_to or d <= date_to)
+    shown = [e for e in entries if in_range(e)]
+    shown.reverse()
+    total_salary_paid = sum(e['credit'] for e in shown if e['entry_type'] == 'Salary Paid')
+    return {'entries': shown, 'advance_balance': closing, 'brought_forward': brought_forward, 'total_salary_paid': total_salary_paid,
             'opening_balance': emp_row['opening_balance'] if emp_row else 0,
             'opening_balance_date': emp_row['opening_balance_date'] if emp_row else ''}
 
@@ -7469,7 +7607,6 @@ def _insert_employee_payment_from_form(conn, employee, f):
 
 @app.route('/employee/<employee>', methods=['GET', 'POST'])
 def employee_ledger(employee):
-    import datetime
     conn = get_db()
     if request.method == 'POST':
         f = request.form
@@ -7486,7 +7623,7 @@ def employee_ledger(employee):
     led = _employee_ledger_entries(conn, employee, date_from, date_to)
     conn.close()
     return render_template('employee_ledger.html', employee=employee, entries=led['entries'],
-                            advance_balance=led['advance_balance'], total_salary_paid=led['total_salary_paid'],
+                            advance_balance=led['advance_balance'], brought_forward=led['brought_forward'], total_salary_paid=led['total_salary_paid'],
                             opening_balance=led['opening_balance'],
                             opening_balance_date=led['opening_balance_date'],
                             f_date_from=date_from, f_date_to=date_to, from_tab=from_tab, active='salaries')
@@ -8209,7 +8346,6 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.lib import colors
-    from reportlab.lib.utils import ImageReader
     import io, os
 
     # Per-trip, per-field toggle from Invoice Center's "Trip Charges & Costs" popup — a trip's own
@@ -8348,14 +8484,12 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     tagline_style = ParagraphStyle('TL', parent=styles['Normal'], fontSize=7.5, textColor=GREY, leading=10)
     sub_style = ParagraphStyle('S', parent=styles['Normal'], fontSize=8, textColor=GREY, leading=11)
     label_style = ParagraphStyle('L', parent=styles['Normal'], fontSize=8.5, textColor=GREY, leading=12)
-    title_box_style = ParagraphStyle('TB', parent=styles['Heading2'], fontSize=14, textColor=BLACK, alignment=1)
     section_head_style = ParagraphStyle('SH', parent=styles['Normal'], fontSize=8.5, textColor=BLACK, fontName='Helvetica-Bold')
     # Table-cell text that can genuinely run long in real data (route names, material
     # descriptions, LR numbers) — wrapped in Paragraph so it wraps inside its column instead of
     # overflowing into the next cell, which is the exact "long text overriding other text" bug
     # plain strings in a reportlab Table cell cause.
     cell_style = ParagraphStyle('CE', parent=styles['Normal'], fontSize=7.3, textColor=BLACK, leading=9)
-    cell_label_style = ParagraphStyle('CL', parent=styles['Normal'], fontSize=8.3, textColor=GREY, leading=10.5)
     cell_val_style = ParagraphStyle('CV', parent=styles['Normal'], fontSize=8.3, textColor=BLACK, leading=10.5)
     def cell(text):
         """Wrap any table-cell value that might be long real data (route names, material,
@@ -8688,9 +8822,32 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             ('BACKGROUND',(0,-1),(-1,-1),colors.HexColor('#E8F5E9')), ('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'),
             ('FONTSIZE',(0,-1),(-1,-1),10.5), ('TEXTCOLOR',(1,-1),(1,-1),colors.HexColor('#2E7D32')),
         ]))
-        combo = Table([[left_col, '', right_stack]], colWidths=[COMBO_L, COMBO_GAP, COMBO_R])
-        combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'), ('LEFTPADDING',(1,0),(1,-1),0), ('RIGHTPADDING',(1,0),(1,-1),0)]))
-        story.append(combo)
+        if left_col and len(addl_rows) > 14:
+            # Many extra charge lines (e.g. an invoice for 200 trips that each carry a detention line): the
+            # side-by-side layout is ONE table row, and a single row cannot be split across pages — ReportLab
+            # raised LayoutError and the invoice failed with a 500. Stack the pieces full-width instead so the
+            # charges table flows (and repeats its header) over as many pages as it needs.
+            wide = Table(addl_rows, colWidths=[CONTENT_W - 3.2*inch, 1.2*inch, 2.0*inch], repeatRows=1)
+            wide.setStyle(TableStyle([
+                ('BACKGROUND',(0,0),(-1,0), colors.HexColor('#EEEEEE')), ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
+                ('FONTSIZE',(0,0),(-1,-1),8), ('ALIGN',(2,0),(2,-1),'RIGHT'), ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#DDDDDD')),
+                ('TOPPADDING',(0,0),(-1,-1),3.5), ('BOTTOMPADDING',(0,0),(-1,-1),3.5),
+            ]))
+            wide_head = Table([[Paragraph('<b>ADDITIONAL CHARGES (SUMMARY)</b>', section_head_style)]], colWidths=[CONTENT_W])
+            wide_head.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('BOX',(0,0),(-1,-1),0.5,LINE),
+                                            ('TOPPADDING',(0,0),(-1,-1),5), ('BOTTOMPADDING',(0,0),(-1,-1),5), ('LEFTPADDING',(0,0),(-1,-1),8)]))
+            wide_tot = Table([['TOTAL ADDITIONAL CHARGES', f"{multi_additional_total:,.2f}"]], colWidths=[CONTENT_W - 2.0*inch, 2.0*inch])
+            wide_tot.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),LIGHTBG), ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
+                                           ('FONTSIZE',(0,0),(-1,-1),8.5), ('ALIGN',(1,0),(1,-1),'RIGHT'), ('BOX',(0,0),(-1,-1),0.5,LINE),
+                                           ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
+            story.extend([wide_head, wide, wide_tot, Spacer(1, 10)])
+            combo = Table([['', right_stack]], colWidths=[CONTENT_W - COMBO_R, COMBO_R])
+            combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'), ('LEFTPADDING',(0,0),(0,0),0), ('RIGHTPADDING',(0,0),(0,0),0)]))
+            story.append(combo)
+        else:
+            combo = Table([[left_col, '', right_stack]], colWidths=[COMBO_L, COMBO_GAP, COMBO_R])
+            combo.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'), ('LEFTPADDING',(1,0),(1,-1),0), ('RIGHTPADDING',(1,0),(1,-1),0)]))
+            story.append(combo)
 
     if invoice_type == 'vehicle_owner' and total_already_given:
         deduction_rows = [['Gross Bill Amount', f"Rs. {grand_total:,.2f}"]]
@@ -8819,6 +8976,15 @@ def invoice_center_generate():
     place_of_supply = f.get('place_of_supply') or ''
     remarks = f.get('remarks') or ''
     payment_status = f.get('payment_status') or 'PENDING'
+    # Saving an invoice (generate / draft) requires that the user opened the LR link of EVERY selected trip to
+    # review its charges (Invoice Center posts reviewed_trip_ids). Preview is exempt.
+    if mode in ('generate', 'draft'):
+        reviewed = set(f.getlist('reviewed_trip_ids'))
+        unreviewed = [tid for tid in trip_ids if tid not in reviewed]
+        if unreviewed:
+            return redirect(url_for('invoice_center', invoice_type=invoice_type or 'party', party_id=party_id or '', vendor_id=vendor_id or '',
+                                    inv_error=f"{'Generate' if mode == 'generate' else 'Save as Draft'} cannot be done until the charges of every selected trip are reviewed (click each LR number). "
+                                              f"{len(unreviewed)} trip(s) not reviewed."))
     num_error = _invoice_numbers_error(f)
     if num_error:
         return redirect(url_for('invoice_center', invoice_type=invoice_type or 'party', inv_error=num_error))
@@ -8891,7 +9057,6 @@ def invoice_center_generate():
         conn.close()
         return send_file(buf, download_name=f'preview-{invoice_number.replace("/","-")}.pdf', mimetype='application/pdf')
 
-    now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
     audit_now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     status = 'draft' if mode == 'draft' else 'generated'
     cur = conn.execute("""INSERT INTO invoice_batches (invoice_number, invoice_type, party_id, vendor_id, invoice_date, due_date,
@@ -9267,7 +9432,7 @@ def invoice_pdf(trip_id):
     story.append(line_table)
     story.append(Spacer(1, 14))
 
-    story.append(Paragraph(f"<b>INVOICE</b>", styles['Heading2']))
+    story.append(Paragraph("<b>INVOICE</b>", styles['Heading2']))
     story.append(Spacer(1, 8))
 
     info_data = [
@@ -9513,12 +9678,18 @@ def require_login():
     # ---- user access level, read from the database on EVERY request so that an admin changing someone
     # to Read Only (or deactivating them) takes effect immediately, not at their next login.
     _conn = get_db()
-    _u = _conn.execute("SELECT access_level, status FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    _u = _conn.execute("SELECT access_level, status, role FROM users WHERE id=?", (session['user_id'],)).fetchone()
     _conn.close()
     if _u is None or (_u['status'] or 'Active') == 'Inactive':
         session.clear()
         return redirect(url_for('app_login') if in_app_section else url_for('login'))
     g.access_level = _u['access_level'] or 'Full Access'
+    g.user_role = (_u['role'] or '').strip()
+    # "Administrator" = the ROLE, not the Full Access level: a Manager can have Full Access to every operation
+    # (trips, ledger, invoices...) and still must not see or change company settings, other users or the user log.
+    g.is_administrator = g.user_role.lower() == 'administrator'
+    if not g.is_administrator and (request.endpoint in _ADMIN_ONLY_ENDPOINTS or (request.endpoint == 'settings_page' and request.method == 'POST')):
+        return _admin_only_denied()
     if g.access_level == 'Read Only' and request.method not in ('GET', 'HEAD', 'OPTIONS') and not _read_only_may_post():
         return _read_only_denied()
 
@@ -9526,10 +9697,24 @@ def require_login():
 # These POSTs only READ (or change the user's own password), so a Read Only user may still use them.
 _READ_ONLY_POST_ALLOWED = {
     'app_change_password',        # their own password — not business data
+    'website_change_password',    # same, from the website's My Profile page
     'invoice_center_review',      # renders the review screen, writes nothing
     'toll_excel_preview',         # previews an import file, writes nothing
     'route_finder_extras',        # live map lookups
 }
+
+# Only an Administrator may touch these: the user list, user create/edit/delete/export, and company settings.
+_ADMIN_ONLY_ENDPOINTS = {'add_user', 'edit_user', 'update_user_phone', 'delete_user', 'export_users', 'upload_company_logo'}
+
+def _admin_only_denied():
+    message = 'Only an Administrator can do this. You can view and update your own profile from Profile & Settings.'
+    app.logger.info('Non-administrator user %s blocked from %s %s', session.get('user_id'), request.method, request.path)
+    wants_html = 'text/html' in (request.headers.get('Accept') or '')
+    if (request.path.startswith('/app/') and not wants_html) or 'application/json' in (request.headers.get('Accept') or ''):
+        return jsonify({'ok': False, 'error': message}), 403
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>Administrators only</title><body style="font-family:system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1rem;line-height:1.5">'
+            f'<h2>Administrators only</h2><p>{message}</p><p><a href="/settings">Go to my profile</a></p></body>', 403)
 
 def _read_only_may_post():
     if request.endpoint in _READ_ONLY_POST_ALLOWED:
@@ -9555,7 +9740,9 @@ def _read_only_denied():
 def inject_access_level():
     """`read_only` is True for a Read Only user — templates can use it to hide write controls."""
     level = getattr(g, 'access_level', None)
-    return {'access_level_now': level, 'read_only': level == 'Read Only'}
+    role = getattr(g, 'user_role', '') or ''
+    return {'access_level_now': level, 'read_only': level == 'Read Only',
+            'is_administrator': bool(getattr(g, 'is_administrator', False)), 'user_role_label': role or 'Staff'}
 
 _READ_ONLY_PAGE_SNIPPET = r'''
 <style id="ro-style">
@@ -9567,7 +9754,7 @@ _READ_ONLY_PAGE_SNIPPET = r'''
 <script>
 (function(){
   var MSG='View-only access: you can see everything, but you cannot add, change or delete anything.';
-  var ALLOW=/\/profile\/change-password|\/invoice-center\/review|\/invoice-center\/generate|\/toll\/excel\/preview|\/route-finder\//;
+  var ALLOW=/\/profile\/change-password|\/settings\/my-password|\/invoice-center\/review|\/invoice-center\/generate|\/toll\/excel\/preview|\/route-finder\//;
   function toast(){var t=document.getElementById('ro-toast');if(!t)return;t.textContent=MSG;t.style.display='block';clearTimeout(window.__roT);window.__roT=setTimeout(function(){t.style.display='none'},3500);}
   var f=window.fetch;
   if(f){window.fetch=function(u,o){var m=((o&&o.method)||'GET').toUpperCase();var url=(typeof u==='string'?u:(u&&u.url)||'');
@@ -9777,6 +9964,70 @@ MODULE_LIST = ['Dashboard', 'Trips', 'Maintenance', 'Vehicles', 'Invoices', 'Pay
                'Ledger', 'Reports', 'Settings', 'User Management', 'Expenses', 'Salaries']
 ROLE_SUGGESTIONS = ['Administrator', 'Manager', 'Operations Head', 'Accountant', 'Supervisor', 'Driver']
 
+def _update_own_profile(conn, user_id, f):
+    """A user editing THEIR OWN name / email / mobile — nothing else (role, access level, status and password are an
+    Administrator's / the password flow's business). Returns (ok, error_or_None). Does not commit."""
+    full_name = (f.get('full_name') or '').strip()
+    email = (f.get('email') or '').strip() or None
+    phone = (f.get('phone') or '').strip() or None
+    if not full_name:
+        return False, 'Full Name is required.'
+    if phone and not USERNAME_MOBILE_RE.match(phone):
+        return False, 'Mobile Number must be a valid 10-digit Indian mobile number.'
+    if email and not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+        return False, 'Email is not valid.'
+    dup = _duplicate_user_contact(conn, phone, email, exclude_user_id=user_id)
+    if dup:
+        return False, dup
+    conn.execute("UPDATE users SET full_name=?, email=?, phone=?, updated_by=?, updated_at=? WHERE id=?",
+                 (full_name, email, phone, user_id, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+    return True, None
+
+def _change_own_password(conn, user_id, f):
+    """Self-service password change (current password verified first). Returns (ok, error_or_None). Does not commit."""
+    from werkzeug.security import check_password_hash, generate_password_hash
+    current_pw, new_pw, confirm_pw = f.get('current_password') or '', f.get('new_password') or '', f.get('confirm_password') or ''
+    if not current_pw or not new_pw:
+        return False, 'All fields are required.'
+    if new_pw != confirm_pw:
+        return False, 'New password and confirmation do not match.'
+    if len(new_pw) < 6:
+        return False, 'New password must be at least 6 characters.'
+    user = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+    if not user or not check_password_hash(user['password_hash'], current_pw):
+        return False, 'Current password is incorrect.'
+    conn.execute("UPDATE users SET password_hash=?, updated_by=?, updated_at=? WHERE id=?",
+                 (generate_password_hash(new_pw), user_id, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+    return True, None
+
+def _render_my_profile(conn, message=None, error=None):
+    u = conn.execute("SELECT username, full_name, phone, email, role, access_level, status, created_at, last_login FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    conn.close()
+    return render_template('profile_self.html', u=u, message=message, error=error, active='settings')
+
+@app.route('/settings/my-profile', methods=['POST'])
+def website_update_my_profile():
+    conn = get_db()
+    ok, err = _update_own_profile(conn, session['user_id'], request.form)
+    if ok:
+        conn.commit()
+    return _render_my_profile(conn, message='Profile updated.' if ok else None, error=err)
+
+@app.route('/settings/my-password', methods=['POST'])
+def website_change_password():
+    conn = get_db()
+    ok, err = _change_own_password(conn, session['user_id'], request.form)
+    if ok:
+        conn.commit()
+    return _render_my_profile(conn, message='Password changed.' if ok else None, error=err)
+
+def _administrator_count(conn, exclude_user_id=None):
+    q = "SELECT COUNT(*) FROM users WHERE LOWER(TRIM(COALESCE(role,'')))='administrator' AND COALESCE(status,'Active')!='Inactive'"
+    p = []
+    if exclude_user_id is not None:
+        q += " AND id != ?"; p.append(exclude_user_id)
+    return conn.execute(q, p).fetchone()[0]
+
 def _users_with_stats(conn):
     rows = conn.execute("""SELECT * FROM users ORDER BY
                            CASE access_level WHEN 'Full Access' THEN 0 WHEN 'Read Only' THEN 1 ELSE 2 END,
@@ -9792,6 +10043,10 @@ def _users_with_stats(conn):
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_page():
     conn = get_db()
+    if not g.is_administrator:
+        # Everyone who is not an Administrator sees ONLY their own profile here — no company details, bank/API keys,
+        # user list or user log (a POST from a non-administrator is refused in require_login()).
+        return _render_my_profile(conn)
     if request.method == 'POST':
         form_type = request.form.get('form_type')
         field_groups = {
@@ -9974,6 +10229,10 @@ def edit_user(user_id):
     dup = _duplicate_user_contact(conn, phone, email, exclude_user_id=user_id)
     if dup:
         return _render_settings_users_error(conn, dup, reopen_edit_user_id=user_id)
+    old = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
+    new_is_admin = (f.get('role') or '').strip().lower() == 'administrator' and (f.get('status') or 'Active') != 'Inactive'
+    if old and (old['role'] or '').strip().lower() == 'administrator' and not new_is_admin and _administrator_count(conn, exclude_user_id=user_id) == 0:
+        return _render_settings_users_error(conn, "This is the last active Administrator — keep their role as Administrator and Active, or make someone else an Administrator first.", reopen_edit_user_id=user_id)
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE users SET full_name=?, role=?, phone=?, email=?, access_level=?, module_access=?,
                     status=?, is_admin=?, updated_by=?, updated_at=? WHERE id=?""",
@@ -10009,6 +10268,10 @@ def update_user_phone(user_id):
 @app.route('/settings/users/<int:user_id>/delete', methods=['POST'])
 def delete_user(user_id):
     conn = get_db()
+    target = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
+    if user_id == session.get('user_id') or (target and (target['role'] or '').strip().lower() == 'administrator' and _administrator_count(conn, exclude_user_id=user_id) == 0):
+        # never delete yourself or the last Administrator — nobody would be able to manage users or settings any more
+        return _render_settings_users_error(conn, "You can't delete your own account or the last Administrator.")
     conn.execute("DELETE FROM users WHERE id=?", (user_id,))
     conn.execute("DELETE FROM access_logs WHERE user_id=?", (user_id,))
     conn.commit()
@@ -10430,7 +10693,7 @@ def route_analytics():
     trips = _ra['trips']; route_rows = _ra['route_rows']
     all_from_list = _ra['all_from_list']; all_to_list = _ra['all_to_list']
     total_routes = _ra['total_routes']; total_trips_sel = _ra['total_trips_sel']
-    total_revenue_sel = _ra['total_revenue_sel']; total_cost_sel = _ra['total_cost_sel']
+    total_revenue_sel = _ra['total_revenue_sel']
     avg_margin = _ra['avg_margin']; avg_rate = _ra['avg_rate']
     top5_by_margin = _ra['top5_by_margin']; top5_by_revenue = _ra['top5_by_revenue']
 
@@ -10924,90 +11187,13 @@ def edit_trip(trip_id):
                                         employees=employees, vehicle_type_map=vehicle_type_map,
                                         return_to=f.get('return_to', ''), active='trips', error=error)
 
-        def n(key):
-            return float(f.get(key) or 0)
-
-        # A trip's vehicle is locked at creation — never changeable on a later edit. The Vehicle
-        # No field is read-only in the UI for this same reason (trip_form.html); this is the
-        # server-side backstop for that, same pattern as the Type field's own lock below it.
-        # Wanting a different vehicle on a trip means deleting it and creating a fresh one, not
-        # editing the existing row out from under whatever ledger/invoice entries already
-        # reference it by vehicle_id.
-        vehicle_id = conn.execute("SELECT vehicle_id FROM trips WHERE id=?", (trip_id,)).fetchone()['vehicle_id']
-        trip_type = _resolve_trip_type(conn, vehicle_id, f.get('type'))
-        party_id = get_or_create_party(conn, f.get('party_name'))
-        fuel_vendor_id = get_or_create_vendor(conn, f.get('fuel_vendor'))
-        driveradv_vendor_id = get_or_create_vendor(conn, f.get('driver_adv_vendor'))
-        misc_vendor_id = get_or_create_vendor(conn, f.get('misc_vendor'))
-
-        quantity = n('quantity')
-        guarantee_qty = n('guarantee_qty')
-        rate = n('rate')
-        rate_type = f.get('rate_type')
-        fixed_rate_amount = n('fixed_rate_amount')
-        owner_rate_type = f.get('owner_rate_type') or 'PER_MT'
-        owner_fixed_amount = n('owner_fixed_amount')
-        freight = _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty)
-        # driver_payment ("Driver Bata") no longer has a form field — deliberately left out of both
-        # the recompute and the UPDATE below so an existing trip's historical value is never touched.
-        total_charges = (n('detention_charges')+n('gps_cost')+n('loading_charge')+
-                          n('unloading_charge')+n('police_charges')+n('sim_tracking')+n('union_charges')+
-                          n('weight_charges')+n('other_charges'))
-        total_deductions = (n('brokerage')+n('builty_commission')+n('late_fees')+n('material_damage')+
-                             n('shortage_amount')+n('tds')+n('other_deductions'))
-        billed_amount = freight + total_charges - total_deductions
-
-        owner_vendor_id = get_or_create_vendor(conn, f.get('owner_name')) if f.get('owner_name') else None
-
-        # Floor payment_received/paid_to_owner at whatever a real recorded Payment has already
-        # allocated to this trip — otherwise a plain re-save of this form (stale page, a field
-        # that was never refreshed after a Payment was added elsewhere) silently resets one of
-        # these back down, orphaning it from the payment_allocations row that's still sitting
-        # there. That desync is exactly what made a vendor/party ledger's "Trip Bill" line look
-        # like it was double-subtracting a payment that had actually already been made — see the
-        # floor added in _get_vendor_ledger_entries / _get_party_ledger_entries. This does not
-        # stop the field being *raised* (a genuine new advance typed in here still saves fine),
-        # only stops it being silently lowered below what a real Payment has already recorded.
-        received_floor = conn.execute("""SELECT COALESCE(SUM(pa.amount),0) as amt FROM payment_allocations pa
-                                         JOIN payments p ON pa.payment_id=p.id
-                                         WHERE pa.trip_id=? AND p.payment_type='received' AND p.party_id IS NOT NULL""",
-                                      (trip_id,)).fetchone()['amt']
-        paid_owner_floor = conn.execute("""SELECT COALESCE(SUM(pa.amount),0) as amt FROM payment_allocations pa
-                                           JOIN payments p ON pa.payment_id=p.id
-                                           WHERE pa.trip_id=? AND p.payment_type='paid' AND p.vendor_id IS NOT NULL""",
-                                        (trip_id,)).fetchone()['amt']
-        payment_received_val = max(n('payment_received'), received_floor)
-        paid_to_owner_val = max(n('paid_to_owner'), paid_owner_floor)
-
-        # conductor_expense/wear_tear no longer have form fields — left out of the UPDATE entirely
-        # (not just zeroed) so an existing trip's historical value is never touched, same pattern as
-        # driver_payment above.
-        conn.execute("""UPDATE trips SET
-            date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, guarantee_qty=?, rate=?,
-            driver_name=?, material=?, rate_type=?, billed_amount=?,
-            detention_charges=?, gps_cost=?, loading_charge=?, unloading_charge=?,
-            police_charges=?, sim_tracking=?, union_charges=?, weight_charges=?, other_charges=?,
-            brokerage=?, builty_commission=?, late_fees=?, material_damage=?, shortage_amount=?, shortage_qty=?, tds=?, other_deductions=?,
-            fuel_amount=?, fuel_liters=?, fuel_price=?, driver_adv_amount=?, party_advance=?, payment_received=?, fuel_vendor_id=?, driver_adv_vendor_id=?,
-            owner_name=?, fixed_rate_amount=?, owner_rate=?, owner_rate_type=?, owner_fixed_amount=?, paid_to_owner=?, owner_vendor_id=?,
-            agent_commission=?, builty_expense=?, fine=?, labour_charges=?, parking=?, puncture=?,
-            toll=?, urea=?, loading_expense=?, unloading_expense=?, weighbridge_charges=?, other_expense=?, misc_vendor_id=?,
-            lr_received=?, is_empty=?, updated_by=?, updated_at=?
-            WHERE id=?""",
-            (f.get('date'), f.get('lr_number'), vehicle_id, trip_type, party_id, f.get('from_loc'), f.get('to_loc'),
-             quantity, guarantee_qty, rate, f.get('driver_name'), f.get('material'), rate_type, billed_amount,
-             n('detention_charges'), n('gps_cost'), n('loading_charge'), n('unloading_charge'),
-             n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
-             n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
-             n('shortage_qty'), n('tds'), n('other_deductions'),
-             n('fuel_amount'), f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), n('party_advance'), payment_received_val, fuel_vendor_id, driveradv_vendor_id,
-             f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, paid_to_owner_val, owner_vendor_id,
-             n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
-             n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
-             n('weighbridge_charges'), n('other_expense'), misc_vendor_id,
-             f.get('lr_received') or None, 1 if f.get('is_empty') else 0,
-             session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), trip_id))
-        _save_trip_custom_items(conn, trip_id, f)
+        # The whole recompute-and-UPDATE (billed amount, payment/owner floors, vendors, custom items) lives in
+        # _update_trip_from_form(), the single copy the mobile app also uses — this route used to carry its own
+        # ~100-line duplicate of it, which is exactly how the two once drifted apart.
+        ok, err = _update_trip_from_form(conn, trip_id, f)
+        if not ok:
+            conn.close()
+            return redirect(url_for('trips_list'))
         conn.commit()
         conn.close()
         return_to = f.get('return_to')
@@ -12824,7 +13010,7 @@ def app_employee_ledger(employee):
     return render_template('app/employee_ledger.html', company_name=company_name, user_initials=user_initials,
         active='salaries', notif_count=0, employee=employee,
         entries=page_entries, total_count=total_count, show=show, has_more=has_more,
-        advance_balance=led['advance_balance'], total_salary_paid=led['total_salary_paid'],
+        advance_balance=led['advance_balance'], brought_forward=led['brought_forward'], total_salary_paid=led['total_salary_paid'],
         opening_balance=led['opening_balance'], opening_balance_date=led['opening_balance_date'],
         f_date_from=date_from, f_date_to=date_to, f_search=search_f)
 
@@ -13748,9 +13934,9 @@ def _app_header_context():
         return {}
     return {
         'app_user_name': u['full_name'] or u['username'],
-        'app_user_role': 'Administrator' if session.get('is_admin') else (u['role'] or 'Staff'),
+        'app_user_role': (u['role'] or '').strip() or 'Staff',
         'app_user_email': u['email'] or '',
-        'app_is_admin': bool(session.get('is_admin')),
+        'app_is_admin': (u['role'] or '').strip().lower() == 'administrator',
     }
 
 @app.route('/app/profile')
@@ -13779,9 +13965,9 @@ def app_profile():
     return render_template('app/profile.html', company_name=company_name, user_initials=user_initials,
         active='profile', notif_count=0,
         full_name=u['full_name'] or u['username'].upper(), username=u['username'], phone=u['phone'] or '',
-        email=u['email'] or '', role_label='Administrator' if session.get('is_admin') else (u['role'] or 'Staff'),
+        email=u['email'] or '', role_label=(u['role'] or '').strip() or 'Staff',
         access_level=u['access_level'] or '', status=u['status'] or 'Active', member_since=member_since,
-        is_admin=bool(session.get('is_admin')))
+        is_admin=bool(getattr(g, 'is_administrator', False)))
 
 @app.route('/app/profile/update', methods=['POST'])
 def app_update_profile():
@@ -13796,16 +13982,11 @@ def app_update_profile():
     from flask import jsonify
     if not session.get('user_id'):
         return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
-    f = request.form
-    full_name = (f.get('full_name') or '').strip()
-    email = (f.get('email') or '').strip()
-    phone = (f.get('phone') or '').strip()
-    if not full_name:
-        return jsonify({'ok': False, 'error': 'Full Name is required.'}), 400
     conn = get_db()
-    conn.execute("""UPDATE users SET full_name=?, email=?, phone=?, updated_by=?, updated_at=? WHERE id=?""",
-                 (full_name, email or None, phone or None, session['user_id'],
-                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), session['user_id']))
+    ok, err = _update_own_profile(conn, session['user_id'], request.form)
+    if not ok:
+        conn.close()
+        return jsonify({'ok': False, 'error': err}), 400
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'redirect': url_for('app_profile')})
@@ -13819,27 +14000,13 @@ def app_change_password():
     field is optional with zero validation), so this doesn't invent a stricter bar than the rest
     of the app already holds itself to."""
     from flask import jsonify
-    from werkzeug.security import check_password_hash, generate_password_hash
     if not session.get('user_id'):
         return jsonify({'ok': False, 'error': 'Session expired — please log in again.'}), 401
-    f = request.form
-    current_pw = f.get('current_password') or ''
-    new_pw = f.get('new_password') or ''
-    confirm_pw = f.get('confirm_password') or ''
-    if not current_pw or not new_pw:
-        return jsonify({'ok': False, 'error': 'All fields are required.'}), 400
-    if new_pw != confirm_pw:
-        return jsonify({'ok': False, 'error': 'New password and confirmation do not match.'}), 400
-    if len(new_pw) < 6:
-        return jsonify({'ok': False, 'error': 'New password must be at least 6 characters.'}), 400
     conn = get_db()
-    user = conn.execute("SELECT password_hash FROM users WHERE id=?", (session['user_id'],)).fetchone()
-    if not user or not check_password_hash(user['password_hash'], current_pw):
+    ok, err = _change_own_password(conn, session['user_id'], request.form)
+    if not ok:
         conn.close()
-        return jsonify({'ok': False, 'error': 'Current password is incorrect.'}), 400
-    conn.execute("UPDATE users SET password_hash=?, updated_by=?, updated_at=? WHERE id=?",
-                 (generate_password_hash(new_pw), session['user_id'],
-                  datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), session['user_id']))
+        return jsonify({'ok': False, 'error': err}), 400
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
