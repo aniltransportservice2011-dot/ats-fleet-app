@@ -2,8 +2,10 @@
    templates/partials/_route_finder.html for the markup and the data-* settings this reads).
 
    Flow: Search -> /route-finder/search (places + routes, fast) -> draw map and route cards ->
-   for the selected route, /route-finder/extras (toll plazas + towns, slower, fetched lazily and
-   only once per route). All text that came from OpenStreetMap is escaped before it touches the DOM. */
+   for the selected route, /route-finder/extras in three parts, one after another and only once per route:
+   'places' (cities and towns from the server's built-in list — instant), then 'tolls' and 'fuel' (petrol
+   pumps + landmarks) from the slow free OpenStreetMap server. Each part fills in when it arrives and a
+   failure of one hides only its own numbers. All text that came from OpenStreetMap is escaped before it touches the DOM. */
 (function () {
   'use strict';
 
@@ -485,6 +487,15 @@
     return 'loading';
   };
 
+  // Toll plazas and petrol pumps arrive after the towns, each on its own: 'loading' until they answer,
+  // 'ok' with the list, or 'failed' (then the towns and route still show). kind = 'toll' | 'fuel'.
+  Finder.prototype.facStatus = function (i, kind) {
+    var x = this.state.extras[i];
+    if (!x) return 'loading';
+    if (x.failed) return 'failed';
+    return x[kind + 'St'] || 'ok';
+  };
+
   // The ordered stops: start, the major towns the lookup found, end — each with the highway it is on,
   // its elapsed driving time, and the toll plazas / petrol pumps mapped on the stretch leading to it.
   Finder.prototype.buildStops = function () {
@@ -560,8 +571,8 @@
       tile('dist', 'map', 'Distance', esc(fmtKm(r.distance_km))) +
       tile('time', 'clock', 'Drive time', esc(fmtTime(r.duration_min))) +
       tile('road', 'road', 'Highways', nRoads || '—') +
-      tile('toll', 'toll', 'Toll plazas', facTile(status, x.tolls || [])) +
-      tile('fuel', 'fuel', 'Petrol pumps', facTile(status, x.fuels || [])) +
+      tile('toll', 'toll', 'Toll plazas', facTile(this.facStatus(st.sel, 'toll'), x.tolls || [])) +
+      tile('fuel', 'fuel', 'Petrol pumps', facTile(this.facStatus(st.sel, 'fuel'), x.fuels || [])) +
       '</div>' + histHtml;
   };
 
@@ -576,10 +587,14 @@
       if (s.kind !== 'start') {
         if (status === 'loading') chips += '<span class="rf-sk"></span>';
         else if (status === 'ok') {
-          chips += s.fuels.length ? '<span class="rf-fac fuel" title="' + s.fuels.length + ' petrol pump(s) mapped since the previous stop">' + ic('fuel') + s.fuels.length + '</span>'
-                                  : '<span class="rf-fac dim" title="None mapped since the previous stop">' + ic('fuel') + '—</span>';
-          chips += s.tolls.length ? '<span class="rf-fac toll" title="' + s.tolls.length + ' toll plaza(s) mapped since the previous stop">' + ic('toll') + s.tolls.length + '</span>'
-                                  : '<span class="rf-fac dim" title="None mapped since the previous stop">' + ic('toll') + '—</span>';
+          var fsF = self.facStatus(st.sel, 'fuel'), fsT = self.facStatus(st.sel, 'toll');
+          var chip = function (fs, list, kind, label) {
+            if (fs === 'loading') return '<span class="rf-sk"></span>';
+            if (fs === 'failed') return '<span class="rf-fac dim" title="Could not be looked up right now">' + ic(kind) + '—</span>';
+            return list.length ? '<span class="rf-fac ' + kind + '" title="' + list.length + ' ' + label + '(s) mapped since the previous stop">' + ic(kind) + list.length + '</span>'
+                               : '<span class="rf-fac dim" title="None mapped since the previous stop">' + ic(kind) + '—</span>';
+          };
+          chips += chip(fsF, s.fuels, 'fuel', 'petrol pump') + chip(fsT, s.tolls, 'toll', 'toll plaza');
         }
       }
       var open = st.openId === s.id, sel = st.stopId === s.id;
@@ -607,6 +622,16 @@
       note.innerHTML = esc(x.note) + ' <button type="button">Try again</button>';
       list.insertBefore(note, list.lastElementChild);
       note.querySelector('button').addEventListener('click', function () { self.loadExtras(st.sel, true); });
+    }
+    if (status === 'ok') {
+      var failedParts = ['toll', 'fuel'].filter(function (k) { return self.facStatus(st.sel, k) === 'failed'; });
+      if (failedParts.length) {
+        var pn = document.createElement('li');
+        pn.className = 'rf-note';
+        pn.innerHTML = esc((failedParts.indexOf('toll') >= 0 ? x.tollNote : x.fuelNote) || 'Some toll and petrol details could not be fetched from OpenStreetMap right now.') + ' <button type="button">Try again</button>';
+        list.insertBefore(pn, list.lastElementChild);
+        pn.querySelector('button').addEventListener('click', function () { self.loadParts(st.sel, true); });
+      }
     }
     count.textContent = status === 'loading' ? 'Finding key locations…'
       : status === 'failed' ? 'Key locations unavailable'
@@ -641,10 +666,15 @@
           }).join('');
           return '<ul>' + shown + '</ul>' + (arr.length > 6 ? '<div class="more">+ ' + (arr.length - 6) + ' more mapped on this stretch</div>' : '');
         };
-        h += '<h4>Toll plazas on this stretch</h4>' + (s.tolls.length ? many(s.tolls, 'toll', 'toll', 'Toll plaza') :
-          '<div class="empty">None mapped in OpenStreetMap — which can be incomplete, so don’t read this as “no toll”.</div>');
-        h += '<h4>Petrol pumps on this stretch</h4>' + (s.fuels.length ? many(s.fuels, 'fuel', 'fuel', 'Petrol pump') :
-          '<div class="empty">None mapped in OpenStreetMap on this stretch.</div>');
+        var fsT = this.facStatus(this.state.sel, 'toll'), fsF = this.facStatus(this.state.sel, 'fuel');
+        var part = function (title, fs, list, fallbackName, icon, cls, none) {
+          if (fs === 'loading') return '<h4>' + title + '</h4><div class="empty">Looking up…</div>';
+          if (fs === 'failed') return '<h4>' + title + '</h4><div class="empty">Could not be looked up right now.</div>';
+          return '<h4>' + title + '</h4>' + (list.length ? many(list, icon, cls, fallbackName) : '<div class="empty">' + none + '</div>');
+        };
+        h += part('Toll plazas on this stretch', fsT, s.tolls, 'Toll plaza', 'toll', 'toll',
+                  'None mapped in OpenStreetMap — which can be incomplete, so don’t read this as “no toll”.');
+        h += part('Petrol pumps on this stretch', fsF, s.fuels, 'Petrol pump', 'fuel', 'fuel', 'None mapped in OpenStreetMap on this stretch.');
       } else if (status === 'loading') {
         h += '<div class="empty">Looking up toll plazas and petrol pumps…</div>';
       } else {
@@ -809,24 +839,76 @@
   };
 
   // ------------------------------------------------------------------ toll plazas, petrol pumps, towns (slow, lazy)
+  Finder.prototype.postExtras = function (i, part) {
+    var r = this.state.routes[i];
+    return fetch(this.cfg.extrasUrl, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ part: part, geometry: r.geometry, distance_km: r.distance_km, highways: r.highways })
+    }).then(readJson);
+  };
+
+  // Part 1: the cities and towns (the server's own list — answers at once). Then the two slow parts follow.
   Finder.prototype.loadExtras = function (i, force, isAutoRetry) {
-    var self = this, st = this.state, r = st.routes[i], token = st.token;
+    var self = this, st = this.state, token = st.token;
     if (st.extras[i] && !force) return;
     delete st.extras[i];
     st.loading = i;
     if (force && !isAutoRetry) { st.retried = st.retried || {}; st.retried[i] = false; }   // a manual "Try again" gets its own auto-retry
     if (force && st.sel === i) { this.renderSummary(); this.renderStops(); this.drawOverlays(); }
-    fetch(this.cfg.extrasUrl, {
-      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ geometry: r.geometry, distance_km: r.distance_km, highways: r.highways })
-    }).then(readJson).then(function (d) {
+    this.postExtras(i, 'places').then(function (d) {
       if (token !== self.state.token) return;
-      if (d.ok && d.extras_ok) { st.extras[i] = d; self.afterExtras(i); return; }
-      self.extrasFailed(i, token, d.note || d.error || 'Toll plazas, petrol pumps and towns could not be fetched right now.');
+      if (d.ok && d.extras_ok) {
+        st.extras[i] = { towns: d.towns, picks: d.picks, tolls: [], fuels: [], tollSt: 'loading', fuelSt: 'loading' };
+        self.afterExtras(i);
+        self.loadParts(i, false);
+        return;
+      }
+      self.extrasFailed(i, token, d.note || d.error || 'Key locations could not be found right now.');
     }).catch(function () {
       if (token !== self.state.token) return;
       self.extrasFailed(i, token, 'Could not reach the server.');
     });
+  };
+
+  // Parts 2 and 3, one after the other (the free server dislikes parallel requests): toll plazas, then petrol
+  // pumps + landmarks. force = "Try again": redo only the parts that failed.
+  Finder.prototype.loadParts = function (i, force) {
+    var self = this, st = this.state, x = st.extras[i], token = st.token;
+    if (!x || x.failed) return;
+    var order = ['tolls', 'fuel'], k = 0;
+    var next = function () {
+      if (token !== self.state.token || st.extras[i] !== x || k >= order.length) return;
+      var part = order[k++], key = part === 'tolls' ? 'toll' : 'fuel';
+      if (!force && x[key + 'St'] === 'ok') return next();
+      if (force && x[key + 'St'] !== 'failed') return next();
+      x[key + 'St'] = 'loading'; x.partTry = x.partTry || {};
+      if (force) { x.partTry[part] = 0; if (st.sel === i) { self.renderSummary(); self.renderStops(); } }
+      var attempt = function () {
+        self.postExtras(i, part).then(function (d) {
+          if (token !== self.state.token || st.extras[i] !== x) return;
+          if (d.ok && d.extras_ok) {
+            if (part === 'tolls') x.tolls = d.tolls || [];
+            else {
+              var before = JSON.stringify(x.towns);
+              x.fuels = d.fuels || []; x.towns = d.towns || x.towns; x.picks = d.picks || x.picks;   // landmarks re-rank the towns
+              // stop ids are positions in the town list: if it changed, an open town row would now point at another place
+              if (JSON.stringify(x.towns) !== before && /^t/.test(st.stopId || '')) { st.stopId = null; st.openId = null; }
+            }
+            x[key + 'St'] = 'ok';
+            self.afterExtras(i); next();
+            return;
+          }
+          failed(d.note || d.error);
+        }).catch(function () { if (token === self.state.token && st.extras[i] === x) failed('Could not reach the server.'); });
+      };
+      var failed = function (note) {
+        if (!x.partTry[part]) { x.partTry[part] = 1; setTimeout(function () { if (token === self.state.token && st.extras[i] === x) attempt(); }, 4000); return; }   // one quiet retry
+        x[key + 'St'] = 'failed'; x[key + 'Note'] = note || 'Some toll and petrol details could not be fetched from OpenStreetMap right now.';
+        self.afterExtras(i); next();
+      };
+      attempt();
+    };
+    next();
   };
   // The free OpenStreetMap lookup is sometimes briefly unavailable. Try once more by itself after a few
   // seconds (the list keeps showing its loading state meanwhile); only then show the note + "Try again".

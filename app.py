@@ -393,8 +393,28 @@ def _ensure_single_admin_index(db_path=None):
 
 print('[security] one active Administrator:', _ensure_single_admin_index(), file=sys.stderr)
 
+def _remove_twilio_settings(db_path=None):
+    """Twilio is no longer used. Delete any credentials saved for it (account SID, auth token, from number, provider choice)
+    so no secret sits unused in the database. Safe to run on every start."""
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            n = conn.execute("DELETE FROM settings WHERE key IN ('twilio_account_sid','twilio_auth_token','twilio_from_number','sms_provider')").rowcount
+            conn.commit()
+            return f'removed {n} saved Twilio setting(s)' if n else 'none saved'
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[security] could not remove Twilio settings: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[security] Twilio settings:', _remove_twilio_settings(), file=sys.stderr)
+
 # How many failures / requests are allowed in a window: (limit, seconds)
-_AUTH_LIMITS = {'login_fail_user': (5, 15 * 60), 'login_fail_ip': (30, 15 * 60),
+_AUTH_LIMITS = {'backup_fail_ip': (5, 15 * 60), 'login_fail_user': (5, 15 * 60), 'login_fail_ip': (30, 15 * 60),
                 'otp_send_phone': (3, 15 * 60), 'otp_send_ip': (10, 60 * 60)}
 
 def _client_ip():
@@ -10051,7 +10071,7 @@ def add_security_headers(resp):
 def require_login():
     if request.endpoint == 'static' and request.path.startswith(_PRIVATE_UPLOAD_PREFIXES) and not session.get('user_id'):
         return ('Please sign in to open this document.', 403)
-    exempt = ['login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick',
+    exempt = ['login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick', 'internal_backup',
               'app_login_otp', 'app_verify_login_otp', 'app_manifest']
     if request.endpoint in exempt:
         return
@@ -10283,16 +10303,32 @@ def logout():
         return redirect(url_for('app_login', from_logout=1))
     return redirect(url_for('login'))
 
+def _sms_configured(s):
+    """SMS login works through MSG91 only (an Indian provider, a few paise per SMS)."""
+    return bool((s.get('msg91_authkey') or '').strip() and (s.get('msg91_template_id') or '').strip())
+
+MSG91_OTP_URL = 'https://control.msg91.com/api/v5/otp'
+
+def _send_otp_msg91(s, phone, otp):
+    """Delivers OUR code through MSG91's Send OTP API. We create, store (hashed) and verify the code ourselves — MSG91 only carries
+    the SMS, so attempt limits, expiry and single use stay exactly as they are. The text of the SMS is the DLT-approved template
+    in the MSG91 account (it must contain the ##OTP## variable). MSG91 can answer HTTP 200 with {"type":"error"}, so the body is
+    checked, not just the status. Raises on any failure."""
+    import requests
+    mobile = ('91' + phone) if USERNAME_MOBILE_RE.match(phone or '') else re.sub(r'\D', '', phone or '')
+    resp = requests.post(MSG91_OTP_URL,
+                         params={'template_id': s['msg91_template_id'].strip(), 'mobile': mobile, 'otp': otp, 'otp_length': len(otp), 'otp_expiry': 5},
+                         headers={'authkey': s['msg91_authkey'].strip(), 'Content-Type': 'application/json', 'Accept': 'application/json'},
+                         json={}, timeout=15)
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    if resp.status_code >= 400 or str(data.get('type', '')).lower() != 'success':
+        raise RuntimeError(f"MSG91 did not send the code (HTTP {resp.status_code}): {str(data.get('message') or resp.text)[:160]}")
+
 def _send_otp_sms(s, phone, otp):
-    from twilio.rest import Client
-    client = Client(s['twilio_account_sid'], s['twilio_auth_token'])
-    client.messages.create(
-        body=f"Your {s.get('company_name') or 'Fleet App'} login OTP is {otp}. Valid for 5 minutes.",
-        from_=s['twilio_from_number'],
-        # Stored phones are the bare 10-digit Indian mobile (USERNAME_MOBILE_RE) — Twilio needs the
-        # full E.164 form, so add the +91 country code here at the one place that actually sends.
-        to=f'+91{phone}' if USERNAME_MOBILE_RE.match(phone or '') else phone,
-    )
+    _send_otp_msg91(s, phone, otp)
 
 @app.route('/login/otp/send', methods=['POST'])
 def send_login_otp():
@@ -10312,9 +10348,9 @@ def _start_otp_login(phone):
     who has one."""
     conn = get_db()
     s = _get_all_settings(conn, session.get('company_id', 1))
-    if not (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']):
+    if not _sms_configured(s):
         conn.close()
-        return "SMS login isn't configured yet. Ask an admin to add Twilio details in Settings."
+        return "SMS login isn't configured yet. Ask an admin to set up the SMS service in Settings."
     wait = max(_auth_wait_seconds(conn, 'otp_send_phone', phone), _auth_wait_seconds(conn, 'otp_send_ip', _client_ip()))
     if wait:
         conn.close()
@@ -10391,7 +10427,7 @@ ALL_SETTING_KEYS = [
     'invoice_prefix', 'next_invoice_number',
     'cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
-    'twilio_account_sid', 'twilio_auth_token', 'twilio_from_number',
+    'msg91_authkey', 'msg91_template_id',
     'rc_lookup_api_key', 'rc_sync_interval_days', 'challan_sync_interval_days'
 ]
 
@@ -10505,10 +10541,11 @@ _SETTINGS_FIELD_GROUPS = {
     'tax': ['cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
             'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit'],
     'rcm': ['rcm_clause'],
-    'sms': ['twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'],
+    'sms': ['msg91_authkey', 'msg91_template_id'],
     'rc_lookup': ['rc_lookup_api_key'],
     'sync_schedule': ['rc_sync_interval_days', 'challan_sync_interval_days'],
 }
+_SECRET_SETTING_KEYS = {'msg91_authkey', 'rc_lookup_api_key'}
 _SETTINGS_CHECKBOX_KEYS = {'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words',
                            'reverse_charge_applicable', 'rcm_on_transport', 'tds_applicable', 'eway_bill_mandatory'}
 
@@ -10528,6 +10565,10 @@ def _save_settings_group(conn, form_type, form):
             val = '1' if form.get(key) == 'on' else '0'
         else:
             val = form.get(key, '')
+            if key in _SECRET_SETTING_KEYS and not (val or '').strip():
+                # secrets are never shown again in a form, so a blank box means "keep the one already saved"
+                row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, session.get('company_id', 1))).fetchone()
+                val = row['value'] if row else ''
         conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
                      (key, val, session.get('company_id', 1), session.get('user_id'), _settings_now,
@@ -10577,6 +10618,11 @@ def _settings_form_error(form_type, form):
         if not (form.get('next_invoice_number') or '').strip():
             return 'Next Invoice Number is required.'
         checks = [('next_invoice_number', 'Next Invoice Number', 1, 99999999, True)]
+    elif form_type == 'sms':
+        if not (form.get('msg91_authkey') or '').strip():
+            return 'MSG91 Auth Key is required.'
+        if not (form.get('msg91_template_id') or '').strip():
+            return 'MSG91 Template ID is required.'
     elif form_type == 'sync_schedule':
         checks = [('rc_sync_interval_days', 'RC / Compliance Sync days', 1, 365, True),
                   ('challan_sync_interval_days', 'eChallan Sync days', 1, 365, True)]
@@ -11223,23 +11269,37 @@ def route_finder_extras():
         return jsonify({'ok': False, 'error': 'That route could not be read.'}), 400
     poly = [[float(p[0]), float(p[1])] for p in geom]
     hws = [{'ref': h.get('ref'), 'km': float(h['km']), 'from_km': float(h['from_km'])} for h in hws]
-    key = ('extras', hashlib.sha1(json.dumps(poly).encode()).hexdigest(), round(dist, 1))
+    # part: 'places' = towns from the built-in list (instant, no network); 'tolls' / 'fuel' = the two small
+    # Overpass lookups, asked for one after another by the browser so a failure of one hides only itself;
+    # no part = the original all-in-one answer.
+    part = data.get('part')
+    if part not in (None, 'places', 'tolls', 'fuel'):
+        return jsonify({'ok': False, 'error': 'That route could not be read.'}), 400
+    key = ('extras', part or 'all', hashlib.sha1(json.dumps(poly).encode()).hexdigest(), round(dist, 1))
     extras = _rf_cache_get(key)
     if extras is None:
-        if not _RF_SLOTS.acquire(blocking=False):
-            return jsonify({'ok': False, 'error': _RF_BUSY_MSG}), 429
-        try:
-            extras = osm_routes.route_extras(poly, dist, hws)
-        except Exception:
-            app.logger.exception('route_finder_extras failed')
-            return jsonify({'ok': False, 'error': 'Something went wrong looking up toll plazas. Please try again.'}), 500
-        finally:
-            _RF_SLOTS.release()
+        if part == 'places':
+            extras = osm_routes.route_places(poly, dist)         # local: needs no slot and cannot be rate-limited
+        else:
+            if not _RF_SLOTS.acquire(blocking=False):
+                return jsonify({'ok': False, 'error': _RF_BUSY_MSG}), 429
+            try:
+                if part == 'tolls':
+                    extras = osm_routes.route_tolls(poly, dist, hws)
+                elif part == 'fuel':
+                    extras = osm_routes.route_fuel(poly, dist, hws)
+                else:
+                    extras = osm_routes.route_extras(poly, dist, hws)
+            except Exception:
+                app.logger.exception('route_finder_extras failed')
+                return jsonify({'ok': False, 'error': 'Something went wrong looking up toll plazas. Please try again.'}), 500
+            finally:
+                _RF_SLOTS.release()
         if extras['extras_ok']:
             _rf_cache_put(key, extras, 3600)   # failures aren't cached, so Retry really retries
         else:
-            app.logger.warning('route_finder_extras: lookup failed: %s', extras['note'])
-    return jsonify(dict(extras, ok=True))
+            app.logger.warning('route_finder_extras(%s): lookup failed: %s', part or 'all', extras['note'])
+    return jsonify(dict(extras, ok=True, part=part))
 
 @app.route('/route-analytics')
 def route_analytics():
@@ -12376,6 +12436,54 @@ def export_excel():
     buf.seek(0)
     return send_file(buf, as_attachment=True, download_name='fleet_export.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+@app.route('/internal/backup', methods=['POST'])
+def internal_backup():
+    """Off-site backup pull. Returns a consistent, gzip-compressed copy of the whole database (SQLite's online backup, safe while
+    the app is running) to a caller that sends the secret in the X-Backup-Token header. The secret is the BACKUP_TOKEN
+    environment variable; if it is not set the endpoint refuses everyone. Wrong tries are limited per address. Used by
+    pull_backup.py, run daily from a computer that keeps the copies (Render's disk can only be read from inside this service)."""
+    import gzip, hmac, tempfile
+    from flask import after_this_request, send_file
+    token = os.environ.get('BACKUP_TOKEN', '')
+    conn = get_db()
+    ip = _client_ip()
+    if _auth_wait_seconds(conn, 'backup_fail_ip', ip):
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Too many attempts.'}), 429
+    if not token or not hmac.compare_digest(token, request.headers.get('X-Backup-Token', '')):
+        _auth_record(conn, 'backup_fail_ip', ip)
+        conn.commit()
+        conn.close()
+        app.logger.warning('Refused a database backup request from %s', ip)
+        return jsonify({'ok': False, 'error': 'Not allowed.'}), 403
+    conn.close()
+    tmpdir = tempfile.mkdtemp(prefix='fleetbk_')
+    raw = os.path.join(tmpdir, 'copy.db')
+    gz = os.path.join(tmpdir, 'copy.db.gz')
+    src = sqlite3.connect(DB, timeout=60)
+    dst = sqlite3.connect(raw)
+    try:
+        src.backup(dst)
+        if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+            return jsonify({'ok': False, 'error': 'The copy failed its integrity check; nothing was sent.'}), 500
+    finally:
+        src.close()
+        dst.close()
+    with open(raw, 'rb') as fi, gzip.open(gz, 'wb', compresslevel=6) as fo:
+        fo.write(fi.read())
+    os.remove(raw)
+
+    @after_this_request
+    def _cleanup(resp):
+        try:
+            os.remove(gz)
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
+        return resp
+    app.logger.info('Database backup sent to %s (%d KB compressed)', ip, os.path.getsize(gz) // 1024)
+    return send_file(gz, mimetype='application/gzip', as_attachment=True, download_name='fleet_backup.db.gz')
 
 @app.route('/internal/sync-tick', methods=['POST'])
 def internal_sync_tick():
@@ -14603,17 +14711,18 @@ def app_settings_save():
     if form_type not in _SETTINGS_FIELD_GROUPS:
         return jsonify({'ok': False, 'error': 'Unknown settings form.'}), 400
     form = request.form.to_dict()
-    err = _settings_form_error(form_type, form)
-    if err:
-        return jsonify({'ok': False, 'error': err}), 400
     conn = get_db()
-    # The app never echoes the Twilio auth token / RC API key back into a form field, so a blank box means "keep the
+    # The app never echoes the MSG91 key / RC API key back into a form field, so a blank box means "keep the
     # saved one" (the website form pre-fills them, which is why it doesn't need this).
     company_id = session.get('company_id', 1)
-    for secret in {'sms': ['twilio_auth_token'], 'rc_lookup': ['rc_lookup_api_key']}.get(form_type, []):
+    for secret in {'sms': ['msg91_authkey'], 'rc_lookup': ['rc_lookup_api_key']}.get(form_type, []):
         if not (form.get(secret) or '').strip():
             row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (secret, company_id)).fetchone()
             form[secret] = row['value'] if row else ''
+    err = _settings_form_error(form_type, form)
+    if err:
+        conn.close()
+        return jsonify({'ok': False, 'error': err}), 400
     _save_settings_group(conn, form_type, form)
     conn.close()
     return jsonify({'ok': True})

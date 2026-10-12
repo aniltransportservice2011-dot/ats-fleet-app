@@ -33,7 +33,7 @@ How each item was confirmed: the ones marked **PROVEN** were reproduced against 
 | B1 | **FIXED (cheap form):** cookie is now SameSite=Lax (+Secure on Render) and a POST that names another website as its origin is refused (403). Full CSRF tokens still not added. **No CSRF protection** on any form (cookie has no `SameSite`). A malicious web page opened by a logged-in user could submit actions (delete a trip, add a user…). | Set `SESSION_COOKIE_SAMESITE='Lax'`, `SESSION_COOKIE_SECURE=True` on Render; add CSRF tokens (Flask-WTF) for POSTs. |
 | B2 | **OPEN — needs your OK** (rewrites GitHub history). **11 old database backups are committed to git** (`fleet.db.bak.*`) — real business data and password hashes sit in the repo history on GitHub. | Confirm repo is Private; remove from history (`git filter-repo`) and rotate all passwords afterwards. |
 | B3 | **FIXED** (nosniff, frame-deny, referrer policy, HSTS on https; no CSP yet). **No security headers** (no clickjacking protection, no `nosniff`, no HSTS, no CSP). | Add a small `after_request` header set. |
-| B4 | **OPEN — you must do it** (rotate in Twilio and the RC provider, paste the new values in Settings). **Twilio token / RC API key** were shown in the website settings form earlier and sit unencrypted in the DB. | Rotate both keys (also needed because of A2). Now admin-only and masked in the app. |
+| B4 | **OPEN — you must do it** (Twilio is gone — its saved keys were deleted; rotate/disable the old Twilio account in Twilio's console, and rotate the RC provider key). **Twilio token / RC API key** were shown in the website settings form earlier and sit unencrypted in the DB. | Rotate both keys (also needed because of A2). Now admin-only and masked in the app. |
 | B5 | **FIXED** (only local paths accepted). **Open redirect**: `return_to` form field is redirected to without checking it is a local path (5 places). Low risk, needs login. | Accept only paths starting with `/`. |
 | B6 | **FIXED 11 Oct (evening): Limited Access is enforced per screen (View/Edit), see roles-stage case `limited_access`.** **Limited Access is not enforced** — the Settings screen lets you pick it, but those users get full access. Misleading permission. | Either enforce the module list or remove the option until built. |
 | B7 | **FIXED** (16 MB cap). **No upload size limit** (`MAX_CONTENT_LENGTH` unset) — one huge upload can fill memory/disk. | Set e.g. 10 MB. |
@@ -79,7 +79,7 @@ Leftover data items: trip 374 over-payment ₹434, duplicate LR `ATS-N/A` (trips
 
 ## Suggested order
 
-1. A1–A5 (≈ half a day of work, then re-test) + rotate Twilio/RC keys + set SECRET_KEY on Render.
+1. A1–A5 (≈ half a day of work, then re-test) + close the old Twilio account + rotate the RC key + set SECRET_KEY on Render.
 2. C1 (persistent disk) and C2 (daily off-server backup) — before any real data goes in.
 3. B1–B3, B7, pin requirements, uptime alert.
 4. Then go live with a small group, watch for a week.

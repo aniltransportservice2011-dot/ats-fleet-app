@@ -15,6 +15,13 @@ policy forbids autocomplete on the public server, while Photon is built for sear
 same OpenStreetMap data. Nominatim is still used for the final Search when a place was typed in full
 without picking a suggestion.
 
+Towns and cities along a route do NOT come from Overpass any more: they are read from a small fixed
+file of Indian places shipped with the app (providers/data/in_places.tsv, from GeoNames, ~5,000 places
+of 10,000+ people or administrative seats), so they appear with the route in milliseconds and cannot be
+hit by the free server's busy spells. Only toll plazas, petrol pumps and landmarks still need Overpass,
+and they are fetched separately so one failure hides only its own part. The file is read-only reference
+data held in memory — it is not in the database and never grows.
+
 Pure functions plus plain `requests` calls — no database or Flask imports — so every piece of path
 maths below is tested with canned responses and no network.
 
@@ -23,6 +30,7 @@ bypass banned for heavy vehicles is not modelled), and OpenStreetMap's toll data
 most plazas have a location but no name.
 """
 import math
+import os
 import re
 import threading
 import time
@@ -46,7 +54,8 @@ NOMINATIM_TIMEOUT = 8
 OSRM_TIMEOUT = 15
 OVERPASS_TIMEOUT = 22
 SEARCH_BUDGET = 30   # seconds: geocode x2 + routing
-EXTRAS_BUDGET = 30   # seconds: Overpass
+EXTRAS_BUDGET = 30   # seconds: Overpass (the all-in-one lookup)
+PART_BUDGET = 20     # seconds: each of the separate toll / petrol lookups — they are optional extras, so give up sooner
 MAX_ALTERNATIVES = 3
 
 # How close to the path a feature must be to count, in metres. OSRM snaps the path onto one
@@ -198,6 +207,53 @@ def route_bboxes(points, cum, chunk_km=BBOX_CHUNK_KM, pad=BBOX_PAD_DEG):
             boxes.append((min(lats) - pad, min(lngs) - pad, max(lats) + pad, max(lngs) + pad))
             start = i
     return boxes
+
+
+# --------------------------------------------------------------------------- built-in places
+
+PLACES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'in_places.tsv')
+_CAPITAL_BY_CODE = {'PPLC': 'yes', 'PPLA': '4', 'PPLA2': '5'}      # same meaning as OpenStreetMap's `capital` tag
+_places_cache = None
+_places_lock = threading.Lock()
+
+
+def load_places():
+    """The built-in list of Indian places, read once per process: [(name, lat, lng, population, feature_code)].
+    A missing or unreadable file gives an empty list (the route then simply shows no towns, never an error)."""
+    global _places_cache
+    if _places_cache is not None:
+        return _places_cache
+    with _places_lock:
+        if _places_cache is None:
+            rows = []
+            try:
+                with open(PLACES_FILE, encoding='utf-8') as f:
+                    for line in f:
+                        if not line.strip() or line.startswith('#'):
+                            continue
+                        parts = line.rstrip('\n').split('\t')
+                        try:
+                            rows.append((parts[0], float(parts[1]), float(parts[2]), int(parts[3]), parts[4]))
+                        except (IndexError, ValueError):
+                            continue
+            except OSError:
+                rows = []
+            _places_cache = rows
+    return _places_cache
+
+
+def local_place_elements(boxes):
+    """Built-in places inside any of the route's bounding boxes, shaped like Overpass elements so the same
+    build_places() / build_tolls() code ranks them. A place of 100,000+ people is a city, any other a town."""
+    out = []
+    for i, (name, lat, lng, pop, code) in enumerate(load_places()):
+        if not any(s_ <= lat <= n_ and w_ <= lng <= e_ for s_, w_, n_, e_ in boxes):
+            continue
+        tags = {'place': 'city' if pop >= 100000 else 'town', 'name': name, 'population': str(pop)}
+        if code in _CAPITAL_BY_CODE:
+            tags['capital'] = _CAPITAL_BY_CODE[code]
+        out.append({'type': 'node', 'id': f'gz{i}', 'lat': lat, 'lon': lng, 'tags': tags})
+    return out
 
 
 # --------------------------------------------------------------------------- Nominatim
@@ -447,34 +503,40 @@ def search_routes(from_pt, to_pt, session=None):
 
 # --------------------------------------------------------------------------- Overpass
 
-def _overpass_query(boxes):
+_Q_TOWNS = ('node["place"~"^(city|town)$"]{bb};',)
+_Q_TOLLS = ('node["barrier"="toll_booth"]{bb};', 'node["highway"="toll_gantry"]{bb};')
+# petrol pumps are mapped as points or as small areas — ask for both (areas via their centre)
+_Q_FUEL = ('nwr["amenity"="fuel"]{bb};',)
+# major landmarks: airports (IATA code), railway junctions, and anything notable enough to have a
+# Wikidata entry (landmarks, historic sites, big industrial areas, dams) — the notability filter keeps
+# the corridor's thousands of ordinary buildings out
+_Q_LANDMARKS = ('nwr["aeroway"="aerodrome"]["iata"]{bb};',
+                'nwr["railway"="station"]["name"~"Junction| Jn",i]{bb};',
+                'nwr["tourism"="attraction"]["wikidata"]{bb};',
+                'nwr["historic"]["wikidata"]{bb};',
+                'nwr["landuse"="industrial"]["wikidata"]{bb};',
+                'nwr["man_made"="dam"]["wikidata"]{bb};',
+                'nwr["waterway"="dam"]["wikidata"]{bb};')
+OVERPASS_GROUPS = {'towns': _Q_TOWNS, 'tolls': _Q_TOLLS, 'fuel': _Q_FUEL, 'landmarks': _Q_LANDMARKS}
+
+
+def _overpass_query(boxes, groups=('towns', 'tolls', 'fuel', 'landmarks')):
+    """One Overpass query for the chosen groups of features over every box. Asking for fewer groups
+    makes a much lighter query — the public server answers a small one even when it is refusing a big one."""
     parts = []
     for s_, w_, n_, e_ in boxes:
         bb = f'({s_:.4f},{w_:.4f},{n_:.4f},{e_:.4f})'
-        parts.append(f'node["barrier"="toll_booth"]{bb};')
-        parts.append(f'node["highway"="toll_gantry"]{bb};')
-        parts.append(f'node["place"~"^(city|town)$"]{bb};')
-        # petrol pumps are mapped as points or as small areas — ask for both (areas via their centre)
-        parts.append(f'nwr["amenity"="fuel"]{bb};')
-        # major landmarks: airports (IATA code), railway junctions, and anything notable enough to have a
-        # Wikidata entry (landmarks, historic sites, big industrial areas, dams) — the notability filter keeps
-        # the corridor's thousands of ordinary buildings out
-        parts.append(f'nwr["aeroway"="aerodrome"]["iata"]{bb};')
-        parts.append(f'nwr["railway"="station"]["name"~"Junction| Jn",i]{bb};')
-        parts.append(f'nwr["tourism"="attraction"]["wikidata"]{bb};')
-        parts.append(f'nwr["historic"]["wikidata"]{bb};')
-        parts.append(f'nwr["landuse"="industrial"]["wikidata"]{bb};')
-        parts.append(f'nwr["man_made"="dam"]["wikidata"]{bb};')
-        parts.append(f'nwr["waterway"="dam"]["wikidata"]{bb};')
+        for g in groups:
+            parts.extend(clause.format(bb=bb) for clause in OVERPASS_GROUPS[g])
     return '[out:json][timeout:20];(' + ''.join(parts) + ');out center;'
 
 
-def fetch_nearby(boxes, budget=None, session=None):
+def fetch_nearby(boxes, budget=None, session=None, groups=('towns', 'tolls', 'fuel', 'landmarks')):
     """Raw Overpass elements (toll booths/gantries, cities, towns) inside the given boxes.
     Raises RouteLookupError if every Overpass server fails or the budget runs out."""
     budget = budget or _Budget(EXTRAS_BUDGET)
     post = (session or requests).post
-    query = _overpass_query(boxes)
+    query = _overpass_query(boxes, groups)
     last_err = None
     # Main server, then the mirror, then the main server once more: its 504s ("busy") are usually
     # momentary, while the mirror often refuses a long route's query outright — so a second try on
@@ -724,3 +786,60 @@ def route_extras(poly, distance_km, highways, session=None):
             'picks': {mode: select_major(places, distance_km, stop_budget(distance_km, cap)) for mode, cap in SCREEN_STOP_CAPS.items()},
             'fuels': build_fuels(elements, poly, cum, highways, scale=scale),
             'extras_ok': True, 'note': None}
+
+
+# --------------------------------------------------------------------------- the three parts of a route's extras
+# The browser asks for them one after another, so the towns (instant, local) appear first and the two
+# Overpass parts fill in as they arrive; a failure in one never hides the others.
+
+def _empty_picks():
+    return {m: [] for m in SCREEN_STOP_CAPS}
+
+
+def _picks_for(places, distance_km):
+    return {mode: select_major(places, distance_km, stop_budget(distance_km, cap)) for mode, cap in SCREEN_STOP_CAPS.items()}
+
+
+def route_places(poly, distance_km):
+    """Cities and towns along one route, from the built-in list — no network at all. Returns
+    {'towns', 'picks', 'extras_ok', 'note'} in the same shape route_extras() uses."""
+    if len(poly) < 2:
+        return {'towns': [], 'picks': _empty_picks(), 'extras_ok': False, 'note': 'No path to look along.'}
+    cum = cumulative_km(poly)
+    scale = (distance_km / cum[-1]) if cum[-1] else 1.0
+    places = build_places(local_place_elements(route_bboxes(poly, cum)), poly, cum, distance_km, scale=scale)
+    return {'towns': places, 'picks': _picks_for(places, distance_km), 'extras_ok': True, 'note': None}
+
+
+def route_tolls(poly, distance_km, highways, session=None):
+    """Toll plazas along one route (Overpass, tolls only — the lightest query). An unnamed plaza is
+    described by the nearest built-in town. A failed lookup is reported in `note`, never raised."""
+    if len(poly) < 2:
+        return {'tolls': [], 'extras_ok': False, 'note': 'No path to look along.'}
+    cum = cumulative_km(poly)
+    scale = (distance_km / cum[-1]) if cum[-1] else 1.0
+    boxes = route_bboxes(poly, cum)
+    try:
+        elements = fetch_nearby(boxes, budget=_Budget(PART_BUDGET), session=session, groups=('tolls',))
+    except RouteLookupError as e:
+        return {'tolls': [], 'extras_ok': False, 'note': str(e).replace('Toll plazas, petrol pumps and towns', 'Toll plazas')}
+    towns = _town_points(local_place_elements(boxes))
+    return {'tolls': build_tolls(elements, poly, cum, highways, scale=scale, town_pts=towns), 'extras_ok': True, 'note': None}
+
+
+def route_fuel(poly, distance_km, highways, session=None):
+    """Petrol pumps and landmarks (airports, junctions, notable sites) along one route (Overpass). Landmarks
+    are merged with the built-in towns, so this also returns the re-ranked town list and picks."""
+    if len(poly) < 2:
+        return {'fuels': [], 'towns': [], 'picks': _empty_picks(), 'extras_ok': False, 'note': 'No path to look along.'}
+    cum = cumulative_km(poly)
+    scale = (distance_km / cum[-1]) if cum[-1] else 1.0
+    boxes = route_bboxes(poly, cum)
+    try:
+        elements = fetch_nearby(boxes, budget=_Budget(PART_BUDGET), session=session, groups=('fuel', 'landmarks'))
+    except RouteLookupError as e:
+        return {'fuels': [], 'towns': [], 'picks': _empty_picks(), 'extras_ok': False,
+                'note': str(e).replace('Toll plazas, petrol pumps and towns', 'Petrol pumps and landmarks')}
+    places = build_places(elements + local_place_elements(boxes), poly, cum, distance_km, scale=scale)
+    return {'fuels': build_fuels(elements, poly, cum, highways, scale=scale), 'towns': places,
+            'picks': _picks_for(places, distance_km), 'extras_ok': True, 'note': None}

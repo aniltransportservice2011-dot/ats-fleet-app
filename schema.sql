@@ -786,7 +786,7 @@ CREATE TABLE access_logs (
 );
 
 -- Singleton key-value settings — one global row per key today (company profile, banking,
--- invoice numbering/prefs, tax rates, Twilio SMS-OTP credentials, RC-lookup API key, sync
+-- invoice numbering/prefs, tax rates, MSG91 SMS-OTP credentials, RC-lookup API key, sync
 -- intervals — 42 distinct keys as of this writing). Flagged in the multi-tenancy plan for a
 -- structural redesign to a (company_id, key) composite key once this app supports more than
 -- one company.

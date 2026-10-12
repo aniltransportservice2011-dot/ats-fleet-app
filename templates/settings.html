@@ -440,37 +440,33 @@
       </div>
     </div>
 
+    {% set sms_ok = s['msg91_authkey'] and s['msg91_template_id'] %}
     <div class="card">
       <div class="card-head">
-        <div><h3>Mobile OTP Login (SMS via Twilio)</h3><div class="sub">Lets staff sign in with just their phone number and a one-time code. Requires a Twilio account.</div></div>
+        <div><h3>Mobile OTP Login (SMS via MSG91)</h3><div class="sub">Lets staff sign in with just their phone number and a one-time code, sent by MSG91 (an Indian SMS provider, a few paise per SMS).</div></div>
         <button type="button" class="edit-toggle-btn" onclick="document.getElementById('smsEditModal').classList.add('open')">Edit</button>
       </div>
       <div class="kv-grid" id="smsView">
-        <div><div class="lbl">Account SID</div>{{ s['twilio_account_sid'] or '—' }}</div>
-        <div><div class="lbl">Auth Token</div>{{ '••••••••' if s['twilio_auth_token'] else '—' }}</div>
-        <div><div class="lbl">From Number</div>{{ s['twilio_from_number'] or '—' }}</div>
+        <div><div class="lbl">Template ID</div>{{ s['msg91_template_id'] or '—' }}</div>
+        <div><div class="lbl">Auth Key</div>{{ '••••••••' if s['msg91_authkey'] else '—' }}</div>
         <div><div class="lbl">Status</div>
-          <span class="toggle-badge {{ 'on' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'off' }}">
-            {{ 'Configured' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'Not Configured' }}
-          </span>
+          <span class="toggle-badge {{ 'on' if sms_ok else 'off' }}">{{ 'Configured' if sms_ok else 'Not Configured' }}</span>
         </div>
       </div>
-      <div style="font-size:11px;color:var(--steel);margin-top:10px;">Get these from your Twilio Console (twilio.com/console). Each OTP sent is billed by Twilio.</div>
+      <div style="font-size:11px;color:var(--steel);margin-top:10px;">Each code sent is billed by MSG91. The message text is your DLT-approved template, which must contain the ##OTP## variable; in MSG91 either turn off the Auth Key's IP restriction or add this server's address to it. A saved key is never shown again — leave the key box blank to keep it.</div>
       <div class="modal-overlay" id="smsEditModal">
         <div class="modal-box ur-modal-box">
           <button type="button" class="modal-close-x" onclick="document.getElementById('smsEditModal').classList.remove('open')">&#10005;</button>
           <h3>Edit Mobile OTP Login (SMS)</h3>
           <form method="POST" action="/settings?tab=users">
             <input type="hidden" name="form_type" value="sms">
-            <div><label>Account SID</label><input type="text" name="twilio_account_sid" value="{{ s['twilio_account_sid'] }}" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></div>
-            <div><label>Auth Token</label><input type="password" name="twilio_auth_token" value="{{ s['twilio_auth_token'] }}"></div>
-            <div><label>From Number (Twilio number)</label><input type="text" name="twilio_from_number" value="{{ s['twilio_from_number'] }}" placeholder="+1XXXXXXXXXX"></div>
+            <div><label>Template ID</label><input type="text" name="msg91_template_id" value="{{ s['msg91_template_id'] }}" placeholder="from MSG91 → OTP → Templates"></div>
+            <div><label>Auth Key</label><input type="password" name="msg91_authkey" value="" autocomplete="new-password" placeholder="{{ 'Saved — leave blank to keep' if s['msg91_authkey'] else 'from MSG91 → Authkey' }}"></div>
             <button type="submit" class="modal-save-btn">Save SMS Settings</button>
           </form>
         </div>
       </div>
     </div>
-
     <div class="card">
       <div class="card-head">
         <div><h3>Vehicle RC Lookup (eChallan API)</h3><div class="sub">Backs the Vehicles page's RC details, Insurance/Fitness/PUC/Permit compliance, and eChallan data — all read from a local cache that the sync schedule below keeps current.</div></div>
@@ -491,7 +487,7 @@
           <h3>Edit Vehicle RC Lookup API</h3>
           <form method="POST" action="/settings?tab=users">
             <input type="hidden" name="form_type" value="rc_lookup">
-            <div><label>API Key</label><input type="text" name="rc_lookup_api_key" value="{{ s['rc_lookup_api_key'] }}" placeholder="eChallan_..."></div>
+            <div><label>API Key</label><input type="password" name="rc_lookup_api_key" value="" autocomplete="new-password" placeholder="{{ 'Saved — leave blank to keep' if s['rc_lookup_api_key'] else 'eChallan_...' }}"></div>
             <button type="submit" class="modal-save-btn">Save API Key</button>
           </form>
         </div>

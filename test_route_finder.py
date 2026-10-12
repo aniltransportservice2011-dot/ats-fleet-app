@@ -574,6 +574,102 @@ if free:
     a._RF_SLOTS.release()
 check("an unexpected error -> 500, generic text, no internals, slot released", r.status_code == 500 and b'secret internals' not in r.data and free)
 
+print("\n--- built-in places (no network, nothing stored)")
+import hashlib  # noqa: E402
+import time  # noqa: E402
+
+gz = o.load_places()
+check("built-in list loads: thousands of Indian places, each with a name, coordinates and population", len(gz) > 4000 and all(len(r) == 5 and r[0] and 6 < r[1] < 37 and 67 < r[2] < 98 and r[3] >= 0 for r in gz))
+check("built-in list knows the Odisha towns the old lookup returned", all(any(r[0] == n_ for r in gz) for n_ in ('Rourkela', 'Angul', 'Dhenkanal', 'Cuttack', 'Talcher', 'Jajpur')))
+ROUTE = [[22.2250, 84.8641], [21.7, 85.0], [20.8409, 85.1019], [20.6574, 85.5969], [20.4650, 85.8793], [20.3164, 86.6085]]   # Rourkela - Angul - Dhenkanal - Cuttack - Paradip
+cumr = o.cumulative_km(ROUTE)
+t0 = time.perf_counter()
+rp = o.route_places(ROUTE, cumr[-1])
+dt = time.perf_counter() - t0
+names = [t['name'] for t in rp['towns']]
+check("route_places: answers instantly (well under a second) with no network call", dt < 0.5 and rp['extras_ok'] and rp['note'] is None)
+check("route_places: the cities and towns on the way are found, in driving order, with km along the route",
+      all(n_ in names for n_ in ('Angul', 'Dhenkanal', 'Cuttack')) and [t['km'] for t in rp['towns']] == sorted(t['km'] for t in rp['towns']))
+check("route_places: pick-lists per screen size, within the caps, valid indices",
+      set(rp['picks']) == {'sm', 'md', 'lg'} and all(len(v) <= o.SCREEN_STOP_CAPS[m] and all(0 <= i < len(rp['towns']) for i in v) for m, v in rp['picks'].items()))
+check("route_places: empty / one-point path handled", o.route_places([], 0)['extras_ok'] is False and o.route_places([[1, 1]], 0)['towns'] == [])
+check("local_place_elements: big places are cities, others towns, district seats carry a capital tag",
+      {e['tags']['place'] for e in o.local_place_elements([(6, 67, 37, 98)])} == {'city', 'town'}
+      and any(e['tags'].get('capital') for e in o.local_place_elements([(6, 67, 37, 98)])))
+miss = o.PLACES_FILE
+o.PLACES_FILE, o._places_cache = os.path.join(TMP_DIR, 'nope.tsv'), None
+check("a missing places file gives no towns, not an error", o.route_places(ROUTE, cumr[-1])['towns'] == [] and o.route_places(ROUTE, cumr[-1])['extras_ok'])
+o.PLACES_FILE, o._places_cache = miss, None
+check("...and the list reloads once the file is back", len(o.load_places()) > 4000)
+
+print("\n--- provider: toll and petrol parts are separate, lighter Overpass queries")
+check("query groups: tolls-only asks for nothing but toll booths and gantries",
+      all(w in o._overpass_query([(20, 85, 21, 85.1)], ('tolls',)) for w in ('toll_booth', 'toll_gantry'))
+      and not any(w in o._overpass_query([(20, 85, 21, 85.1)], ('tolls',)) for w in ('fuel', 'wikidata', 'place')))
+check("query groups: the default is still the full original query", all(w in o._overpass_query([(20, 85, 21, 85.1)]) for w in ('toll_booth', 'fuel', 'wikidata', 'aerodrome', 'place')))
+
+
+class SessTollsOnly:
+    def __init__(self):
+        self.queries = []
+
+    def post(self, url, **k):
+        self.queries.append(k['data']['data'])
+        return R({'elements': [{'type': 'node', 'id': 1, 'lat': 20.8409, 'lon': 85.1019, 'tags': {'barrier': 'toll_booth'}}]})
+
+
+st_ = SessTollsOnly()
+rt_ = o.route_tolls(ROUTE, cumr[-1], [], session=st_)
+check("route_tolls: one small query, asks only for tolls", len(st_.queries) == 1 and 'toll_booth' in st_.queries[0] and 'amenity' not in st_.queries[0] and 'wikidata' not in st_.queries[0])
+check("route_tolls: an unnamed plaza is described by the nearest built-in town", rt_['extras_ok'] and len(rt_['tolls']) == 1 and rt_['tolls'][0]['name'].startswith('Toll plaza near '))
+fl_ = o.route_tolls(ROUTE, cumr[-1], [], session=SessDown())
+check("route_tolls: failure reported with a tolls-specific note, never raised", fl_['extras_ok'] is False and fl_['tolls'] == [] and fl_['note'] and 'petrol' not in fl_['note'].lower())
+
+
+class SessFuel:
+    def __init__(self):
+        self.queries = []
+
+    def post(self, url, **k):
+        self.queries.append(k['data']['data'])
+        return R({'elements': [
+            {'type': 'node', 'id': 11, 'lat': 20.8415, 'lon': 85.1025, 'tags': {'amenity': 'fuel', 'name': 'Indian Oil'}},
+            {'type': 'node', 'id': 12, 'lat': 20.3700, 'lon': 85.8200, 'tags': {'aeroway': 'aerodrome', 'iata': 'BBI', 'name': 'Biju Patnaik Airport'}}]})
+
+
+sf_ = SessFuel()
+rf_ = o.route_fuel(ROUTE, cumr[-1], [], session=sf_)
+check("route_fuel: one query for petrol pumps and landmarks, no toll or town clauses", len(sf_.queries) == 1 and 'amenity' in sf_.queries[0] and 'toll_booth' not in sf_.queries[0] and '"place"' not in sf_.queries[0])
+check("route_fuel: petrol pumps returned", rf_['extras_ok'] and [f['name'] for f in rf_['fuels']] == ['Indian Oil'])
+check("route_fuel: landmarks are merged with the built-in towns (towns are still there)", all(n_ in [t['name'] for t in rf_['towns']] for n_ in ('Angul', 'Dhenkanal', 'Cuttack')))
+ff_ = o.route_fuel(ROUTE, cumr[-1], [], session=Sess429())
+check("route_fuel: failure keeps nothing invented and says petrol/landmarks", ff_['extras_ok'] is False and ff_['fuels'] == [] and ff_['towns'] == [] and 'busy' in ff_['note'])
+
+print("\n--- server: /route-finder/extras in parts")
+bodyr = {'geometry': ROUTE, 'distance_km': round(cumr[-1], 1), 'highways': []}
+db_before = hashlib.sha256(open(TEST_DB, 'rb').read()).hexdigest()
+for _ in range(3):
+    a._RF_SLOTS.acquire()
+r = cl.post('/route-finder/extras', json=dict(bodyr, part='places'))
+jp = r.get_json()
+check("part=places answers even when every network slot is taken (it needs none)", r.status_code == 200 and jp['ok'] and jp['part'] == 'places' and any(t['name'] == 'Cuttack' for t in jp['towns']) and 'tolls' not in jp)
+check("part=tolls is refused with 429 when all slots are taken (it uses the network)", cl.post('/route-finder/extras', json=dict(bodyr, part='tolls')).status_code == 429)
+for _ in range(3):
+    a._RF_SLOTS.release()
+n0 = calls.setdefault('parts', [])
+o.route_tolls = lambda poly, dist, hws, session=None: (n0.append('tolls') or {'tolls': [{'name': 'T', 'named': False, 'lat': 20.9, 'lng': 85.2, 'km': 200.0, 'highway': None, 'barrierless': False}], 'extras_ok': True, 'note': None})
+o.route_fuel = lambda poly, dist, hws, session=None: (n0.append('fuel') or {'fuels': [], 'towns': [], 'picks': {'sm': [], 'md': [], 'lg': []}, 'extras_ok': False, 'note': 'Petrol pumps and landmarks: busy'})
+jt = cl.post('/route-finder/extras', json=dict(bodyr, part='tolls')).get_json()
+jf = cl.post('/route-finder/extras', json=dict(bodyr, part='fuel')).get_json()
+check("part=tolls returns just the toll plazas", jt['ok'] and jt['part'] == 'tolls' and len(jt['tolls']) == 1 and 'fuels' not in jt)
+check("part=fuel failing is reported on its own (the tolls answer above is unaffected)", jf['ok'] and jf['extras_ok'] is False and 'busy' in jf['note'])
+cl.post('/route-finder/extras', json=dict(bodyr, part='tolls'))
+cl.post('/route-finder/extras', json=dict(bodyr, part='fuel'))
+check("each part is cached separately; a successful one is not asked twice, a failed one is retried", n0.count('tolls') == 1 and n0.count('fuel') == 2)
+check("an unknown part is rejected", cl.post('/route-finder/extras', json=dict(bodyr, part='everything')).status_code == 400)
+db_after = hashlib.sha256(open(TEST_DB, 'rb').read()).hexdigest()
+check("the database file is byte-for-byte unchanged after all of that (nothing is stored)", db_before == db_after)
+
 shutil.rmtree(TMP_DIR, ignore_errors=True)
 print(f"\n{_ok} passed, {_fail} failed")
 sys.exit(1 if _fail else 0)

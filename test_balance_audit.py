@@ -2427,7 +2427,7 @@ def _db_fingerprint(env):
     c = sqlite3.connect(env.path)
     try:
         out = {}
-        for (t,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall():
+        for (t,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'auth_attempts'").fetchall():   # throttle counters are bookkeeping, not business data
             out[t] = c.execute(f'SELECT COUNT(*), COALESCE(SUM(rowid),0) FROM "{t}"').fetchone()
         return out
     finally:
@@ -2623,7 +2623,7 @@ def run_roles_scenario(env, F, sc):
             env.exec("INSERT INTO users (id,username,password_hash,role,is_admin,full_name,access_level,status,phone,email,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                      uid, uname, 'x', role, 1 if lvl == 'Full Access' else 0, f'Person {uid}', lvl, 'Active', uname, f'p{uid}@x.example', '2026-01-01')
         env.exec("INSERT INTO settings (key,value,company_id) VALUES ('bank_name','SECRET-BANK-XYZ',1)")
-        env.exec("INSERT INTO settings (key,value,company_id) VALUES ('twilio_auth_token','SECRET-TOKEN-ABC',1)")
+        env.exec("INSERT INTO settings (key,value,company_id) VALUES ('msg91_authkey','SECRET-TOKEN-ABC',1)")
         env.exec("INSERT INTO access_logs (user_id,event,date) VALUES (10,'Login','2026-06-01')")
         clients = {uid: _client_for(env, uid) for uid in ROLE_USERS}
         case = sc['case']
@@ -2633,7 +2633,7 @@ def run_roles_scenario(env, F, sc):
             for uid in non_admins:
                 r = clients[uid].get('/settings')
                 body = r.data.decode('utf-8', 'ignore')
-                leaks = [x for x in ('SECRET-BANK-XYZ', 'SECRET-TOKEN-ABC', 'Person 10', 'Person 12', '9100000010', 'Access Log', 'twilio') if x.lower() in body.lower() and x not in (f'Person {uid}',)]
+                leaks = [x for x in ('SECRET-BANK-XYZ', 'SECRET-TOKEN-ABC', 'Person 10', 'Person 12', '9100000010', 'Access Log', 'msg91') if x.lower() in body.lower() and x not in (f'Person {uid}',)]
                 own_ok = f'Person {uid}' in body
                 run.check('NON_ADMIN_SEES_ONLY_OWN_PROFILE', r.status_code == 200 and own_ok and not leaks, f'{ROLE_USERS[uid][1]} / {ROLE_USERS[uid][2]}: open Profile & Settings',
                           'own details only', f'HTTP {r.status_code}, leaked: {leaks}')
@@ -2794,7 +2794,7 @@ def run_roles_scenario(env, F, sc):
             appmod = env.appmod
             H = {'X-App-Request': '1', 'Accept': 'application/json'}
             # --- every route is classified (a route added later without a screen would be refused for Limited users)
-            exempt = {'login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick', 'app_login_otp', 'app_verify_login_otp', 'app_manifest'}
+            exempt = {'login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick', 'internal_backup', 'app_login_otp', 'app_verify_login_otp', 'app_manifest'}
             known = set(appmod._ENDPOINT_MODULE) | appmod._COMMON_ENDPOINTS | appmod._ADMIN_ONLY_ENDPOINTS | exempt | appmod._FULL_ACCESS_ONLY_ENDPOINTS
             live = {r.endpoint for r in appmod.app.url_map.iter_rules()}
             run.check('EVERY_ROUTE_HAS_A_SCREEN', not (live - known), 'all routes', 'each belongs to a screen / common / admin-only', sorted(live - known))
@@ -2868,10 +2868,80 @@ def run_roles_scenario(env, F, sc):
             run.check('EDITOR_SHOWS_PICKER_NOT_CHECKBOXES', 'la-mount' in page and 'limited_access_picker.js' in page, 'website user editor', 'screen picker', 'old grid')
             page = a.get('/app/settings/users').data.decode('utf-8', 'ignore')
             run.check('APP_EDITOR_SHOWS_PICKER', 'limited_access_picker.js' in page and 'uModules' in page, 'app user editor', 'screen picker', 'old grid')
+        elif case == 'msg91':
+            import requests as _rq
+            appmod = env.appmod
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            env.exec("INSERT OR REPLACE INTO settings (key,value,company_id) VALUES ('msg91_authkey','KEY-SECRET-1',1)")
+            env.exec("INSERT OR REPLACE INTO settings (key,value,company_id) VALUES ('msg91_template_id','TPL-77',1)")
+            calls = []
+            real_post = _rq.post
+
+            class FakeResp:
+                def __init__(self, status=200, body=None, text=''):
+                    self.status_code, self._b, self.text = status, body, text or str(body)
+                def json(self):
+                    if self._b is None:
+                        raise ValueError('no json')
+                    return self._b
+            mode = {'resp': FakeResp(200, {'type': 'success', 'message': 'abc123'})}
+            def fake_post(url, **kw):
+                calls.append((url, kw))
+                if mode.get('boom'):
+                    raise _rq.exceptions.ConnectTimeout('timed out')
+                return mode['resp']
+            _rq.post = fake_post
+            try:
+                c = appmod.app.test_client()
+                r = c.post('/login/otp/send', data={'phone': '9100000010'})
+                url, kw = calls[-1]
+                run.check('MSG91_CALL_SHAPE', url == 'https://control.msg91.com/api/v5/otp' and kw['params']['mobile'] == '919100000010' and kw['params']['template_id'] == 'TPL-77' and kw['headers'].get('authkey') == 'KEY-SECRET-1' and kw.get('timeout'), 'send a code with MSG91', 'POST v5/otp, 91+mobile, template, authkey header, timeout', (url, {k: v for k, v in kw['params'].items() if k != 'otp'}))
+                run.check('MSG91_KEY_NOT_IN_URL', 'KEY-SECRET-1' not in str(kw['params']) and 'KEY-SECRET-1' not in url, 'where the key travels', 'header only, never the query string', 'in query')
+                code = kw['params']['otp']
+                run.check('MSG91_CODE_IS_6_DIGITS', len(code) == 6 and code.isdigit() and kw['params'].get('otp_length') == 6, 'code passed to MSG91', '6 digits', code)
+                r = c.post('/login/otp/verify', data={'phone': '9100000010', 'otp': code})
+                run.check('MSG91_OWN_CODE_LOGS_IN', r.status_code == 302 and '/dashboard' in r.headers.get('Location', ''), 'enter the code we sent through MSG91', 'logged in (we verify it ourselves)', r.status_code)
+                mode['resp'] = FakeResp(200, {'type': 'error', 'message': 'Template not found'})
+                c = appmod.app.test_client(); n = len(calls)
+                r = c.post('/login/otp/send', data={'phone': '9100000011'})
+                body = r.get_data(as_text=True)
+                run.check('MSG91_ERROR_BODY_WITH_HTTP_200_IS_A_FAILURE', 'Could not send the code' in body and 'Template not found' not in body and 'KEY-SECRET-1' not in body, 'MSG91 answers 200 with type=error', 'generic message, no provider detail leaked', body[-200:])
+                code_row = env.one("SELECT used FROM login_otps WHERE user_id=11 ORDER BY id DESC LIMIT 1")
+                run.check('MSG91_FAILED_SEND_VOIDS_THE_CODE', code_row and code_row['used'] == 1, 'code after a failed send', 'invalidated', code_row and code_row['used'])
+                mode['resp'] = FakeResp(500, None, 'Internal error')
+                r = appmod.app.test_client().post('/login/otp/send', data={'phone': '9100000012'})
+                run.check('MSG91_HTTP_500_IS_A_FAILURE', b'Could not send the code' in r.data, 'MSG91 answers HTTP 500', 'friendly failure', r.status_code)
+                mode['boom'] = True
+                r = appmod.app.test_client().post('/app/login/otp', data={'phone': '9100000013'})
+                run.check('MSG91_TIMEOUT_IS_A_FAILURE_NOT_A_CRASH', r.status_code == 200 and b'Could not send the code' in r.data, 'MSG91 times out (app login)', 'friendly failure', r.status_code)
+                mode['boom'] = False
+                run.check('MSG91_UNKNOWN_NUMBER_SENDS_NOTHING', (lambda n0: (appmod.app.test_client().post('/login/otp/send', data={'phone': '9000011111'}), len(calls) == n0)[1])(len(calls)), 'number with no account', 'no MSG91 call', 'called')
+                run.check('CONFIGURED_CHECK', appmod._sms_configured({'msg91_authkey': 'k', 'msg91_template_id': 't'}) and not appmod._sms_configured({'msg91_authkey': 'k', 'msg91_template_id': ''}) and not appmod._sms_configured({'msg91_authkey': '', 'msg91_template_id': 't'}) and not appmod._sms_configured({}), 'configured?', 'needs both Auth Key and Template ID', 'wrong')
+                src = open(appmod.__file__).read().lower()
+                run.check('NO_TWILIO_CODE_LEFT', 'from twilio' not in src and 'import twilio' not in src and not hasattr(appmod, '_sms_provider'), 'the app code', 'no Twilio import / provider switch', 'still present')
+                for k in ('twilio_account_sid', 'twilio_auth_token', 'twilio_from_number', 'sms_provider'):
+                    env.exec("INSERT OR REPLACE INTO settings (key,value,company_id) VALUES (?,?,1)", k, 'old-secret')
+                appmod._remove_twilio_settings(env.path)
+                left = env.one("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'twilio%' OR key='sms_provider'")['n']
+                run.check('SAVED_TWILIO_SETTINGS_ARE_DELETED', left == 0, 'start-up cleanup with old Twilio credentials saved', 'all deleted', left)
+            finally:
+                _rq.post = real_post
+            # settings screens
+            a = clients[10]
+            r = a.post('/app/settings/save', data={'form_type': 'sms', 'msg91_template_id': '', 'msg91_authkey': ''}, headers=H)
+            run.check('APP_MSG91_NEEDS_TEMPLATE', r.status_code == 400 and 'Template' in (r.get_json() or {}).get('error', ''), 'MSG91 without template', '400', r.status_code)
+            r = a.post('/app/settings/save', data={'form_type': 'sms', 'msg91_template_id': 'TPL-88', 'msg91_authkey': ''}, headers=H)
+            run.check('APP_BLANK_MSG91_KEY_KEEPS_SAVED', r.status_code == 200 and env.one("SELECT value FROM settings WHERE key='msg91_authkey'")['value'] == 'KEY-SECRET-1' and env.one("SELECT value FROM settings WHERE key='msg91_template_id'")['value'] == 'TPL-88', 'template changed, key box blank', 'key kept', r.status_code)
+            r = a.post('/settings?tab=users', data={'form_type': 'sms', 'msg91_template_id': 'TPL-99', 'msg91_authkey': ''})
+            run.check('WEBSITE_BLANK_KEY_ALSO_KEEPS_SAVED', env.one("SELECT value FROM settings WHERE key='msg91_authkey'")['value'] == 'KEY-SECRET-1' and env.one("SELECT value FROM settings WHERE key='msg91_template_id'")['value'] == 'TPL-99', 'website form with blank key', 'key kept', 'wiped')
+            page = a.get('/settings?tab=users').data.decode('utf-8', 'ignore'); page2 = a.get('/app/settings/users').data.decode('utf-8', 'ignore')
+            run.check('KEYS_NEVER_SHOWN_IN_PAGES', 'KEY-SECRET-1' not in page and 'KEY-SECRET-1' not in page2, 'settings page source', 'no key', 'leaked')
+            run.check('SMS_FORM_OFFERS_MSG91', 'MSG91' in page and 'MSG91' in page2, 'both screens', 'provider choice', 'missing')
+            run.check('NON_ADMIN_CANNOT_SAVE_SMS', clients[11].post('/app/settings/save', data={'form_type': 'sms'}, headers=H).status_code == 403, 'Manager saves SMS settings', '403', 'allowed')
         elif case == 'security':
             import os, base64, zlib, json as _json, hashlib as _h
             appmod = env.appmod
-            for k in ('twilio_account_sid', 'twilio_auth_token', 'twilio_from_number'):
+            for k in ('msg91_authkey', 'msg91_template_id'):
                 env.exec("INSERT OR REPLACE INTO settings (key,value,company_id) VALUES (?,?,1)", k, 'fake')
             sent = []
             real_sms = appmod._send_otp_sms
@@ -2943,7 +3013,7 @@ def run_roles_scenario(env, F, sc):
 
 def gen_roles(quick=False):
     return [{'id': f'Q{i:04d}', 'stage': 'roles', 'case': c, 'tag': f'roles/{c}'} for i, c in
-            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens', 'security', 'single_admin', 'limited_access'], 1)]
+            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens', 'security', 'single_admin', 'limited_access', 'msg91'], 1)]
 
 
 # --------------------------------------------------------------------------------------------------
