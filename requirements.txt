@@ -2,5 +2,5 @@ flask
 openpyxl
 reportlab
 gunicorn
-twilio
 apscheduler
+requests

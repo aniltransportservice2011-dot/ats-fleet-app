@@ -51,7 +51,7 @@ cp fleet.db /path/to/scratchpad/test_x.db
 Back up the real `fleet.db` before any migration touches it; delete the backup only after the
 migration is verified against the real file too (row counts match, app smoke-tests pass).
 
-For anything that would call a real paid external API (eChallan RC/challan lookup, Twilio SMS),
+For anything that would call a real paid external API (eChallan RC/challan lookup, MSG91 SMS),
 hard-block `requests.get`/`requests.post` during tests (monkeypatch to raise) so a bug can never
 accidentally spend real API credits or send a real SMS during testing.
 

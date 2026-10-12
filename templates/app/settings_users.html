@@ -73,13 +73,14 @@
 <div class="as-panel" id="p-integ">
   <form class="as-card as-form" data-as-save>
     <input type="hidden" name="form_type" value="sms">
-    <h2>Mobile OTP Login (SMS)</h2>
+    {% set sms_ok = s['msg91_authkey'] and s['msg91_template_id'] %}
+    <h2>Mobile OTP Login (SMS via MSG91)</h2>
     <div class="as-error"></div>
-    <div class="as-note" style="margin:-6px 0 12px;">Lets staff sign in with just their phone number and a one-time code. Requires a Twilio account; each OTP sent is billed by Twilio.
-      <span class="as-chip {{ 'green' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'grey' }}">{{ 'Configured' if (s['twilio_account_sid'] and s['twilio_auth_token'] and s['twilio_from_number']) else 'Not configured' }}</span></div>
-    {{ field('Account SID', 'twilio_account_sid', s['twilio_account_sid'], attrs='autocomplete="off" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"') }}
-    {{ field('Auth Token', 'twilio_auth_token', '', type='password', attrs='autocomplete="new-password" placeholder="' ~ ('Saved — leave blank to keep' if s['twilio_auth_token'] else 'Not set') ~ '"') }}
-    {{ field('From Number (Twilio number)', 'twilio_from_number', s['twilio_from_number'], attrs='placeholder="+1XXXXXXXXXX"') }}
+    <div class="as-note" style="margin:-6px 0 12px;">Lets staff sign in with just their phone number and a one-time code. MSG91 bills a few paise per code.
+      <span class="as-chip {{ 'green' if sms_ok else 'grey' }}">{{ 'Configured' if sms_ok else 'Not configured' }}</span></div>
+    {{ field('Template ID', 'msg91_template_id', s['msg91_template_id'], attrs='autocomplete="off" placeholder="from MSG91 → OTP → Templates"') }}
+    {{ field('Auth Key', 'msg91_authkey', '', type='password', attrs='autocomplete="new-password" placeholder="' ~ ('Saved — leave blank to keep' if s['msg91_authkey'] else 'from MSG91 → Authkey') ~ '"') }}
+    <div class="as-note" style="margin:-4px 0 12px;">The SMS text is your DLT-approved template and must contain ##OTP##. In MSG91, turn off the Auth Key's IP restriction or add this server's address.</div>
     <button type="submit" class="as-save">Save SMS Settings</button>
   </form>
 
