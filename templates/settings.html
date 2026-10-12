@@ -58,6 +58,8 @@
   .ur-guide-card ul { margin:0; padding-left:18px; font-size:0.78rem; color:var(--steel); }
   .ur-guide-card ul li { margin-bottom:3px; }
 
+  .ur-form-error { display:none; background:rgba(179,57,47,0.08); border:1px solid rgba(179,57,47,0.25); color:var(--red); padding:10px 14px; border-radius:4px; font-size:0.85rem; margin-bottom:14px; font-weight:600; }
+  .ur-la-hint { font-size:0.78rem; color:var(--steel); background:var(--paper); border:1px dashed var(--line); border-radius:8px; padding:8px 12px; margin-top:10px; }
   .ur-modal-box { width:720px; max-width:92vw; max-height:88vh; overflow-y:auto; }
   label.ur-section-lbl { font-size:0.7rem; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.02em; margin-bottom:0; }
   .ur-access-tiles { display:flex; gap:10px; margin-bottom:4px; }
@@ -542,7 +544,7 @@
 <!-- ADD USER -->
 <div class="modal-overlay {{ 'open' if reopen_add_user }}" id="addUserModal">
   <div class="modal-box ur-modal-box">
-    <button type="button" class="modal-close-x" onclick="document.getElementById('addUserModal').classList.remove('open')">&#10005;</button>
+    <button type="button" class="modal-close-x" onclick="urCloseUser('addUserModal')">&#10005;</button>
     <h3>&#128100; Add New User</h3>
     <div style="font-size:0.8rem;color:var(--steel);margin:-6px 0 14px;">Create a new user and set access level</div>
     {% if user_error %}
@@ -578,13 +580,14 @@
       </div>
       <input type="hidden" name="access_level" id="addAccessLevel" value="Full Access">
 
-      <label style="font-size:0.72rem;color:var(--steel);display:block;margin-top:10px;">Screens this user can open (Limited Access)</label>
+      <div class="ur-la-hint" id="addLaHint">Choose <b>Limited Access</b> above to pick exactly which screens this user can open (View or Edit for each).</div>
+      <label class="ur-la-title" id="addLaTitle" style="font-size:0.72rem;color:var(--steel);display:none;margin-top:10px;">Screens this user can open (Limited Access) &mdash; switch on each screen, then choose View or Edit</label>
       <div class="la-mount" id="addModuleGrid" data-initial="Dashboard:v" data-preview="1"></div>
 
       <div style="margin-top:14px;max-width:220px;"><label class="ur-section-lbl">3. Status *</label><select name="status" style="margin-top:6px;"><option value="Active">Active</option><option value="Inactive">Inactive</option></select></div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
-        <button type="button" onclick="document.getElementById('addUserModal').classList.remove('open')" class="btn-cancel">Cancel</button>
+        <button type="button" onclick="urCloseUser('addUserModal')" class="btn-cancel">Cancel</button>
         <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save User</button>
       </div>
     </form>
@@ -593,9 +596,9 @@
 
 <!-- EDIT USER (per row) -->
 {% for u in users %}
-<div class="modal-overlay {{ 'open' if reopen_edit_user_id == u['id'] }}" id="editUserModal{{ u['id'] }}">
+<div class="modal-overlay {{ 'open' if reopen_edit_user_id == u['id'] }}" id="editUserModal{{ u['id'] }}" data-access="{{ u['access_level'] or 'Full Access' }}">
   <div class="modal-box ur-modal-box">
-    <button type="button" class="modal-close-x" onclick="document.getElementById('editUserModal{{ u['id'] }}').classList.remove('open')">&#10005;</button>
+    <button type="button" class="modal-close-x" onclick="urCloseUser('editUserModal{{ u['id'] }}')">&#10005;</button>
     <h3>&#9998; Edit User — {{ u['username'] }}</h3>
     {% if user_error and reopen_edit_user_id == u['id'] %}
     <div style="background:rgba(179,57,47,0.08);border:1px solid rgba(179,57,47,0.25);color:var(--red);padding:10px 14px;border-radius:4px;font-size:0.85rem;margin-bottom:14px;">{{ user_error }}</div>
@@ -623,7 +626,8 @@
       </div>
       <input type="hidden" name="access_level" id="edit{{ u['id'] }}AccessLevel" value="{{ u['access_level'] or 'Full Access' }}">
 
-      <label style="font-size:0.72rem;color:var(--steel);display:block;margin-top:10px;">Screens this user can open (Limited Access)</label>
+      <div class="ur-la-hint" id="edit{{ u['id'] }}LaHint" {% if u['access_level']=='Limited Access' %}style="display:none"{% endif %}>Choose <b>Limited Access</b> above to pick exactly which screens this user can open (View or Edit for each).</div>
+      <label class="ur-la-title" id="edit{{ u['id'] }}LaTitle" style="font-size:0.72rem;color:var(--steel);display:{{ 'block' if u['access_level']=='Limited Access' else 'none' }};margin-top:10px;">Screens this user can open (Limited Access) &mdash; switch on each screen, then choose View or Edit</label>
       <div class="la-mount {{ 'open' if u['access_level']=='Limited Access' }}" id="edit{{ u['id'] }}ModuleGrid" data-initial="{{ u['module_access'] or '' }}" data-preview="1"></div>
 
       <div style="margin-top:14px;max-width:220px;">
@@ -635,7 +639,7 @@
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">
-        <button type="button" onclick="document.getElementById('editUserModal{{ u['id'] }}').classList.remove('open')" style="height:38px;padding:0 18px;background:none;border:1px solid var(--line);border-radius:999px;font-size:0.85rem;font-weight:600;cursor:pointer;">Cancel</button>
+        <button type="button" onclick="urCloseUser('editUserModal{{ u['id'] }}')" style="height:38px;padding:0 18px;background:none;border:1px solid var(--line);border-radius:999px;font-size:0.85rem;font-weight:600;cursor:pointer;">Cancel</button>
         <button type="submit" style="height:38px;padding:0 18px;background:var(--accent);color:#fff;border:none;border-radius:999px;font-size:0.85rem;font-weight:600;cursor:pointer;">Save Changes</button>
       </div>
     </form>
@@ -682,12 +686,65 @@ function urFilterTable() {
 function urPickAccess(tile, prefix) {
   tile.parentElement.querySelectorAll('.ur-access-tile').forEach(function(t) { t.classList.remove('active'); });
   tile.classList.add('active');
-  var val = tile.dataset.val;
+  var val = tile.dataset.val, limited = val === 'Limited Access';
   document.getElementById(prefix + 'AccessLevel').value = val;
   var grid = document.getElementById(prefix + 'ModuleGrid');
-  grid.classList.toggle('open', val === 'Limited Access');
-  if (val !== 'Limited Access') { grid.querySelectorAll('input[name=modules]').forEach(function(i) { i.remove(); }); } else if (grid.laSet) { grid.laSet(grid.laValue() || 'Dashboard:v'); }
+  grid.classList.toggle('open', limited);
+  var hint = document.getElementById(prefix + 'LaHint'), title = document.getElementById(prefix + 'LaTitle');
+  if (hint) hint.style.display = limited ? 'none' : '';
+  if (title) title.style.display = limited ? 'block' : 'none';
+  if (!limited) { grid.querySelectorAll('input[name=modules]').forEach(function(i) { i.remove(); }); }
+  else {
+    if (grid.laSet) { grid.laSet(grid.laValue() || 'Dashboard:v'); }
+    // the screens list sits below the tiles, often past the bottom edge of the pop-up: bring it into view
+    var box = grid.closest('.modal-box');
+    if (box) { var d = grid.getBoundingClientRect().top - box.getBoundingClientRect().top - 150; if (d > 0) box.scrollBy({ top: d, behavior: 'smooth' }); }
+  }
 }
+// Closing a pop-up (Cancel or X) throws away what was typed in it; nothing else does.
+function urCloseUser(modalId) {
+  var m = document.getElementById(modalId); if (!m) return;
+  m.classList.remove('open');
+  var f = m.querySelector('form'); if (!f) return;
+  f.reset();
+  var err = f.querySelector('.ur-form-error'); if (err) err.style.display = 'none';
+  var prefix = modalId === 'addUserModal' ? 'add' : modalId.replace('editUserModal', 'edit');
+  var tiles = f.querySelectorAll('.ur-access-tile');
+  var want = prefix === 'add' ? 'Full Access' : ((m.dataset.access) || 'Full Access');
+  tiles.forEach(function(t) { if (t.dataset.val === want) urPickAccess(t, prefix); });
+  var grid = document.getElementById(prefix + 'ModuleGrid');
+  if (grid && grid.laSet) grid.laSet(prefix === 'add' ? 'Dashboard:v' : (grid.dataset.initial || ''));
+  if (prefix !== 'add' && want !== 'Limited Access') { grid.querySelectorAll('input[name=modules]').forEach(function(i) { i.remove(); }); }
+  var box = m.querySelector('.modal-box'); if (box) box.scrollTop = 0;
+}
+// Save without reloading the page: a refused save (mobile number taken, no screen chosen ...) shows its reason at the top of
+// the pop-up and keeps everything already typed; only a successful save reloads the list.
+function urShowFormError(form, msg) {
+  var box = form.querySelector('.ur-form-error');
+  if (!box) { box = document.createElement('div'); box.className = 'ur-form-error'; form.insertBefore(box, form.firstChild); }
+  box.textContent = msg; box.style.display = 'block';
+  var mb = form.closest('.modal-box'); if (mb) mb.scrollTo({ top: 0, behavior: 'smooth' });
+}
+document.querySelectorAll('form[action="/settings/users/add"], form[action$="/edit"]').forEach(function(form) {
+  if (!form.closest('.modal-overlay[id$=Modal], .modal-overlay[id^=editUserModal]')) return;
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    if (!form.checkValidity()) { form.reportValidity(); return; }
+    var btn = form.querySelector('button[type=submit]'), label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
+    fetch(form.action, { method: 'POST', body: new FormData(form), credentials: 'same-origin', headers: { 'X-App-Request': '1', 'Accept': 'application/json' } })
+      .then(function(r) { return r.json().catch(function() { return { ok: false, error: 'The server sent an unexpected answer. Nothing was saved \u2014 please try again.' }; }); })
+      .then(function(d) {
+        if (d && d.ok) { window.location.href = '/settings?tab=users'; return; }
+        urShowFormError(form, (d && d.error) || 'That could not be saved.');
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      })
+      .catch(function() {
+        urShowFormError(form, 'Could not reach the server. Nothing was saved \u2014 check the connection and try again; what you typed is still here.');
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      });
+  });
+});
 </script>
 <script src="{{ asset_v('limited_access_picker.js') }}"></script>
 <script>

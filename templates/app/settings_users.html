@@ -180,6 +180,12 @@ function asPickAccess(val) {
   var box = document.getElementById('uModules');
   box.classList.toggle('open', val === 'Limited Access');
   if (box.laSet) { if (val === 'Limited Access') box.laSet(box.laValue() || 'Dashboard:v'); else box.querySelectorAll('input[name=modules]').forEach(function (i) { i.remove(); }); }
+  if (val === 'Limited Access') {
+    // the screens list opens below the tiles, usually past the bottom of the sheet: scroll it into view
+    var sc = box.parentElement;
+    while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+    if (sc && sc !== document.body) { var d = box.getBoundingClientRect().top - sc.getBoundingClientRect().top - 150; if (d > 0) sc.scrollBy({ top: d, behavior: 'smooth' }); }
+  }
 }
 document.querySelectorAll('#uTiles .as-tile').forEach(function (t) { t.addEventListener('click', function () { asPickAccess(t.dataset.val); }); });
 function asOpenUser(id) {
