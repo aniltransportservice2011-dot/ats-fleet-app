@@ -105,7 +105,7 @@
         </span>
       </label>
       <a href="{{ return_to or '/trips' }}" class="back">&larr; {{ 'Back to Ledger' if return_to else 'Back to Trips' }}</a>
-      <button type="submit" form="tripForm" class="tf-btn-primary">&#128190; {{ 'Update Trip' if mode=='edit' else 'Save Trip' }}</button>
+      <button type="submit" form="tripForm" class="tf-btn-primary">&#128190; {{ 'Update' if mode=='edit' else 'Save' }}</button>
     </div>
   </div>
   <div id="tfEmptyBanner" style="display:none;background:rgba(192,86,33,0.08);border:1px solid rgba(192,86,33,0.25);border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:var(--ink);">
@@ -333,7 +333,7 @@
 
     <div class="tf-bottom-bar">
       <a href="{{ return_to or '/trips' }}" class="btn-cancel" style="text-decoration:none;display:inline-flex;align-items:center;">Cancel</a>
-      <button type="submit" class="tf-btn-primary">&#10003; {{ 'Update Trip' if mode=='edit' else 'Save Trip' }}</button>
+      <button type="submit" class="tf-btn-primary">&#10003; {{ 'Update' if mode=='edit' else 'Save' }}</button>
     </div>
   </form>
 

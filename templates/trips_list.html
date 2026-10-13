@@ -115,8 +115,8 @@
 
   <div class="summary-cards">
     <div class="summary-card"><div class="lbl">Total Trips</div><div class="val">{{ total_count }}</div></div>
-    <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">₹{{ '{:,.0f}'.format(total_shown) }}</div></div>
-    <div class="summary-card"><div class="lbl">Pending Balance</div><div class="val" style="color:var(--red);">₹{{ '{:,.0f}'.format(pending_total) }}</div></div>
+    <div class="summary-card"><div class="lbl">Total Billed</div><div class="val">{{ mny(total_shown, '{:,.0f}') }}</div></div>
+    <div class="summary-card"><div class="lbl">Pending Balance</div><div class="val" style="color:var(--red);">{{ mny(pending_total, '{:,.0f}') }}</div></div>
     <div class="summary-card"><div class="lbl">Active Trips</div><div class="val" style="color:var(--accent);">{{ active_count }}</div></div>
     <div class="summary-card"><div class="lbl">LR Pending</div><div class="val" style="color:var(--red);">{{ lr_pending_count }}</div></div>
   </div>
@@ -137,9 +137,9 @@
     <tr class="clickable-row" onclick="goTo('/trips/edit/{{ t['id'] }}')">
       <td>{{ t['date'] }}</td><td style="color:var(--accent);">{{ t['lr_number'] }}</td><td>{{ t['vehicle_no'] }}</td>
       <td>{{ t['party_name'] }}</td><td>{{ t['from_loc'] }}</td><td>{{ t['to_loc'] }}</td>
-      <td class="num">₹{{ '{:,.0f}'.format(t['billed_amount'] or 0) }}</td>
+      <td class="num">{{ mny(t['billed_amount'] or 0, '{:,.0f}') }}</td>
       {% set pending = (t['billed_amount'] or 0) - (t['payment_received'] or 0) - (t['party_advance'] or 0) %}
-      <td class="num" style="color:{% if pending > 0 %}var(--red){% else %}var(--green){% endif %};font-weight:600;">₹{{ '{:,.0f}'.format(pending) }}</td>
+      <td class="num" style="color:{% if pending > 0 %}var(--red){% else %}var(--green){% endif %};font-weight:600;">{{ mny(pending, '{:,.0f}') }}</td>
       <td onclick="event.stopPropagation();">
         {% if t['end_date'] %}
         <span class="completed-badge">Completed</span>

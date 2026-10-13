@@ -13,7 +13,7 @@
       <button type="button" class="pill" onclick="document.getElementById('asLogoFile').click()">{{ 'Change Logo' if s['logo_path'] else 'Upload Logo' }}</button>
       <div class="hint">PNG, JPG, GIF or WEBP. Shown top-left on every invoice PDF.</div>
     </div>
-    <input type="file" id="asLogoFile" accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none;">
+    <input type="file" id="asLogoFile" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tif,.tiff" style="display:none;">
   </div>
   <div class="as-error" id="asLogoErr"></div>
 </div>
@@ -41,7 +41,7 @@
     {{ field('Phone', 'phone', s['phone'], type='tel') }}
     {{ field('Email', 'email', s['email'], type='email') }}
   </div>
-  <button type="submit" class="as-save">Save Changes</button>
+  <button type="submit" class="as-save">Update</button>
 </form>
 {% endblock %}
 {% block extra_scripts %}

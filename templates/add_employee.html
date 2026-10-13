@@ -6,13 +6,14 @@
   <h1>Add Employee</h1>
   <form class="stack" method="POST">
     <div><label>Name</label><input type="text" name="name" required></div>
+    <div><label>Mobile number *</label><input type="text" name="mobile" required inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" title="10-digit Indian mobile number" placeholder="10-digit mobile number"></div>
     <div><label>Staff or Driver</label>
       <select name="type">
         <option value="Staff">Staff</option>
         <option value="Driver">Driver</option>
       </select>
     </div>
-    <button type="submit" class="submit">Save &amp; Open Ledger</button>
+    <button type="submit" class="submit">Save</button>
   </form>
 </div>
 {% endblock %}

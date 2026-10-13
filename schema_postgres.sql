@@ -820,7 +820,9 @@ CREATE TABLE users (
     created_by    INTEGER,
     updated_by    INTEGER,
     updated_at    TEXT,
-    company_id    INTEGER NOT NULL REFERENCES companies(id)
+    company_id    INTEGER NOT NULL REFERENCES companies(id),
+    hide_trip_amounts INTEGER NOT NULL DEFAULT 0,
+    salary_view_ids TEXT
 );
 CREATE UNIQUE INDEX idx_users_company_username_ci ON users(company_id, lower(username));
 -- Mobile number and email must each be unique per account, same as username — a self-signup's

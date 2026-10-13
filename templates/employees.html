@@ -6,6 +6,7 @@
 {% block content %}
 {% set tab_titles = {'overview':'Overview','salary':'Salary','attendance':'Attendance'} %}
 <div class="wrap" style="max-width:none; width:100%;">
+  {% if request.args.get('emp_error') %}<div style="margin:0 0 12px;padding:10px 14px;border-radius:6px;background:rgba(179,57,47,0.08);border:1px solid rgba(179,57,47,0.25);color:var(--red);font-size:0.88rem;font-weight:600;">{{ request.args.get('emp_error') }}</div>{% endif %}
   <div class="mt-crumb"><a href="/salaries">Employees</a> &nbsp;&rsaquo;&nbsp; {{ tab_titles.get(tab, 'Overview') }}</div>
   <div class="mt-head">
     <div>

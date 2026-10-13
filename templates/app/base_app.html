@@ -1119,14 +1119,29 @@
     curItems.forEach(function (el) { el.classList.toggle('active', el.getAttribute('href') === activeHref); });
   }
 
+  // Re-run a swapped-in page's scripts IN ORDER. A re-created <script src> loads asynchronously, and the inline script after it used to run
+  // first — so a page that loads a library and then uses it (e.g. the Users screen's screen picker) broke whenever the library was not
+  // already in memory (the first visit after signing in). Each external script is now waited for before the next one runs.
   function runScripts(container) {
-    var scripts = container.querySelectorAll('script');
-    scripts.forEach(function (old) {
+    var list = Array.prototype.slice.call(container.querySelectorAll('script'));
+    (function next() {
+      var old = list.shift();
+      if (!old) return;
       var fresh = document.createElement('script');
       for (var i = 0; i < old.attributes.length; i++) fresh.setAttribute(old.attributes[i].name, old.attributes[i].value);
-      fresh.textContent = old.textContent;
-      old.parentNode.replaceChild(fresh, old);
-    });
+      if (old.src) {
+        var done = false;
+        var go = function () { if (!done) { done = true; next(); } };
+        fresh.async = false;
+        fresh.onload = go; fresh.onerror = go;
+        setTimeout(go, 8000);                    // never let one slow file block the rest of the page
+        old.parentNode.replaceChild(fresh, old);
+      } else {
+        fresh.textContent = old.textContent;
+        old.parentNode.replaceChild(fresh, old);
+        next();
+      }
+    })();
   }
 
   function navigate(url, isPopState) {
@@ -1143,6 +1158,14 @@
       var newDoc = new DOMParser().parseFromString(html, 'text/html');
       var newMain = newDoc.getElementById('appMain');
       var newScripts = newDoc.getElementById('appExtraScripts');
+      // stylesheet FILES in the new page's <head> are not part of #appMain: load any that this page does not have yet
+      newDoc.querySelectorAll('head link[rel="stylesheet"]').forEach(function (l) {
+        var href = l.getAttribute('href');
+        if (!href) return;
+        var abs = new URL(href, window.location.href).href;
+        if (Array.prototype.some.call(document.querySelectorAll('link[rel="stylesheet"]'), function (x) { return x.href === abs; })) return;
+        var c = document.createElement('link'); c.rel = 'stylesheet'; c.href = href; document.head.appendChild(c);
+      });
       if (!newMain) { window.location.href = url; return; } // unrecognized response shape -> real nav, never show a broken half-page
 
       runPageCleanup();

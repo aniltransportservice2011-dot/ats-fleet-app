@@ -393,6 +393,72 @@ def _ensure_single_admin_index(db_path=None):
 
 print('[security] one active Administrator:', _ensure_single_admin_index(), file=sys.stderr)
 
+_USER_EXTRA_COLUMNS = (
+    ('hide_trip_amounts', 'INTEGER NOT NULL DEFAULT 0'),   # Trips (View only): stars instead of rates, bills and payments
+    ('salary_view_ids', 'TEXT'),                           # Salaries (View only): salary of OTHER employees this user may also see: '*' = everyone, or '3,5,9'
+)
+
+
+def _ensure_user_extra_columns(db_path=None):
+    """The per-user switches above, added by plain ALTER TABLE ... ADD COLUMN (default 0 / empty) — touches no existing row and changes
+    nobody's access. Each column is skipped when it is already there, so this is safe on every start and with two workers starting together."""
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+            if not cols:
+                return 'no users table yet'
+            added = []
+            for name, ddl in _USER_EXTRA_COLUMNS:
+                if name in cols:
+                    continue
+                try:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+                    conn.commit()
+                    added.append(name)
+                except sqlite3.OperationalError:
+                    # a second worker added it between our check and our ALTER
+                    if name not in [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]:
+                        raise
+            msg = ('added ' + ', '.join(added)) if added else 'already up to date'
+            legacy = [c for c in ('salary_view_own', 'salary_view_drivers', 'employee_id') if c in cols]
+            if legacy:
+                # interim designs (own / drivers tick boxes, an explicit employee link) are replaced by salary_view_ids and by matching the login's
+                # mobile number to the employee's: carry any "drivers" setting over, then drop those columns — after an online copy of the database,
+                # inside one transaction.
+                import datetime as _dt
+                bak_dir = os.path.join(os.path.dirname(os.path.abspath(path)), 'db_backups')       # git-ignored folder: a database copy must never be committed
+                os.makedirs(bak_dir, exist_ok=True)
+                bak = os.path.join(bak_dir, f"{os.path.basename(path)}.before_salary_scope_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                dst = sqlite3.connect(bak)
+                try:
+                    conn.backup(dst)
+                finally:
+                    dst.close()
+                conn.execute('BEGIN IMMEDIATE')
+                try:
+                    if 'salary_view_drivers' in cols:
+                        conn.execute("""UPDATE users SET salary_view_ids = (SELECT group_concat(id) FROM employees WHERE LOWER(TRIM(COALESCE(type,'')))='driver')
+                                        WHERE salary_view_drivers=1 AND salary_view_ids IS NULL""")
+                    for c in legacy:
+                        conn.execute(f'ALTER TABLE users DROP COLUMN {c}')
+                    conn.commit()
+                    msg += f'; interim salary columns converted and dropped (copy: db_backups/{os.path.basename(bak)})'
+                except Exception:
+                    conn.rollback()
+                    raise
+            return msg
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[schema] could not add the per-user switch columns: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[schema] users extra columns:', _ensure_user_extra_columns(), file=sys.stderr)
+
 def _remove_twilio_settings(db_path=None):
     """Twilio is no longer used. Delete any credentials saved for it (account SID, auth token, from number, provider choice)
     so no secret sits unused in the database. Safe to run on every start."""
@@ -1586,8 +1652,8 @@ def dashboard():
         activities.append({'icon': 'maintenance', 'text': f"Maintenance recorded — {r['category'] or 'Service'} ({r['vehicle_no'] or 'N/A'})", 'ts': r['created_at']})
     for r in conn.execute("SELECT category, amount, created_at FROM overheads WHERE created_at IS NOT NULL ORDER BY created_at DESC LIMIT 3").fetchall():
         activities.append({'icon': 'expense', 'text': f"Expense recorded — {r['category'] or 'Overhead'} (₹{r['amount'] or 0:,.0f})", 'ts': r['created_at']})
-    for r in conn.execute("""SELECT employee, updated_at FROM salaries WHERE payment_status='paid' AND updated_at IS NOT NULL
-                             ORDER BY updated_at DESC LIMIT 3""").fetchall():
+    for r in (conn.execute("""SELECT employee, updated_at FROM salaries WHERE payment_status='paid' AND updated_at IS NOT NULL
+                             ORDER BY updated_at DESC LIMIT 3""").fetchall() if _salary_scope_ids(conn) is None else []):   # a restricted salary viewer is not told who was paid
         activities.append({'icon': 'salary', 'text': f"Salary paid — {r['employee']}", 'ts': r['updated_at']})
     for r in conn.execute("""SELECT v.vehicle_no, vc.compliance_type, vc.updated_at FROM vehicle_compliance vc
                              LEFT JOIN vehicles v ON vc.vehicle_id=v.id
@@ -2297,13 +2363,16 @@ def _employees_overview_tab(conn):
         date_from, date_to = date_to, date_from
     today = datetime.date.today().isoformat()
 
-    employees = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    employees = _salary_visible_employees(conn)
     total_employees = len(employees)
     drivers = sum(1 for e in employees if (e['type'] or '') == 'Driver')
     office_staff = total_employees - drivers
 
     today_rows = {r['employee_id']: r['status'] for r in
                   conn.execute("SELECT employee_id, status FROM attendance WHERE date=?", (today,)).fetchall()}
+    _sids = _salary_scope_ids(conn)
+    if _sids is not None:
+        today_rows = {k: v for k, v in today_rows.items() if k in _sids}
     present_today = sum(1 for s in today_rows.values() if s == 'Present')
     on_leave_today = sum(1 for s in today_rows.values() if s == 'Leave')
 
@@ -2320,8 +2389,9 @@ def _employees_overview_tab(conn):
         latest_salary_by_emp[e['id']] = sum(s['net_salary'] or 0 for s in sal_rows)
     overall_attendance_pct = round(sum(period_pcts) / len(period_pcts), 1) if period_pcts else 0
 
-    period_sal = conn.execute("""SELECT COALESCE(SUM(net_salary),0), COALESCE(SUM(CASE WHEN payment_status='paid' THEN net_salary ELSE 0 END),0)
-                                 FROM salaries WHERE date IS NOT NULL AND date>=? AND date<=?""", (date_from, date_to)).fetchone()
+    period_sal = conn.execute(f"""SELECT COALESCE(SUM(net_salary),0), COALESCE(SUM(CASE WHEN payment_status='paid' THEN net_salary ELSE 0 END),0)
+                                 FROM salaries WHERE date IS NOT NULL AND date>=? AND date<=?
+                                 {'' if _sids is None else 'AND employee_id IN ' + _salary_ids_sql(_sids)}""", (date_from, date_to)).fetchone()
     total_payroll = period_sal[0] or 0
     paid_payroll = period_sal[1] or 0
     pending_payroll = total_payroll - paid_payroll
@@ -2371,6 +2441,9 @@ def _employees_overview_tab(conn):
             'aadhaar': e['aadhaar'], 'pan': e['pan'], 'driving_license': e['driving_license'],
             'basic_salary_raw': e['basic_salary'] or 0,
         })
+        if _sids is not None:        # restricted viewer: salary figures yes, personal / bank / ID details no
+            for k in ('mobile', 'email', 'address', 'date_of_birth', 'bank_account', 'ifsc_code', 'upi_id', 'emergency_contact', 'aadhaar', 'pan', 'driving_license'):
+                rows[-1][k] = None
 
     total_count = len(rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
@@ -2405,7 +2478,7 @@ def _employees_salary_data(conn):
     role_f = request.args.get('role', '')
     search_f = request.args.get('search', '')
 
-    employees = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    employees = _salary_visible_employees(conn)
     if role_f:
         employees = [e for e in employees if (e['role'] or e['type']) == role_f]
     if search_f:
@@ -2430,7 +2503,7 @@ def _employees_salary_data(conn):
     total_outstanding_advances = sum(r['outstanding'] for r in rows)
     avg_salary = round(total_payroll / employees_paid, 0) if employees_paid else 0
 
-    roles = sorted(set((e['role'] or e['type'] or '') for e in conn.execute("SELECT role, type FROM employees").fetchall() if (e['role'] or e['type'])))
+    roles = sorted(set((e['role'] or e['type'] or '') for e in _salary_visible_employees(conn) if (e['role'] or e['type'])))
 
     return {'rows': rows, 'total_count': len(rows), 'total_payroll': total_payroll,
             'employees_paid': employees_paid, 'total_employees_all': len(employees),
@@ -2473,7 +2546,7 @@ def _employees_attendance_tab(conn):
     search_f = request.args.get('search', '')
     today = datetime.date.today().isoformat()
 
-    employees = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    employees = _salary_visible_employees(conn)
     if role_f:
         employees = [e for e in employees if (e['role'] or e['type']) == role_f]
     if search_f:
@@ -2482,6 +2555,9 @@ def _employees_attendance_tab(conn):
 
     today_rows = {r['employee_id']: r['status'] for r in
                   conn.execute("SELECT employee_id, status FROM attendance WHERE date=?", (today,)).fetchall()}
+    _sids = _salary_scope_ids(conn)
+    if _sids is not None:
+        today_rows = {k: v for k, v in today_rows.items() if k in _sids}
     present_kpi = sum(1 for s in today_rows.values() if s == 'Present')
     absent_kpi = sum(1 for s in today_rows.values() if s == 'Absent')
     leave_kpi = sum(1 for s in today_rows.values() if s == 'Leave')
@@ -2490,7 +2566,8 @@ def _employees_attendance_tab(conn):
     # a Present row whose logged in_time is after this cutoff, a simple fixed threshold rather than
     # a per-employee shift schedule this app doesn't model.
     LATE_CUTOFF = '09:30'
-    late_kpi = conn.execute("SELECT COUNT(*) FROM attendance WHERE date=? AND status='Present' AND in_time IS NOT NULL AND in_time > ?",
+    late_kpi = conn.execute("SELECT COUNT(*) FROM attendance WHERE date=? AND status='Present' AND in_time IS NOT NULL AND in_time > ?"
+                            + ('' if _sids is None else ' AND employee_id IN ' + _salary_ids_sql(_sids)),
                             (today, LATE_CUTOFF)).fetchone()[0]
 
     rows = []
@@ -2519,7 +2596,7 @@ def _employees_attendance_tab(conn):
     base_params.pop('page', None); base_params.pop('per_page', None)
     base_qs = urlencode(base_params)
 
-    roles = sorted(set((e['role'] or e['type'] or '') for e in conn.execute("SELECT role, type FROM employees").fetchall() if (e['role'] or e['type'])))
+    roles = sorted(set((e['role'] or e['type'] or '') for e in _salary_visible_employees(conn) if (e['role'] or e['type'])))
     all_employees_list = [{'id': e['id'], 'name': e['name'], 'employee_code': e['employee_code'] or f"EMP-{e['id']:03d}"} for e in employees]
     # The drawer's calendar is a fixed month grid — it can't render an arbitrary multi-month range,
     # so it shows the calendar month containing the end of the selected period.
@@ -2954,6 +3031,9 @@ def trips_list():
     query += f" ORDER BY {order_col} {order_dir}, t.date DESC LIMIT {per_page} OFFSET {offset}"
 
     trips = conn.execute(query, params).fetchall()
+    if _hide_trip_amounts():
+        trips = [_mask_trip_dict(r) for r in trips]
+        total_shown = pending_total = 0
     vehicles = conn.execute("""SELECT DISTINCT vehicle_no FROM vehicles
                                WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active'
                                ORDER BY vehicle_no""").fetchall()
@@ -7103,10 +7183,16 @@ def delete_salary(s_id):
 def edit_employee(employee_id):
     conn = get_db()
     f = request.form
+    mobile, mob_err = _employee_mobile(conn, f.get('mobile'), exclude_id=employee_id)
+    if mob_err:
+        conn.close()
+        if _wants_json():
+            return jsonify({'ok': False, 'error': mob_err}), 400
+        return redirect(url_for('salaries_list', tab=request.form.get('return_tab') or 'overview', emp_error=mob_err))
     conn.execute("""UPDATE employees SET name=?, type=?, role=?, mobile=?, email=?, address=?, joining_date=?,
                     date_of_birth=?, bank_account=?, ifsc_code=?, upi_id=?, emergency_contact=?, aadhaar=?, pan=?,
                     driving_license=?, basic_salary=?, updated_by=?, updated_at=? WHERE id=?""",
-                 (f.get('name'), f.get('type'), f.get('role'), f.get('mobile') or None, f.get('email') or None,
+                 (f.get('name'), f.get('type'), f.get('role'), mobile, f.get('email') or None,
                   f.get('address') or None, f.get('joining_date') or None, f.get('date_of_birth') or None,
                   f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
                   f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
@@ -7114,6 +7200,8 @@ def edit_employee(employee_id):
                   session.get('user_id'), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), employee_id))
     conn.commit()
     conn.close()
+    if _wants_json():
+        return jsonify({'ok': True})
     return redirect(url_for('salaries_list', tab=request.form.get('return_tab') or 'overview'))
 
 @app.route('/employees/<int:employee_id>/deactivate', methods=['POST'])
@@ -7208,6 +7296,10 @@ def download_payslip(salary_id):
     if not sal:
         conn.close()
         return redirect(url_for('salaries_list', tab='salary'))
+    _sids = _salary_scope_ids(conn)
+    if _sids is not None and sal['employee_id'] not in _sids:
+        conn.close()
+        return _salary_denied()
     items = conn.execute("SELECT item_type, description, amount FROM salary_items WHERE salary_id=?", (salary_id,)).fetchall()
     company_name = get_company_name(session.get('company_id', 1))
     conn.close()
@@ -7390,6 +7482,8 @@ def export_trips():
         c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="1B2A4A")
     for r_idx, row in enumerate(rows, 2):
         vals = list(row)[:-2] + ['Yes' if row['lr_received'] == 'Yes' else 'No', 'Completed' if row['end_date'] else 'Active']
+        if _hide_trip_amounts():
+            vals[6] = '****'           # the Billed Amount column (a "hide amounts" user never gets the real figure in a file)
         for c_idx, val in enumerate(vals, 1):
             ws.cell(row=r_idx, column=c_idx, value=val)
     buf = io.BytesIO()
@@ -7443,7 +7537,7 @@ def export_trips_pdf():
     for r in rows:
         total_billed += r['billed_amount'] or 0
         table_rows.append([r['date'] or '', r['lr_number'] or '', r['vehicle_no'] or '', r['party_name'] or '',
-                            r['from_loc'] or '', r['to_loc'] or '', f"{r['billed_amount'] or 0:,.0f}",
+                            r['from_loc'] or '', r['to_loc'] or '', '****' if _hide_trip_amounts() else f"{r['billed_amount'] or 0:,.0f}",
                             'Yes' if r['lr_received'] == 'Yes' else 'No',
                             'Completed' if r['end_date'] else 'Active'])
     t = Table(table_rows, colWidths=[0.75*inch, 0.9*inch, 0.8*inch, 1.4*inch, 1.5*inch, 1.5*inch, 0.9*inch, 0.7*inch, 0.8*inch], repeatRows=1)
@@ -7458,7 +7552,7 @@ def export_trips_pdf():
     ]))
     story.append(t)
     story.append(Spacer(1, 10))
-    story.append(Paragraph(f"Total Trips: {len(rows)} &nbsp;&nbsp;|&nbsp;&nbsp; Total Billed: Rs. {total_billed:,.0f}",
+    story.append(Paragraph(f"Total Trips: {len(rows)} &nbsp;&nbsp;|&nbsp;&nbsp; Total Billed: {'****' if _hide_trip_amounts() else f'Rs. {total_billed:,.0f}'}",
                             ParagraphStyle('F', parent=styles['Normal'], fontSize=10)))
     doc.build(story)
     buf.seek(0)
@@ -7571,6 +7665,10 @@ def advances_list():
         SUM(CASE WHEN type='given' THEN amount ELSE -amount END) as outstanding
         FROM advances GROUP BY employee ORDER BY employee""").fetchall()
     entries = conn.execute("SELECT employee, date, amount, type, notes FROM advances ORDER BY date DESC").fetchall()
+    if _salary_scope_ids(conn) is not None:
+        ok_names = {(e['name'] or '').strip().lower() for e in _salary_visible_employees(conn)}
+        rows = [r for r in rows if (r['employee'] or '').strip().lower() in ok_names]
+        entries = [r for r in entries if (r['employee'] or '').strip().lower() in ok_names]
     conn.close()
     return render_template('advances_list.html', rows=rows, entries=entries, active='salaries')
 
@@ -7811,6 +7909,9 @@ def _insert_employee_payment_from_form(conn, employee, f):
 @app.route('/employee/<employee>', methods=['GET', 'POST'])
 def employee_ledger(employee):
     conn = get_db()
+    if not _salary_name_allowed(conn, employee):
+        conn.close()
+        return _salary_denied()
     if request.method == 'POST':
         f = request.form
         from_tab = f.get('from_tab', 'overview')
@@ -8174,6 +8275,25 @@ def export_performance():
     return send_file(buf, as_attachment=True, download_name='performance_export.xlsx',
                       mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
+def _employee_mobile(conn, raw, exclude_id=None):
+    """(ten_digit_mobile, None) or (None, message). An employee's mobile number is mandatory: it is how the app recognises the same person's
+    login (the login's mobile number is matched to it) when it decides whose salary that user may see. Must be a valid 10-digit Indian
+    mobile and unique among employees."""
+    digits = ''.join(ch for ch in str(raw or '') if ch.isdigit())
+    if len(digits) == 12 and digits.startswith('91'):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith('0'):
+        digits = digits[1:]
+    if not digits:
+        return None, 'Mobile number is required.'
+    if not USERNAME_MOBILE_RE.match(digits):
+        return None, 'Mobile number must be a valid 10-digit Indian mobile number.'
+    for r in conn.execute("SELECT id, name, mobile FROM employees").fetchall():
+        if r['id'] != exclude_id and _digits10(r['mobile']) == digits:
+            return None, f'Mobile number {digits} is already used by employee "{r["name"]}".'
+    return digits, None
+
+
 def _insert_employee_from_form(conn, f):
     """Builds and inserts one new employee — same fields, same required set (Name/Type), same
     duplicate-name no-op (an existing employee with that name just isn't re-created — matching
@@ -8193,13 +8313,16 @@ def _insert_employee_from_form(conn, f):
     existing = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", (name,)).fetchone()
     if existing:
         return True, None
+    mobile, err = _employee_mobile(conn, f.get('mobile'))
+    if err:
+        return False, err
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     cur = conn.execute("""INSERT INTO employees (name, type, employee_code, role, mobile, email, address,
                           joining_date, date_of_birth, bank_account, ifsc_code, upi_id, emergency_contact,
                           aadhaar, pan, driving_license, status, basic_salary, created_by, created_at)
                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active', ?, ?, ?)""",
                         (name, etype, f.get('employee_code') or None, f.get('role') or etype,
-                         f.get('mobile') or None, f.get('email') or None, f.get('address') or None,
+                         mobile, f.get('email') or None, f.get('address') or None,
                          f.get('joining_date') or None, f.get('date_of_birth') or None,
                          f.get('bank_account') or None, f.get('ifsc_code') or None, f.get('upi_id') or None,
                          f.get('emergency_contact') or None, f.get('aadhaar') or None, f.get('pan') or None,
@@ -8217,11 +8340,18 @@ def add_employee():
     if request.method == 'POST':
         f = request.form
         name = (f.get('name') or '').strip()
-        _insert_employee_from_form(conn, f)
+        ok, result = _insert_employee_from_form(conn, f)
+        if not ok:
+            conn.close()
+            if _wants_json():
+                return jsonify({'ok': False, 'error': result}), 400
+            return redirect(url_for('salaries_list', tab='overview', emp_error=result))
         conn.commit()
         # 'next' lets the Add Employee modal (which lives on the tabbed Employees page) return the
         # admin to that page instead of the old standalone employee_ledger detail view.
         conn.close()
+        if _wants_json():
+            return jsonify({'ok': True})
         if request.form.get('next') == 'employees':
             return redirect(url_for('salaries_list', tab='overview'))
         return redirect(url_for('employee_ledger', employee=name))
@@ -8507,35 +8637,84 @@ def _get_invoice_settings(conn, company_id=1):
         s[key] = row['value'] if row else ''
     return s
 
+LOGO_MAX_SIDE = 600          # px: the logo is shown at ~50 px on screen and ~0.45 inch on an invoice, so more detail than this is wasted bytes
+LOGO_BAD_FILE = ('That file could not be read as a picture. Please choose a JPG, PNG, GIF, WEBP, BMP or TIFF image '
+                 '(a photo saved as HEIC or a vector SVG must be saved as JPG or PNG first).')
+
+
+def _normalise_logo_image(data):
+    """Turns an uploaded picture of ANY common format (JPG/JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO ...) into one clean PNG: (png_bytes, None) or
+    (None, message). The file is judged by what it really contains, not by its extension, so a JPEG named .png (or the reverse) works; a
+    text file or a truncated image is refused instead of being stored as a broken logo. A phone photo's rotation flag is applied, an
+    animated GIF/WEBP keeps its first frame, CMYK / palette / 16-bit pictures are converted, and a big picture is shrunk to LOGO_MAX_SIDE."""
+    import io
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return None, 'Picture support is not installed on this server (Pillow). Ask your administrator.'
+    if not data:
+        return None, 'That file is empty.'
+    if data.lstrip()[:5].lower() in (b'<?xml', b'<svg ') or b'<svg' in data[:600].lower():
+        return None, LOGO_BAD_FILE
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()                                   # decode every pixel now, so a truncated file is caught here
+    except Exception:                               # unknown format, corrupt data, decompression bomb ...
+        return None, LOGO_BAD_FILE
+    try:
+        im.seek(0)                                  # animated file: first frame
+    except EOFError:
+        pass
+    try:
+        im = ImageOps.exif_transpose(im)            # honour the camera's rotation flag
+    except Exception:
+        pass
+    try:
+        has_alpha = im.mode in ('RGBA', 'LA', 'PA') or (im.mode == 'P' and 'transparency' in im.info) or 'transparency' in im.info
+        im = im.convert('RGBA' if has_alpha else 'RGB')
+    except Exception:
+        return None, LOGO_BAD_FILE
+    if min(im.size) < 8:
+        return None, 'That picture is too small to be a logo. Please choose a larger image.'
+    if max(im.size) > LOGO_MAX_SIDE:
+        im.thumbnail((LOGO_MAX_SIDE, LOGO_MAX_SIDE), Image.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, 'PNG', optimize=True)
+    return out.getvalue(), None
+
+
 @app.route('/settings/logo/upload', methods=['POST'])
 def upload_company_logo():
-    """Company logo shown on every generated invoice PDF — uploaded once here, reused
-    everywhere _build_invoice_pdf runs. Same save-and-record-a-relative-path pattern as
-    Insurance's document uploads."""
+    """Company logo shown on every generated invoice PDF — uploaded once here, reused everywhere _build_invoice_pdf runs.
+    Any common picture format is accepted (see _normalise_logo_image); it is stored as a clean PNG under uploads/logo/<company_id>/."""
     f = request.files.get('logo')
-    conn = get_db()
-    _logo_error = 'Choose a PNG, JPG, GIF or WEBP image.'
-    if f and f.filename:
-        filename = secure_filename(f.filename)
-        ext = os.path.splitext(filename)[1].lower()
-        if ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp'):
-            _logo_error = None
+    error = None
+    rel_path = None
+    if not (f and f.filename):
+        error = 'Choose a picture file first.'
+    else:
+        png, error = _normalise_logo_image(f.read())
+        if not error:
             company_id = session.get('company_id', 1)
-            unique = f"logo_{int(datetime.datetime.now().timestamp() * 1000)}{ext}"
+            unique = f"logo_{int(datetime.datetime.now().timestamp() * 1000)}.png"
             company_dir = os.path.join(LOGO_UPLOAD_DIR, str(company_id))
             os.makedirs(company_dir, exist_ok=True)
-            f.save(os.path.join(company_dir, unique))
+            with open(os.path.join(company_dir, unique), 'wb') as fh:
+                fh.write(png)
             rel_path = f"uploads/logo/{company_id}/{unique}"
             _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            conn = get_db()
             conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
                             VALUES ('logo_path', ?, ?, ?, ?, ?, ?)""",
                          (rel_path, company_id, session.get('user_id'), _now, session.get('user_id'), _now))
             conn.commit()
-    conn.close()
+            conn.close()
     if _wants_json():
-        if _logo_error:
-            return jsonify({'ok': False, 'error': _logo_error}), 400
+        if error:
+            return jsonify({'ok': False, 'error': error}), 400
         return jsonify({'ok': True, 'logo_url': '/static/' + rel_path})
+    if error:
+        return redirect(url_for('settings_page', tab='company', logo_error=error))
     return redirect(url_for('settings_page', tab='company'))
 
 
@@ -9929,6 +10108,64 @@ def _parse_modules(text):
 def _format_modules(mods):
     return ','.join(f'{m}:{mods[m]}' for m in MODULE_LIST if m in mods)
 
+# ---- "Hide amounts on Trips" (per user) -----------------------------------------------------------------------
+# A Limited Access user whose Trips access is View-only can be set to see stars instead of what the trip earns and what has been paid on it
+# (rate, trip bill, charges, deductions, TDS, payments received, balance, party advance, and the hired-vehicle owner's amounts). Fuel, driver
+# advance, toll and the other trip expenses, and everything about the trip itself (route, party, material, tonnage, dates, vehicle, driver) stay
+# visible. With Edit access nothing is ever hidden. The values are removed on the server (here), not just hidden by the page.
+TRIP_HIDDEN_COLUMNS = (
+    'rate', 'fixed_rate_amount', 'billed_amount',
+    'detention_charges', 'gps_cost', 'loading_charge', 'unloading_charge', 'police_charges', 'sim_tracking', 'union_charges',
+    'weight_charges', 'other_charges',
+    'brokerage', 'builty_commission', 'late_fees', 'material_damage', 'shortage_amount', 'tds', 'other_deductions',
+    'party_advance', 'payment_received',
+    'owner_rate', 'owner_fixed_amount', 'owner_amount', 'paid_to_owner', 'pending_to_owner',
+)
+_TRIP_FORM_ENDPOINTS = {'add_trip', 'edit_trip', 'app_add_trip', 'app_edit_trip'}
+HIDDEN_AMOUNT_MARK = '\u2605\u2605\u2605\u2605'   # four stars: always the same length, so it says nothing about the size of the amount
+
+
+def _hide_trip_amounts():
+    """True when the signed-in user must not see trip amounts (see above)."""
+    return bool(getattr(g, 'hide_trip_amounts', False))
+
+
+def _mask_trip_dict(row):
+    """A copy of one trip (dict or sqlite row) with every hidden column set to 0; returned unchanged when amounts are not hidden."""
+    d = dict(row)
+    if _hide_trip_amounts():
+        for k in TRIP_HIDDEN_COLUMNS:
+            if k in d:
+                d[k] = 0
+    return d
+
+
+@app.template_global('mny')
+def _mny(value, spec='{:,.0f}', prefix='\u20b9'):
+    """Money for templates: the amount with the rupee sign, or four stars when this user's trip amounts are hidden."""
+    if _hide_trip_amounts():
+        return HIDDEN_AMOUNT_MARK
+    try:
+        return prefix + spec.format(value or 0)
+    except (TypeError, ValueError):
+        return prefix + '0'
+
+
+@app.template_global('employee_choices')
+def _employee_choices():
+    """[{id, name, type, mobile}] of every employee, for the "also show the salary of ..." list and the live "own salary matched to ..." hint in the user editors."""
+    conn = get_db()
+    try:
+        return [{'id': r['id'], 'name': r['name'], 'type': r['type'] or '', 'mobile': _digits10(r['mobile'])} for r in conn.execute("SELECT id, name, type, mobile FROM employees ORDER BY name").fetchall()]
+    finally:
+        conn.close()
+
+
+@app.context_processor
+def _inject_hide_amounts():
+    return {'hide_amounts': _hide_trip_amounts()}
+
+
 def _modules_from_form(form, access_level):
     """(module_access text or None, error or None) from the add/edit user form — values arrive as 'Trips:e' / 'Ledger:v'."""
     if access_level != 'Limited Access':
@@ -9937,6 +10174,88 @@ def _modules_from_form(form, access_level):
     if not mods:
         return None, 'Choose at least one screen for Limited Access.'
     return _format_modules(mods), None
+
+def _hide_trip_amounts_from_form(form, modules_text):
+    """1 only when the form asked for it AND the user's Trips access is View-only (with Edit nothing is ever hidden)."""
+    return 1 if form.get('hide_trip_amounts') == '1' and _parse_modules(modules_text).get('Trips') == 'v' else 0
+
+
+# ---- Salary visibility for a Limited Access user whose Salaries access is View-only ---------------------------------
+# By default such a user sees NO employee's salary. The Administrator can tick "Own salary" (needs the login linked to an employee record) and/or
+# "Drivers' salaries" (every employee whose type is Driver). With Edit access, or Full Access, nothing is restricted — as before.
+def _employee_for_login(conn, phone, username=None):
+    """The employee whose mobile number equals this login's mobile number (the login's phone, or its username when that is a mobile number), or
+    None. This match is what "their own salary" means: no name or typed link is involved, so nobody can be matched to a salary that is not
+    theirs. Two employees can never share a mobile number (checked when employees are saved); if bad data ever makes it ambiguous, nobody matches."""
+    mob = _digits10(phone) or _digits10(username)
+    if not mob:
+        return None
+    hits = [r for r in conn.execute("SELECT id, name, mobile FROM employees").fetchall() if _digits10(r['mobile']) == mob]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _salary_scope_ids(conn):
+    """None = unrestricted; otherwise the set of employees.id this user may see salary data for.
+    Always includes the employee whose mobile number equals this login's mobile number (their OWN salary); plus every employee the Administrator ticked
+    ('*' = everyone). The identity comes from the signed-in session (server side); the link and the ticks come from the database on every
+    request, so a change by the Administrator (or a corrected mobile number) takes effect on the very next click."""
+    sc = getattr(g, 'salary_scope', None)
+    if sc is None:
+        return None
+    ids = set()
+    if sc.get('employee_id'):
+        ids.add(int(sc['employee_id']))
+    raw = (sc.get('ids') or '').strip()
+    if raw == '*':
+        ids |= {r['id'] for r in conn.execute("SELECT id FROM employees").fetchall()}
+    elif raw:
+        wanted = {int(x) for x in raw.split(',') if x.strip().isdigit()}
+        if wanted:
+            ids |= {r['id'] for r in conn.execute("SELECT id FROM employees").fetchall() if r['id'] in wanted}
+    return ids
+
+
+def _salary_visible_employees(conn):
+    """Every employees row this user may see, name order."""
+    rows = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
+    ids = _salary_scope_ids(conn)
+    return rows if ids is None else [r for r in rows if r['id'] in ids]
+
+
+def _salary_name_allowed(conn, name):
+    """May this user see the ledger of the employee called `name`?"""
+    ids = _salary_scope_ids(conn)
+    if ids is None:
+        return True
+    row = conn.execute("SELECT id FROM employees WHERE name=? COLLATE NOCASE", ((name or '').strip(),)).fetchone()
+    return bool(row) and row['id'] in ids
+
+
+def _salary_ids_sql(ids):
+    """'(1,2,3)' for a SQL IN clause ('(NULL)' when empty); ids are our own integers, never user text."""
+    return '(' + (','.join(str(int(i)) for i in sorted(ids)) if ids else 'NULL') + ')'
+
+
+def _salary_denied():
+    return _limited_denied('Salaries', message="You can only see your own salary and, where your Administrator has allowed it, the drivers' salaries.")
+
+
+def _digits10(v):
+    d = ''.join(ch for ch in str(v or '') if ch.isdigit())
+    return d[-10:] if len(d) >= 10 else ''
+
+
+def _salary_scope_from_form(conn, form, modules_text, user_id=None):
+    """(salary_view_ids, error) from the add/edit user form: '*' (Everyone), '3,5' (ticked employees) or '' — counts only while Salaries is
+    View-only. Their OWN salary needs no setting: it is found by matching the login's mobile number to an employee's mobile number."""
+    if _parse_modules(modules_text).get('Salaries') != 'v':
+        return '', None
+    if form.get('salary_everyone') == '1':
+        return '*', None
+    valid = {r['id'] for r in conn.execute("SELECT id FROM employees").fetchall()}
+    picked = sorted({int(x) for x in form.getlist('salary_ids') if str(x).isdigit() and int(x) in valid})
+    return ','.join(str(i) for i in picked), None
+
 
 def _module_level(module):
     """'e' (may change things), 'v' (view only) or '' (no access) for the signed-in user on `module`."""
@@ -9956,8 +10275,8 @@ def _first_allowed_url(app_side):
                 return url
     return '/app/profile' if app_side else '/settings'
 
-def _limited_denied(module, view_only=False):
-    msg = (f'Your access to {module} is view-only. Ask your Administrator if you need to make changes.' if view_only
+def _limited_denied(module, view_only=False, message=None):
+    msg = message or (f'Your access to {module} is view-only. Ask your Administrator if you need to make changes.' if view_only
            else (f'You don\'t have access to {module}. Ask your Administrator to add it.' if module else 'This screen isn\'t available for your access level.'))
     app_side = request.path.startswith('/app/')
     home = _first_allowed_url(app_side)
@@ -10100,7 +10419,11 @@ def require_login():
     # ---- user access level, read from the database on EVERY request so that an admin changing someone
     # to Read Only (or deactivating them) takes effect immediately, not at their next login.
     _conn = get_db()
-    _u = _conn.execute("SELECT access_level, status, role, module_access FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    try:
+        _u = _conn.execute("SELECT access_level, status, role, module_access, hide_trip_amounts, salary_view_ids, phone, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
+    except sqlite3.OperationalError:
+        # a database that does not have the per-user switch columns yet (its start-up step could not run): behave as if none is set
+        _u = _conn.execute("SELECT access_level, status, role, module_access, 0 AS hide_trip_amounts, NULL AS salary_view_ids, phone, username FROM users WHERE id=?", (session['user_id'],)).fetchone()
     _conn.close()
     if _u is None or (_u['status'] or 'Active') == 'Inactive':
         session.clear()
@@ -10115,8 +10438,21 @@ def require_login():
     if g.access_level == 'Read Only' and request.method not in ('GET', 'HEAD', 'OPTIONS') and not _read_only_may_post():
         return _read_only_denied()
     g.modules = {}
+    g.hide_trip_amounts = False
+    g.salary_scope = None            # None = may see every employee's salary; otherwise {'own', 'drivers', 'employee_id'} (see _salary_scope_ids)
     if g.access_level == 'Limited Access':
         g.modules = _parse_modules(_u['module_access'])
+        g.hide_trip_amounts = bool(_u['hide_trip_amounts']) and g.modules.get('Trips') == 'v'
+        if g.modules.get('Salaries') == 'v':
+            _c2 = get_db()
+            try:
+                own = _employee_for_login(_c2, _u['phone'], _u['username'])
+            finally:
+                _c2.close()
+            g.salary_scope = {'ids': (_u['salary_view_ids'] or '').strip(), 'employee_id': own['id'] if own else None}
+        if g.hide_trip_amounts and request.endpoint in _TRIP_FORM_ENDPOINTS:
+            # the Add / Edit trip forms are full of rates and charges, and a View-only user cannot save them anyway
+            return redirect('/app/trips' if in_app_section else url_for('trips_list'))
         blocked = _limited_block()
         if blocked is not None:
             return blocked
@@ -10183,13 +10519,11 @@ def inject_access_level():
 _READ_ONLY_PAGE_SNIPPET = r'''
 <style id="ro-style">
 [data-ro-hide]{display:none !important}
-#ro-badge{position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#1b2a4a;color:#fff;font:600 12px/1 system-ui,sans-serif;padding:8px 12px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:.92;pointer-events:none}
 #ro-toast{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:2147483001;background:#b3261e;color:#fff;font:600 13px/1.4 system-ui,sans-serif;padding:10px 16px;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:90vw;display:none}
 </style>
-<div id="ro-badge">&#128065; View-only access</div><div id="ro-toast" role="alert"></div>
+<div id="ro-toast" role="alert"></div>
 <script>
 (function(){
-  var b=document.getElementById('ro-badge'); if(b&&document.querySelector('.a-bottom-nav')) b.style.bottom='92px';   /* in the app, sit above the bottom bar instead of covering it */
   var MSG='View-only access: you can see everything, but you cannot add, change or delete anything.';
   var ALLOW=/\/profile\/change-password|\/settings\/my-password|\/invoice-center\/review|\/invoice-center\/generate|\/toll\/excel\/preview|\/route-finder\//;
   function toast(){var t=document.getElementById('ro-toast');if(!t)return;t.textContent=MSG;t.style.display='block';clearTimeout(window.__roT);window.__roT=setTimeout(function(){t.style.display='none'},3500);}
@@ -10215,7 +10549,7 @@ _READ_ONLY_PAGE_SNIPPET = r'''
 
 @app.after_request
 def _read_only_page_enhancements(response):
-    """For a Read Only user's HTML pages: show a "View-only access" badge, hide the obvious add / edit /
+    """For a Read Only user's HTML pages: hide the obvious add / edit /
     delete controls and politely block any write that is attempted anyway. This is a convenience layer —
     the real enforcement is the server-side check in require_login()."""
     try:
@@ -10525,6 +10859,9 @@ def _users_with_stats(conn):
                            CASE access_level WHEN 'Full Access' THEN 0 WHEN 'Read Only' THEN 1 ELSE 2 END,
                            username""").fetchall()
     users = [dict(r) for r in rows]
+    for u in users:                    # which employee this login's mobile number matches (their own salary), if any
+        emp = _employee_for_login(conn, u.get('phone'), u.get('username'))
+        u['salary_employee'] = emp['name'] if emp else None
     total = len(users)
     admin_n = sum(1 for u in users if u['access_level'] == 'Full Access')
     readonly_n = sum(1 for u in users if u['access_level'] == 'Read Only')
@@ -10746,6 +11083,9 @@ def add_user():
     modules, modules_err = _modules_from_form(request.form, access_level)
     if modules_err:
         return _render_settings_users_error(conn, modules_err, reopen_add_user=True)
+    sal_ids, sal_err = _salary_scope_from_form(conn, request.form, modules)
+    if sal_err:
+        return _render_settings_users_error(conn, sal_err, reopen_add_user=True)
     # A password is optional — leave it blank and the user signs in with mobile OTP only;
     # set one here and they can also sign in the normal username+password way.
     pw = f.get('password') or ''
@@ -10774,13 +11114,14 @@ def add_user():
         return _render_settings_users_error(conn, dup, reopen_add_user=True)
     try:
         conn.execute("""INSERT INTO users (username, password_hash, role, is_admin, phone, full_name, email,
-                        access_level, module_access, status, created_at, created_by)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        access_level, module_access, status, created_at, created_by, hide_trip_amounts,
+                        salary_view_ids)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (username, pw_hash, f.get('role'),
                       1 if access_level == 'Full Access' else 0, phone,
                       full_name, email, access_level, modules,
                       f.get('status') or 'Active', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                      session.get('user_id')))
+                      session.get('user_id'), _hide_trip_amounts_from_form(f, modules), sal_ids or None))
         conn.commit()
         conn.close()
     except sqlite3.IntegrityError:
@@ -10796,6 +11137,9 @@ def edit_user(user_id):
     modules, modules_err = _modules_from_form(request.form, access_level)
     if modules_err:
         return _render_settings_users_error(conn, modules_err, reopen_edit_user_id=user_id)
+    sal_ids, sal_err = _salary_scope_from_form(conn, request.form, modules, user_id=user_id)
+    if sal_err:
+        return _render_settings_users_error(conn, sal_err, reopen_edit_user_id=user_id)
     full_name = (f.get('full_name') or '').strip()
     phone = (f.get('phone') or '').strip() or None
     email = (f.get('email') or '').strip() or None
@@ -10823,10 +11167,12 @@ def edit_user(user_id):
         return _render_settings_users_error(conn, "This is the last active Administrator — keep their role as Administrator and Active, or make someone else an Administrator first.", reopen_edit_user_id=user_id)
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     conn.execute("""UPDATE users SET full_name=?, role=?, phone=?, email=?, access_level=?, module_access=?,
-                    status=?, is_admin=?, updated_by=?, updated_at=? WHERE id=?""",
+                    status=?, is_admin=?, updated_by=?, updated_at=?, hide_trip_amounts=?,
+                    salary_view_ids=? WHERE id=?""",
                  (full_name, f.get('role'), phone,
                   email, access_level, modules, f.get('status') or 'Active',
-                  1 if access_level == 'Full Access' else 0, session.get('user_id'), _now, user_id))
+                  1 if access_level == 'Full Access' else 0, session.get('user_id'), _now,
+                  _hide_trip_amounts_from_form(f, modules), sal_ids or None, user_id))
     # Leave the password untouched unless a new one was actually typed in.
     new_pw = f.get('password') or ''
     if new_pw:
@@ -10852,8 +11198,8 @@ def make_administrator(user_id):
         return _render_settings_users_error(conn, 'Make this user Active first — an inactive user cannot be the Administrator.')
     _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     # demote first, then promote, in one transaction (the database allows only one active Administrator)
-    conn.execute("UPDATE users SET role='Manager', access_level='Full Access', module_access=NULL, is_admin=1, updated_by=?, updated_at=? WHERE id=?", (me, _now, me))
-    conn.execute("UPDATE users SET role='Administrator', access_level='Full Access', module_access=NULL, is_admin=1, status='Active', updated_by=?, updated_at=? WHERE id=?", (me, _now, user_id))
+    conn.execute("UPDATE users SET role='Manager', access_level='Full Access', module_access=NULL, hide_trip_amounts=0, salary_view_ids=NULL, is_admin=1, updated_by=?, updated_at=? WHERE id=?", (me, _now, me))
+    conn.execute("UPDATE users SET role='Administrator', access_level='Full Access', module_access=NULL, hide_trip_amounts=0, salary_view_ids=NULL, is_admin=1, status='Active', updated_by=?, updated_at=? WHERE id=?", (me, _now, user_id))
     conn.execute("INSERT INTO access_logs (user_id, event, date) VALUES (?,?,?)", (me, f"Administrator role handed to {target['full_name'] or target['username']}", _now))
     conn.commit()
     conn.close()
@@ -11873,7 +12219,9 @@ def _trip_detail_data(conn, trip_id):
     custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
                                        FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
                                        WHERE ii.trip_id=?""", (trip_id,)).fetchall()
-    t = dict(trip)
+    t = _mask_trip_dict(trip)             # a "hide amounts" user gets 0 in every revenue / payment column (see TRIP_HIDDEN_COLUMNS)
+    if _hide_trip_amounts():
+        custom_item_rows = [dict(r, amount=0) for r in custom_item_rows]
     is_hired = t.get('type') == VEHICLE_TYPE_HIRED
     owner_amount = 0
     if is_hired:
@@ -13672,6 +14020,9 @@ def app_employee_ledger(employee):
     search convenience on top of otherwise-real filters" call already made for Ledger/Expenses.
     "Load More" (growing show count) instead of showing every entry at once."""
     conn = get_db()
+    if not _salary_name_allowed(conn, employee):
+        conn.close()
+        return _salary_denied()
     company_name, user_initials = _app_user_display(conn)
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
@@ -13821,7 +14172,7 @@ def app_trips():
                {where} ORDER BY t.date {order_dir}, t.id {order_dir} LIMIT ?"""
     rows = conn.execute(query, params + [show]).fetchall()
     trips = [{'id': r['id'], 'date': r['date'], 'lr_number': r['lr_number'] or f"Trip #{r['id']}",
-              'ongoing': r['end_date'] is None, 'billed_amount': r['billed_amount'] or 0,
+              'ongoing': r['end_date'] is None, 'billed_amount': 0 if _hide_trip_amounts() else (r['billed_amount'] or 0),
               'vehicle_no': r['vehicle_no'] or '—', 'route': ' → '.join(x for x in [r['from_loc'], r['to_loc']] if x) or '—'}
              for r in rows]
 
@@ -13829,7 +14180,7 @@ def app_trips():
     month_trips = conn.execute("SELECT billed_amount, end_date FROM trips WHERE date>=? AND date<=?", (month_from, month_to)).fetchall()
     total_trips_month = len(month_trips)
     completed_month = sum(1 for t in month_trips if t['end_date'] is not None)
-    total_freight_month = sum(t['billed_amount'] or 0 for t in month_trips)
+    total_freight_month = 0 if _hide_trip_amounts() else sum(t['billed_amount'] or 0 for t in month_trips)
     ongoing_count = conn.execute("SELECT COUNT(*) FROM trips WHERE end_date IS NULL").fetchone()[0]
 
     display_name = session.get('username', '')
@@ -13852,7 +14203,7 @@ def app_trips():
         trips=trips, f_status=status_f, f_search=search_f, f_type=type_f, f_lr_received=lr_received_f,
         f_date_from=date_from_f, f_date_to=date_to_f, f_sort_dir=sort_dir_f, show=show, has_more=has_more, total_count=total_count,
         total_trips_month=total_trips_month, ongoing_count=ongoing_count,
-        completed_month=completed_month, total_freight_month=_fmt_freight(total_freight_month))
+        completed_month=completed_month, total_freight_month=(HIDDEN_AMOUNT_MARK if _hide_trip_amounts() else _fmt_freight(total_freight_month)))
 
 @app.route('/app/trips/<int:trip_id>')
 def app_trip_detail(trip_id):
@@ -14697,7 +15048,8 @@ def app_settings_users():
         sync = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT 8").fetchall()
         # whitelisted fields only — the raw rows carry password hashes and must never be serialised into the page
         users_public = [{k: u.get(k) for k in ('id', 'username', 'full_name', 'phone', 'email', 'role', 'access_level',
-                                               'module_access', 'status', 'last_login')} for u in users]
+                                               'module_access', 'status', 'last_login', 'hide_trip_amounts',
+                                               'salary_view_ids', 'salary_employee')} for u in users]
         return dict(users=users_public, total_users=total, admin_users=admin_n, readonly_users=readonly_n, limited_users=limited_n,
                     inactive_users=inactive_n, role_counts=role_counts, access_logs=logs, recent_sync_log=sync,
                     module_list=MODULE_LIST, role_suggestions=_role_suggestions(conn))

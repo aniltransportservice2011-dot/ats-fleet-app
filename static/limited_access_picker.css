@@ -35,3 +35,57 @@
 .la-nav div { min-width: 34px; } .la-nav i { font-style: normal; display: block; font-size: 0.95rem; }
 .la-more { padding: 6px 8px; border-top: 1px solid var(--la-line); font-size: 0.62rem; color: var(--la-steel); display: flex; flex-wrap: wrap; gap: 4px; }
 .la-more span { background: var(--la-paper); border-radius: 999px; padding: 2px 7px; }
+
+.la-hide { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--la-accent); border-radius: 12px; background: rgba(192, 86, 33, 0.05); font-size: 0.78rem; color: var(--la-ink); line-height: 1.35; cursor: pointer; }
+.la-hide input { margin-top: 3px; flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--la-accent); }
+.la-hide span { color: var(--la-steel); }
+.la-hide b { color: var(--la-ink); }
+/* the host pages style every <label> as a small uppercase caption — keep this explanation as normal text */
+.la-picker label.la-hide { display: flex; text-transform: none; letter-spacing: normal; font-weight: 400; font-size: 0.78rem; color: var(--la-steel); margin: 4px 0 8px 0; }
+.la-picker label.la-hide b { font-weight: 700; color: var(--la-ink); text-transform: none; letter-spacing: normal; }
+.la-picker label.la-hide span { display: block; }
+.la-picker label.la-hide input { margin: 2px 0 0 0; }
+
+.la-sal { display: block; }
+.la-sal > span { display: block; margin-bottom: 6px; }
+.la-picker .la-sal label.la-opt { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 0.8rem; color: var(--la-ink); text-transform: none; letter-spacing: normal; font-weight: 600; cursor: pointer; }
+.la-picker .la-sal label.la-opt span { display: inline; color: var(--la-ink); }
+.la-emp { margin-top: 8px; font-size: 0.76rem; color: var(--la-steel); }
+.la-emp select { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid var(--la-line); border-radius: 8px; font: inherit; font-size: 0.82rem; background: var(--la-white); color: var(--la-ink); }
+.la-emp[hidden] { display: none; }
+
+.la-also { margin-top: 10px; font-size: 0.76rem; font-weight: 700; color: var(--la-ink); }
+.la-warn { margin-top: 6px; padding: 6px 9px; border-radius: 8px; background: #fff4e5; color: #8a5200; font-size: 0.74rem; line-height: 1.35; }
+.la-warn[hidden] { display: none; }
+.la-pick { margin-top: 4px; max-height: 150px; overflow-y: auto; padding: 4px 8px; border: 1px solid var(--la-line); border-radius: 8px; background: var(--la-white); }
+.la-pick em { font-style: normal; color: var(--la-steel); font-size: 0.7rem; margin-left: 4px; }
+
+/* friendly multi-select for "also show the salary of" — a field of chips that opens a searchable checklist (works for 5 or 500 employees) */
+.la-ms { margin-top: 4px; }
+.la-ms-field { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 5px 9px; border: 1px solid var(--la-line); border-radius: 10px; background: var(--la-white); cursor: pointer; }
+.la-ms.open .la-ms-field, .la-ms-field:focus { border-color: var(--la-accent); outline: none; }
+.la-ms-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.la-ms-ph { color: var(--la-steel); font-size: 0.8rem; }
+.la-ms-caret { color: var(--la-steel); font-size: 0.8rem; }
+.la-ms.open .la-ms-caret { transform: rotate(180deg); }
+.la-chip2 { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 9px; border-radius: 999px; background: rgba(192, 86, 33, 0.12); color: var(--la-ink); font-size: 0.76rem; font-weight: 600; max-width: 100%; }
+.la-chip2.all { background: var(--la-accent); color: #fff; padding-right: 10px; }
+.la-chip2.more { padding-right: 9px; background: var(--la-paper); color: var(--la-steel); }
+.la-chip2 button { border: none; background: transparent; color: var(--la-steel); width: 18px; height: 18px; border-radius: 50%; line-height: 1; font-size: 0.95rem; cursor: pointer; padding: 0; }
+.la-chip2 button:hover { background: rgba(0,0,0,.08); color: var(--la-ink); }
+.la-ms-panel { margin-top: 6px; border: 1px solid var(--la-line); border-radius: 10px; background: var(--la-white); padding: 8px; }
+.la-ms-panel[hidden] { display: none; }
+.la-picker .la-ms-search { display: block; width: 100%; box-sizing: border-box; padding: 8px 10px; margin: 0 0 6px; border: 1px solid var(--la-line); border-radius: 8px; font: inherit; font-size: 0.85rem; background: var(--la-paper); color: var(--la-ink); }
+.la-ms-bar { display: flex; align-items: center; gap: 12px; margin: 2px 0 4px; font-size: 0.74rem; }
+.la-ms-bar button { border: none; background: none; padding: 2px 0; color: var(--la-accent); font: inherit; font-weight: 700; cursor: pointer; }
+.la-ms-count { margin-left: auto; color: var(--la-steel); }
+.la-picker .la-ms-every { padding: 6px 4px; border-bottom: 1px solid var(--la-line); margin: 0 0 4px; }
+.la-ms-list { max-height: 190px; overflow-y: auto; }
+.la-picker .la-ms-list label.la-opt[hidden] { display: none; }
+.la-ms-empty, .la-ms-none { padding: 8px 4px; color: var(--la-steel); font-size: 0.78rem; font-style: normal; }
+.la-ms-every em { font-style: normal; color: var(--la-steel); font-weight: 400; font-size: 0.72rem; }
+.la-ms-list em { font-style: normal; color: var(--la-steel); font-size: 0.7rem; margin-left: 4px; }
+
+.la-match { margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 0.76rem; line-height: 1.4; }
+.la-match.ok { background: #e8f5ee; color: #14693c; }
+.la-match.warn { background: #fff4e5; color: #8a5200; }
