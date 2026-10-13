@@ -16,7 +16,7 @@
         <div class="mt-fld"><label>Role</label><input type="text" name="role" placeholder="e.g. Driver, Accountant, Clerk"></div>
       </div>
       <div class="mt-form-grid">
-        <div class="mt-fld"><label>Mobile</label><input type="text" name="mobile"></div>
+        <div class="mt-fld"><label>Mobile *</label><input type="text" name="mobile" required inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" title="10-digit Indian mobile number" placeholder="10-digit mobile number"></div>
         <div class="mt-fld"><label>Email</label><input type="email" name="email"></div>
         <div class="mt-fld" style="grid-column:span 2;"><label>Address</label><input type="text" name="address"></div>
       </div>
@@ -45,7 +45,7 @@
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
         <button type="button" onclick="document.getElementById('addEmployeeModal').classList.remove('open')" class="btn-cancel">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Employee</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save</button>
       </div>
     </form>
   </div>
@@ -81,7 +81,7 @@
       <div class="mt-fld"><label>Remarks</label><textarea name="remarks" rows="2"></textarea></div>
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;">
         <button type="button" onclick="document.getElementById('markAttendanceModal').classList.remove('open')" class="btn-cancel">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Attendance</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save</button>
       </div>
     </form>
   </div>
@@ -99,4 +99,37 @@ document.addEventListener('DOMContentLoaded', function() {
   var d = document.getElementById('markAttnDate');
   if (d && !d.value) d.valueAsDate = new Date();
 });
+</script>
+
+<script>
+// Add / Edit employee save without reloading the page: a refusal (missing or already-used mobile number ...) shows at the top of the pop-up and
+// keeps everything already typed; only a successful save reloads the list.
+(function () {
+  function showError(form, msg) {
+    var box = form.querySelector('.emp-form-error');
+    if (!box) { box = document.createElement('div'); box.className = 'emp-form-error'; box.style.cssText = 'display:none;background:rgba(179,57,47,0.08);border:1px solid rgba(179,57,47,0.25);color:var(--red);padding:10px 14px;border-radius:4px;font-size:0.85rem;font-weight:600;margin:10px 0;'; form.insertBefore(box, form.firstChild); }
+    box.textContent = msg; box.style.display = 'block';
+    var mb = form.closest('.modal-box'); if (mb) mb.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function wire(form) {
+    if (!form || form.__ajaxWired) return;
+    form.__ajaxWired = true;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (!form.checkValidity()) { form.reportValidity(); return; }
+      var btns = [].slice.call(document.querySelectorAll('button[type=submit]')).filter(function (b) { return b.form === form || form.contains(b); });
+      btns.forEach(function (b) { b.disabled = true; });
+      fetch(form.action, { method: 'POST', body: new FormData(form), credentials: 'same-origin', headers: { 'X-App-Request': '1', 'Accept': 'application/json' } })
+        .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'The server sent an unexpected answer. Nothing was saved \u2014 please try again.' }; }); })
+        .then(function (d) {
+          if (d && d.ok) { window.location.href = '/salaries?tab=' + ((form.querySelector('[name=return_tab]') || {}).value || 'overview'); return; }
+          showError(form, (d && d.error) || 'That could not be saved.');
+          btns.forEach(function (b) { b.disabled = false; });
+        })
+        .catch(function () { showError(form, 'Could not reach the server. Nothing was saved \u2014 what you typed is still here.'); btns.forEach(function (b) { b.disabled = false; }); });
+    });
+  }
+  wire(document.querySelector('#addEmployeeModal form'));
+  document.querySelectorAll('form[id^=editEmpForm]').forEach(wire);
+})();
 </script>

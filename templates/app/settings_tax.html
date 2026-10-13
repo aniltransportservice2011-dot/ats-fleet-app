@@ -26,7 +26,7 @@
   {{ toggle('eway_bill_mandatory', 'E-Way Bill Mandatory', s['eway_bill_mandatory']=='1') }}
   <div style="height:10px"></div>
   {{ field('Round Off Limit (₹)', 'round_off_limit', s['round_off_limit'], type='number', req=True, attrs='step="0.01" min="0" inputmode="decimal"') }}
-  <button type="submit" class="as-save">Save Changes</button>
+  <button type="submit" class="as-save">Update</button>
 </form>
 
 <form class="as-card as-form" data-as-save>
@@ -34,7 +34,7 @@
   <h2>RCM Clause (Tax Invoices)</h2>
   <div class="as-error"></div>
   <div class="fld"><label class="lbl">Text printed on every Tax Invoice</label><textarea name="rcm_clause" rows="4">{{ s['rcm_clause'] }}</textarea></div>
-  <button type="submit" class="as-save">Save RCM Clause</button>
+  <button type="submit" class="as-save">Save</button>
 </form>
 {% endblock %}
 {% block extra_scripts %}{% include 'app/_settings_scripts.html' %}{% endblock %}

@@ -308,7 +308,7 @@
               </div>
               <div class="ins-modal-ftr">
                 <button type="button" onclick="document.getElementById('insEditModal').classList.remove('open')" class="btn-cancel">Cancel</button>
-                <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Insurance</button>
+                <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save</button>
               </div>
             </form>
           </div>
@@ -343,7 +343,7 @@
             <div class="mt-fld" style="margin-top:10px;"><label>Valid Upto *</label><input type="date" name="valid_upto" value="{{ comp_row.permit.expiry if comp_row else '' }}" required></div>
             <div style="display:flex;gap:10px;margin-top:18px;">
               <button type="button" onclick="document.getElementById('editPermitModal').classList.remove('open')" class="btn-cancel" style="flex:1;">Cancel</button>
-              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save Permit</button>
+              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save</button>
             </div>
           </form>
         </div>
@@ -374,7 +374,7 @@
             <div class="mt-fld" style="margin-top:10px;"><label>Valid Upto *</label><input type="date" name="valid_upto" value="{{ comp_row.fitness.expiry if comp_row else '' }}" required></div>
             <div style="display:flex;gap:10px;margin-top:18px;">
               <button type="button" onclick="document.getElementById('editFitnessModal').classList.remove('open')" class="btn-cancel" style="flex:1;">Cancel</button>
-              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save Fitness</button>
+              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save</button>
             </div>
           </form>
         </div>
@@ -405,7 +405,7 @@
             <div class="mt-fld" style="margin-top:10px;"><label>Valid Upto *</label><input type="date" name="valid_upto" value="{{ comp_row.puc.expiry if comp_row else '' }}" required></div>
             <div style="display:flex;gap:10px;margin-top:18px;">
               <button type="button" onclick="document.getElementById('editPucModal').classList.remove('open')" class="btn-cancel" style="flex:1;">Cancel</button>
-              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save PUC</button>
+              <button type="submit" class="modal-save-btn" style="margin-top:0;flex:1;">Save</button>
             </div>
           </form>
         </div>

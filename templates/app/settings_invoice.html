@@ -14,7 +14,7 @@
     {{ field('Next Invoice Number', 'next_invoice_number', s['next_invoice_number'], type='number', req=True, attrs='min="1" step="1" inputmode="numeric"') }}
   </div>
   <div class="fld"><label class="lbl">Example</label><div class="as-preview">{{ invoice_example or '—' }}</div></div>
-  <button type="submit" class="as-save">Save Numbering</button>
+  <button type="submit" class="as-save">Update</button>
 </form>
 
 <form class="as-card as-form" data-as-save>
@@ -37,7 +37,7 @@
   {{ toggle('show_bank_details', 'Show Bank Details', s['show_bank_details']=='1') }}
   {{ toggle('show_signatory', 'Show Authorised Signatory', s['show_signatory']=='1') }}
   {{ toggle('print_amount_words', 'Print Amount in Words', s['print_amount_words']=='1') }}
-  <button type="submit" class="as-save">Save Preferences</button>
+  <button type="submit" class="as-save">Update</button>
 </form>
 {% endblock %}
 {% block extra_scripts %}{% include 'app/_settings_scripts.html' %}{% endblock %}

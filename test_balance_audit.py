@@ -54,6 +54,14 @@ SCHEMA = open(os.path.join(REPO, 'schema.sql')).read()
 _app = None
 
 
+_MOB_COUNTER = itertools.count(1)
+
+
+def _mob():
+    """A fresh valid 10-digit mobile number — adding an employee now requires a unique one."""
+    return '97' + str(next(_MOB_COUNTER)).zfill(8)
+
+
 def _boot_app():
     """Import the Flask app once per process, blocking the network."""
     global _app
@@ -1667,7 +1675,7 @@ def run_employee_scenario(env, F, sc):
     run = Run(env, sc, F)
     name = f"{sc['id']}Emp"
     try:
-        env.post('/employees/add', {'name': name, 'type': 'Driver', 'basic_salary': '15000'})
+        env.post('/employees/add', {'name': name, 'type': 'Driver', 'basic_salary': '15000', 'mobile': _mob()})
         row = env.one('SELECT id FROM employees WHERE name=?', name)
         if not run.check('EMPLOYEE_CREATED', row is not None, 'setup', 'employee row', 'none'):
             return run
@@ -1762,7 +1770,7 @@ def run_employee_edge(env, F, sc):
     run = Run(env, sc, F)
     name = f"{sc['id']}Emp"
     try:
-        env.post('/employees/add', {'name': name, 'type': 'Driver', 'basic_salary': '15000'})
+        env.post('/employees/add', {'name': name, 'type': 'Driver', 'basic_salary': '15000', 'mobile': _mob()})
         kind, v, route = sc['kind'], sc['variant'], sc['route']
         url = f'/app/employee/{name}/add' if route == 'app' else f'/employee/{name}'
         if sc['case'] == 'amount':
@@ -1791,7 +1799,7 @@ def run_employee_edge(env, F, sc):
             ob = env.one('SELECT opening_balance FROM employees WHERE name=?', name)['opening_balance']
             run.check('EMP_OPENING_NONSENSE_STORED', abs(ob or 0) < 1e10 and ob == ob, f'opening advance {v!r}', 'finite number or rejected', ob)
         elif sc['case'] == 'basic_salary':
-            resp = env.post('/employees/add', {'name': name + 'X', 'type': 'Staff', 'basic_salary': v})
+            resp = env.post('/employees/add', {'name': name + 'X', 'type': 'Staff', 'basic_salary': v, 'mobile': _mob()})
             run.check('EMP_BASIC_SALARY_SERVER_ERROR', resp.status_code < 500, f'basic salary {v!r}', 'handled', f'HTTP {resp.status_code}')
         elif sc['case'] == 'advance_drawer':
             emp_id = env.one('SELECT id FROM employees WHERE name=?', name)['id']
@@ -1895,7 +1903,7 @@ def run_acct_scenario(env, F, sc):
         add(f'{tag}-H', hired_v, '2026-06-30', hx)       # hired trip on the last day of the window
         env.post('/maintenance/add', {'date': '2026-05-20', 'vehicle_no': own_v, 'category': 'Service', 'amount': '3000', 'paid_amount': '3000', 'vendor_name': f'{tag}Mv'})
         env.post('/overheads/add', {'date': '2026-06-10', 'category': 'Office', 'amount': '800', 'status': 'Paid', 'payment_mode': 'Cash'})
-        env.post('/employees/add', {'name': f'{tag}Emp', 'type': 'Driver'})
+        env.post('/employees/add', {'name': f'{tag}Emp', 'type': 'Driver', 'mobile': _mob()})
         env.post(f'/employee/{tag}Emp', {'entry_kind': 'salary', 'date': '2026-05-31', 'amount': '5000', 'payment_mode': 'Cash'})
 
         # first-principles per-record model
@@ -2100,7 +2108,7 @@ def fuzz_routes():
 def _fuzz_seed(env, tag):
     pid, tid, _ = mk_party_trip(env, tag)
     env.post('/accounts/add', {'name': f'{tag}V', 'role': 'Vendor'})
-    env.post('/employees/add', {'name': f'{tag}E', 'type': 'Driver', 'basic_salary': '15000'})
+    env.post('/employees/add', {'name': f'{tag}E', 'type': 'Driver', 'basic_salary': '15000', 'mobile': _mob()})
     env.post('/maintenance/add', {'date': '2026-05-20', 'vehicle_no': 'OD01AB0001', 'category': 'Service', 'amount': '3000', 'paid_amount': '1000', 'vendor_name': f'{tag}V'})
     env.post('/overheads/add', {'date': '2026-06-10', 'category': 'Office', 'amount': '800', 'status': 'Pending', 'payment_mode': 'Cash'})
     env.post(f'/payment/party/{pid}', {'date': '2026-06-10', 'amount': '1000', 'mode': 'Cash'})
@@ -2479,9 +2487,9 @@ def run_access_scenario(env, F, sc):
                 r = ro.get(url, follow_redirects=True)
                 run.check('READ_ONLY_CAN_VIEW', r.status_code == 200, f'Read Only: GET {url}', 200, r.status_code)
                 if r.status_code == 200 and 'text/html' in (r.content_type or ''):
-                    run.check('READ_ONLY_BADGE_SHOWN', b'View-only access' in r.data, f'Read Only: {url}', 'view-only badge in the page', 'missing')
+                    run.check('READ_ONLY_LAYER_PRESENT_BADGE_GONE', b'id="ro-style"' in r.data and b'id="ro-badge"' not in r.data, f'Read Only: {url}', 'write-blocking layer present, no floating "View-only access" badge', 'wrong')
                 rf = full.get(url, follow_redirects=True)
-                run.check('FULL_ACCESS_HAS_NO_READ_ONLY_LAYER', b'ro-badge' not in rf.data and rf.status_code == 200, f'Full Access: GET {url}', 'normal page, no badge', rf.status_code)
+                run.check('FULL_ACCESS_HAS_NO_READ_ONLY_LAYER', b'ro-style' not in rf.data and rf.status_code == 200, f'Full Access: GET {url}', 'normal page, no read-only layer', rf.status_code)
         elif case == 'exports_work':
             for url in sc['urls']:
                 r = ro.get(url)
@@ -2821,9 +2829,9 @@ def run_roles_scenario(env, F, sc):
             run.check('LIMITED_VIEW_ONLY_BLOCKS_DELETE', code(21, 'POST', '/vehicles/delete/1', data={}) == 403, 'Vehicles is View only: delete', 403, code(21, 'POST', '/vehicles/delete/1', data={}))
             run.check('LIMITED_VIEW_ONLY_STILL_READS', code(21, 'GET', '/vehicles') == 200, 'Vehicles is View only: GET /vehicles', 200, code(21, 'GET', '/vehicles'))
             body = cl[21].get('/vehicles').data.decode('utf-8', 'ignore')
-            run.check('LIMITED_VIEW_ONLY_SCREEN_SHOWS_BADGE', 'ro-badge' in body, 'view-only screen', 'view-only layer present', 'missing')
+            run.check('LIMITED_VIEW_ONLY_SCREEN_HAS_LAYER_BUT_NO_BADGE', 'id="ro-style"' in body and 'id="ro-badge"' not in body, 'view-only screen', 'write-blocking layer present, no floating badge', 'wrong')
             body = cl[21].get('/trips').data.decode('utf-8', 'ignore')
-            run.check('LIMITED_EDIT_SCREEN_HAS_NO_BADGE', 'ro-badge' not in body, 'edit screen', 'no view-only layer', 'present')
+            run.check('LIMITED_EDIT_SCREEN_HAS_NO_BADGE', 'ro-style' not in body, 'edit screen', 'no view-only layer', 'present')
             # legacy values, no screens
             run.check('LIMITED_LEGACY_MODULES_STILL_WORK', code(22, 'GET', '/trips') == 200 and code(22, 'GET', '/accounts') == 200 and code(22, 'GET', '/vehicles') == 403, "old-format 'Trips,Payments'", 'Trips + Ledger (edit)', (code(22, 'GET', '/trips'), code(22, 'GET', '/accounts')))
             run.check('LIMITED_NO_SCREENS_ONLY_PROFILE', code(23, 'GET', '/trips') == 403 and code(23, 'GET', '/settings') == 200, 'no screens chosen', 'only own profile', (code(23, 'GET', '/trips'), code(23, 'GET', '/settings')))
@@ -2868,6 +2876,314 @@ def run_roles_scenario(env, F, sc):
             run.check('EDITOR_SHOWS_PICKER_NOT_CHECKBOXES', 'la-mount' in page and 'limited_access_picker.js' in page, 'website user editor', 'screen picker', 'old grid')
             page = a.get('/app/settings/users').data.decode('utf-8', 'ignore')
             run.check('APP_EDITOR_SHOWS_PICKER', 'limited_access_picker.js' in page and 'uModules' in page, 'app user editor', 'screen picker', 'old grid')
+        elif case == 'hide_trip_amounts':
+            # A Limited Access user whose Trips access is View-only can be set to see stars instead of rates, bills and payments.
+            appmod = env.appmod
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            env.exec("INSERT INTO parties (id,name) VALUES (901,'Sentinel Steel')")
+            env.exec("INSERT INTO vehicles (id,vehicle_no,type) VALUES (901,'OD99Z9001','own')")
+            # one own trip and one hired trip with recognisable amounts
+            env.exec("""INSERT INTO trips (id,date,lr_number,vehicle_id,type,party_id,from_loc,to_loc,quantity,rate,rate_type,billed_amount,detention_charges,tds,
+                        fuel_amount,driver_adv_amount,toll,party_advance,payment_received,shortage_qty,shortage_unit,shortage_amount)
+                        VALUES (901,'2026-05-01','LR-SENT-1',901,'own',901,'Rourkela','Bhubaneswar',32,1357.5,'PER_MT',98765,2468,1597,
+                                17911,6543,777,4321,54321,1.5,'MT',3579)""")
+            env.exec("""INSERT INTO trips (id,date,lr_number,vehicle_id,type,party_id,from_loc,to_loc,quantity,rate,rate_type,billed_amount,owner_name,owner_rate,
+                        owner_rate_type,paid_to_owner)
+                        VALUES (902,'2026-05-02','LR-SENT-2',901,'hired',901,'Rourkela','Paradeep',30,1422,'PER_MT',42660,'Hired Owner',1111.25,'PER_MT',8642)""")
+            users = ((30, 'Trips:v', 1), (31, 'Trips:v', 0), (32, 'Trips:e', 1), (33, 'Trips:v,Vehicles:e', 1))
+            for uid, mods, hide in users:
+                env.exec("INSERT INTO users (id,username,password_hash,role,is_admin,full_name,access_level,module_access,hide_trip_amounts,status,phone,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         uid, f'92000000{uid}', 'x', 'Staff', 0, f'Hide {uid}', 'Limited Access', mods, hide, 'Active', f'92000000{uid}', '2026-01-01')
+            cl = {uid: _client_for(env, uid) for uid, _, _ in users}
+            SECRET = ('98,765', '54,321', '4,321', '1,357.50', '1,357', '2,468', '1,597', '42,660', '1,422', '1,111.25', '8,642', '3,579', '3579', '98765', '54321')
+            VISIBLE = ('17,911', '6,543', '777')
+            def page(uid, url, **kw):
+                r = cl[uid].get(url, headers={'Accept': 'text/html'}, **kw)
+                return r.status_code, r.data.decode('utf-8', 'ignore')
+            pages = ('/trips', '/trips/901/view', '/trips/902/view', '/app/trips', '/app/trips/901', '/app/trips/902')
+            for url in pages:
+                code, body = page(30, url)
+                leaks = [x for x in SECRET if x in body]
+                run.check('HIDDEN_USER_PAGE_OPENS', code == 200, f'hidden-amounts user: GET {url}', 200, code)
+                run.check('HIDDEN_USER_SEES_NO_AMOUNTS', not leaks, f'hidden-amounts user: GET {url}', 'no rate / bill / payment / owner amount anywhere in the page', leaks)
+                run.check('HIDDEN_USER_SEES_STARS', '\u2605\u2605\u2605\u2605' in body, f'hidden-amounts user: GET {url}', 'stars where the amounts were', 'none')
+            code, body = page(30, '/trips')
+            run.check('HIDDEN_USER_STILL_SEES_THE_TRIP', all(x in body for x in ('LR-SENT-1', 'Sentinel Steel', 'Rourkela', 'Bhubaneswar')), 'trips list', 'route, party, LR number visible', 'missing')
+            code, body = page(30, '/trips/901/view')
+            run.check('HIDDEN_USER_SEES_FUEL_ADVANCE_TOLL', all(x in body for x in VISIBLE) and '32' in body, 'trip detail', 'fuel, driver advance, toll and tonnage stay visible', [x for x in VISIBLE if x not in body])
+            code, body = page(30, '/app/trips/901')
+            run.check('HIDDEN_USER_SEES_FUEL_ADVANCE_APP', '17,911' in body and '6,543' in body, 'phone trip detail', 'fuel and driver advance visible', [x for x in ('17,911', '6,543') if x not in body])
+            # the add / edit forms are full of rates: not served to this user
+            for url in ('/trips/add', '/trips/edit/901', '/app/trips/add', '/app/trips/901/edit'):
+                r = cl[30].get(url, headers={'Accept': 'text/html'})
+                run.check('HIDDEN_USER_GETS_NO_TRIP_FORMS', r.status_code == 302, f'hidden-amounts user: GET {url}', 302, r.status_code)
+            # exports
+            r = cl[30].get('/trips/export')
+            try:
+                import io as _io
+                from openpyxl import load_workbook
+                ws = load_workbook(_io.BytesIO(r.data)).active
+                col = [c.value for c in ws['G'][1:]]
+                run.check('HIDDEN_USER_EXCEL_HAS_NO_AMOUNTS', r.status_code == 200 and col and all(v == '****' for v in col), 'Trips Excel export', 'Billed column is ****', col)
+            except Exception as e:
+                run.check('HIDDEN_USER_EXCEL_HAS_NO_AMOUNTS', False, 'Trips Excel export', 'readable file', repr(e))
+            r = cl[30].get('/trips/export/pdf')
+            run.check('HIDDEN_USER_PDF_RENDERS', r.status_code == 200 and r.data[:4] == b'%PDF', 'Trips PDF export', 'a PDF', r.status_code)
+            try:
+                import fitz
+                txt = ''.join(pg.get_text() for pg in fitz.open(stream=r.data, filetype='pdf'))
+                run.check('HIDDEN_USER_PDF_HAS_NO_AMOUNTS', '98,765' not in txt and '42,660' not in txt and '****' in txt, 'Trips PDF text', 'amounts replaced by ****', 'amounts present')
+            except ImportError:
+                pass
+            # nothing changes for anyone else
+            for uid, label in ((31, 'View-only without the switch'), (32, 'Edit access WITH the switch set')):
+                for url in ('/trips', '/trips/901/view', '/app/trips/901'):
+                    code, body = page(uid, url)
+                    run.check('OTHERS_SEE_EVERYTHING', code == 200 and '98,765' in body or url == '/app/trips/901' and '98,765' in body, f'{label}: GET {url}', 'real amounts shown', code)
+                    run.check('OTHERS_SEE_NO_STARS', '\u2605\u2605\u2605\u2605' not in body, f'{label}: GET {url}', 'no stars', 'stars')
+            r = cl[31].get('/trips/export'); 
+            try:
+                from openpyxl import load_workbook as _lw; import io as _io2
+                col = [c.value for c in _lw(_io2.BytesIO(r.data)).active['G'][1:]]
+                run.check('OTHERS_EXCEL_HAS_AMOUNTS', 98765 in col, 'view-only without the switch: Excel', 'real amounts', col)
+            except Exception as e:
+                run.check('OTHERS_EXCEL_HAS_AMOUNTS', False, 'Excel', 'readable', repr(e))
+            r = cl[32].get('/trips/edit/901', headers={'Accept': 'text/html'})
+            run.check('EDITOR_KEEPS_THE_FORMS', r.status_code == 200 and b'1357.5' in r.data, 'Edit access: GET /trips/edit/901', 'the full form with the rate', r.status_code)
+            r = cl[32].post('/trips/901/end', data={'end_date': '2026-05-03', 'freight_amount': '98765', 'shortage_amount': '0'}, headers={'Accept': 'text/html'})
+            run.check('EDITOR_CAN_STILL_ACT', r.status_code in (200, 302), 'Edit access with the switch: End Trip', 'works', r.status_code)
+            run.check('EDITOR_ACTION_KEPT_AMOUNT', abs((env.one('SELECT billed_amount FROM trips WHERE id=901')['billed_amount'] or 0) - 98765) < 0.01, 'trip 901 bill after the edit user ended it', 98765, env.one('SELECT billed_amount FROM trips WHERE id=901')['billed_amount'])
+            # a hidden-amounts user still cannot change anything
+            r = cl[30].post('/trips/901/end', data={'end_date': '2026-05-03', 'freight_amount': '1'}, headers={'Accept': 'text/html'})
+            run.check('HIDDEN_USER_CANNOT_WRITE', r.status_code == 403, 'hidden-amounts user: POST end trip', 403, r.status_code)
+            # the user's Edit on Trips plus other screens: the switch needs Trips to be View
+            code, body = page(33, '/trips'); run.check('HIDDEN_USER_WITH_OTHER_EDIT_SCREENS', '98,765' not in body and '\u2605\u2605\u2605\u2605' in body, 'Trips:v + Vehicles:e', 'trips still hidden', code)
+            # administrator saving the switch
+            a = clients[10]
+            def save(extra, level='Limited Access', mods=('Trips:v',), uname='9588100001'):
+                data = {'username': uname, 'full_name': 'Hide Test', 'role': 'Staff', 'access_level': level, 'modules': list(mods), 'status': 'Active'}
+                data.update(extra)
+                return a.post('/settings/users/add', data=data, headers=H)
+            r = save({'hide_trip_amounts': '1'}, uname='9588100001'); row = env.one("SELECT hide_trip_amounts FROM users WHERE username='9588100001'")
+            run.check('ADMIN_CAN_SET_THE_SWITCH', r.status_code == 200 and row and row['hide_trip_amounts'] == 1, 'add Limited user, Trips View + switch', 1, row and row['hide_trip_amounts'])
+            r = save({'hide_trip_amounts': '1'}, mods=('Trips:e',), uname='9588100002'); row = env.one("SELECT hide_trip_amounts FROM users WHERE username='9588100002'")
+            run.check('SWITCH_IGNORED_WITH_TRIPS_EDIT', r.status_code == 200 and row and row['hide_trip_amounts'] == 0, 'Trips Edit + switch posted', 0, row and row['hide_trip_amounts'])
+            r = save({'hide_trip_amounts': '1'}, level='Full Access', mods=(), uname='9588100003'); row = env.one("SELECT hide_trip_amounts FROM users WHERE username='9588100003'")
+            run.check('SWITCH_IGNORED_FOR_FULL_ACCESS', r.status_code == 200 and row and row['hide_trip_amounts'] == 0, 'Full Access + switch posted', 0, row and row['hide_trip_amounts'])
+            r = save({}, uname='9588100004'); row = env.one("SELECT hide_trip_amounts FROM users WHERE username='9588100004'")
+            run.check('SWITCH_OFF_BY_DEFAULT', r.status_code == 200 and row and row['hide_trip_amounts'] == 0, 'Trips View, switch not ticked', 0, row and row['hide_trip_amounts'])
+            uid1 = env.one("SELECT id FROM users WHERE username='9588100001'")['id']
+            r = a.post(f'/settings/users/{uid1}/edit', data={'full_name': 'Hide Test', 'phone': '9588100001', 'role': 'Staff', 'access_level': 'Limited Access', 'modules': ['Trips:e'], 'hide_trip_amounts': '1', 'status': 'Active'}, headers=H)
+            run.check('MOVING_TRIPS_TO_EDIT_CLEARS_THE_SWITCH', r.status_code == 200 and env.one('SELECT hide_trip_amounts FROM users WHERE id=?', uid1)['hide_trip_amounts'] == 0, 'edit user: Trips View -> Edit', 0, env.one('SELECT hide_trip_amounts FROM users WHERE id=?', uid1)['hide_trip_amounts'])
+            run.check('SWITCH_TAKES_EFFECT_IMMEDIATELY', (env.exec("UPDATE users SET hide_trip_amounts=0 WHERE id=30") or True) and '98,765' in page(30, '/trips')[1], 'administrator turns the switch off', 'the user sees amounts on the next click', 'still hidden')
+            env.exec("UPDATE users SET hide_trip_amounts=1 WHERE id=30")
+            ed = a.get('/settings?tab=users').data.decode('utf-8', 'ignore')
+            run.check('EDITOR_OFFERS_THE_SWITCH', 'data-hide=' in ed and 'limited_access_picker.js' in ed, 'website user editor', 'picker with the Hide amounts option', 'missing')
+            run.check('PICKER_HAS_THE_SWITCH', 'hide_trip_amounts' in (__import__('pathlib').Path(appmod.__file__).parent / 'static' / 'limited_access_picker.js').read_text(encoding='utf-8'), 'static/limited_access_picker.js', 'offers hide_trip_amounts', 'missing')
+        elif case == 'salary_scope':
+            # A Limited Access user whose Salaries access is View-only ALWAYS sees their own salary — the employee whose MOBILE NUMBER equals the
+            # login's mobile number — and nothing else unless the Administrator ticks "Everyone" or specific employees.
+            appmod = env.appmod
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            today = datetime.date.today().isoformat()
+            emps = ((701, 'Drv One', 'Driver', 1000), (702, 'Drv Two', 'Driver', 2000), (703, 'Staff One', 'Staff', 30000), (704, 'Staff Two', 'Staff', 400000))
+            for eid, name, typ, amt in emps:
+                env.exec("INSERT INTO employees (id,name,type,role,status,basic_salary,bank_account,aadhaar,mobile) VALUES (?,?,?,?,?,?,?,?,?)",
+                         eid, name, typ, typ, 'Active', amt, f'ACCT-SECRET-{eid}', f'99998888{eid}', f'957010000{eid - 700}')
+                env.exec("INSERT INTO salaries (id,employee,month,amount,date,employee_id,month_key,basic_salary,gross_salary,net_salary,payment_status,payment_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         eid, name, 'This month', amt, today, eid, today[:7], amt, amt, amt, 'paid', today)
+                env.exec("INSERT INTO advances (employee,date,amount,type,notes) VALUES (?,?,?,?,?)", name, today, amt // 10, 'given', f'note-{eid}')
+            # (user, Salaries level, salary_view_ids, the login's mobile number)
+            people = ((40, 'Salaries:v', None, '9570100003'),    # mobile = Staff One's  -> own salary
+                      (41, 'Salaries:v', '701,702', '9000000041'),  # two drivers picked; mobile matches nobody -> no "own"
+                      (42, 'Salaries:v', '704', '9570100001'),   # mobile = Drv One's -> own + Staff Two
+                      (43, 'Salaries:v', '*', '9570100002'),     # everyone
+                      (44, 'Salaries:e', '701', '9000000044'),   # Edit: sees all as before
+                      (45, 'Salaries:v', None, '9000000045'))    # nothing picked, no match: sees nothing
+            for uid, mods, ids, mob in people:
+                env.exec("INSERT INTO users (id,username,password_hash,role,is_admin,full_name,access_level,module_access,salary_view_ids,status,phone,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         uid, f'93000000{uid}', 'x', 'Staff', 0, f'Sal {uid}', 'Limited Access', mods, ids, 'Active', mob, '2026-01-01')
+            cl = {uid: _client_for(env, uid) for uid, *_ in people}
+            cl[11] = _client_for(env, 11)           # Full Access
+            def get(uid, url):
+                r = cl[uid].get(url, headers={'Accept': 'text/html'})
+                return r.status_code, r.data.decode('utf-8', 'ignore')
+            ALL = ['Drv One', 'Drv Two', 'Staff One', 'Staff Two']
+            expect = {40: (['Staff One'], '30,000'), 41: (['Drv One', 'Drv Two'], '3,000'), 42: (['Drv One', 'Staff Two'], '401,000'),
+                      43: (ALL, '433,000'), 44: (ALL, '433,000'), 45: ([], None), 11: (ALL, '433,000')}
+            names = [n for _, n, _, _ in emps]
+            amount_of = {n: a for _, n, _, a in emps}
+            for uid, (vis, total) in expect.items():
+                for url in ('/salaries?tab=overview&per_page=50', '/salaries?tab=salary&per_page=50', '/salaries?tab=attendance&per_page=50', '/app/salary?show=100'):
+                    code, body = get(uid, url)
+                    shown = [n for n in names if n in body]
+                    run.check('SALARY_PAGE_OPENS', code == 200, f'user {uid}: GET {url}', 200, code)
+                    run.check('SALARY_ROWS_ARE_EXACTLY_THE_ALLOWED_ONES', sorted(shown) == sorted(vis), f'user {uid}: GET {url}', sorted(vis), sorted(shown))
+                code, body = get(uid, '/salaries?tab=salary&per_page=50')
+                if total:
+                    run.check('SALARY_TOTAL_ONLY_COUNTS_ALLOWED', total in body, f'user {uid}: payroll total on the Salary tab', total, 'missing')
+                for hidden in [n for n in names if n not in vis]:
+                    amt = f'{amount_of[hidden]:,}'
+                    for url in ('/salaries?tab=overview&per_page=50', '/salaries?tab=salary&per_page=50'):
+                        _, b = get(uid, url)
+                        run.check('HIDDEN_EMPLOYEE_AMOUNT_NOT_IN_PAGE', amt not in b or (total is not None and amt in total), f'user {uid}: {url}', f'{hidden} amount absent', f'{amt} present')
+                for _, n, _, _ in emps:
+                    ledger_code = get(uid, f'/employee/{n}')[0]
+                    app_code = get(uid, f'/app/employee/{n}')[0]
+                    want = 200 if n in vis else 403
+                    run.check('LEDGER_LINK_FOLLOWS_THE_RULE', ledger_code == want and app_code == want, f'user {uid}: ledger of {n}', want, (ledger_code, app_code))
+                for eid, n, _, _ in emps:
+                    want = 200 if n in vis else 403
+                    pc = cl[uid].get(f'/salaries/{eid}/payslip').status_code
+                    run.check('PAYSLIP_LINK_FOLLOWS_THE_RULE', pc == want, f'user {uid}: payslip of {n}', want, pc)
+                code, body = get(uid, '/advances')
+                run.check('ADVANCES_LIST_ONLY_ALLOWED', sorted(n for n in names if n in body) == sorted(vis) if code == 200 else code == 403, f'user {uid}: /advances', sorted(vis), code)
+            for uid, own in ((40, 'Staff One'), (42, 'Drv One'), (43, 'Drv Two')):
+                code, body = get(uid, '/salaries?tab=salary&per_page=50')
+                run.check('OWN_SALARY_ALWAYS_VISIBLE', own in body, f'user {uid} (mobile matches {own})', 'own row present', 'missing')
+            for uid in (40, 41, 42, 43):
+                code, body = get(uid, '/salaries?tab=overview&per_page=50')
+                run.check('NO_BANK_OR_ID_DETAILS_FOR_RESTRICTED_VIEWER', 'ACCT-SECRET' not in body and '99998888' not in body, f'user {uid}: overview', 'no bank / Aadhaar', 'present')
+            code, body = get(11, '/salaries?tab=overview&per_page=50')
+            run.check('FULL_ACCESS_STILL_SEES_DETAILS', 'ACCT-SECRET-701' in body, 'Full Access: overview', 'details present', 'missing')
+            r = cl[42].post('/employee/Drv One', data={'entry_kind': 'given', 'date': today, 'amount': '10'}, headers={'Accept': 'text/html'})
+            run.check('RESTRICTED_VIEWER_CANNOT_WRITE', r.status_code == 403, 'view-only salary user: POST an advance', 403, r.status_code)
+            # the match is by mobile number and is re-read on every click
+            env.exec("UPDATE employees SET mobile='9570100099' WHERE id=703")
+            code, body = get(40, '/salaries?tab=salary&per_page=50')
+            run.check('MOBILE_CHANGE_REMOVES_OWN_SALARY_AT_ONCE', not any(n in body for n in names), 'employee 703 gets a different mobile', 'user 40 sees nothing', [n for n in names if n in body])
+            env.exec("UPDATE employees SET mobile='9570100003' WHERE id=703")
+            code, body = get(40, '/salaries?tab=salary&per_page=50')
+            run.check('MOBILE_MATCH_RESTORES_OWN_SALARY', 'Staff One' in body, 'mobile matches again', 'Staff One back', [n for n in names if n in body])
+            env.exec("UPDATE employees SET mobile='9000000045' WHERE id=704")
+            code, body = get(45, '/salaries?tab=salary&per_page=50')
+            run.check('NEW_MATCH_SHOWS_OWN_SALARY', 'Staff Two' in body and 'Drv One' not in body, 'employee 704 gets user 45\'s mobile', 'user 45 sees Staff Two only', [n for n in names if n in body])
+            env.exec("UPDATE employees SET mobile='9570100004' WHERE id=704")
+            env.exec("UPDATE employees SET mobile='9570100001' WHERE id=702")           # two employees with Drv One's number: ambiguous -> nobody is matched
+            code, body = get(42, '/salaries?tab=salary&per_page=50')
+            run.check('AMBIGUOUS_MOBILE_MATCHES_NOBODY', 'Drv One' not in body and 'Drv Two' not in body and 'Staff Two' in body, 'two employees share user 42\'s mobile', 'no own salary (only the ticked Staff Two)', [n for n in names if n in body])
+            env.exec("UPDATE employees SET mobile='9570100002' WHERE id=702")
+            env.exec("UPDATE employees SET status='Inactive' WHERE id=701")
+            code, body = get(42, '/salaries?tab=salary&per_page=50')
+            env.exec("UPDATE employees SET status='Active' WHERE id=701")
+            # administrator saving user choices
+            a = clients[10]
+            base = {'full_name': 'Sal Test', 'role': 'Staff', 'access_level': 'Limited Access', 'status': 'Active'}
+            r = a.post('/settings/users/add', data=dict(base, username='9588200002', modules=['Salaries:v'], salary_ids=['701', '702', '999']), headers=H)
+            row = env.one("SELECT salary_view_ids FROM users WHERE username='9588200002'")
+            run.check('ADMIN_CAN_PICK_SEVERAL_EMPLOYEES', r.status_code == 200 and row and row['salary_view_ids'] == '701,702', 'add user: pick 701, 702 (+ an unknown id)', '701,702', row and tuple(row))
+            r = a.post('/settings/users/add', data=dict(base, username='9588200005', modules=['Salaries:v'], salary_everyone='1', salary_ids=['701']), headers=H)
+            row = env.one("SELECT salary_view_ids FROM users WHERE username='9588200005'")
+            run.check('EVERYONE_IS_STORED_AS_STAR', r.status_code == 200 and row and row['salary_view_ids'] == '*', 'tick Everyone', '*', row and tuple(row))
+            r = a.post('/settings/users/add', data=dict(base, username='9588200003', modules=['Salaries:v']), headers=H)
+            row = env.one("SELECT salary_view_ids FROM users WHERE username='9588200003'")
+            run.check('NOTHING_EXTRA_BY_DEFAULT', r.status_code == 200 and row and not row['salary_view_ids'], 'Salaries View, nothing ticked', 'empty', row and tuple(row))
+            r = a.post('/settings/users/add', data=dict(base, username='9588200004', modules=['Salaries:e'], salary_everyone='1'), headers=H)
+            row = env.one("SELECT salary_view_ids FROM users WHERE username='9588200004'")
+            run.check('TICKS_IGNORED_WITH_SALARIES_EDIT', r.status_code == 200 and row and not row['salary_view_ids'], 'Salaries Edit + ticks posted', 'not stored', row and tuple(row))
+            page = a.get('/settings?tab=users').data.decode('utf-8', 'ignore')
+            run.check('EDITOR_OFFERS_SALARY_OPTIONS', 'LA_EMPLOYEES' in page and 'data-sal-ids=' in page and 'Staff One' in page and '9570100003' in page, 'website user editor', 'employee list (with mobile numbers for the live match hint) on the page', 'missing')
+            run.check('USERS_TABLE_SHOWS_WHO_THEY_MATCH', 'own: Staff One' in page, 'users table', 'login 40 shows "own: Staff One"', 'missing')
+            js = (__import__('pathlib').Path(appmod.__file__).parent / 'static' / 'limited_access_picker.js').read_text(encoding='utf-8')
+            run.check('PICKER_HAS_MULTI_SELECT_MATCH_HINT_NO_LINK_DROPDOWN', 'salary_ids' in js and 'salary_everyone' in js and 'la-match' in js and 'name="employee_id"' not in js and 'salary_own' not in js, 'picker script', 'multi-select + live mobile match hint, no employee dropdown, no "own" tick', 'wrong')
+            # ---- employees: the mobile number is mandatory, valid and unique (website pop-up, phone sheet)
+            def emp_row(name):
+                return env.one("SELECT id, mobile FROM employees WHERE name=?", name)
+            for label, url in (('website', '/employees/add'), ('phone', '/app/salary/add')):
+                hdr = H if url == '/employees/add' else {'Accept': 'application/json'}
+                r = a.post(url, data={'name': f'Mob None {label}', 'type': 'Staff', 'basic_salary': '100'}, headers=hdr)
+                run.check('EMPLOYEE_MOBILE_REQUIRED', r.status_code == 400 and 'required' in ((r.get_json() or {}).get('error') or '').lower() and emp_row(f'Mob None {label}') is None, f'{label}: add employee with no mobile', '400 "Mobile number is required"', (r.status_code, (r.get_json() or {}).get('error')))
+                for bad in ('12345', '5123456789', 'abcdefghij', '98765432101234'):
+                    r = a.post(url, data={'name': f'Mob Bad {label}', 'type': 'Staff', 'mobile': bad}, headers=hdr)
+                    run.check('EMPLOYEE_MOBILE_MUST_BE_VALID', r.status_code == 400 and emp_row(f'Mob Bad {label}') is None, f'{label}: add employee with mobile {bad!r}', 400, r.status_code)
+                r = a.post(url, data={'name': f'Mob Ok {label}', 'type': 'Staff', 'mobile': '+91 98765 4321' + ('0' if label == 'website' else '9')}, headers=hdr)
+                row = emp_row(f'Mob Ok {label}')
+                run.check('EMPLOYEE_MOBILE_SAVED_AS_TEN_DIGITS', r.status_code == 200 and row and row['mobile'] == ('9876543210' if label == 'website' else '9876543219'), f'{label}: add employee with "+91 98765 43210"', 'saved as 10 digits', row and tuple(row))
+                r = a.post(url, data={'name': f'Mob Dup {label}', 'type': 'Staff', 'mobile': '9570100003'}, headers=hdr)
+                run.check('EMPLOYEE_MOBILE_MUST_BE_UNIQUE', r.status_code == 400 and 'already used' in ((r.get_json() or {}).get('error') or '') and emp_row(f'Mob Dup {label}') is None, f'{label}: add employee with Staff One\'s mobile', '400 already used', (r.status_code, (r.get_json() or {}).get('error')))
+            eid = emp_row('Mob Ok website')['id']
+            base_f = {'name': 'Mob Ok website', 'type': 'Staff', 'role': 'Staff', 'basic_salary': '100'}
+            r = a.post(f'/employees/{eid}/edit', data=dict(base_f, mobile=''), headers=H)
+            run.check('EMPLOYEE_EDIT_CANNOT_BLANK_MOBILE', r.status_code == 400 and emp_row('Mob Ok website')['mobile'] == '9876543210', 'edit employee: clear the mobile', 400, r.status_code)
+            r = a.post(f'/employees/{eid}/edit', data=dict(base_f, mobile='9570100003'), headers=H)
+            run.check('EMPLOYEE_EDIT_MOBILE_STILL_UNIQUE', r.status_code == 400 and emp_row('Mob Ok website')['mobile'] == '9876543210', 'edit employee: take Staff One\'s mobile', 400, r.status_code)
+            r = a.post(f'/employees/{eid}/edit', data=dict(base_f, mobile='9876543210'), headers=H)
+            run.check('EMPLOYEE_EDIT_KEEPS_OWN_MOBILE_OK', r.status_code == 200, 'edit employee: unchanged own mobile', 200, r.status_code)
+            r = a.post(f'/employees/{eid}/edit', data=dict(base_f, mobile='9876500001'), headers=H)
+            run.check('EMPLOYEE_EDIT_CAN_CHANGE_MOBILE', r.status_code == 200 and emp_row('Mob Ok website')['mobile'] == '9876500001', 'edit employee: new valid mobile', '9876500001', emp_row('Mob Ok website')['mobile'])
+            r = a.post('/employees/add', data={'name': 'Mob Plain', 'type': 'Staff'}, headers={'Accept': 'text/html'})
+            run.check('EMPLOYEE_WEBSITE_REFUSAL_REDIRECTS_WITH_MESSAGE', r.status_code == 302 and 'emp_error=' in r.headers.get('Location', ''), 'website form without JSON header', 'redirect carrying emp_error', r.headers.get('Location', ''))
+            page = a.get(r.headers.get('Location', '/salaries')).data.decode('utf-8', 'ignore')
+            run.check('EMPLOYEE_ERROR_BANNER_SHOWN', 'Mobile number is required' in page, 'employees page after the refusal', 'message visible', 'missing')
+            page = a.get('/salaries?tab=overview').data.decode('utf-8', 'ignore')
+            run.check('EMPLOYEE_FORMS_MARK_MOBILE_REQUIRED', len(__import__('re').findall(r'<input[^>]*name="mobile"[^>]*required', page)) >= 2 and 'Mobile *' in page, 'add + edit employee forms', 'required mobile fields', 'not required')
+            run.check('PHONE_ADD_EMPLOYEE_MOBILE_REQUIRED', bool(__import__('re').search(r'<input[^>]*name="mobile"[^>]*required', a.get('/app/salary').data.decode('utf-8', 'ignore'))), 'phone add-employee sheet', 'required mobile field', 'not required')
+        elif case == 'logo_upload':
+            # The company logo accepts every common picture format and is stored as one clean PNG; things that are not pictures are refused.
+            import io as _io, tempfile as _tf, pathlib as _pl
+            from PIL import Image
+            appmod = env.appmod
+            appmod.LOGO_UPLOAD_DIR = _tf.mkdtemp(prefix='logo_test_')         # never write into the project's static/uploads
+            a = clients[10]
+            H = {'X-App-Request': '1', 'Accept': 'application/json'}
+            def img_bytes(fmt, size=(300, 200), mode='RGB', color=(200, 40, 40), **kw):
+                im = Image.new(mode, size, color)
+                b = _io.BytesIO(); im.save(b, fmt, **kw); return b.getvalue()
+            def current_logo():
+                row = env.one("SELECT value FROM settings WHERE key='logo_path'")
+                return row['value'] if row else None
+            def stored(rel):
+                return Image.open(_pl.Path(appmod.LOGO_UPLOAD_DIR) / '/'.join(rel.split('/')[2:]))
+            def up(name, data, hdr=H):
+                return a.post('/settings/logo/upload', data={'logo': (_io.BytesIO(data), name)}, headers=hdr, content_type='multipart/form-data')
+            exif_rot = Image.new('RGB', (400, 200), (10, 120, 200)); ex = exif_rot.getexif(); ex[0x0112] = 6
+            jb = _io.BytesIO(); exif_rot.save(jb, 'JPEG', exif=ex)
+            anim = _io.BytesIO(); Image.new('RGB', (120, 80), (255, 0, 0)).save(anim, 'GIF', save_all=True, append_images=[Image.new('RGB', (120, 80), (0, 255, 0))], duration=100, loop=0)
+            pal = Image.new('P', (90, 90)); pal.putpalette([0, 0, 0, 255, 255, 255] * 128); pb = _io.BytesIO(); pal.save(pb, 'PNG', transparency=0)
+            cases = [
+                ('logo.jpg', img_bytes('JPEG'), 'JPEG'), ('logo.JPEG', img_bytes('JPEG'), 'upper-case .JPEG'), ('logo.png', img_bytes('PNG'), 'PNG'),
+                ('logo.gif', img_bytes('GIF', mode='P', color=3), 'GIF'), ('logo.webp', img_bytes('WEBP'), 'WEBP'), ('logo.bmp', img_bytes('BMP'), 'BMP'),
+                ('logo.tif', img_bytes('TIFF'), 'TIFF'), ('logo.ico', img_bytes('ICO', size=(64, 64)), 'ICO'),
+                ('actually-a-jpeg.png', img_bytes('JPEG'), 'a JPEG named .png'), ('actually-a-png.jpg', img_bytes('PNG'), 'a PNG named .jpg'),
+                ('no-extension', img_bytes('PNG'), 'a picture with no extension'), ('phone-photo.jpg', jb.getvalue(), 'phone photo with a rotation flag'),
+                ('animated.gif', anim.getvalue(), 'animated GIF'), ('palette.png', pb.getvalue(), 'palette PNG with transparency'),
+                ('cmyk.jpg', img_bytes('JPEG', mode='CMYK', color=(10, 200, 10, 0)), 'CMYK JPEG'), ('gray.png', img_bytes('PNG', mode='L', color=128), 'greyscale PNG'),
+                ('big.jpg', img_bytes('JPEG', size=(4000, 3000)), 'large 4000x3000 photo'), ('wide.png', img_bytes('PNG', size=(1500, 120)), 'very wide banner'),
+            ]
+            for name, data, label in cases:
+                r = up(name, data)
+                rel = current_logo()
+                ok = r.status_code == 200 and (r.get_json() or {}).get('ok') is True and rel and rel.endswith('.png')
+                run.check('LOGO_FORMAT_ACCEPTED', ok, f'upload {label} ({name})', 'accepted, stored as PNG', (r.status_code, (r.get_json() or {}).get('error')))
+                if ok:
+                    im = stored(rel); im.load()
+                    run.check('LOGO_IS_A_VALID_PNG', im.format == 'PNG' and max(im.size) <= appmod.LOGO_MAX_SIDE, f'stored logo for {label}', f'PNG, longest side <= {appmod.LOGO_MAX_SIDE}', (im.format, im.size))
+            # rotation flag applied (400x200 rotated 90 degrees -> 200x400), animated GIF keeps one frame, transparency kept
+            r = up('phone-photo.jpg', jb.getvalue()); im = stored(current_logo())
+            run.check('LOGO_ROTATION_APPLIED', im.size == (200, 400), 'phone photo 400x200 with rotate-90 flag', (200, 400), im.size)
+            r = up('palette.png', pb.getvalue()); im = stored(current_logo())
+            run.check('LOGO_TRANSPARENCY_KEPT', im.mode == 'RGBA', 'palette PNG with transparency', 'RGBA', im.mode)
+            r = up('big.jpg', img_bytes('JPEG', size=(4000, 3000))); im = stored(current_logo())
+            run.check('LOGO_SHRUNK_KEEPING_SHAPE', im.size == (600, 450), '4000x3000 photo', (600, 450), im.size)
+            # things that are NOT pictures are refused and the current logo is left alone
+            keep = current_logo()
+            for name, data, label in (('fake.png', b'this is not an image at all', 'text renamed .png'), ('empty.png', b'', 'empty file'),
+                                      ('cut.png', img_bytes('PNG', size=(500, 500))[:200], 'truncated PNG'),
+                                      ('logo.svg', b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>', 'SVG vector'),
+                                      ('doc.pdf', b'%PDF-1.4 not a picture', 'a PDF'), ('tiny.png', img_bytes('PNG', size=(3, 3)), '3x3 picture')):
+                r = up(name, data)
+                run.check('LOGO_NOT_A_PICTURE_REFUSED', r.status_code == 400 and (r.get_json() or {}).get('ok') is False and (r.get_json() or {}).get('error') and current_logo() == keep,
+                          f'upload {label}', '400 with a message, logo unchanged', (r.status_code, current_logo() == keep))
+            r = a.post('/settings/logo/upload', data={}, headers=H, content_type='multipart/form-data')
+            run.check('LOGO_NO_FILE_REFUSED', r.status_code == 400 and current_logo() == keep, 'submit with no file', 400, r.status_code)
+            # the website form (no JSON header): a refusal is shown on the page instead of vanishing silently
+            r = a.post('/settings/logo/upload', data={'logo': (_io.BytesIO(b'not an image'), 'x.png')}, content_type='multipart/form-data')
+            loc = r.headers.get('Location', '')
+            run.check('LOGO_WEBSITE_REFUSAL_IS_SHOWN', r.status_code == 302 and 'logo_error=' in loc, 'website form with a bad file', 'redirect carrying logo_error', loc)
+            page = a.get(loc).data.decode('utf-8', 'ignore') if loc else ''
+            run.check('LOGO_WEBSITE_REFUSAL_TEXT_ON_PAGE', 'could not be read as a picture' in page, 'company tab after a bad upload', 'message visible', 'missing')
+            page = a.get('/settings?tab=company').data.decode('utf-8', 'ignore')
+            run.check('LOGO_CHOOSER_OFFERS_ALL_PICTURES', 'accept="image/*' in page and '.bmp' in page, 'file chooser', 'any picture', 'png/jpg only')
         elif case == 'msg91':
             import requests as _rq
             appmod = env.appmod
@@ -3013,7 +3329,7 @@ def run_roles_scenario(env, F, sc):
 
 def gen_roles(quick=False):
     return [{'id': f'Q{i:04d}', 'stage': 'roles', 'case': c, 'tag': f'roles/{c}'} for i, c in
-            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens', 'security', 'single_admin', 'limited_access', 'msg91'], 1)]
+            enumerate(['settings_page_content', 'admin_only_endpoints', 'own_profile', 'last_administrator', 'app_profile', 'app_admin_screens', 'security', 'single_admin', 'limited_access', 'hide_trip_amounts', 'salary_scope', 'logo_upload', 'msg91'], 1)]
 
 
 # --------------------------------------------------------------------------------------------------

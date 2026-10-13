@@ -43,10 +43,10 @@
 </div>
 
 <div class="vd-kpi-grid">
-  <div class="vd-kpi-card"><div class="lbl">Billed Amount</div><div class="big">₹{{ '{:,.0f}'.format(t.billed_amount or 0) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Billed Amount</div><div class="big">{{ mny(t.billed_amount or 0, '{:,.0f}') }}</div></div>
   <div class="vd-kpi-card"><div class="lbl">Driver Advance</div><div class="big">₹{{ '{:,.0f}'.format(t.driver_adv_amount or 0) }}</div></div>
-  <div class="vd-kpi-card"><div class="lbl">Deductions</div><div class="big" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(deductions_total) }}</div></div>
-  <div class="vd-kpi-card"><div class="lbl">Balance Due</div><div class="big" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(balance_due) }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Deductions</div><div class="big" style="color:var(--a-red);">{{ mny(deductions_total, '{:,.0f}') }}</div></div>
+  <div class="vd-kpi-card"><div class="lbl">Balance Due</div><div class="big" style="color:var(--a-green);">{{ mny(balance_due, '{:,.0f}') }}</div></div>
 </div>
 
 <!-- Client-side tab switch (tdGoToTab() below) — all 4 panels render in the same page load
@@ -79,9 +79,9 @@
     <div><div class="lbl">Charge Type</div><div class="v">{{ 'Fixed' if t.rate_type == 'FIXED' else 'Per MT' }}</div></div>
     <div><div class="lbl">Quantity (MT)</div><div class="v">{{ t.quantity or 0 }}</div></div>
     {% if t.rate_type == 'FIXED' %}
-    <div><div class="lbl">Fixed Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.fixed_rate_amount or 0) }}</div></div>
+    <div><div class="lbl">Fixed Amount</div><div class="v">{{ mny(t.fixed_rate_amount or 0, '{:,.0f}') }}</div></div>
     {% else %}
-    <div><div class="lbl">Rate (Per Unit)</div><div class="v">₹{{ '{:,.2f}'.format(t.rate or 0) }}</div></div>
+    <div><div class="lbl">Rate (Per Unit)</div><div class="v">{{ mny(t.rate or 0, '{:,.2f}') }}</div></div>
     {% endif %}
     <div><div class="lbl">Empty Trip</div><div class="v">{{ 'Yes' if t.is_empty else 'No' }}</div></div>
   </div>
@@ -102,10 +102,10 @@
   <div class="ld-card-head"><h2>Hired Vehicle Owner</h2></div>
   <div class="vd-info-grid">
     <div><div class="lbl">Owner Name</div><div class="v">{{ t.owner_name or '—' }}</div></div>
-    <div><div class="lbl">Owner Rate (Per Unit)</div><div class="v">₹{{ '{:,.2f}'.format(t.owner_rate or 0) }}</div></div>
+    <div><div class="lbl">Owner Rate (Per Unit)</div><div class="v">{{ mny(t.owner_rate or 0, '{:,.2f}') }}</div></div>
     <div><div class="lbl">Owner Charge Type</div><div class="v">{{ 'Fixed' if t.owner_rate_type == 'FIXED' else 'Per MT' }}</div></div>
-    <div><div class="lbl">Owner Amount</div><div class="v">₹{{ '{:,.0f}'.format(owner_amount) }}</div></div>
-    <div><div class="lbl">Paid To Owner</div><div class="v">₹{{ '{:,.0f}'.format(t.paid_to_owner or 0) }}</div></div>
+    <div><div class="lbl">Owner Amount</div><div class="v">{{ mny(owner_amount, '{:,.0f}') }}</div></div>
+    <div><div class="lbl">Paid To Owner</div><div class="v">{{ mny(t.paid_to_owner or 0, '{:,.0f}') }}</div></div>
   </div>
 </div>
 {% endif %}
@@ -115,24 +115,24 @@
 <div class="ld-card">
   <div class="ld-card-head"><h2>Billing &amp; Payments</h2></div>
   <div class="vd-info-grid">
-    <div><div class="lbl">Billed Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.billed_amount or 0) }}</div></div>
-    <div><div class="lbl">Payment Received</div><div class="v">₹{{ '{:,.0f}'.format(t.payment_received or 0) }}</div></div>
-    <div><div class="lbl">Party Advance</div><div class="v">₹{{ '{:,.0f}'.format(t.party_advance or 0) }}</div></div>
+    <div><div class="lbl">Billed Amount</div><div class="v">{{ mny(t.billed_amount or 0, '{:,.0f}') }}</div></div>
+    <div><div class="lbl">Payment Received</div><div class="v">{{ mny(t.payment_received or 0, '{:,.0f}') }}</div></div>
+    <div><div class="lbl">Party Advance</div><div class="v">{{ mny(t.party_advance or 0, '{:,.0f}') }}</div></div>
     <div><div class="lbl">Driver Advance</div><div class="v">₹{{ '{:,.0f}'.format(t.driver_adv_amount or 0) }}</div></div>
-    <div><div class="lbl">Balance Due</div><div class="v">₹{{ '{:,.0f}'.format(balance_due) }}</div></div>
+    <div><div class="lbl">Balance Due</div><div class="v">{{ mny(balance_due, '{:,.0f}') }}</div></div>
   </div>
 </div>
 {% set add_fields = [('detention_charges','Detention'), ('gps_cost','GPS'), ('loading_charge','Loading'), ('unloading_charge','Unloading'), ('police_charges','Police'), ('sim_tracking','SIM Tracking'), ('union_charges','Union'), ('weight_charges','Weight'), ('other_charges','Other')] %}
 <div class="ld-card">
-  <div class="ld-card-head"><h2>Additional Charges <span style="color:var(--a-ink);font-weight:800;">₹{{ '{:,.0f}'.format(additions_total) }}</span></h2></div>
+  <div class="ld-card-head"><h2>Additional Charges <span style="color:var(--a-ink);font-weight:800;">{{ mny(additions_total, '{:,.0f}') }}</span></h2></div>
   {% for key, label in add_fields %}
   {% if t.get(key) %}
-  <div class="vd-chl-detail-row"><span class="k">{{ label }}</span><span class="v">₹{{ '{:,.0f}'.format(t.get(key) or 0) }}</span></div>
+  <div class="vd-chl-detail-row"><span class="k">{{ label }}</span><span class="v">{{ mny(t.get(key) or 0, '{:,.0f}') }}</span></div>
   {% endif %}
   {% endfor %}
   {% for it in custom_items %}
   {% if it.item_type == 'charge' %}
-  <div class="vd-chl-detail-row"><span class="k">{{ it.description }}{% if it.vendor_name %} ({{ it.vendor_name }}){% endif %}</span><span class="v">₹{{ '{:,.0f}'.format(it.amount or 0) }}</span></div>
+  <div class="vd-chl-detail-row"><span class="k">{{ it.description }}{% if it.vendor_name %} ({{ it.vendor_name }}){% endif %}</span><span class="v">{{ mny(it.amount or 0, '{:,.0f}') }}</span></div>
   {% endif %}
   {% endfor %}
 </div>
@@ -141,18 +141,18 @@
 <div class="td-panel {{ 'active' if tab=='deductions' }}" data-td-panel="deductions">
 {% set ded_fields = [('brokerage','Brokerage'), ('builty_commission','Builty Commission'), ('late_fees','Late Fees'), ('material_damage','Material Damage'), ('shortage_amount','Shortage'), ('tds','TDS'), ('other_deductions','Other')] %}
 <div class="ld-card">
-  <div class="ld-card-head"><h2>Deductions <span style="color:var(--a-red);font-weight:800;">₹{{ '{:,.0f}'.format(deductions_total) }}</span></h2></div>
+  <div class="ld-card-head"><h2>Deductions <span style="color:var(--a-red);font-weight:800;">{{ mny(deductions_total, '{:,.0f}') }}</span></h2></div>
   {% set any_ded = false %}
   {% for key, label in ded_fields %}
   {% if t.get(key) %}
   {% set any_ded = true %}
-  <div class="vd-chl-detail-row"><span class="k">{{ label }}</span><span class="v">₹{{ '{:,.0f}'.format(t.get(key) or 0) }}</span></div>
+  <div class="vd-chl-detail-row"><span class="k">{{ label }}</span><span class="v">{{ mny(t.get(key) or 0, '{:,.0f}') }}</span></div>
   {% endif %}
   {% endfor %}
   {% for it in custom_items %}
   {% if it.item_type == 'deduction' %}
   {% set any_ded = true %}
-  <div class="vd-chl-detail-row"><span class="k">{{ it.description }}{% if it.vendor_name %} ({{ it.vendor_name }}){% endif %}</span><span class="v">₹{{ '{:,.0f}'.format(it.amount or 0) }}</span></div>
+  <div class="vd-chl-detail-row"><span class="k">{{ it.description }}{% if it.vendor_name %} ({{ it.vendor_name }}){% endif %}</span><span class="v">{{ mny(it.amount or 0, '{:,.0f}') }}</span></div>
   {% endif %}
   {% endfor %}
   {% if not any_ded %}<div class="vd-empty">No deductions on this trip.</div>{% endif %}
@@ -172,7 +172,7 @@
   {% if t.shortage_amount %}
   <div class="vd-info-grid" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--a-line);">
     <div><div class="lbl">Shortage Qty</div><div class="v">{{ t.shortage_qty or 0 }} {{ t.shortage_unit or '' }}</div></div>
-    <div><div class="lbl">Shortage Amount</div><div class="v">₹{{ '{:,.0f}'.format(t.shortage_amount or 0) }}</div></div>
+    <div><div class="lbl">Shortage Amount</div><div class="v">{{ mny(t.shortage_amount or 0, '{:,.0f}') }}</div></div>
   </div>
   {% if t.shortage_remarks %}<div style="margin-top:10px;font-size:0.8rem;color:var(--a-steel);"><b style="color:var(--a-ink);">Shortage Remarks:</b> {{ t.shortage_remarks }}</div>{% endif %}
   {% endif %}
@@ -184,7 +184,7 @@
 </div>
 
 <div class="td-actions">
-  <a href="{{ url_for('app_edit_trip', trip_id=t.id) }}" class="td-btn-outline">Update Trip</a>
+  <a href="{{ url_for('app_edit_trip', trip_id=t.id) }}" class="td-btn-outline">Update</a>
   {% if not t.end_date %}
   <button type="button" class="td-btn-primary" onclick="openEndTripModal()">End Trip</button>
   {% endif %}

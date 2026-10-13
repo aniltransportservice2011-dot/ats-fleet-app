@@ -443,11 +443,62 @@
     });
   }
 
+  // Re-run a swapped-in page's <script> tags IN ORDER. Scripts that arrive via innerHTML are inert, so each is re-created; but a re-created
+  // <script src> loads asynchronously, and the inline script right after it used to run first — so a page that loads a library and then
+  // uses it (e.g. the Settings user editor's screen picker) failed whenever the library was not already in memory (typically the first
+  // visit after signing in). Here each external script is waited for before the next script runs.
+  function runScriptsInOrder(container) {
+    var list = Array.prototype.slice.call(container.querySelectorAll('script'));
+    (function next() {
+      var old = list.shift();
+      if (!old) return;
+      var fresh = document.createElement('script');
+      Array.from(old.attributes).forEach(function(attr) { fresh.setAttribute(attr.name, attr.value); });
+      if (old.src) {
+        var done = false;
+        var go = function() { if (!done) { done = true; next(); } };
+        fresh.async = false;
+        fresh.onload = go; fresh.onerror = go;
+        setTimeout(go, 8000);                 // never let one slow file block the rest of the page
+        old.parentNode.replaceChild(fresh, old);
+      } else {
+        fresh.textContent = old.textContent;
+        old.parentNode.replaceChild(fresh, old);
+        next();
+      }
+    })();
+  }
+
   function swapContent(html, url, pushState) {
     var parser = new DOMParser();
     var doc = parser.parseFromString(html, 'text/html');
     var newMain = doc.getElementById('main-content');
     var newTitle = doc.querySelector('title');
+
+    // Page-specific stylesheet FILES (<link rel="stylesheet"> in the new page's <head>, e.g. the Users screen's screen-picker styles) are not part of
+    // #main-content, so a soft navigation used to leave them out and the page showed unstyled. Load any that are not already on the page, and
+    // swap the content once they are in (or after 2 s, whichever is first).
+    var linkWaits = [];
+    doc.querySelectorAll('head link[rel="stylesheet"]').forEach(function(l) {
+      var href = l.getAttribute('href');
+      if (!href) return;
+      var abs = new URL(href, window.location.href).href;
+      var have = Array.prototype.some.call(document.querySelectorAll('link[rel="stylesheet"]'), function(x) { return x.href === abs; });
+      if (have) return;
+      linkWaits.push(new Promise(function(resolve) {
+        var c = document.createElement('link');
+        c.rel = 'stylesheet'; c.href = href;
+        c.onload = resolve; c.onerror = resolve;
+        document.head.appendChild(c);
+      }));
+    });
+    if (linkWaits.length && !swapContent._linksReady) {
+      Promise.race([Promise.all(linkWaits), new Promise(function(r) { setTimeout(r, 2000); })]).then(function() {
+        swapContent._linksReady = true;
+        try { swapContent(html, url, pushState); } finally { swapContent._linksReady = false; }
+      });
+      return;
+    }
 
     // Remove any page-specific styles injected by a previous soft-nav
     document.querySelectorAll('style[data-page-style]').forEach(function(el) { el.remove(); });
@@ -467,12 +518,7 @@
       mainEl.innerHTML = newMain.innerHTML;
       // Scripts inserted via innerHTML are inert by design — re-create each one so page-specific
       // JS (e.g. Settings tab switching) actually runs after a soft navigation, not just on a hard reload.
-      mainEl.querySelectorAll('script').forEach(function(oldScript) {
-        var newScript = document.createElement('script');
-        Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
-        newScript.textContent = oldScript.textContent;
-        oldScript.parentNode.replaceChild(newScript, oldScript);
-      });
+      runScriptsInOrder(mainEl);
     }
     if (newTitle) {
       document.title = newTitle.textContent;
@@ -514,12 +560,7 @@
         var newMain = doc.getElementById('main-content');
         if (newMain) {
           inner.innerHTML = '<button class="detail-panel-close" onclick="closeDetailPanel()">&#10005;</button>' + newMain.innerHTML;
-          inner.querySelectorAll('script').forEach(function(oldScript) {
-            var newScript = document.createElement('script');
-            Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
-            newScript.textContent = oldScript.textContent;
-            oldScript.parentNode.replaceChild(newScript, oldScript);
-          });
+          runScriptsInOrder(inner);
         }
       })
       .catch(function() { inner.innerHTML = '<div style="padding:40px;color:var(--red);">Could not load.</div>'; });
@@ -560,12 +601,7 @@
         var doc = parser.parseFromString(html, 'text/html');
         var newMain = doc.getElementById('main-content');
         box.innerHTML = newMain ? newMain.innerHTML : html;
-        box.querySelectorAll('script').forEach(function(oldScript) {
-          var newScript = document.createElement('script');
-          Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
-          newScript.textContent = oldScript.textContent;
-          oldScript.parentNode.replaceChild(newScript, oldScript);
-        });
+        runScriptsInOrder(box);
       })
       .catch(function() { box.innerHTML = '<div style="padding:40px;color:var(--red);">Could not load.</div>'; });
   }
@@ -595,12 +631,7 @@
         var doc = parser.parseFromString(html, 'text/html');
         var newMain = doc.getElementById('main-content');
         box.innerHTML = newMain ? newMain.innerHTML : html;
-        box.querySelectorAll('script').forEach(function(oldScript) {
-          var newScript = document.createElement('script');
-          Array.from(oldScript.attributes).forEach(function(attr) { newScript.setAttribute(attr.name, attr.value); });
-          newScript.textContent = oldScript.textContent;
-          oldScript.parentNode.replaceChild(newScript, oldScript);
-        });
+        runScriptsInOrder(box);
         box.scrollTop = 0;
         updateRecordNavButtons();
       })
@@ -773,6 +804,42 @@
 
   window.addEventListener('popstate', function() {
     goTo(window.location.pathname + window.location.search);
+  });
+})();
+</script>
+<script>
+// Escape closes the top-most open pop-up, one at a time: the record / RC lookup pop-ups, any ".modal-overlay" pop-up (through its own close
+// button, so a pop-up's own clean-up still runs), the side detail panel, then the small menus. A pop-up's inner control that already used
+// Escape (e.g. an open dropdown inside it) calls preventDefault / stopPropagation first and so closes alone.
+(function () {
+  function shown(el) { return el && el.classList.contains('open') && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'; }
+  function topmost(list) {
+    var best = null, bestZ = -1;
+    list.forEach(function (el) {
+      if (!shown(el)) return;
+      var z = parseInt(getComputedStyle(el).zIndex, 10); if (isNaN(z)) z = 0;
+      if (z >= bestZ) { best = el; bestZ = z; }        // later in the page wins a tie
+    });
+    return best;
+  }
+  function closeOverlay(el) {
+    var x = el.querySelector('.modal-close-x, .rd-close-btn, [data-esc-close]') ||
+            Array.prototype.filter.call(el.querySelectorAll('button'), function (b) { return /^\s*cancel\s*$/i.test(b.textContent); })[0];
+    if (x) x.click(); else el.classList.remove('open');
+    if (shown(el)) el.classList.remove('open');          // the button's own handler did not close it: close it anyway
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+    var rd = document.getElementById('rdModalOverlay');
+    if (shown(rd) && typeof window.closeRecordModal === 'function') { window.closeRecordModal(); e.preventDefault(); return; }
+    var rc = document.getElementById('rcModalOverlay');
+    if (shown(rc) && typeof window.closeRcModal === 'function') { window.closeRcModal(); e.preventDefault(); return; }
+    var ov = topmost(Array.prototype.slice.call(document.querySelectorAll('.modal-overlay')));
+    if (ov) { closeOverlay(ov); e.preventDefault(); return; }
+    var dp = document.getElementById('detailPanel');
+    if (shown(dp) && typeof window.closeDetailPanel === 'function') { window.closeDetailPanel(); e.preventDefault(); return; }
+    var menus = ['notifDropdown', 'lg2DlMenu'];
+    for (var i = 0; i < menus.length; i++) { var m = document.getElementById(menus[i]); if (m && m.classList.contains('open')) { m.classList.remove('open'); e.preventDefault(); return; } }
   });
 })();
 </script>

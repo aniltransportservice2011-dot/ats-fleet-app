@@ -285,7 +285,7 @@
 
     <div class="vam-actions">
       <button type="button" class="vam-btn-cancel" onclick="closeAddServiceModal()">Cancel</button>
-      <button type="submit" class="vam-btn-save" id="asSaveBtn">Save Service</button>
+      <button type="submit" class="vam-btn-save" id="asSaveBtn">Save</button>
     </div>
   </form>
 </div>
@@ -348,7 +348,7 @@
 
     <div class="vam-actions">
       <button type="button" class="vam-btn-cancel" onclick="closeEditServiceModal()">Cancel</button>
-      <button type="submit" class="vam-btn-save" id="esSaveBtn">Save Changes</button>
+      <button type="submit" class="vam-btn-save" id="esSaveBtn">Update</button>
     </div>
   </form>
 </div>
@@ -493,14 +493,14 @@ if (asForm) {
           errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
           errBox.style.display = 'block';
           btn.disabled = false;
-          btn.textContent = 'Save Service';
+          btn.textContent = 'Save';
         }
       })
       .catch(function () {
         errBox.textContent = 'Network error — please check your connection and try again.';
         errBox.style.display = 'block';
         btn.disabled = false;
-        btn.textContent = 'Save Service';
+        btn.textContent = 'Save';
       });
   });
 }
@@ -617,14 +617,14 @@ if (esForm) {
           errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
           errBox.style.display = 'block';
           btn.disabled = false;
-          btn.textContent = 'Save Changes';
+          btn.textContent = 'Update';
         }
       })
       .catch(function () {
         errBox.textContent = 'Network error — please check your connection and try again.';
         errBox.style.display = 'block';
         btn.disabled = false;
-        btn.textContent = 'Save Changes';
+        btn.textContent = 'Update';
       });
   });
 }

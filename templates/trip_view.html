@@ -62,10 +62,10 @@
   </div>
 
   <div class="rd-stat-row">
-    <div class="rd-stat"><div class="rd-stat-icon" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div><div><div class="lbl">Billed Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('billed_amount') or 0) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div><div><div class="lbl">Billed Amount</div><div class="val">{{ mny(t.get('billed_amount') or 0, '{:,.0f}') }}</div></div></div>
     <div class="rd-stat"><div class="rd-stat-icon" style="background:#fff3e8;color:var(--accent);">&#8593;</div><div><div class="lbl">Driver Advance</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('driver_adv_amount') or 0) }}</div></div></div>
-    <div class="rd-stat"><div class="rd-stat-icon" style="background:#fdecea;color:var(--red);">&#8595;</div><div><div class="lbl">Deductions</div><div class="val">&#8377;{{ '{:,.0f}'.format(deductions_total) }}</div></div></div>
-    <div class="rd-stat"><div class="rd-stat-icon" style="background:#e8f5ee;color:var(--green);">&#10003;</div><div><div class="lbl">Balance Due</div><div class="val">&#8377;{{ '{:,.0f}'.format(balance_due) }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#fdecea;color:var(--red);">&#8595;</div><div><div class="lbl">Deductions</div><div class="val">{{ mny(deductions_total, '{:,.0f}') }}</div></div></div>
+    <div class="rd-stat"><div class="rd-stat-icon" style="background:#e8f5ee;color:var(--green);">&#10003;</div><div><div class="lbl">Balance Due</div><div class="val">{{ mny(balance_due, '{:,.0f}') }}</div></div></div>
   </div>
 
   <div class="rd-tabs">
@@ -85,9 +85,9 @@
           <div class="rd-fld"><div class="lbl">Charge Type</div><div class="val">{{ 'Fixed' if t.get('rate_type')=='FIXED' else 'Per MT' }}</div></div>
           <div class="rd-fld"><div class="lbl">Quantity (MT)</div><div class="val">{{ t.get('quantity') or 0 }}</div></div>
           {% if t.get('rate_type')=='FIXED' %}
-          <div class="rd-fld"><div class="lbl">Fixed Rate Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('fixed_rate_amount') or 0) }}</div></div>
+          <div class="rd-fld"><div class="lbl">Fixed Rate Amount</div><div class="val">{{ mny(t.get('fixed_rate_amount') or 0, '{:,.0f}') }}</div></div>
           {% else %}
-          <div class="rd-fld"><div class="lbl">Rate (per unit)</div><div class="val">&#8377;{{ '{:,.2f}'.format(t.get('rate') or 0) }}</div></div>
+          <div class="rd-fld"><div class="lbl">Rate (per unit)</div><div class="val">{{ mny(t.get('rate') or 0, '{:,.2f}') }}</div></div>
           {% endif %}
           <div class="rd-fld"><div class="lbl">Empty Trip</div><div class="val{% if not t.get('is_empty') %} muted{% endif %}">{{ 'Yes' if t.get('is_empty') else 'No' }}</div></div>
         </div>
@@ -109,12 +109,12 @@
         <div class="rd-fld"><div class="lbl">Owner Name</div><div class="val">{{ t.get('owner_name') or '—' }}</div></div>
         <div class="rd-fld"><div class="lbl">Owner Charge Type</div><div class="val">{{ 'Fixed' if t.get('owner_rate_type')=='FIXED' else 'Per MT' }}</div></div>
         {% if t.get('owner_rate_type')=='FIXED' %}
-        <div class="rd-fld"><div class="lbl">Owner Fixed Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('owner_fixed_amount') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Owner Fixed Amount</div><div class="val">{{ mny(t.get('owner_fixed_amount') or 0, '{:,.0f}') }}</div></div>
         {% else %}
-        <div class="rd-fld"><div class="lbl">Owner Rate (per unit)</div><div class="val">&#8377;{{ '{:,.2f}'.format(t.get('owner_rate') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Owner Rate (per unit)</div><div class="val">{{ mny(t.get('owner_rate') or 0, '{:,.2f}') }}</div></div>
         {% endif %}
-        <div class="rd-fld"><div class="lbl">Owner Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(owner_amount) }}</div></div>
-        <div class="rd-fld"><div class="lbl">Paid to Owner</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('paid_to_owner') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Owner Amount</div><div class="val">{{ mny(owner_amount, '{:,.0f}') }}</div></div>
+        <div class="rd-fld"><div class="lbl">Paid to Owner</div><div class="val">{{ mny(t.get('paid_to_owner') or 0, '{:,.0f}') }}</div></div>
       </div>
     </div>
     {% endif %}
@@ -131,7 +131,7 @@
       <div class="rd-section-ttl">Charges (Additions)</div>
       <div class="rd-grid cols3">
         {% for lbl, val in additions %}
-        <div class="rd-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(val or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">{{ mny(val or 0, '{:,.0f}') }}</div></div>
         {% endfor %}
       </div>
     </div>
@@ -165,7 +165,7 @@
         <tr>
           <td>{{ it['description'] }}</td>
           <td>{{ 'Deduction' if it['item_type']=='deduction' else 'Charge' }}</td>
-          <td class="num">&#8377;{{ '{:,.0f}'.format(it['amount'] or 0) }}</td>
+          <td class="num">{{ mny(it['amount'] or 0, '{:,.0f}') }}</td>
           <td>{{ it['vendor_name'] or '—' }}</td>
         </tr>
         {% endfor %}
@@ -176,9 +176,9 @@
     <div class="rd-section">
       <div class="rd-section-ttl">Payment Tracking</div>
       <div class="rd-grid cols3">
-        <div class="rd-fld"><div class="lbl">Party Advance</div><div class="val{% if not t.get('party_advance') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('party_advance') or 0) }}</div></div>
-        <div class="rd-fld"><div class="lbl">Payment Received</div><div class="val{% if not t.get('payment_received') %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(t.get('payment_received') or 0) }}</div></div>
-        <div class="rd-fld"><div class="lbl">Balance Due</div><div class="val" style="color:{% if balance_due > 0 %}var(--red){% else %}var(--green){% endif %};">&#8377;{{ '{:,.0f}'.format(balance_due) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Party Advance</div><div class="val{% if not t.get('party_advance') %} muted{% endif %}">{{ mny(t.get('party_advance') or 0, '{:,.0f}') }}</div></div>
+        <div class="rd-fld"><div class="lbl">Payment Received</div><div class="val{% if not t.get('payment_received') %} muted{% endif %}">{{ mny(t.get('payment_received') or 0, '{:,.0f}') }}</div></div>
+        <div class="rd-fld"><div class="lbl">Balance Due</div><div class="val" style="color:{% if balance_due > 0 %}var(--red){% else %}var(--green){% endif %};">{{ mny(balance_due, '{:,.0f}') }}</div></div>
       </div>
     </div>
   </div>
@@ -188,12 +188,12 @@
       <div class="rd-section-ttl">Deductions</div>
       <div class="rd-grid cols3">
         {% for lbl, val in deductions %}
-        <div class="rd-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">&#8377;{{ '{:,.0f}'.format(val or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">{{ lbl }}</div><div class="val{% if not val %} muted{% endif %}">{{ mny(val or 0, '{:,.0f}') }}</div></div>
         {% endfor %}
         <div class="rd-fld"><div class="lbl">Shortage Qty</div><div class="val{% if not t.get('shortage_qty') %} muted{% endif %}">{{ t.get('shortage_qty') or 0 }} {{ t.get('shortage_unit') or '' }}</div></div>
       </div>
       <div class="rd-fld" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
-        <div class="lbl">Total Deductions</div><div class="val" style="font-size:1.1rem;color:var(--red);">&#8377;{{ '{:,.0f}'.format(deductions_total) }}</div>
+        <div class="lbl">Total Deductions</div><div class="val" style="font-size:1.1rem;color:var(--red);">{{ mny(deductions_total, '{:,.0f}') }}</div>
       </div>
     </div>
   </div>
@@ -211,7 +211,7 @@
       {% if t.get('shortage_amount') or t.get('shortage_qty') %}
       <div class="rd-grid" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
         <div class="rd-fld"><div class="lbl">Shortage Qty</div><div class="val">{{ t.get('shortage_qty') or 0 }} {{ t.get('shortage_unit') or '' }}</div></div>
-        <div class="rd-fld"><div class="lbl">Shortage Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(t.get('shortage_amount') or 0) }}</div></div>
+        <div class="rd-fld"><div class="lbl">Shortage Amount</div><div class="val">{{ mny(t.get('shortage_amount') or 0, '{:,.0f}') }}</div></div>
         <div class="rd-fld"><div class="lbl">Shortage Date</div><div class="val{% if not t.get('shortage_date') %} muted{% endif %}">{{ t.get('shortage_date') or '—' }}</div></div>
       </div>
       {% if t.get('shortage_remarks') %}

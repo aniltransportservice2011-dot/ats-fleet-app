@@ -23,3 +23,6 @@ static/uploads/toll_receipts/
 
 # OS/editor cruft
 .DS_Store
+
+# online copies of the database taken automatically before a self-applying schema change — real business data, never commit
+db_backups/

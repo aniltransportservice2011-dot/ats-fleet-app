@@ -86,7 +86,7 @@
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
         <button type="button" onclick="document.getElementById('addTyreModal').classList.remove('open')" class="btn-cancel">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" id="tySubmitBtn">Save Tyre</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" id="tySubmitBtn">Save</button>
       </div>
     </form>
   </div>
@@ -156,7 +156,7 @@ function tySetMode(mode) {
 
   var form = document.getElementById('addTyreForm');
   var titles = {new: 'Add Tyre', stock: 'Add Tyre Stock', install: 'Install Tyre from Stock'};
-  var btnLabels = {new: 'Save Tyre', stock: 'Save to Stock', install: 'Install'};
+  var btnLabels = {new: 'Save', stock: 'Save', install: 'Install'};
   document.getElementById('tyModalTitle').innerHTML = '{{ tyre_icon }} ' + titles[mode];
   document.getElementById('tySubmitBtn').textContent = btnLabels[mode];
   form.action = (mode === 'stock') ? '/maintenance/tyre/stock/add' : '/maintenance/tyre/add';
@@ -298,7 +298,7 @@ function tyPickStock(sel) {
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
         <button type="button" onclick="document.getElementById('editTyreModal{{ loop.index }}').classList.remove('open')" class="btn-cancel">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Update</button>
       </div>
     </form>
   </div>

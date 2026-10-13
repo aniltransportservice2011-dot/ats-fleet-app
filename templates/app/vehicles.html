@@ -252,7 +252,7 @@
 
     <div class="vam-actions">
       <button type="button" class="vam-btn-cancel" onclick="closeAddVehicleModal()">Cancel</button>
-      <button type="submit" class="vam-btn-save" id="vamSaveBtn">Save Vehicle</button>
+      <button type="submit" class="vam-btn-save" id="vamSaveBtn">Save</button>
     </div>
   </form>
 </div>
@@ -330,14 +330,14 @@ document.getElementById('vamForm').addEventListener('submit', function (e) {
         errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
         errBox.style.display = 'block';
         btn.disabled = false;
-        btn.textContent = 'Save Vehicle';
+        btn.textContent = 'Save';
       }
     })
     .catch(function () {
       errBox.textContent = 'Network error — please check your connection and try again.';
       errBox.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Save Vehicle';
+      btn.textContent = 'Save';
     });
 });
 // Auto-open when landing here from the FAB's "Add Vehicle" quick-add (/app/vehicles?add=1),

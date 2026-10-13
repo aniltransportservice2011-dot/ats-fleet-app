@@ -764,7 +764,9 @@ CREATE TABLE users (
     created_by    INTEGER REFERENCES users(id),
     updated_by    INTEGER REFERENCES users(id),
     updated_at    TEXT,
-    company_id            INTEGER NOT NULL DEFAULT 1
+    company_id            INTEGER NOT NULL DEFAULT 1,
+    hide_trip_amounts     INTEGER NOT NULL DEFAULT 0,  -- 1 = on the Trips screen (View-only) show stars instead of rates, bills and payments
+    salary_view_ids       TEXT                         -- Salaries (View-only): other employees whose salary they may see: '*' = everyone, or '3,5,9' (their OWN is found by matching the login's mobile number to employees.mobile)
 );
 -- Mobile number and email must each be unique per account, same as username above — a
 -- self-signup's username IS its phone/email (see app_signup()'s own comment in app.py), and

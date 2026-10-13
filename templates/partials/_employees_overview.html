@@ -194,7 +194,7 @@
 
     <div class="modal-actions" style="border-top:1px solid var(--line);padding-top:16px;margin-top:18px;">
       <button type="button" onclick="document.getElementById('viewEmpModal{{ r.id }}').classList.remove('open')" class="btn-cancel">Close</button>
-      <button type="button" onclick="document.getElementById('viewEmpModal{{ r.id }}').classList.remove('open');document.getElementById('editEmpModal{{ r.id }}').classList.add('open');" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">&#9999;&#65039; Edit Employee</button>
+      <button type="button" onclick="document.getElementById('viewEmpModal{{ r.id }}').classList.remove('open');document.getElementById('editEmpModal{{ r.id }}').classList.add('open');" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">&#9999;&#65039; Edit</button>
     </div>
   </div>
 </div>
@@ -214,7 +214,7 @@
           </select>
         </div>
         <div class="mt-fld"><label>Role</label><input type="text" name="role" value="{{ r.raw_role or '' }}"></div>
-        <div class="mt-fld"><label>Mobile</label><input type="text" name="mobile" value="{{ r.mobile or '' }}"></div>
+        <div class="mt-fld"><label>Mobile *</label><input type="text" name="mobile" value="{{ r.mobile or '' }}" required inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" title="10-digit Indian mobile number" placeholder="10-digit mobile number"></div>
       </div>
       <div class="mt-form-grid">
         <div class="mt-fld"><label>Email</label><input type="email" name="email" value="{{ r.email or '' }}"></div>
@@ -250,7 +250,7 @@
       </form>
       <div style="display:flex;gap:10px;">
         <button type="button" onclick="document.getElementById('editEmpModal{{ r.id }}').classList.remove('open')" class="btn-cancel">Cancel</button>
-        <button type="submit" form="editEmpForm{{ r.id }}" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Save Changes</button>
+        <button type="submit" form="editEmpForm{{ r.id }}" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;">Update</button>
       </div>
     </div>
   </div>

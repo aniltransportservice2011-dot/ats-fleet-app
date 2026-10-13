@@ -164,8 +164,8 @@
         <input type="text" name="role" placeholder="e.g. Driver, Accountant, Clerk">
       </div>
       <div class="vam-field">
-        <label>Mobile</label>
-        <input type="text" name="mobile">
+        <label>Mobile <span class="req">*</span></label>
+        <input type="tel" name="mobile" required inputmode="numeric" maxlength="10" pattern="[6-9][0-9]{9}" placeholder="10-digit mobile number">
       </div>
       <div class="vam-field">
         <label>Email</label>
@@ -201,7 +201,7 @@
 
     <div class="vam-actions">
       <button type="button" class="vam-btn-cancel" onclick="closeAddEmpModal()">Cancel</button>
-      <button type="submit" class="vam-btn-save" id="empAddSaveBtn">Save Employee</button>
+      <button type="submit" class="vam-btn-save" id="empAddSaveBtn">Save</button>
     </div>
   </form>
 </div>
@@ -300,14 +300,14 @@ document.getElementById('empAddForm').addEventListener('submit', function (e) {
         errBox.textContent = r.data.error || 'Something went wrong. Please try again.';
         errBox.style.display = 'block';
         btn.disabled = false;
-        btn.textContent = 'Save Employee';
+        btn.textContent = 'Save';
       }
     })
     .catch(function () {
       errBox.textContent = 'Network error — please check your connection and try again.';
       errBox.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Save Employee';
+      btn.textContent = 'Save';
     });
 });
 {% endif %}

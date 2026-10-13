@@ -100,7 +100,7 @@
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
         <button type="button" onclick="document.getElementById('addBatteryModal').classList.remove('open')" class="btn-cancel">Cancel</button>
-        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" id="batSubmitBtn">Save Battery</button>
+        <button type="submit" class="add-btn" style="background:var(--accent);border:none;cursor:pointer;" id="batSubmitBtn">Save</button>
       </div>
     </form>
   </div>
@@ -186,7 +186,7 @@ function batSetMode(mode) {
 
   var form = document.getElementById('addBatteryForm');
   var titles = {install: 'Add New Battery', stock: 'Add New Battery', install_stock: 'Install Battery from Stock'};
-  var btnLabels = {install: 'Save Battery', stock: 'Save Battery', install_stock: 'Install'};
+  var btnLabels = {install: 'Save', stock: 'Save', install_stock: 'Install'};
   document.getElementById('batModalTitle').innerHTML = '{{ battery_icon }} ' + titles[mode];
   document.getElementById('batSubmitBtn').textContent = btnLabels[mode];
   // Install-from-Stock reuses the same per-battery route the row-level Install button already

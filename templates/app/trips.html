@@ -127,7 +127,7 @@
     </div>
     <div class="tr-card-right">
       <span class="tr-card-badge {{ 'ongoing' if t.ongoing else 'completed' }}">{{ 'On Trip' if t.ongoing else 'Completed' }}</span>
-      <div class="tr-card-amt">₹{{ '{:,.0f}'.format(t.billed_amount) }}</div>
+      <div class="tr-card-amt">{{ mny(t.billed_amount, '{:,.0f}') }}</div>
     </div>
   </div>
 </a>
