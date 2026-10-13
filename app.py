@@ -459,6 +459,64 @@ def _ensure_user_extra_columns(db_path=None):
 
 print('[schema] users extra columns:', _ensure_user_extra_columns(), file=sys.stderr)
 
+_BILLING_EXTRA_COLUMNS = (                                  # (table, column, definition) — exactly what migrate_guarantee_qty.sql / migrate_invoice_batch_items_vendor.sql add
+    ('trips', 'guarantee_qty', 'REAL DEFAULT 0'),                                # Minimum Guarantee Weight; 0 = none, so every existing trip bills exactly as before
+    ('invoice_batch_items', 'vendor_id', 'INTEGER REFERENCES vendors(id)'),      # which vendor an invoice's extra line belongs to; empty for existing lines
+)
+_BILLING_CHARGE_EXCLUSIONS_DDL = (                          # same as migrate_invoice_charge_exclusions.sql
+    """CREATE TABLE IF NOT EXISTS invoice_batch_charge_exclusions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_batch_id  INTEGER NOT NULL REFERENCES invoice_batches(id),
+        trip_id           INTEGER NOT NULL REFERENCES trips(id),
+        charge_key        TEXT NOT NULL,
+        company_id        INTEGER NOT NULL DEFAULT 1,
+        created_by        INTEGER REFERENCES users(id),
+        created_at        TEXT,
+        UNIQUE(invoice_batch_id, trip_id, charge_key)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_invoice_batch_charge_exclusions_batch ON invoice_batch_charge_exclusions(invoice_batch_id)",
+)
+
+
+def _ensure_billing_columns(db_path=None):
+    """Invoices read trips.guarantee_qty, invoice_batch_items.vendor_id and the invoice_batch_charge_exclusions table. A database that was never given
+    those migrations (an older copy running on the server) answered every invoice generate / preview with "Internal Server Error". They are purely
+    additive — a new column with an empty default, a new empty table — so the app adds any that are missing itself, on start-up, and touches no
+    existing row. Each step is skipped when already present, so it is safe on every start and with two workers starting together."""
+    path = db_path or DB
+    try:
+        if not os.path.exists(path):
+            return 'no database file'
+        conn = sqlite3.connect(path, timeout=60)
+        try:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            done = []
+            for table, column, ddl in _BILLING_EXTRA_COLUMNS:
+                if table not in tables:
+                    continue
+                if column in [r[1] for r in conn.execute(f'PRAGMA table_info({table})')]:
+                    continue
+                try:
+                    conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {ddl}')
+                    conn.commit()
+                    done.append(f'{table}.{column}')
+                except sqlite3.OperationalError:
+                    if column not in [r[1] for r in conn.execute(f'PRAGMA table_info({table})')]:      # a second worker may have added it first
+                        raise
+            if 'invoice_batches' in tables and 'trips' in tables and 'invoice_batch_charge_exclusions' not in tables:
+                for stmt in _BILLING_CHARGE_EXCLUSIONS_DDL:
+                    conn.execute(stmt)
+                conn.commit()
+                done.append('invoice_batch_charge_exclusions')
+            return ('added ' + ', '.join(done)) if done else 'already up to date'
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'[schema] could not add the invoice columns: {e!r}', file=sys.stderr)
+        return f'failed: {e!r}'
+
+print('[schema] invoice columns:', _ensure_billing_columns(), file=sys.stderr)
+
 def _remove_twilio_settings(db_path=None):
     """Twilio is no longer used. Delete any credentials saved for it (account SID, auth token, from number, provider choice)
     so no secret sits unused in the database. Safe to run on every start."""
