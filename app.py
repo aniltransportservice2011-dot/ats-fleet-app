@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, g, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, g, jsonify, send_from_directory
 import sqlite3
 import sys
 import datetime
@@ -8620,7 +8620,7 @@ def number_to_words_inr(n):
 
 INVOICE_SETTINGS_KEYS = ['company_name', 'address', 'gstin', 'pan', 'phone', 'email', 'bank_name', 'account_holder',
                          'account_number', 'ifsc_code', 'branch', 'rcm_clause', 'cgst_rate', 'sgst_rate',
-                         'invoice_prefix', 'next_invoice_number', 'logo_path']
+                         'invoice_prefix', 'next_invoice_number', 'logo_path', 'show_company_logo']
 LOGO_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'logo')
 os.makedirs(LOGO_UPLOAD_DIR, exist_ok=True)
 
@@ -8654,8 +8654,8 @@ def _normalise_logo_image(data):
         return None, 'Picture support is not installed on this server (Pillow). Ask your administrator.'
     if not data:
         return None, 'That file is empty.'
-    if data.lstrip()[:5].lower() in (b'<?xml', b'<svg ') or b'<svg' in data[:600].lower():
-        return None, LOGO_BAD_FILE
+    # No "looks like SVG" pre-check on purpose: a real picture's metadata (PNG text chunks, XMP) can contain the text "<svg", and
+    # Pillow cannot open a genuine SVG anyway, so that case lands in the except below with the same message.
     try:
         im = Image.open(io.BytesIO(data))
         im.load()                                   # decode every pixel now, so a truncated file is caught here
@@ -8681,6 +8681,26 @@ def _normalise_logo_image(data):
     out = io.BytesIO()
     im.save(out, 'PNG', optimize=True)
     return out.getvalue(), None
+
+
+def _trim_logo_margins(im, pad_frac=0.04):
+    """Crops the empty border (transparent, or the same colour as the corners) off a logo so the mark itself, not a wide white frame, fills the
+    space it is printed in. Returns the picture unchanged when there is nothing to trim or the whole picture is one colour."""
+    from PIL import Image, ImageChops
+    try:
+        if im.mode == 'RGBA' and im.getchannel('A').getextrema()[0] < 250:
+            box = im.getchannel('A').point(lambda v: 255 if v > 12 else 0).getbbox()
+        else:
+            rgb = im.convert('RGB')
+            bg = Image.new('RGB', rgb.size, rgb.getpixel((0, 0)))
+            box = ImageChops.difference(rgb, bg).convert('L').point(lambda v: 255 if v > 28 else 0).getbbox()
+        if not box:
+            return im
+        padx, pady = int((box[2] - box[0]) * pad_frac), int((box[3] - box[1]) * pad_frac)
+        box = (max(0, box[0] - padx), max(0, box[1] - pady), min(im.size[0], box[2] + padx), min(im.size[1], box[3] + pady))
+        return im.crop(box)
+    except Exception:
+        return im
 
 
 @app.route('/settings/logo/upload', methods=['POST'])
@@ -8920,7 +8940,8 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     # Company logo, if one's been uploaded (Settings > Company Profile) — sized modestly and
     # placed beside the company name, never dominating the header. Falls back silently to the
     # text-only header if no logo is set, or the stored file has gone missing on disk.
-    logo_path = s.get('logo_path')
+    # The "Show Company Logo on Invoice" switch (Settings > Invoice) is honoured: only an explicit OFF hides it.
+    logo_path = s.get('logo_path') if str(s.get('show_company_logo') or '1') != '0' else None
     logo_full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', logo_path) if logo_path else None
     if logo_full_path and os.path.isfile(logo_full_path):
         try:
@@ -8931,10 +8952,16 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
             with PILImage.open(logo_full_path) as pil_img:
                 pil_img.load()
                 iw, ih = pil_img.size
-            max_h = 0.45 * inch
-            logo_img = Image(logo_full_path, width=max_h * iw / ih, height=max_h)
+                # The logo prints about 0.45 inch tall, so embed a 300 px copy (~650 dpi): the stored 600 px file would add ~300 KB to every invoice for no visible gain.
+                small = _trim_logo_margins(pil_img.copy())
+                iw, ih = small.size
+                small.thumbnail((300, 300), PILImage.LANCZOS)
+                logo_bytes = io.BytesIO(); small.save(logo_bytes, 'PNG', optimize=True); logo_bytes.seek(0)
+            max_h = 0.62 * inch
+            logo_w = min(max_h * iw / ih, 1.4 * inch)                   # a very wide banner logo is capped so the company text keeps its room
+            logo_img = Image(logo_bytes, width=logo_w, height=logo_w * ih / iw)
             header_left_w = CONTENT_W - 2.4*inch
-            header_left = Table([[logo_img, company_block]], colWidths=[max_h * iw / ih + 8, header_left_w - (max_h * iw / ih + 8)])
+            header_left = Table([[logo_img, company_block]], colWidths=[logo_w + 10, header_left_w - (logo_w + 10)])
             header_left.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (0, 0), 0),
                                               ('RIGHTPADDING', (0, 0), (0, 0), 8), ('LEFTPADDING', (1, 0), (1, 0), 0)]))
         except Exception:
@@ -9968,6 +9995,12 @@ def inject_app_name():
     own separately-hardcoded copy of the name."""
     return {'app_name': APP_NAME}
 
+@app.route('/favicon.ico')
+def favicon():
+    """Browsers ask for /favicon.ico on their own (pages without a <link rel=icon>, bookmarks, tab restore); answer with the same wheel icon."""
+    return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/x-icon', max_age=86400)
+
+
 @app.route('/app-manifest.json')
 def app_manifest():
     """The PWA install manifest — name/short_name come from APP_NAME (the same single source of
@@ -10081,7 +10114,7 @@ _MODULE_ENDPOINTS = {
 _ENDPOINT_MODULE = {ep: m for m, eps in _MODULE_ENDPOINTS.items() for ep in eps}
 # open to every signed-in user (own profile, password, sign-in/out, static files)
 _COMMON_ENDPOINTS = {'settings_page', 'website_change_password', 'website_update_my_profile', 'app_profile', 'app_change_password',
-                     'app_update_profile', 'logout', 'static', 'app_manifest'}
+                     'app_update_profile', 'logout', 'static', 'app_manifest', 'favicon'}
 # the whole-database Excel export is for Full Access users only (Limited users never get it)
 _FULL_ACCESS_ONLY_ENDPOINTS = {'export_excel'}
 # where each screen opens: (website, app)
@@ -10391,7 +10424,7 @@ def require_login():
     if request.endpoint == 'static' and request.path.startswith(_PRIVATE_UPLOAD_PREFIXES) and not session.get('user_id'):
         return ('Please sign in to open this document.', 403)
     exempt = ['login', 'app_login', 'app_signup', 'static', 'send_login_otp', 'verify_login_otp', 'internal_sync_tick', 'internal_backup',
-              'app_login_otp', 'app_verify_login_otp', 'app_manifest']
+              'app_login_otp', 'app_verify_login_otp', 'app_manifest', 'favicon']
     if request.endpoint in exempt:
         return
     # Every redirect-to-login below picks app_login instead of the website's own login for any

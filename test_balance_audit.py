@@ -3140,7 +3140,12 @@ def run_roles_scenario(env, F, sc):
             jb = _io.BytesIO(); exif_rot.save(jb, 'JPEG', exif=ex)
             anim = _io.BytesIO(); Image.new('RGB', (120, 80), (255, 0, 0)).save(anim, 'GIF', save_all=True, append_images=[Image.new('RGB', (120, 80), (0, 255, 0))], duration=100, loop=0)
             pal = Image.new('P', (90, 90)); pal.putpalette([0, 0, 0, 255, 255, 255] * 128); pb = _io.BytesIO(); pal.save(pb, 'PNG', transparency=0)
+            from PIL.PngImagePlugin import PngInfo
+            meta = PngInfo(); meta.add_text('Description', '<svg xmlns="http://www.w3.org/2000/svg"><title>exported from a design tool</title></svg>')
+            meta.add_itxt('XML:com.adobe.xmp', '<?xml version="1.0"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><svg/></x:xmpmeta>')
+            mb = _io.BytesIO(); Image.new('RGB', (300, 200), (30, 90, 160)).save(mb, 'PNG', pnginfo=meta)
             cases = [
+                ('design-export.png', mb.getvalue(), 'PNG whose metadata mentions <svg> (design-tool / AI-image export)'),
                 ('logo.jpg', img_bytes('JPEG'), 'JPEG'), ('logo.JPEG', img_bytes('JPEG'), 'upper-case .JPEG'), ('logo.png', img_bytes('PNG'), 'PNG'),
                 ('logo.gif', img_bytes('GIF', mode='P', color=3), 'GIF'), ('logo.webp', img_bytes('WEBP'), 'WEBP'), ('logo.bmp', img_bytes('BMP'), 'BMP'),
                 ('logo.tif', img_bytes('TIFF'), 'TIFF'), ('logo.ico', img_bytes('ICO', size=(64, 64)), 'ICO'),
@@ -3182,6 +3187,26 @@ def run_roles_scenario(env, F, sc):
             run.check('LOGO_WEBSITE_REFUSAL_IS_SHOWN', r.status_code == 302 and 'logo_error=' in loc, 'website form with a bad file', 'redirect carrying logo_error', loc)
             page = a.get(loc).data.decode('utf-8', 'ignore') if loc else ''
             run.check('LOGO_WEBSITE_REFUSAL_TEXT_ON_PAGE', 'could not be read as a picture' in page, 'company tab after a bad upload', 'message visible', 'missing')
+            # the browser-tab / app icon is the fixed wheel mark, never the uploaded invoice logo; /favicon.ico works without signing in
+            anon = appmod.app.test_client()
+            fr = anon.get('/favicon.ico')
+            run.check('FAVICON_PUBLIC', fr.status_code == 200 and fr.data[:4] == b'\x00\x00\x01\x00', '/favicon.ico without signing in', '200 and an .ico file', (fr.status_code, fr.data[:4]))
+            for label, pg in (('website page', a.get('/settings?tab=company').data), ('sign-in page', anon.get('/login').data)):
+                html = pg.decode('utf-8', 'ignore')
+                icons = [ln for ln in html.splitlines() if 'rel="icon"' in ln or 'rel="apple-touch-icon"' in ln]
+                run.check('FAVICON_IS_THE_WHEEL_MARK', icons and all('uploads/logo' not in ln for ln in icons) and any('favicon.ico' in ln for ln in icons),
+                          f'icon links on the {label}', 'wheel mark, not the uploaded logo', icons[:2])
+            for f_ in ('favicon.ico', 'brand/favicon-32.png', 'brand/favicon-16.png', 'app-icons/icon-180.png', 'app-icons/icon-192.png', 'app-icons/icon-512.png', 'app-icons/icon-512-maskable.png'):
+                sr = anon.get('/static/' + f_)
+                run.check('ICON_FILES_SERVED', sr.status_code == 200 and len(sr.data) > 200, f'/static/{f_}', 200, sr.status_code)
+            # invoice header: the empty frame round a logo is trimmed so the mark itself fills the space
+            framed = Image.new('RGB', (600, 600), (255, 255, 255)); framed.paste(Image.new('RGB', (200, 100), (240, 100, 20)), (200, 250))
+            tr = appmod._trim_logo_margins(framed)
+            run.check('LOGO_MARGIN_TRIMMED', tr.size[0] < 260 and tr.size[1] < 140 and tr.size[0] > 200, 'white-framed logo', 'cropped round the mark', tr.size)
+            blank = Image.new('RGB', (300, 300), (255, 255, 255))
+            run.check('LOGO_BLANK_UNCHANGED', appmod._trim_logo_margins(blank).size == (300, 300), 'all-white picture', 'left as is', appmod._trim_logo_margins(blank).size)
+            tlogo = Image.new('RGBA', (400, 400), (0, 0, 0, 0)); tlogo.paste(Image.new('RGBA', (100, 100), (10, 20, 200, 255)), (150, 150))
+            run.check('LOGO_TRANSPARENT_MARGIN_TRIMMED', appmod._trim_logo_margins(tlogo).size[0] < 130, 'logo with a transparent border', 'cropped', appmod._trim_logo_margins(tlogo).size)
             page = a.get('/settings?tab=company').data.decode('utf-8', 'ignore')
             run.check('LOGO_CHOOSER_OFFERS_ALL_PICTURES', 'accept="image/*' in page and '.bmp' in page, 'file chooser', 'any picture', 'png/jpg only')
         elif case == 'msg91':
