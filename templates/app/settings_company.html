@@ -11,7 +11,6 @@
     <div class="box">{% if s['logo_path'] %}<img src="/static/{{ s['logo_path'] }}" alt="Company logo" id="asLogoImg">{% else %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17M15 9h4a1 1 0 0 1 1 1v11M9 7h2M9 11h2M9 15h2"/></svg>{% endif %}</div>
     <div>
       <button type="button" class="pill" onclick="document.getElementById('asLogoFile').click()">{{ 'Change Logo' if s['logo_path'] else 'Upload Logo' }}</button>
-      <div class="hint">PNG, JPG, GIF or WEBP. Shown top-left on every invoice PDF.</div>
     </div>
     <input type="file" id="asLogoFile" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tif,.tiff" style="display:none;">
   </div>

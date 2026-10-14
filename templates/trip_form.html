@@ -542,4 +542,11 @@ function tfToggleEmptyTrip() {
   tfRecalc();
 })();
 </script>
+{% if mode != 'edit' %}
+<script src="{{ asset_v('trip_number_suggest.js') }}"></script>
+<script>
+TripNumberSuggest.init({ url: '/trips/next-number', dateEl: document.querySelector('#tripForm [name=date]'),
+                         lrEl: document.querySelector('#tripForm [name=lr_number]'), emptyEl: document.getElementById('tfIsEmpty') });
+</script>
+{% endif %}
 {% endblock %}

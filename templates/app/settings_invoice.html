@@ -18,6 +18,36 @@
 </form>
 
 <form class="as-card as-form" data-as-save>
+  <input type="hidden" name="form_type" value="trip_numbering">
+  <h2>Trip Numbering</h2>
+  <div class="as-error"></div>
+  {{ field('LR Number Format', 'lr_format', s['lr_format'], req=True, attrs='maxlength="60" autocapitalize="off" id="tnLrFormat" oninput="tnPreview()"') }}
+  <div class="fld"><label class="lbl">Example</label><div class="as-preview" id="tnLrExample">{{ s['lr_example'] }}</div></div>
+  {{ field('Empty Trip Number Format', 'empty_format', s['empty_format'], req=True, attrs='maxlength="60" autocapitalize="off" id="tnEmptyFormat" oninput="tnPreview()"') }}
+  <div class="fld"><label class="lbl">Example</label><div class="as-preview" id="tnEmptyExample">{{ s['empty_example'] }}</div></div>
+  <div class="hint" style="font-size:0.74rem;line-height:1.55;margin:2px 0 10px;opacity:.8;">
+    Parts: {DATE} trip date as DDMMYY, {DD} {MM} {YY} {YYYY} {MON}, and {SEQ} the running number — {SEQ:4} fills to at least 4 digits (0001), a bigger number just grows.
+    The number restarts whenever the text around it changes (with {DATE} it restarts every day). It is only a suggestion: you can change it on every trip.
+  </div>
+  <button type="submit" class="as-save">Update</button>
+</form>
+
+<div class="as-card">
+  <h2>Authorised Signature &amp; Stamp</h2>
+  <div class="as-logo">
+    <div class="box">{% if s['signature_path'] %}<img src="/static/{{ s['signature_path'] }}" alt="Signature and stamp" id="asSigImg">{% else %}<span style="font-size:.7rem;opacity:.6;text-align:center;">None</span>{% endif %}</div>
+    <div>
+      <button type="button" class="pill" onclick="document.getElementById('asSigFile').click()">{{ 'Change Picture' if s['signature_path'] else 'Upload Picture' }}</button>
+      {% if s['signature_path'] %}<button type="button" class="pill" id="asSigRemove" style="margin-left:6px;">Remove</button>{% endif %}
+      <div class="hint">One picture with the signature and the company stamp. Printed above "Authorised Signatory" on every invoice.</div>
+    </div>
+    <input type="file" id="asSigFile" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tif,.tiff" style="display:none;">
+  </div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:.82rem;margin-top:10px;"><input type="checkbox" id="asSigClear" checked> Make the white background see-through</label>
+  <div class="as-error" id="asSigErr"></div>
+</div>
+
+<form class="as-card as-form" data-as-save>
   <input type="hidden" name="form_type" value="invoice_prefs">
   <h2>Invoice Preferences</h2>
   <div class="as-error"></div>
@@ -40,4 +70,30 @@
   <button type="submit" class="as-save">Update</button>
 </form>
 {% endblock %}
-{% block extra_scripts %}{% include 'app/_settings_scripts.html' %}{% endblock %}
+{% block extra_scripts %}{% include 'app/_settings_scripts.html' %}
+<script>
+function tnExample(fmt) {
+  var d = new Date(), pad = function (n, w) { n = String(n); while (n.length < w) n = '0' + n; return n; };
+  var mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+  return fmt.replace(/\{(DATE|DD|MM|YYYY|YY|MON|SEQ(?::(\d{1,2}))?)\}/g, function (m, tok, w) {
+    if (tok.indexOf('SEQ') === 0) return pad(1, parseInt(w || '0', 10));
+    return { DATE: pad(d.getDate(), 2) + pad(d.getMonth() + 1, 2) + pad(d.getFullYear() % 100, 2), DD: pad(d.getDate(), 2), MM: pad(d.getMonth() + 1, 2),
+             YY: pad(d.getFullYear() % 100, 2), YYYY: String(d.getFullYear()), MON: mon }[tok];
+  });
+}
+function tnPreview() {
+  document.getElementById('tnLrExample').textContent = tnExample(document.getElementById('tnLrFormat').value);
+  document.getElementById('tnEmptyExample').textContent = tnExample(document.getElementById('tnEmptyFormat').value);
+}
+document.getElementById('asSigFile').addEventListener('change', function () {
+  if (!this.files.length) return;
+  var fd = new FormData(); fd.append('signature', this.files[0]);
+  if (document.getElementById('asSigClear').checked) fd.append('clear_background', '1');
+  asPost('/settings/signature/upload', fd, document.getElementById('asSigErr'), null);
+});
+var asSigRemove = document.getElementById('asSigRemove');
+if (asSigRemove) asSigRemove.addEventListener('click', function () {
+  if (confirm('Remove the signature and stamp from invoices?')) asPost('/settings/signature/remove', new FormData(), document.getElementById('asSigErr'), null);
+});
+</script>
+{% endblock %}
