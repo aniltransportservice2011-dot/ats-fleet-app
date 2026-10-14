@@ -16,6 +16,8 @@ fleet.db
 # future uploads of any kind should get committed.
 static/uploads/insurance/
 static/uploads/toll_receipts/
+# the company's authorised signature + stamp picture — must never end up in the repository
+static/uploads/signature/
 
 # Local environment / secrets, once these exist
 .env

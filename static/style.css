@@ -7,16 +7,23 @@
   --white: #ffffff;
   --green: #1a7a4c;
   --red: #b3392f;
+  /* Table headers: a soft tint of --accent (the "pink" header) instead of a dark bar; --th-bg-neutral is the near-white used by the cells that
+     sit beside a tinted group header; --th-line / --th-divider are the thin accent rules under a header and between column groups. */
+  --th-bg: #fcf4f0;
+  --th-bg-neutral: #f6f8fa;
+  --th-line: rgba(192, 86, 33, 0.28);
+  --th-divider: rgba(192, 86, 33, 0.62);
 }
 /* Dark theme — toggled via the sun/moon switch in the topbar (see base.html). Because virtually
    every page in the app is already built on these same variables (var(--ink)/var(--white)/
    var(--paper)/var(--steel)/var(--line)), redefining just these five here re-themes the whole
    app in one place, no per-page work needed. --accent/--green/--red get slightly brighter
    variants so they stay legible on dark cards instead of reading muddy. A small number of
-   components that intentionally use --ink as a fixed dark badge/bar background (table headers,
-   the topbar avatar) are hardcoded to that literal color rather than the variable, specifically
-   so they don't flip to a pale header bar in dark mode — everywhere else --ink is used as text
-   or a border, which is exactly what should flip. */
+   components that intentionally use --ink as a fixed dark badge/bar background (the topbar
+   avatar) are hardcoded to that literal color rather than the variable, specifically so they
+   don't flip to a pale bar in dark mode — everywhere else --ink is used as text or a border,
+   which is exactly what should flip. Table headers use the --th-* tokens, which have their own
+   dark values below. */
 :root[data-theme="dark"] {
   --ink: #eef1f8;
   --steel: #93a0c2;
@@ -25,6 +32,10 @@
   --white: #161c2e;
   --green: #34c77b;
   --red: #f0665e;
+  --th-bg: #2b242d;
+  --th-bg-neutral: #1c2338;
+  --th-line: rgba(240, 130, 70, 0.35);
+  --th-divider: rgba(240, 130, 70, 0.62);
 }
 * { box-sizing: border-box; }
 html {
@@ -214,10 +225,11 @@ a.clear:hover { color: var(--ink); }
 table { width: 100%; border-collapse: collapse; background: var(--white); border-radius: 4px; overflow: hidden; }
 th, td { padding: 10px 14px; text-align: left; font-size: 0.87rem; border-bottom: 1px solid var(--line); }
 th {
-  /* Fixed dark bar in both themes, deliberately not var(--ink) — that flips to a light color in
-     dark mode, which would turn this into a pale header bar instead of staying a dark one. */
-  background: #14213d;
-  color: #fff;
+  /* Soft accent-tinted header ("pink") with ink text — the same size, case and spacing as before, only the colours changed, so no table
+     changes shape. Colours come from the --th-* tokens above, which have dark-theme values. */
+  background: var(--th-bg);
+  color: var(--ink);
+  border-bottom: 1px solid var(--th-line);
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;

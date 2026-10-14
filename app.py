@@ -3145,6 +3145,124 @@ def _duplicate_lr_trip(conn, lr_number, exclude_trip_id=None):
         params.append(exclude_trip_id)
     return conn.execute(query, params).fetchone()
 
+# ---------------------------------------------------------------------------------------------------------------------------
+# Suggested LR numbers for new trips (Settings > Invoice > Trip Numbering).
+# A format is plain text with these parts:  {DATE} = DDMMYY, {DD} {MM} {YY} {YYYY} {MON} (e.g. OCT), and exactly one {SEQ} or {SEQ:N}
+# (N = minimum digits, zero-filled; a longer number simply grows — {SEQ:2} gives 01 ... 99, 100, 101). The date is the TRIP's date, and the
+# sequence restarts whenever the text round it changes, so "ATS-{DATE}-LR-{SEQ:4}" counts per day, "{MON}-{SEQ}" per month, "LR-{SEQ}" never.
+# The number is only a suggestion pre-filled in the Add Trip form: the LR field stays editable and _duplicate_lr_trip still guards every save.
+# ---------------------------------------------------------------------------------------------------------------------------
+_NUM_TOKEN_RE = re.compile(r'\{(DATE|DD|MM|YYYY|YY|MON|SEQ(?::(\d{1,2}))?)\}')
+_NUM_LITERAL_OK = re.compile(r'[A-Za-z0-9 _\-/#.:]*')
+_MONTH_ABBR = ('JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC')
+EMPTY_TRIP_FORMAT_DEFAULT = 'Empty-{DATE}-{SEQ:2}'
+# An empty run is a trip with the "Empty Trip" switch on OR (older trips, before the switch was used) an LR number that starts with "Empty".
+# Every analytics query that tells empty runs apart from loaded trips uses these, so the answer is the same everywhere.
+_EMPTY_RUN_SQL = "(COALESCE(is_empty,0)=1 OR COALESCE(lr_number,'') LIKE 'Empty%')"
+_EMPTY_RUN_SQL_T = "(COALESCE(t.is_empty,0)=1 OR COALESCE(t.lr_number,'') LIKE 'Empty%')"
+
+
+def _company_initials(name):
+    """'Anil Transport Service' -> 'ATS' (first letter of each word, at most 4), the default LR prefix when none has been chosen."""
+    letters = ''.join(w[0] for w in re.findall(r'[A-Za-z0-9]+', name or ''))[:4].upper()
+    return letters or 'LR'
+
+
+def _default_lr_format(company_name):
+    return f'{_company_initials(company_name)}-{{DATE}}-LR-{{SEQ:4}}'
+
+
+def _validate_number_format(fmt):
+    """Returns a readable error for a number format, or None when it is fine."""
+    fmt = (fmt or '').strip()
+    if not fmt:
+        return 'Enter a format, for example ABC-{DATE}-LR-{SEQ:4}.'
+    if len(fmt) > 60:
+        return 'The format is too long (60 characters at most).'
+    seqs = [m for m in _NUM_TOKEN_RE.finditer(fmt) if m.group(1).startswith('SEQ')]
+    if len(seqs) != 1:
+        return 'The format must contain exactly one {SEQ} (the running number), for example {SEQ:4}.'
+    rest = _NUM_TOKEN_RE.sub('', fmt)
+    if '{' in rest or '}' in rest:
+        bad = re.findall(r'\{[^}]*\}?', rest)
+        return f'Unknown part {bad[0] if bad else "{ }"}. You can use {{DATE}}, {{DD}}, {{MM}}, {{YY}}, {{YYYY}}, {{MON}} and {{SEQ}} or {{SEQ:N}}.'
+    if not _NUM_LITERAL_OK.fullmatch(rest):
+        return 'Use only letters, digits, spaces and - _ / # . : around the parts.'
+    if len(_render_trip_number(fmt, datetime.date(2026, 12, 28), 99999)) > 40:
+        return 'The numbers this format makes would be longer than 40 characters.'
+    return None
+
+
+def _render_trip_number(fmt, d, seq):
+    def part(m):
+        tok = m.group(1)
+        if tok.startswith('SEQ'):
+            return str(seq).zfill(int(m.group(2) or 0))
+        return {'DATE': d.strftime('%d%m%y'), 'DD': d.strftime('%d'), 'MM': d.strftime('%m'), 'YY': d.strftime('%y'),
+                'YYYY': d.strftime('%Y'), 'MON': _MONTH_ABBR[d.month - 1]}[tok]
+    return _NUM_TOKEN_RE.sub(part, fmt)
+
+
+def _load_trip_number_formats(conn, company_id=1):
+    """(LR format, empty-trip format) as saved in Settings, falling back to the defaults (the LR default carries the company's initials)."""
+    def val(key):
+        row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, company_id)).fetchone()
+        return (row['value'] or '').strip() if row else ''
+    lr, empty = val('lr_format'), val('empty_format')
+    if not lr or _validate_number_format(lr):
+        lr = _default_lr_format(val('company_name') or get_company_name(company_id))
+    if not empty or _validate_number_format(empty):
+        empty = EMPTY_TRIP_FORMAT_DEFAULT
+    return lr, empty
+
+
+def _next_trip_number(conn, fmt, d):
+    """The next free number for `fmt` on date `d`: one more than the highest running number already used by a trip with the same text round
+    it (so typed or edited numbers can never collide with the suggestion), then pushed on past anything that is still taken."""
+    regex, like = [], []
+    for m in re.finditer(r'\{[^}]*\}|[^{]+', fmt):
+        chunk = m.group(0)
+        tok = _NUM_TOKEN_RE.fullmatch(chunk)
+        if tok and tok.group(1).startswith('SEQ'):
+            regex.append(r'(\d+)')
+            like.append('%')
+        else:
+            text = _render_trip_number(chunk, d, 0) if tok else chunk
+            regex.append(re.escape(text))
+            like.append(text.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_'))
+    pattern = re.compile(''.join(regex), re.I)
+    best = 0
+    for row in conn.execute("SELECT lr_number FROM trips WHERE TRIM(lr_number) LIKE ? ESCAPE '\\'", (''.join(like),)).fetchall():
+        m = pattern.fullmatch((row['lr_number'] or '').strip())
+        if m:
+            best = max(best, int(m.group(1)))
+    seq = best + 1
+    for _ in range(5000):
+        candidate = _render_trip_number(fmt, d, seq)
+        if not _duplicate_lr_trip(conn, candidate):
+            return candidate
+        seq += 1
+    return _render_trip_number(fmt, d, seq)
+
+
+@app.route('/trips/next-number')
+@app.route('/app/trips/next-number')
+def trip_next_number():
+    """JSON: the suggested LR number for a trip on ?date=YYYY-MM-DD (default today); ?empty=1 uses the Empty Trip format."""
+    try:
+        d = datetime.datetime.strptime((request.args.get('date') or '')[:10], '%Y-%m-%d').date()
+    except ValueError:
+        d = datetime.date.today()
+    empty = (request.args.get('empty') or '').lower() in ('1', 'true', 'on', 'yes')
+    conn = get_db()
+    try:
+        lr_fmt, empty_fmt = _load_trip_number_formats(conn, session.get('company_id', 1))
+        number = _next_trip_number(conn, empty_fmt if empty else lr_fmt, d)
+    finally:
+        conn.close()
+    return jsonify({'ok': True, 'number': number, 'empty': empty})
+
+
 def _trip_freight(quantity, rate, rate_type, fixed_rate_amount, guarantee_qty=0):
     """Party-side freight for one trip — the single formula every place in the app that bills a
     trip's party (insert, update, invoice preview/PDF, invoice batch line items) calls, so a
@@ -8678,8 +8796,9 @@ def number_to_words_inr(n):
 
 INVOICE_SETTINGS_KEYS = ['company_name', 'address', 'gstin', 'pan', 'phone', 'email', 'bank_name', 'account_holder',
                          'account_number', 'ifsc_code', 'branch', 'rcm_clause', 'cgst_rate', 'sgst_rate',
-                         'invoice_prefix', 'next_invoice_number', 'logo_path', 'show_company_logo']
+                         'invoice_prefix', 'next_invoice_number', 'logo_path', 'show_company_logo', 'show_signatory', 'signature_path']
 LOGO_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'logo')
+SIGNATURE_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'signature')
 os.makedirs(LOGO_UPLOAD_DIR, exist_ok=True)
 
 def _get_invoice_settings(conn, company_id=1):
@@ -8700,7 +8819,7 @@ LOGO_BAD_FILE = ('That file could not be read as a picture. Please choose a JPG,
                  '(a photo saved as HEIC or a vector SVG must be saved as JPG or PNG first).')
 
 
-def _normalise_logo_image(data):
+def _normalise_logo_image(data, what='logo'):
     """Turns an uploaded picture of ANY common format (JPG/JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO ...) into one clean PNG: (png_bytes, None) or
     (None, message). The file is judged by what it really contains, not by its extension, so a JPEG named .png (or the reverse) works; a
     text file or a truncated image is refused instead of being stored as a broken logo. A phone photo's rotation flag is applied, an
@@ -8733,7 +8852,7 @@ def _normalise_logo_image(data):
     except Exception:
         return None, LOGO_BAD_FILE
     if min(im.size) < 8:
-        return None, 'That picture is too small to be a logo. Please choose a larger image.'
+        return None, f'That picture is too small to be a {what}. Please choose a larger image.'
     if max(im.size) > LOGO_MAX_SIDE:
         im.thumbnail((LOGO_MAX_SIDE, LOGO_MAX_SIDE), Image.LANCZOS)
     out = io.BytesIO()
@@ -8794,6 +8913,96 @@ def upload_company_logo():
     if error:
         return redirect(url_for('settings_page', tab='company', logo_error=error))
     return redirect(url_for('settings_page', tab='company'))
+
+
+def _make_white_transparent(im):
+    """Scanned stamps and signatures come on a white page: turns near-white into see-through (soft edge), keeping the ink as it is."""
+    from PIL import ImageChops
+    rgb = im.convert('RGB')
+    r, g, b = rgb.split()
+    lightest_ink = ImageChops.darker(ImageChops.darker(r, g), b)                 # the darkest of the three channels: ink is low, paper is high
+    alpha = lightest_ink.point(lambda v: 0 if v >= 245 else (255 if v <= 200 else int((245 - v) * 255 / 45)))
+    if im.mode == 'RGBA':
+        alpha = ImageChops.multiply(alpha, im.getchannel('A'))
+    out = rgb.convert('RGBA')
+    out.putalpha(alpha)
+    return out
+
+
+def _delete_signature_file(rel_path):
+    """Removes a stored signature image — only ever from inside the signature folder."""
+    try:
+        full = os.path.realpath(os.path.join(app.static_folder, rel_path or ''))
+        if rel_path and full.startswith(os.path.realpath(SIGNATURE_UPLOAD_DIR) + os.sep) and os.path.isfile(full):
+            os.remove(full)
+    except OSError:
+        pass
+
+
+@app.route('/settings/signature/upload', methods=['POST'])
+def upload_company_signature():
+    """The authorised signature + company stamp printed in the invoice footer — ONE picture holding both. Any common picture format is accepted
+    (same checks as the logo); optionally the white paper round it is made see-through. Stored as a PNG under uploads/signature/<company_id>/
+    and served only to signed-in users (a stamp must not be downloadable by anyone with the link)."""
+    f = request.files.get('signature')
+    error = None
+    rel_path = None
+    if not (f and f.filename):
+        error = 'Choose a picture file first.'
+    else:
+        png, error = _normalise_logo_image(f.read(), what='signature')
+        if not error:
+            from PIL import Image
+            import io
+            im = Image.open(io.BytesIO(png))
+            im.load()
+            if request.form.get('clear_background') in ('1', 'on', 'true'):
+                im = _make_white_transparent(im)
+            im = _trim_logo_margins(im, 0.03)
+            out = io.BytesIO()
+            im.save(out, 'PNG', optimize=True)
+            company_id = session.get('company_id', 1)
+            company_dir = os.path.join(SIGNATURE_UPLOAD_DIR, str(company_id))
+            os.makedirs(company_dir, exist_ok=True)
+            unique = f"signature_{int(datetime.datetime.now().timestamp() * 1000)}.png"
+            with open(os.path.join(company_dir, unique), 'wb') as fh:
+                fh.write(out.getvalue())
+            rel_path = f"uploads/signature/{company_id}/{unique}"
+            _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            conn = get_db()
+            old = conn.execute("SELECT value FROM settings WHERE key='signature_path' AND company_id=?", (company_id,)).fetchone()
+            conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
+                            VALUES ('signature_path', ?, ?, ?, ?, ?, ?)""",
+                         (rel_path, company_id, session.get('user_id'), _now, session.get('user_id'), _now))
+            conn.commit()
+            conn.close()
+            if old and old['value']:
+                _delete_signature_file(old['value'])                       # the replaced picture is not kept
+    if _wants_json():
+        if error:
+            return jsonify({'ok': False, 'error': error}), 400
+        return jsonify({'ok': True, 'signature_url': '/static/' + rel_path})
+    if error:
+        return redirect(url_for('settings_page', tab='invoice', sig_error=error))
+    return redirect(url_for('settings_page', tab='invoice'))
+
+
+@app.route('/settings/signature/remove', methods=['POST'])
+def remove_company_signature():
+    company_id = session.get('company_id', 1)
+    conn = get_db()
+    old = conn.execute("SELECT value FROM settings WHERE key='signature_path' AND company_id=?", (company_id,)).fetchone()
+    _now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute("""INSERT OR REPLACE INTO settings (key, value, company_id, created_by, created_at, updated_by, updated_at)
+                    VALUES ('signature_path', '', ?, ?, ?, ?, ?)""",
+                 (company_id, session.get('user_id'), _now, session.get('user_id'), _now))
+    conn.commit()
+    conn.close()
+    if old and old['value']:
+        _delete_signature_file(old['value'])
+    if _wants_json():
+        return jsonify({'ok': True})
+    return redirect(url_for('settings_page', tab='invoice'))
 
 
 # Fields that have NEVER fed into any Invoice Center total before this popup existed — they only
@@ -9370,7 +9579,31 @@ def _build_invoice_pdf(trips, invoice_type, entity, s, invoice_number, invoice_d
     terms_lines = ["<b>TERMS &amp; CONDITIONS</b>", "1. Payment should be made within due date.",
                    "2. Interest @ 18% p.a. will be charged on overdue.", "3. All disputes subject to Rourkela Jurisdiction."]
     left_blocks.append(Paragraph('<br/>'.join(terms_lines), label_style))
-    signature_block = Paragraph(f"<b>FOR {esc(s['company_name'])}</b><br/><br/><br/>Authorised Signatory", label_style)
+    # "Show Authorised Signatory" (Settings > Invoice) is honoured: only an explicit OFF removes the block. The uploaded signature + stamp picture
+    # (Settings > Invoice > Authorised Signature & Stamp) fills the gap above the words "Authorised Signatory".
+    if str(s.get('show_signatory') or '1') == '0':
+        signature_block = ''
+    else:
+        signature_block = [Paragraph(f"<b>FOR {esc(s['company_name'])}</b>", label_style)]
+        sig_rel = s.get('signature_path')
+        sig_full = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', sig_rel) if sig_rel else None
+        sig_flow = None
+        if sig_full and os.path.isfile(sig_full):
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(sig_full) as sig_im:
+                    sig_im.load()
+                    sig_small = _trim_logo_margins(sig_im.copy(), 0.02)
+                    sw, sh = sig_small.size
+                    sig_small.thumbnail((600, 600), PILImage.LANCZOS)
+                    sig_bytes = io.BytesIO(); sig_small.save(sig_bytes, 'PNG', optimize=True); sig_bytes.seek(0)
+                box_w, box_h = 1.9 * inch, 0.95 * inch                       # fits the 2.3 inch column; the picture keeps its own shape
+                scale = min(box_w / sw, box_h / sh)
+                sig_flow = Image(sig_bytes, width=sw * scale, height=sh * scale)
+            except Exception:
+                sig_flow = None                                              # an unreadable picture never blocks invoice generation
+        signature_block.append(sig_flow if sig_flow is not None else Spacer(1, 0.42 * inch))
+        signature_block.append(Paragraph("Authorised Signatory", label_style))
     footer_table = Table([[left_blocks, signature_block]], colWidths=[4.6*inch, 2.3*inch])
     footer_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LINEABOVE', (0,0), (-1,0), 0.7, LINE),
                                        ('TOPPADDING', (0,0), (-1,-1), 8), ('LEFTPADDING', (0,0), (0,0), 0)]))
@@ -10138,7 +10371,7 @@ _MODULE_ALIASES = {'Payments': 'Ledger'}
 _MODULE_ENDPOINTS = {
     'Dashboard': ['home', 'dashboard', 'app_dashboard'],
     'Trips': ['trips_list', 'trip_view', 'add_trip', 'edit_trip', 'delete_trip', 'end_trip', 'export_trips', 'export_trips_pdf',
-              'app_trips', 'app_trip_detail', 'app_edit_trip', 'app_end_trip', 'app_add_trip'],
+              'app_trips', 'app_trip_detail', 'app_edit_trip', 'app_end_trip', 'app_add_trip', 'trip_next_number'],
     'Vehicles': ['vehicles_list', 'vehicle_detail', 'vehicle_challan_detail', 'vehicle_rc_lookup', 'vehicle_rc_download', 'vehicle_sync_now',
                  'vehicle_compliance_renew', 'vehicle_compliance_sync', 'vehicles_compliance_sync_all', 'add_vehicle', 'edit_vehicle',
                  'delete_vehicle', 'toggle_vehicle_status', 'app_vehicles', 'app_vehicle_detail', 'app_add_vehicle', 'app_compliance',
@@ -10452,7 +10685,7 @@ def inject_security_flags():
 
 # Uploaded business documents (insurance papers, toll receipts) sit under /static/, which has no login check of its own —
 # without this, anyone holding a file's address could open it. Logos stay public (the login page may show one).
-_PRIVATE_UPLOAD_PREFIXES = ('/static/uploads/insurance/', '/static/uploads/toll_receipts/')
+_PRIVATE_UPLOAD_PREFIXES = ('/static/uploads/insurance/', '/static/uploads/toll_receipts/', '/static/uploads/signature/')
 
 @app.before_request
 def reject_cross_site_posts():
@@ -10561,7 +10794,7 @@ _READ_ONLY_POST_ALLOWED = {
 
 # Only an Administrator may touch these: the user list, user create/edit/delete/export, and company settings.
 _ADMIN_ONLY_ENDPOINTS = {'add_user', 'edit_user', 'update_user_phone', 'delete_user', 'export_users', 'upload_company_logo',
-                         'make_administrator', 'app_settings_save', 'app_settings_company', 'app_settings_banking', 'app_settings_invoice',
+                         'upload_company_signature', 'remove_company_signature', 'make_administrator', 'app_settings_save', 'app_settings_company', 'app_settings_banking', 'app_settings_invoice',
                          'app_settings_tax', 'app_settings_users'}
 
 def _admin_only_denied():
@@ -10849,7 +11082,7 @@ ALL_SETTING_KEYS = [
     'bank_name', 'account_holder', 'account_number', 'ifsc_code', 'branch', 'account_type',
     'default_invoice_type', 'default_payment_terms', 'default_place_of_supply', 'default_due_days',
     'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words', 'logo_path',
-    'invoice_prefix', 'next_invoice_number',
+    'invoice_prefix', 'next_invoice_number', 'lr_format', 'empty_format', 'signature_path',
     'cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
     'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit', 'rcm_clause',
     'msg91_authkey', 'msg91_template_id',
@@ -10966,6 +11199,7 @@ _SETTINGS_FIELD_GROUPS = {
     'invoice_prefs': ['default_invoice_type', 'default_payment_terms', 'default_place_of_supply', 'default_due_days',
                       'show_company_logo', 'show_bank_details', 'show_signatory', 'print_amount_words'],
     'invoice_numbering': ['invoice_prefix', 'next_invoice_number'],
+    'trip_numbering': ['lr_format', 'empty_format'],
     'tax': ['cgst_rate', 'sgst_rate', 'igst_rate', 'reverse_charge_applicable', 'rcm_on_transport',
             'tds_applicable', 'tds_rate_default', 'eway_bill_mandatory', 'round_off_limit'],
     'rcm': ['rcm_clause'],
@@ -11046,6 +11280,11 @@ def _settings_form_error(form_type, form):
         if not (form.get('next_invoice_number') or '').strip():
             return 'Next Invoice Number is required.'
         checks = [('next_invoice_number', 'Next Invoice Number', 1, 99999999, True)]
+    elif form_type == 'trip_numbering':
+        for key, label in (('lr_format', 'LR Number Format'), ('empty_format', 'Empty Trip Number Format')):
+            err = _validate_number_format(form.get(key))
+            if err:
+                return f'{label}: {err}'
     elif form_type == 'sms':
         if not (form.get('msg91_authkey') or '').strip():
             return 'MSG91 Auth Key is required.'
@@ -11068,6 +11307,11 @@ def settings_page():
         # user list or user log (a POST from a non-administrator is refused in require_login()).
         return _render_my_profile(conn)
     if request.method == 'POST':
+        if request.form.get('form_type') == 'trip_numbering':
+            tn_err = _settings_form_error('trip_numbering', request.form)
+            if tn_err:
+                conn.close()
+                return redirect(url_for('settings_page', tab='invoice', tn_error=tn_err))
         _save_settings_group(conn, request.form.get('form_type'), request.form)
 
     users, total_users, admin_users, readonly_users, limited_users, inactive_users = _users_with_stats(conn)
@@ -11097,6 +11341,10 @@ def _get_all_settings(conn, company_id=1):
     for key in ALL_SETTING_KEYS:
         row = conn.execute("SELECT value FROM settings WHERE key=? AND company_id=?", (key, company_id)).fetchone()
         s[key] = row['value'] if row else ''
+    s['lr_format'], s['empty_format'] = _load_trip_number_formats(conn, company_id)      # blank / invalid -> the defaults, so forms always show a working format
+    _today = datetime.date.today()
+    s['lr_example'] = _render_trip_number(s['lr_format'], _today, 1)
+    s['empty_example'] = _render_trip_number(s['empty_format'], _today, 1)
     return s
 
 def _duplicate_user_contact(conn, phone, email, exclude_user_id=None):
@@ -11367,8 +11615,14 @@ def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f, vehicl
                     t.puncture, t.urea, t.loading_expense, t.unloading_expense, t.wear_tear, t.weighbridge_charges,
                     t.other_expense, t.permit_charges, t.fixed_rate_amount, t.owner_rate, t.owner_rate_type, t.owner_fixed_amount, t.quantity
                     FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                    WHERE t.date>=? AND t.date<=? AND (t.lr_number IS NULL OR t.lr_number NOT LIKE 'Empty%')"""
-    params = [date_from, date_to]
+                    WHERE NOT """ + _EMPTY_RUN_SQL_T
+    params = []
+    if date_from:                                      # no dates = every trip (the website's Route Analytics has no date filter)
+        trip_query += " AND t.date>=?"
+        params.append(date_from)
+    if date_to:
+        trip_query += " AND t.date<=?"
+        params.append(date_to)
     if type_f:
         trip_query += " AND t.type=?"
         params.append(type_f)
@@ -11581,7 +11835,7 @@ def _route_history(conn, from_text, to_text):
         return None
     rows = conn.execute("""SELECT id, from_loc, to_loc, toll FROM trips
                            WHERE from_loc IS NOT NULL AND to_loc IS NOT NULL
-                           AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')""").fetchall()
+                           AND NOT """ + _EMPTY_RUN_SQL).fetchall()
     matched = [t for t in rows if _clean_loc(t['from_loc']) == cf and _clean_loc(t['to_loc']) == ct]
     if not matched:
         return None
@@ -11742,16 +11996,12 @@ def route_finder_extras():
 def route_analytics():
     conn = get_db()
     tab = request.args.get('tab', 'best-routes')
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
+    # No date filter on this page: every trip counts, so the numbers can't silently depend on a hidden date range.
     from_f = request.args.get('from', '')
     to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
 
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
-
-    _ra = _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f)
+    _ra = _route_analytics_data(conn, None, None, from_f, to_f, type_f)
     trips = _ra['trips']; route_rows = _ra['route_rows']
     all_from_list = _ra['all_from_list']; all_to_list = _ra['all_to_list']
     total_routes = _ra['total_routes']; total_trips_sel = _ra['total_trips_sel']
@@ -11800,9 +12050,9 @@ def route_analytics():
     hired_pct += round(len(other_rates) / len(all_rates_flat) * 100, 0) if all_rates_flat else 0
 
     rt_query = """SELECT substr(date,1,7) as month, AVG(rate) as avg_rate FROM trips
-                  WHERE rate_type='PER_MT' AND rate > 0 AND date>=? AND date<=?
-                  AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
-    rt_params = [date_from, date_to]
+                  WHERE rate_type='PER_MT' AND rate > 0
+                  AND NOT """ + _EMPTY_RUN_SQL
+    rt_params = []
     if type_f:
         rt_query += " AND type=?"
         rt_params.append(type_f)
@@ -11840,7 +12090,7 @@ def route_analytics():
     rr_base_qs = urlencode(rr_base_params)
 
     return render_template('route_analytics.html',
-        tab=tab, f_date_from=date_from, f_date_to=date_to, f_from=from_f, f_to=to_f, f_vehicle_type=type_f,
+        tab=tab, f_from=from_f, f_to=to_f, f_vehicle_type=type_f,
         all_from_list=all_from_list, all_to_list=all_to_list,
         total_routes=total_routes, total_trips_sel=total_trips_sel, total_revenue_sel=total_revenue_sel,
         avg_rate=avg_rate, avg_margin=avg_margin,
@@ -11864,20 +12114,17 @@ def export_route_analytics():
     from flask import send_file
     import io
     conn = get_db()
-    date_from = request.args.get('date_from', '2026-04-01')
-    date_to = request.args.get('date_to', '2027-03-31')
+    # Same as the page: no date filter, every trip counts.
     from_f = request.args.get('from', '')
     to_f = request.args.get('to', '')
     type_f = request.args.get('vehicle_type', '')
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
 
     trip_query = """SELECT id, from_loc, to_loc, type, rate, rate_type, billed_amount, fuel_amount, driver_adv_amount,
                     toll, parking, agent_commission, builty_expense, conductor_expense, fine, labour_charges,
                     puncture, urea, loading_expense, unloading_expense, wear_tear, weighbridge_charges,
                     other_expense, permit_charges, fixed_rate_amount, owner_rate, owner_rate_type, owner_fixed_amount, quantity
-                    FROM trips WHERE date>=? AND date<=? AND (lr_number IS NULL OR lr_number NOT LIKE 'Empty%')"""
-    params = [date_from, date_to]
+                    FROM trips WHERE NOT """ + _EMPTY_RUN_SQL
+    params = []
     if type_f:
         trip_query += " AND type=?"
         params.append(type_f)
@@ -12003,7 +12250,7 @@ def _fleet_utilization_data(conn, date_from, date_to, vehicle_f=''):
             conn, v['id'], v['registration_date'], date_from, date_to)
         last_trip = conn.execute("SELECT MAX(date) FROM trips WHERE vehicle_id=?", (v['id'],)).fetchone()[0]
         status = 'Idle' if idle_days >= active_days else 'Active'
-        empty_run_count = conn.execute("""SELECT COUNT(*) FROM trips WHERE vehicle_id=? AND lr_number LIKE 'Empty%'
+        empty_run_count = conn.execute("""SELECT COUNT(*) FROM trips WHERE vehicle_id=? AND """ + _EMPTY_RUN_SQL + """
                                           AND date>=? AND date<=?""", (v['id'], date_from, date_to)).fetchone()[0]
         vehicle_trip_count = conn.execute("SELECT COUNT(*) FROM trips WHERE vehicle_id=? AND date>=? AND date<=?",
                                            (v['id'], date_from, date_to)).fetchone()[0]
@@ -12033,10 +12280,10 @@ def _fleet_utilization_data(conn, date_from, date_to, vehicle_f=''):
     avg_active_days = round(total_active_days / total_vehicles, 1) if total_vehicles > 0 else 0
     most_idle = sorted(rows, key=lambda r: r['idle_days'], reverse=True)[:5]
 
-    # ---------- Empty runs (same formulas as the old Empty Runs page — LR number starting with "Empty") ----------
+    # ---------- Empty runs (same formulas as the old Empty Runs page — the Empty Trip switch, or an LR number starting with "Empty") ----------
     eq = """SELECT t.id, t.date, v.vehicle_no, v.type as vehicle_type, t.from_loc, t.to_loc, t.fuel_amount, t.toll
             FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
-            WHERE t.lr_number LIKE 'Empty%'"""
+            WHERE """ + _EMPTY_RUN_SQL_T
     eparams = []
     if date_from:
         eq += " AND t.date >= ?"; eparams.append(date_from)
@@ -12192,7 +12439,7 @@ def export_fleet_utilization():
             conn, v['id'], v['registration_date'], date_from, date_to)
         last_trip = conn.execute("SELECT MAX(date) FROM trips WHERE vehicle_id=?", (v['id'],)).fetchone()[0]
         status = 'Idle' if idle_days >= active_days else 'Active'
-        empty_run_count = conn.execute("""SELECT COUNT(*) FROM trips WHERE vehicle_id=? AND lr_number LIKE 'Empty%'
+        empty_run_count = conn.execute("""SELECT COUNT(*) FROM trips WHERE vehicle_id=? AND """ + _EMPTY_RUN_SQL + """
                                           AND date>=? AND date<=?""", (v['id'], date_from, date_to)).fetchone()[0]
         rows.append((v['vehicle_no'], v['type'], active_days, idle_days, total_days_v, empty_run_count, last_trip or '', status))
     conn.close()

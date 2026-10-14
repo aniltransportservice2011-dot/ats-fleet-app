@@ -632,6 +632,13 @@ twInitAutocomplete('twDriver', 'twDriverAcList', DRIVER_OPTIONS);
 twInitAutocomplete('twFromLoc', 'twFromLocAcList', LOCATION_OPTIONS);
 twInitAutocomplete('twToLoc', 'twToLocAcList', LOCATION_OPTIONS);
 </script>
+{% if mode != 'edit' %}
+<script src="{{ asset_v('trip_number_suggest.js') }}"></script>
+<script>
+TripNumberSuggest.init({ url: '/app/trips/next-number', dateEl: document.getElementById('twDate'),
+                         lrEl: document.getElementById('twLr'), emptyEl: document.getElementById('twIsEmpty') });
+</script>
+{% endif %}
 
 <!-- Same custom calendar popup as every other /app/ page (base_app.html) — this page doesn't
      extend base_app.html (its own standalone wizard flow, see the top of this file), so it needs
