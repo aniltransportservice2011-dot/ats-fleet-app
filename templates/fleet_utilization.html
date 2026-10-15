@@ -88,9 +88,9 @@
   </div>
 
   <div class="fu-tabs">
-    <button type="button" class="fu-tab active" onclick="showFuTab('overview', this)">&#128260; Overview</button>
-    <button type="button" class="fu-tab" onclick="showFuTab('idle', this)">&#128337; Idle Analysis</button>
-    <button type="button" class="fu-tab" onclick="showFuTab('empty', this)">&#8644; Empty Run Analysis</button>
+    <button type="button" class="fu-tab active" data-tab="overview" onclick="showFuTab('overview', this)">&#128260; Overview</button>
+    <button type="button" class="fu-tab" data-tab="idle" onclick="showFuTab('idle', this)">&#128337; Idle Analysis</button>
+    <button type="button" class="fu-tab" data-tab="empty" onclick="showFuTab('empty', this)">&#8644; Empty Run Analysis</button>
   </div>
 
   <div id="fu-overview" class="fu-tab-panel active">
@@ -216,11 +216,12 @@
 </div>
 
 <script>
-function showFuTab(id, btn) {
+function showFuTab(id, btn, silent) {
   document.querySelectorAll('.fu-tab-panel').forEach(function(p) { p.classList.remove('active'); });
   document.querySelectorAll('.fu-tab').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById('fu-' + id).classList.add('active');
-  btn.classList.add('active');
+  (btn || document.querySelector('.fu-tab[data-tab="' + id + '"]')).classList.add('active');
+  if (!silent && window.rememberView) window.rememberView({ tab: id === 'overview' ? null : id });   // refresh lands on this tab
 }
 
 var fuAllRows = Array.from(document.querySelectorAll('#fuTable tr.fu-row'));
@@ -239,6 +240,7 @@ function fuRenderPage(page) {
   var pageSize = parseInt(pageSizeEl.value, 10);
   var totalPages = Math.max(1, Math.ceil(fuFiltered.length / pageSize));
   fuPage = Math.min(Math.max(1, page), totalPages);
+  if (window.rememberView && fuReady) window.rememberView({ fu_page: fuPage > 1 ? fuPage : null, fu_per: pageSize !== fuDefaultSize ? pageSize : null });   // refresh lands on this page
 
   fuAllRows.forEach(function(r) { r.style.display = 'none'; });
   var start = (fuPage - 1) * pageSize;
@@ -271,6 +273,19 @@ function fuRenderPage(page) {
   next.onclick = function() { fuRenderPage(fuPage + 1); };
   btnsEl.appendChild(next);
 }
-fuRenderPage(1);
+// Come back to the tab, page size and page the address names (a browser refresh).
+var fuReady = false, fuDefaultSize = 0;
+(function () {
+  var sz = document.getElementById('fuPageSize');
+  if (sz) {
+    fuDefaultSize = parseInt(sz.value, 10);
+    var want = parseInt(window.viewParam ? window.viewParam('fu_per') : '', 10);
+    if (want && Array.prototype.some.call(sz.options, function (o) { return parseInt(o.value, 10) === want; })) sz.value = want;
+  }
+  var t = window.viewParam ? window.viewParam('tab') : null;
+  showFuTab(['overview', 'idle', 'empty'].indexOf(t) >= 0 ? t : 'overview', null, true);
+  fuRenderPage(parseInt(window.viewParam ? window.viewParam('fu_page') : '', 10) || 1);
+  fuReady = true;
+})();
 </script>
 {% endblock %}

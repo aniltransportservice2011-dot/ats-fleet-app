@@ -225,6 +225,19 @@
       // in base.html) — only this page's clickable rows, in the same top-to-bottom order shown
       // here, so stepping through the popup matches what's visually on screen.
       window.LEDGER_DETAIL_LINKS = [{% for e in entries %}{% if e.link %}{{ e.link|tojson }},{% endif %}{% endfor %}];
+      // Arriving from a trip's "Open in ledger" link (?open_payment=ID): show that payment's detail straight away, on whatever page of the
+      // ledger it is. The browser's Back button then returns to the trip it came from.
+      (function () {
+        var pid = new URLSearchParams(window.location.search).get('open_payment');
+        if (!pid || !/^[0-9]+$/.test(pid)) return;
+        function go() {
+          if (!window.openRecordModal) return;
+          window.openRecordModal('/payments/' + pid + '/view');
+          var u = new URL(window.location.href); u.searchParams.delete('open_payment');
+          history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
+      })();
     </script>
     {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
     {% else %}

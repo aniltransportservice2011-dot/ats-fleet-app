@@ -11684,19 +11684,33 @@ def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f, vehicl
         'top5_by_margin': top5_by_margin, 'top5_by_revenue': top5_by_revenue,
     }
 
+def _owner_rate_per_tonne(t):
+    """What a HIRED trip pays its vehicle owner, per tonne. A per-tonne owner rate is used as it is; a fixed owner amount is divided by the tonnes
+    carried. 0 when the trip has no owner rate / amount to work from (RoadKing only gives a total hire amount, so most hired trips use the second form)."""
+    qty = t['quantity'] or 0
+    if (t['owner_rate_type'] or 'PER_MT') == 'FIXED':
+        amount = t['owner_fixed_amount'] or 0
+        return amount / qty if amount > 0 and qty > 0 else 0
+    return t['owner_rate'] or 0
+
+
+def _rate_stats(values):
+    return {'highest': max(values), 'average': sum(values) / len(values), 'lowest': min(values), 'trips': len(values)} if values else None
+
+
 def _route_rates_data(trips, from_f='', to_f=''):
-    """Shared per-(from,to,vehicle-type) PER_MT rate-range rollup — the Route Rates tab's own
-    real numbers, extracted unchanged from route_analytics() below so app_analytics()'s own
-    Route Rates tab (mobile) reads the exact same Highest/Average/Lowest rate, Driver Advance,
-    and Fuel Taken figures the website shows, never a second hand-written copy. Takes the
-    already date-range/vehicle-type-filtered `trips` list _route_analytics_data() returns (not a
-    fresh query) — so the two tabs can never disagree on which trips are 'in scope' before this
-    function's own from_f/to_f narrowing. Does not touch conn; rr_groups is returned too since
-    the website's own Rate Trend chart / Own-vs-Hired donut (mobile doesn't show these — real
-    future scope, not this pass) need the raw per-route rate lists, not just the summarized rows."""
+    """The Route Rates tab, one row per ROUTE (From -> To), worked out fresh from the trips every time — so adding, editing or deleting a trip shows
+    up on the next load, on the website and in the phone app alike (both call this one function):
+      own           what OWN vehicles were charged to the party, per tonne  (highest / average / lowest / trips)
+      hired_party   what HIRED vehicles were charged to the party, per tonne
+      hired_owner   what the owners of those hired vehicles were paid, per tonne (see _owner_rate_per_tonne) — only trips that have an owner amount
+      margin_avg / margin_pct   hired margin = party rate - owner rate, per tonne, and as a % of the party rate, over the trips that have both
+      op            Driver Advance and Fuel Taken, from OWN-vehicle trips only (on a hired trip they are the owner's money)
+    Only per-tonne trips with a rate count (a fixed-rate trip has no per-tonne rate). Takes the trips _route_analytics_data() returns, so the tab and
+    the rest of Route Analytics always agree on which trips are in scope. rr_groups (route x vehicle type -> party rates) is also returned: the Rate
+    Trend / Own-vs-Hired donut and the top KPI cards read it."""
     rr_groups = {}
-    rr_driver_adv_groups = {}
-    rr_fuel_groups = {}
+    routes = {}
     for t in trips:
         if t['rate_type'] != 'PER_MT' or not t['rate'] or t['rate'] <= 0:
             continue
@@ -11704,20 +11718,29 @@ def _route_rates_data(trips, from_f='', to_f=''):
         if (from_f and cf != from_f) or (to_f and ct != to_f):
             continue
         rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
-        if t['driver_adv_amount']:
-            rr_driver_adv_groups.setdefault((cf, ct, t['type']), []).append(t['driver_adv_amount'])
-        if t['fuel_amount']:
-            rr_fuel_groups.setdefault((cf, ct, t['type']), []).append(t['fuel_amount'])
+        r = routes.setdefault((cf, ct), {'own': [], 'hired': [], 'owner': [], 'margin': [], 'margin_base': [], 'da': [], 'fuel': []})
+        if t['type'] == VEHICLE_TYPE_HIRED:
+            r['hired'].append(t['rate'])
+            owner_rate = _owner_rate_per_tonne(t)
+            if owner_rate > 0:
+                r['owner'].append(owner_rate)
+                r['margin'].append(t['rate'] - owner_rate)
+                r['margin_base'].append(t['rate'])
+        elif t['type'] == VEHICLE_TYPE_OWN:
+            r['own'].append(t['rate'])
+            if t['driver_adv_amount']:
+                r['da'].append(t['driver_adv_amount'])
+            if t['fuel_amount']:
+                r['fuel'].append(t['fuel_amount'])
 
     rr_rows = []
-    for (cf, ct, ttype), rates in rr_groups.items():
-        da = rr_driver_adv_groups.get((cf, ct, ttype), [])
-        fu = rr_fuel_groups.get((cf, ct, ttype), [])
-        rr_rows.append({'clean_from': cf, 'clean_to': ct, 'type': ttype, 'highest': max(rates),
-                         'average': sum(rates) / len(rates), 'lowest': min(rates), 'trips': len(rates),
-                         'da_lowest': min(da) if da else 0, 'da_average': (sum(da) / len(da)) if da else 0, 'da_highest': max(da) if da else 0,
-                         'fuel_lowest': min(fu) if fu else 0, 'fuel_average': (sum(fu) / len(fu)) if fu else 0, 'fuel_highest': max(fu) if fu else 0})
-    rr_rows.sort(key=lambda r: (r['clean_from'], r['clean_to']))
+    for (cf, ct), r in routes.items():
+        margin_avg = (sum(r['margin']) / len(r['margin'])) if r['margin'] else None
+        margin_pct = (sum(r['margin']) / sum(r['margin_base']) * 100) if r['margin_base'] and sum(r['margin_base']) else None
+        rr_rows.append({'clean_from': cf, 'clean_to': ct, 'own': _rate_stats(r['own']), 'hired_party': _rate_stats(r['hired']),
+                        'hired_owner': _rate_stats(r['owner']), 'margin_avg': margin_avg, 'margin_pct': margin_pct,
+                        'op_trips': len(r['own']), 'da': _rate_stats(r['da']), 'fuel': _rate_stats(r['fuel'])})
+    rr_rows.sort(key=lambda x: (x['clean_from'], x['clean_to']))
 
     # Overall Driver Advance / Fuel Taken KPI cards — every trip in the current filters (not just
     # the PER_MT-rate subset that feeds the rate table), since these are real costs paid regardless
@@ -11744,7 +11767,7 @@ def _route_rates_data(trips, from_f='', to_f=''):
         if lowest_entry is None or l < lowest_entry[2]:
             lowest_entry = (cf, ct, l)
     rr_avg_rate_overall = round(sum(all_rates_flat) / len(all_rates_flat), 0) if all_rates_flat else 0
-    rr_total_routes = len(rr_groups)
+    rr_total_routes = len(rr_rows)                       # distinct routes (From -> To), not route x vehicle type
 
     return {
         'rr_groups': rr_groups, 'rr_rows': rr_rows, 'rr_total_count': len(rr_rows),
@@ -11996,6 +12019,8 @@ def route_finder_extras():
 def route_analytics():
     conn = get_db()
     tab = request.args.get('tab', 'best-routes')
+    if tab not in ('best-routes', 'route-rates', 'route-finder'):
+        tab = 'best-routes'
     # No date filter on this page: every trip counts, so the numbers can't silently depend on a hidden date range.
     from_f = request.args.get('from', '')
     to_f = request.args.get('to', '')
@@ -12082,11 +12107,13 @@ def route_analytics():
     base_params = request.args.to_dict()
     base_params.pop('page', None)
     base_params.pop('per_page', None)
-    base_qs = urlencode(base_params)
+    base_params['tab'] = 'best-routes'            # tab switching happens in the browser and never reaches the address, so each pager names its OWN tab —
+    base_qs = urlencode(base_params)              # otherwise a page click reloads on the default tab (Best Routes)
 
     rr_base_params = request.args.to_dict()
     rr_base_params.pop('rr_page', None)
     rr_base_params.pop('per_page', None)
+    rr_base_params['tab'] = 'route-rates'
     rr_base_qs = urlencode(rr_base_params)
 
     return render_template('route_analytics.html',
@@ -12133,9 +12160,6 @@ def export_route_analytics():
     conn.close()
 
     groups = {}
-    rr_groups = {}
-    rr_driver_adv_groups = {}
-    rr_fuel_groups = {}
     for t in trips:
         cf, ct = _clean_loc(t['from_loc']), _clean_loc(t['to_loc'])
         if (from_f and cf != from_f) or (to_f and ct != to_f):
@@ -12156,12 +12180,6 @@ def export_route_analytics():
         if t['type'] == VEHICLE_TYPE_HIRED:
             cost += (t['owner_fixed_amount'] or 0) if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0)
         d['cost'] += cost
-        if t['rate_type'] == 'PER_MT' and (t['rate'] or 0) > 0:
-            rr_groups.setdefault((cf, ct, t['type']), []).append(t['rate'])
-            if t['driver_adv_amount']:
-                rr_driver_adv_groups.setdefault((cf, ct, t['type']), []).append(t['driver_adv_amount'])
-            if t['fuel_amount']:
-                rr_fuel_groups.setdefault((cf, ct, t['type']), []).append(t['fuel_amount'])
 
     route_rows = []
     for (cf, ct), d in groups.items():
@@ -12170,14 +12188,15 @@ def export_route_analytics():
         route_rows.append((f"{cf} → {ct}", d['trips'], d['revenue'], d['cost'], profit, margin))
     route_rows.sort(key=lambda r: r[2], reverse=True)
 
+    # The Route Rates sheet is the Route Rates tab itself (same calculation, one row per route)
+    def _cells(stats):
+        return [stats['highest'], stats['average'], stats['lowest'], stats['trips']] if stats else [None, None, None, None]
+    def _plain(stats):
+        return [stats['highest'], stats['average'], stats['lowest']] if stats else [None, None, None]
     rate_rows = []
-    for (cf, ct, ttype), rates in rr_groups.items():
-        da = rr_driver_adv_groups.get((cf, ct, ttype), [])
-        fu = rr_fuel_groups.get((cf, ct, ttype), [])
-        rate_rows.append((f"{cf} → {ct}", ttype, max(rates), sum(rates) / len(rates), min(rates), len(rates),
-                           min(da) if da else 0, (sum(da) / len(da)) if da else 0, max(da) if da else 0,
-                           min(fu) if fu else 0, (sum(fu) / len(fu)) if fu else 0, max(fu) if fu else 0))
-    rate_rows.sort(key=lambda r: r[0])
+    for r in _route_rates_data(trips, from_f, to_f)['rr_rows']:
+        rate_rows.append([f"{r['clean_from']} → {r['clean_to']}"] + _cells(r['own']) + _cells(r['hired_party']) + _cells(r['hired_owner']) +
+                         [r['margin_avg'], r['margin_pct']] + _plain(r['da']) + _plain(r['fuel']))
 
     navy = "1B2A4A"
     header_font = Font(bold=True, color="FFFFFF")
@@ -12194,9 +12213,12 @@ def export_route_analytics():
             ws.cell(row=r_idx, column=c_idx, value=val)
 
     ws2 = wb.create_sheet("Route Rates")
-    headers2 = ["Route", "Type", "Highest Rate", "Average Rate", "Lowest Rate", "Trips",
-                "Driver Adv. Lowest", "Driver Adv. Average", "Driver Adv. Highest",
-                "Fuel Lowest", "Fuel Average", "Fuel Highest"]
+    headers2 = ["Route", "Own to Party: Highest", "Own to Party: Average", "Own to Party: Lowest", "Own to Party: Trips",
+                "Hired to Party: Highest", "Hired to Party: Average", "Hired to Party: Lowest", "Hired to Party: Trips",
+                "Hired to Owner: Highest", "Hired to Owner: Average", "Hired to Owner: Lowest", "Hired to Owner: Trips",
+                "Hired Margin Avg (Rs/t)", "Hired Margin Avg (%)",
+                "Own Driver Adv. Highest", "Own Driver Adv. Average", "Own Driver Adv. Lowest",
+                "Own Fuel Highest", "Own Fuel Average", "Own Fuel Lowest"]
     for i, h in enumerate(headers2, 1):
         c = ws2.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
     for r_idx, row in enumerate(rate_rows, 2):
@@ -12494,7 +12516,7 @@ def edit_trip(trip_id):
                 return render_template('trip_form.html', mode='edit', t=f, custom_items=custom_items,
                                         vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                                         employees=employees, vehicle_type_map=vehicle_type_map,
-                                        return_to=f.get('return_to', ''), active='trips', error=error)
+                                        return_to=f.get('return_to', ''), active='trips', error=error, pay=_trip_pay_for(trip_id))
 
         # The whole recompute-and-UPDATE (billed amount, payment/owner floors, vendors, custom items) lives in
         # _update_trip_from_form(), the single copy the mobile app also uses — this route used to carry its own
@@ -12535,7 +12557,129 @@ def edit_trip(trip_id):
     return render_template('trip_form.html', mode='edit', t=dict(trip), custom_items=custom_items,
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                             employees=employees, vehicle_type_map=vehicle_type_map,
-                            return_to=request.args.get('return_to', ''), active='trips')
+                            return_to=request.args.get('return_to', ''), active='trips', pay=_trip_pay_for(trip_id))
+
+def _pay_date_label(d):
+    """'2026-10-16' -> '16 Oct 2026' (blank / unparseable -> the text as stored)."""
+    try:
+        return datetime.date.fromisoformat((d or '')[:10]).strftime('%d %b %Y')
+    except ValueError:
+        return d or ''
+
+
+def _pay_recorded_label(ts):
+    """'2026-10-16 10:42:07' -> '16 Oct, 10:42' (older rows have no timestamp -> blank)."""
+    try:
+        return datetime.datetime.strptime((ts or '')[:19], '%Y-%m-%d %H:%M:%S').strftime('%d %b, %H:%M')
+    except ValueError:
+        return ''
+
+
+def _pay_status(billed, due, paid_any):
+    """Paid / Partly paid / Pending for one side of a trip (nothing billed -> no status)."""
+    if (billed or 0) <= 0.004:
+        return ''
+    if due <= 0.004:
+        return 'Paid'
+    return 'Partly paid' if paid_any else 'Pending'
+
+
+def _trip_payment_block(conn, t, is_hired, owner_amount):
+    """The payment history shown on a trip's screens (website trip edit page, phone trip edit + detail): every dated payment recorded for
+    this trip in the Ledger, read straight from payment_allocations — so the trip and the Ledger can never disagree — plus the part of the
+    stored totals that has no date (an advance or amount typed on the trip itself, or imported), shown honestly as undated. Read-only:
+    nothing here changes any stored number, and payments are still only recorded in the Ledger.
+
+    Each dated row carries a label worked out from the payment itself (no stored field): money dated on/before the trip is an Advance, the
+    payment that clears the balance is the Balance payment (or Full payment when it is the only money), anything else is a Part payment;
+    owner payments are Owner payments.
+
+    Returns {'hidden': True} for a user whose trip amounts are hidden, else {'party': {...} or None, 'owner': {...} or None, 'ledger_ok': bool}."""
+    if _hide_trip_amounts():
+        return {'hidden': True}
+    ledger_ok = bool(_module_level('Ledger'))
+    rows = conn.execute("""SELECT pa.amount AS amt, p.id AS payment_id, p.date AS raw_date, p.payment_type, p.mode, p.reference_id, p.remarks,
+                                  p.amount AS payment_total, p.created_at, p.party_id, p.vendor_id, u.full_name AS by_name
+                           FROM payment_allocations pa JOIN payments p ON pa.payment_id=p.id
+                           LEFT JOIN users u ON p.created_by=u.id
+                           WHERE pa.trip_id=? ORDER BY p.date, p.id""", (t['id'],)).fetchall()
+
+    def _row(r):
+        return {'payment_id': r['payment_id'], 'raw_date': r['raw_date'] or '', 'date': _pay_date_label(r['raw_date']), 'mode': r['mode'] or '',
+                'ref': r['reference_id'] or '', 'remarks': r['remarks'] or '', 'amount': r['amt'] or 0, 'payment_total': r['payment_total'] or 0,
+                'split': abs((r['payment_total'] or 0) - (r['amt'] or 0)) > 0.004,
+                'recorded': _pay_recorded_label(r['created_at']), 'by': (r['by_name'] or '').strip(),
+                'party_id': r['party_id'], 'vendor_id': r['vendor_id'], 'label': '', 'label_cls': ''}
+
+    out = {'hidden': False, 'ledger_ok': ledger_ok, 'party': None, 'owner': None}
+    if t.get('party_id'):
+        got = [_row(r) for r in rows if r['payment_type'] == 'received']
+        dated = round(sum(r['amount'] for r in got), 2)
+        billed = t.get('billed_amount') or 0
+        advance = t.get('party_advance') or 0
+        stored = t.get('payment_received') or 0
+        before = round(max(stored - dated, 0), 2)
+        due = round(billed - stored - advance, 2)
+        running = round(before + advance, 2)
+        trip_date = (t.get('date') or '')[:10]
+        for r in got:
+            running = round(running + r['amount'], 2)
+            if billed > 0 and running >= billed - 0.004:
+                only = len(got) == 1 and before + advance <= 0.004
+                r['label'], r['label_cls'] = ('Full payment', 'full') if only else ('Balance payment', 'bal')
+            elif r['raw_date'] and trip_date and r['raw_date'][:10] <= trip_date:
+                r['label'], r['label_cls'] = 'Advance', 'adv'
+            else:
+                r['label'], r['label_cls'] = 'Part payment', 'part'
+        out['party'] = {'rows': got, 'dated_total': dated, 'before_tracking': before, 'advance': advance,
+                        'received_total': round(stored + advance, 2), 'billed': billed, 'due': due,
+                        'status': _pay_status(billed, due, (stored + advance) > 0.004),
+                        'party_id': t['party_id'], 'party_name': t.get('party_name') or ''}
+    if is_hired:
+        got = [_row(r) for r in rows if r['payment_type'] == 'paid']
+        for r in got:
+            r['label'], r['label_cls'] = 'Owner payment', 'own'
+        dated = round(sum(r['amount'] for r in got), 2)
+        owner_vid = t.get('owner_vendor_id')
+        # fuel / driver advance the COMPANY paid on this trip (not through the owner) come off what the owner is owed —
+        # the same rule as _OWNER_COMPANY_PAID_SQL, which the ledger's own pending list uses
+        company_paid = 0
+        if owner_vid:
+            if (t.get('fuel_vendor_id') or 0) != owner_vid:
+                company_paid += t.get('fuel_amount') or 0
+            if (t.get('driver_adv_vendor_id') or 0) != owner_vid:
+                company_paid += t.get('driver_adv_amount') or 0
+        stored = t.get('paid_to_owner') or 0
+        before = round(max(stored - dated, 0), 2)
+        pending = round(owner_amount - stored - company_paid, 2)
+        out['owner'] = {'rows': got, 'dated_total': dated, 'before_tracking': before, 'paid_total': stored, 'owner_amount': owner_amount,
+                        'company_paid': company_paid, 'pending': pending, 'vendor_id': owner_vid, 'owner_name': t.get('owner_name') or '',
+                        'status': _pay_status(owner_amount, pending, (stored + company_paid) > 0.004)}
+    return out
+
+
+@app.template_global('blank_trip_pay')
+def _blank_trip_pay():
+    """An empty payment block for the Add Trip forms: the live Received / Balance / Pending figures work on a trip that does not exist yet
+    (no history, nothing recorded in the ledger)."""
+    if _hide_trip_amounts():
+        return {'hidden': True}
+    return {'hidden': False, 'ledger_ok': False,
+            'party': {'rows': [], 'dated_total': 0, 'before_tracking': 0, 'advance': 0, 'received_total': 0, 'billed': 0, 'due': 0, 'status': '',
+                      'party_id': None, 'party_name': ''},
+            'owner': {'rows': [], 'dated_total': 0, 'before_tracking': 0, 'paid_total': 0, 'owner_amount': 0, 'company_paid': 0, 'pending': 0,
+                      'vendor_id': None, 'owner_name': '', 'status': ''}}
+
+
+def _trip_pay_for(trip_id):
+    """The payment history for one trip, on its own connection — for the trip edit screens, which build their own context."""
+    conn = get_db()
+    try:
+        data = _trip_detail_data(conn, trip_id)
+        return data['pay'] if data else None
+    finally:
+        conn.close()
+
 
 def _trip_detail_data(conn, trip_id):
     """Shared by trip_view() (website, Ledger popup) and app_trip_detail() (mobile) — every real
@@ -12588,7 +12732,8 @@ def _trip_detail_data(conn, trip_id):
     balance_due = (t.get('billed_amount') or 0) - (t.get('payment_received') or 0) - (t.get('party_advance') or 0)
     return {'t': t, 'custom_items': custom_item_rows, 'is_hired': is_hired,
             'owner_amount': owner_amount, 'veh_rc': veh_rc, 'additions_total': additions_total,
-            'deductions_total': deductions_total, 'balance_due': balance_due}
+            'deductions_total': deductions_total, 'balance_due': balance_due,
+            'pay': _trip_payment_block(conn, t, is_hired, owner_amount)}
 
 @app.route('/trips/<int:trip_id>/view')
 def trip_view(trip_id):
@@ -13741,7 +13886,7 @@ def app_edit_trip(trip_id):
             return render_template('app/trip_add.html', t=f, vehicles=vehicles, combined_names=combined_names,
                                     employees=employees, vehicle_type_map=vehicle_type_map,
                                     location_options=location_options, error=error,
-                                    mode='edit', trip_id=trip_id, custom_items=custom_items)
+                                    mode='edit', trip_id=trip_id, custom_items=custom_items, pay=_trip_pay_for(trip_id))
         ok, error = _update_trip_from_form(conn, trip_id, f)
         if not ok:
             conn.close()
@@ -13772,7 +13917,7 @@ def app_edit_trip(trip_id):
     return render_template('app/trip_add.html', t=dict(trip), vehicles=vehicles, combined_names=combined_names,
                             employees=employees, vehicle_type_map=vehicle_type_map,
                             location_options=location_options, error=None,
-                            mode='edit', trip_id=trip_id, custom_items=custom_items)
+                            mode='edit', trip_id=trip_id, custom_items=custom_items, pay=_trip_pay_for(trip_id))
 
 @app.route('/app/maintenance')
 def app_maintenance():

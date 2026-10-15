@@ -122,6 +122,8 @@
     <div><div class="lbl">Balance Due</div><div class="v">{{ mny(balance_due, '{:,.0f}') }}</div></div>
   </div>
 </div>
+{# every dated payment behind the totals above, recorded in the Ledger — read-only, see _trip_payment_block() in app.py #}
+{% set tph2_card = True %}{% include "app/_trip_payment_history.html" %}
 {% set add_fields = [('detention_charges','Detention'), ('gps_cost','GPS'), ('loading_charge','Loading'), ('unloading_charge','Unloading'), ('police_charges','Police'), ('sim_tracking','SIM Tracking'), ('union_charges','Union'), ('weight_charges','Weight'), ('other_charges','Other')] %}
 <div class="ld-card">
   <div class="ld-card-head"><h2>Additional Charges <span style="color:var(--a-ink);font-weight:800;">{{ mny(additions_total, '{:,.0f}') }}</span></h2></div>

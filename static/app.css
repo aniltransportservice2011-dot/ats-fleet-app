@@ -703,18 +703,17 @@ input[type="date"] { accent-color: var(--a-accent); }
 .vam-date-icon { position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
   width: 14px; height: 14px; color: var(--a-steel); pointer-events: none; }
 
-/* Custom tap-to-show suggestion list (Vehicle/Party/Driver in Add/Edit Trip) — replaces the
-   browser's native list="..." datalist for just these 3 fields, which was unreliable on Android.
-   See twInitAutocomplete() in trip_add.html. */
-.tw-ac-wrap { position: relative; }
-.tw-ac-list { display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+/* Auto-complete drop-down — every suggestion field in the app (Vehicle / Party / Driver / Vendor / Category …). static/autocomplete.js draws ONE
+   list straight under the field that has the focus (same left edge and width, set from the field's own position), flipping above it when a
+   bottom sheet leaves no room below. position:fixed + z-index above the sheets (81), the bottom bar and the calendar popup; appended to <body>
+   so a sheet's own scrolling / transform can never clip or displace it. */
+.autocomplete-list { position: fixed; box-sizing: border-box; display: none; z-index: 2000;
   background: var(--a-white); border: 1px solid var(--a-line); border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(20,33,61,0.14); max-height: 220px; overflow-y: auto; }
-.tw-ac-list.open { display: block; }
-.tw-ac-item { padding: 10px 12px; font-size: 0.84rem; color: var(--a-ink); border-bottom: 1px solid var(--a-line); }
-.tw-ac-item:last-child { border-bottom: none; }
-.tw-ac-item:active { background: var(--a-paper); }
-.tw-ac-empty { padding: 10px 12px; font-size: 0.8rem; color: var(--a-steel); }
+  box-shadow: 0 8px 24px rgba(20,33,61,0.14); max-height: 220px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.autocomplete-item { padding: 10px 12px; font-size: 0.84rem; color: var(--a-ink); border-bottom: 1px solid var(--a-line); overflow-wrap: anywhere; }
+.autocomplete-item:last-child { border-bottom: none; }
+.autocomplete-item:active, .autocomplete-item.highlighted { background: var(--a-paper); }
+.autocomplete-empty { padding: 10px 12px; font-size: 0.8rem; color: var(--a-steel); }
 /* iOS Safari specifically — see the matching comment on .vam-field input[type="date"] above for
    why the rule above alone isn't enough there: these WebKit-only pseudo-elements reach into the
    date input's actual internal rendering (day/month/year segments + calendar icon), which is
@@ -1565,6 +1564,20 @@ input[type="date"] { accent-color: var(--a-accent); }
 .rr-detail-block { background: var(--a-paper); border-radius: 10px; padding: 10px 12px; }
 .rr-detail-block + .rr-detail-block { margin-top: 8px; }
 .rr-detail-title { font-size: 0.7rem; font-weight: 700; color: var(--a-steel); margin-bottom: 8px; }
+/* Route Rates cards: four colour-coded blocks per route (own -> party, hired -> party, hired -> owner, hired margin) + own-vehicle details */
+.rr2m-blocks { padding: 0 0 12px; display: grid; gap: 8px; }          /* inside .rr-row-detail, which already has the side padding */
+.rr2m-own { --g: 168,70,26; } .rr2m-hp { --g: 31,95,174; } .rr2m-ho { --g: 20,107,64; } .rr2m-hm { --g: 107,63,176; }
+.rr2m-block { background: rgba(var(--g),0.09); border-radius: 12px; padding: 10px 12px; }
+.rr2m-ttl { font-size: 0.72rem; font-weight: 800; color: rgb(var(--g)); margin-bottom: 7px; }
+.rr2m-stats { display: flex; gap: 10px; }
+.rr2m-stats > div { flex: 1; min-width: 0; }
+.rr2m-lbl { font-size: 0.64rem; color: var(--a-steel); font-weight: 600; }
+.rr2m-val { font-size: 0.84rem; font-weight: 800; color: var(--a-ink); margin-top: 2px; white-space: nowrap; }
+.rr2m-val.pos { color: var(--a-green); } .rr2m-val.neg { color: var(--a-red); }
+.rr2m-none { background: rgba(var(--g),0.06); border-radius: 12px; padding: 10px 12px; font-size: 0.74rem; color: var(--a-steel); line-height: 1.4; }
+.rr2m-opt { font-size: 0.74rem; font-weight: 800; color: rgb(168,70,26); margin-bottom: 8px; }
+.rr2m-opt span { font-weight: 600; color: var(--a-steel); font-size: 0.66rem; }
+.rr2m-note { font-size: 0.74rem; color: var(--a-steel); }
 .ra-empty { text-align: center; color: var(--a-steel); font-size: 0.84rem; padding: 24px 0; }
 
 /* ==========================================================================
@@ -1921,3 +1934,41 @@ input[type="date"] { accent-color: var(--a-accent); }
 .ld-summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .ld-summary-lbl { font-size: 0.7rem; color: var(--a-steel); font-weight: 600; }
 .ld-summary-val { font-size: 0.9rem; font-weight: 800; margin-top: 2px; }
+
+/* Payment history on a trip (phone: trip edit wizard + detail Costs tab) — see templates/app/_trip_payment_history.html */
+.tph2 + .tph2 { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--a-line); }
+.tph2.tph2-card + .tph2-card { margin-top: 0; padding-top: 14px; border-top: 1px solid var(--a-line); }
+.tph2-hd { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--a-steel); margin-bottom: 8px; }
+.tph2-hd > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.tph2-pill { padding: 3px 10px; border-radius: 999px; font-size: 0.68rem; font-weight: 800; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.tph2-pill.tph2-paid { background: rgba(26,156,91,0.13); color: var(--a-green); } .tph2-pill.tph2-pend { background: rgba(227,73,72,0.12); color: var(--a-red); }
+.tph2-pill.tph2-part { background: rgba(237,161,0,0.17); color: #8a5a00; }
+.tph2-tot { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tph2-tot > div { background: var(--a-paper); border-radius: 10px; padding: 8px 9px; min-width: 0; }
+.tph2-tot span { display: block; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--a-steel); font-weight: 700; }
+.tph2-tot b { font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.tph2-bar { display: flex; height: 6px; border-radius: 99px; background: var(--a-line); overflow: hidden; margin: 10px 0 4px; }
+.tph2-bar i { display: block; height: 100%; } .tph2-bar i.u { background: #d9b45a; } .tph2-bar i.d { background: var(--a-green); }
+.tph2-tl { margin-top: 8px; }
+.tph2-ev { position: relative; margin-left: 5px; padding: 3px 0 12px 14px; border-left: 2px solid var(--a-line); }
+.tph2-ev:last-child { padding-bottom: 2px; }
+.tph2-ev::before { content: ""; position: absolute; left: -6px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--a-green); border: 2px solid var(--a-white); box-shadow: 0 0 0 1px var(--a-green); }
+.tph2-ev.nodate::before { background: var(--a-white); box-shadow: 0 0 0 1px #c9a24a; }
+.tph2-ev .h { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-weight: 800; }
+.tph2-ev .dt { font-size: 0.82rem; } .tph2-ev .amt { font-variant-numeric: tabular-nums; }
+.tph2-ev .m { font-size: 0.74rem; color: var(--a-steel); margin-top: 2px; overflow-wrap: anywhere; }
+.tph2-ev.nodate .dt { color: var(--a-steel); font-style: italic; }
+.tph2-lk { display: inline-block; margin-top: 4px; font-size: 0.78rem; font-weight: 800; color: var(--a-accent); text-decoration: none; padding: 4px 0; }
+.tph2-chip { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 0.64rem; font-weight: 800; }
+.tph2-chip.adv { background: rgba(237,161,0,0.17); color: #8a5a00; } .tph2-chip.part { background: rgba(26,156,91,0.13); color: var(--a-green); }
+.tph2-chip.bal { background: rgba(122,90,214,0.14); color: var(--a-purple); } .tph2-chip.full { background: rgba(26,156,91,0.2); color: var(--a-green); }
+.tph2-chip.own { background: rgba(42,120,214,0.13); color: var(--a-blue); }
+.tph2-none { font-size: 0.8rem; color: var(--a-steel); background: var(--a-paper); border-radius: 10px; padding: 10px; }
+.tph2-manual summary { cursor: pointer; font-size: 0.82rem; font-weight: 800; color: var(--a-steel); padding: 6px 0; }
+.tph2-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding-top: 10px; }
+@media (max-width: 480px) { .tph2-fields { grid-template-columns: 1fr; } }
+.ld-txn-card.ld-hl { box-shadow: 0 0 0 2px var(--a-accent); background: #fcf4f0; }
+.tph2-tot b.tpl-good { color: var(--a-green); } .tph2-tot b.tpl-bad { color: var(--a-red); }
+.tph2 [hidden] { display: none !important; }
+.tph2-sub { font-size: 0.72rem; color: var(--a-steel); margin-top: 6px; } .tph2-sub b { color: var(--a-ink); }
+.tph2-note { margin-top: 8px; font-size: 0.74rem; color: #8a5a00; background: rgba(237,161,0,0.13); border-radius: 8px; padding: 7px 9px; }

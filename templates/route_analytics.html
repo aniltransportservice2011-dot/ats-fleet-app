@@ -51,27 +51,43 @@
   .stat-compound-item .lbl { font-size:0.72rem; color:var(--steel); margin-bottom:5px; }
   .stat-compound-item .val { font-size:1.2rem; font-weight:700; }
 
-  /* Route Rates table gains two grouped column blocks (Driver Advance / Fuel Taken) and gets wide
-     enough to need horizontal scroll — From/To stay pinned on the left so you never lose track of
-     which route a row belongs to while scrolling through the extra columns. */
+  /* Route Rates: one row per route. Four colour-coded column groups — what OWN vehicles were charged to the party, what HIRED vehicles were
+     charged to the party, what the OWNERS of those hired vehicles were paid, and the hired margin between the two. From / To are pinned on the
+     left while the rest scrolls; a chevron opens the route's own-vehicle Driver Advance / Fuel Taken details underneath. */
   .rr-table-wrap { overflow-x:auto; }
-  .rr-table { border-collapse:separate; border-spacing:0; white-space:nowrap; }
+  /* overflow:visible — the global `table { overflow:hidden }` turns the table itself into the scroll container, and then the pinned From/To columns
+     (position:sticky) have nothing to stick to; with it visible, .rr-table-wrap is the scroller and the pinning works. */
+  .rr-table { border-collapse:separate; border-spacing:0; white-space:nowrap; overflow:visible;
+              --g-own:168,70,26; --g-hp:31,95,174; --g-ho:20,107,64; --g-hm:107,63,176; }
+  :root[data-theme="dark"] .rr-table { --g-own:255,155,105; --g-hp:135,185,255; --g-ho:115,220,165; --g-hm:195,165,255; }
   .rr-table th, .rr-table td { padding:9px 12px; }
-  /* Header design: the group titles (Trip Rate / Driver Advance / Fuel Taken) are the pink cells, the plain cells next to them and the
-     sub-headings are near-white, and each group starts after a thin accent rule that runs down through the rows. */
   .rr-table thead th { background:var(--th-bg-neutral); color:var(--ink); border-bottom:1px solid var(--th-line); }
   .rr-table tbody td { border-bottom:1px solid var(--line); }
-  .rr-table .grp-title { background:var(--th-bg); text-align:center; font-size:0.7rem; font-weight:700; letter-spacing:0.04em; }
-  .rr-table .grp-sub { color:var(--steel); font-weight:600; }
-  .rr-table .grp-start { border-left:2px solid var(--th-divider); }
+  .rr-table .g-own { --g:var(--g-own); } .rr-table .g-hp { --g:var(--g-hp); } .rr-table .g-ho { --g:var(--g-ho); } .rr-table .g-hm { --g:var(--g-hm); }
+  .rr-table th.grp-title { background:rgba(var(--g),0.12); color:rgb(var(--g)); text-align:center; font-size:0.72rem; font-weight:700; letter-spacing:0.03em; }
+  .rr-table th.grp-sub { background:rgba(var(--g),0.05); color:var(--steel); font-weight:600; }
+  .rr-table .grp-start { border-left:2px solid rgba(var(--g),0.55); }
+  .rr-table .grp-empty { text-align:left; padding-left:18px; color:var(--steel); font-size:0.78rem; font-style:italic; background:rgba(var(--g),0.04); }
+  .rr-table td.pos { color:var(--green); font-weight:700; } .rr-table td.neg { color:var(--red); font-weight:700; }
   .rr-table .sticky-col { position:sticky; background:var(--white); z-index:2; overflow:hidden; text-overflow:ellipsis; }
   .rr-table th.sticky-col { z-index:3; background:var(--th-bg-neutral); }
-  .rr-table .sticky-from { left:0; max-width:130px; }
-  .rr-table .sticky-to { left:130px; max-width:120px; box-shadow:2px 0 4px -2px rgba(0,0,0,0.08); }
-  /* Type is the first non-frozen column, sitting right against the sticky boundary — give it its
-     own guaranteed width and a hair of left padding so it can never get visually squeezed against
-     (or read as swallowed by) the frozen From/To columns next to it. */
-  .rr-table td:nth-child(3), .rr-table th:nth-child(3) { min-width:70px; padding-left:16px; }
+  /* From / To are pinned, so each gets a FIXED width equal to its pin offset (To is pinned 150px in = From's width). With only a max-width, a
+     short place name made From narrower than its pin offset and To was pushed right on top of the next column. */
+  .rr-table .sticky-from { left:0; width:150px; min-width:150px; max-width:150px; }
+  .rr-table .sticky-to { left:150px; width:130px; min-width:130px; max-width:130px; box-shadow:2px 0 4px -2px rgba(0,0,0,0.08); }
+  .rr-chev { border:0; background:none; cursor:pointer; padding:0 6px 0 0; color:var(--steel); font-size:0.9rem; line-height:1; transition:transform .15s; }
+  .rr-chev.open { transform:rotate(90deg); color:var(--accent); }
+  .rr2-detail[hidden] { display:none; }
+  .rr2-detail > td { padding:0; background:rgba(var(--g-own),0.05); border-bottom:1px solid var(--line); white-space:normal; }
+  .rr2-det { position:sticky; left:0; box-sizing:border-box; width:var(--rr-wrap-w, 100%); padding:14px 18px 16px; }
+  .rr2-det-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:0.84rem; margin-bottom:10px; }
+  .rr2-det-head b { color:rgb(var(--g-own)); }
+  .rr2-det-head .muted, .rr2-det-note { color:var(--steel); font-size:0.74rem; }
+  .rr2-det-cards { display:flex; gap:14px; flex-wrap:wrap; }
+  .rr2-det-card { background:var(--white); border:1px solid var(--line); border-radius:10px; padding:12px 16px; min-width:300px; }
+  .rr2-det-card .ttl { font-weight:700; font-size:0.82rem; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+  .rr2-det-card .row { display:flex; gap:28px; } .rr2-det-card .row > div { min-width:70px; }
+  .rr2-det-card .lbl { font-size:0.7rem; color:var(--steel); } .rr2-det-card .val { font-weight:700; font-size:1.02rem; }
 </style>
 {% endblock %}
 {% block content %}
@@ -207,44 +223,90 @@
     <div class="ra-panel">
       <div class="ra-panel-head"><h3>Route Rates <span style="color:var(--steel);font-weight:400;font-size:0.8rem;">({{ rr_total_count }})</span></h3></div>
       {% if rr_rows %}
+      {% macro cells4(s, g, first=True) %}
+        <td class="num g-{{ g }}{{ ' grp-start' if first }}">₹{{ '{:,.0f}'.format(s.highest) }}</td>
+        <td class="num">₹{{ '{:,.0f}'.format(s.average) }}</td>
+        <td class="num">₹{{ '{:,.0f}'.format(s.lowest) }}</td>
+        <td class="num">{{ s.trips }}</td>
+      {% endmacro %}
       <div class="rr-table-wrap">
       <table class="rr-table">
         <thead>
         <tr>
           <th class="sticky-col sticky-from" rowspan="2" style="vertical-align:bottom;">From</th>
           <th class="sticky-col sticky-to" rowspan="2" style="vertical-align:bottom;">To</th>
-          <th rowspan="2" style="vertical-align:bottom;">Type</th>
-          <th class="grp-title grp-start" colspan="4">Trip Rate (₹)</th>
-          <th class="grp-title grp-start" colspan="3">Driver Advance (₹)</th>
-          <th class="grp-title grp-start" colspan="3">Fuel Taken (₹)</th>
+          <th class="grp-title g-own grp-start" colspan="4">Own Vehicle → Party (₹)</th>
+          <th class="grp-title g-hp grp-start" colspan="4">Hired Vehicle → Party (₹)</th>
+          <th class="grp-title g-ho grp-start" colspan="4">Hired Vehicle → Owner (₹)</th>
+          <th class="grp-title g-hm grp-start" colspan="2">Hired Margin (₹ / %)</th>
         </tr>
         <tr>
-          <th class="num grp-sub grp-start">Highest</th><th class="num grp-sub">Average</th><th class="num grp-sub">Lowest</th><th class="num grp-sub">Trips</th>
-          <th class="num grp-sub grp-start">Highest</th><th class="num grp-sub">Average</th><th class="num grp-sub">Lowest</th>
-          <th class="num grp-sub grp-start">Highest</th><th class="num grp-sub">Average</th><th class="num grp-sub">Lowest</th>
+          {% for g in ('own', 'hp', 'ho') %}
+          <th class="num grp-sub g-{{ g }} grp-start">High</th><th class="num grp-sub g-{{ g }}">Avg</th><th class="num grp-sub g-{{ g }}">Low</th><th class="num grp-sub g-{{ g }}">Trips</th>
+          {% endfor %}
+          <th class="num grp-sub g-hm grp-start">Avg (₹)</th><th class="num grp-sub g-hm">Avg (%)</th>
         </tr>
         </thead>
         <tbody>
         {% for r in rr_rows %}
-        <tr>
-          <td class="sticky-col sticky-from">{{ r.clean_from }}</td>
+        <tr class="rr2-row">
+          <td class="sticky-col sticky-from"><button type="button" class="rr-chev" aria-expanded="false" aria-label="Show own-vehicle driver advance and fuel for {{ r.clean_from }} to {{ r.clean_to }}">&#9656;</button>{{ r.clean_from }}</td>
           <td class="sticky-col sticky-to">{{ r.clean_to }}</td>
-          <td>{{ VEHICLE_TYPE_LABELS.get(r.type, r.type) }}</td>
-          <td class="num grp-start">₹{{ '{:,.0f}'.format(r.highest) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.average) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.lowest) }}</td>
-          <td class="num">{{ r.trips }}</td>
-          <td class="num grp-start">₹{{ '{:,.0f}'.format(r.da_highest) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.da_average) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.da_lowest) }}</td>
-          <td class="num grp-start">₹{{ '{:,.0f}'.format(r.fuel_highest) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_average) }}</td>
-          <td class="num">₹{{ '{:,.0f}'.format(r.fuel_lowest) }}</td>
+          {% if r.own %}{{ cells4(r.own, 'own') }}{% else %}<td class="grp-empty g-own grp-start" colspan="4">No own-vehicle trips</td>{% endif %}
+          {% if not r.hired_party %}
+          <td class="grp-empty g-hp grp-start" colspan="10">&#9432; No hired trips for this route</td>
+          {% else %}
+            {{ cells4(r.hired_party, 'hp') }}
+            {% if r.hired_owner %}
+              {{ cells4(r.hired_owner, 'ho') }}
+              <td class="num g-hm grp-start {{ 'pos' if r.margin_avg >= 0 else 'neg' }}">₹{{ '{:,.0f}'.format(r.margin_avg) }}</td>
+              <td class="num {{ 'pos' if r.margin_pct >= 0 else 'neg' }}">{{ '{:,.0f}'.format(r.margin_pct) }}%</td>
+            {% else %}
+              <td class="grp-empty g-ho grp-start" colspan="6">&#9432; No owner rate data</td>
+            {% endif %}
+          {% endif %}
+        </tr>
+        <tr class="rr2-detail" hidden>
+          <td colspan="16"><div class="rr2-det">
+            <div class="rr2-det-head"><b>&#128666; Own Vehicle Operational Details</b><span class="muted">(avg values from {{ r.op_trips }} trip{{ '' if r.op_trips == 1 else 's' }})</span>
+              <span class="rr2-det-note">&#9432; These fields apply only to own vehicle trips</span></div>
+            {% if r.op_trips %}
+            <div class="rr2-det-cards">
+              <div class="rr2-det-card"><div class="ttl"><span>&#128100;</span>Driver Advance (₹)</div>
+                {% if r.da %}<div class="row"><div><div class="lbl">High</div><div class="val">₹{{ '{:,.0f}'.format(r.da.highest) }}</div></div><div><div class="lbl">Avg</div><div class="val">₹{{ '{:,.0f}'.format(r.da.average) }}</div></div><div><div class="lbl">Low</div><div class="val">₹{{ '{:,.0f}'.format(r.da.lowest) }}</div></div></div>
+                {% else %}<div class="rr2-det-note">No driver advance recorded on these trips.</div>{% endif %}</div>
+              <div class="rr2-det-card"><div class="ttl"><span>&#9981;</span>Fuel Taken (₹)</div>
+                {% if r.fuel %}<div class="row"><div><div class="lbl">High</div><div class="val">₹{{ '{:,.0f}'.format(r.fuel.highest) }}</div></div><div><div class="lbl">Avg</div><div class="val">₹{{ '{:,.0f}'.format(r.fuel.average) }}</div></div><div><div class="lbl">Low</div><div class="val">₹{{ '{:,.0f}'.format(r.fuel.lowest) }}</div></div></div>
+                {% else %}<div class="rr2-det-note">No fuel recorded on these trips.</div>{% endif %}</div>
+            </div>
+            {% else %}<div class="rr2-det-note">No own-vehicle trips on this route, so there is no driver advance or fuel to show.</div>{% endif %}
+          </div></td>
         </tr>
         {% endfor %}
         </tbody>
       </table>
       </div>
+      <script>
+      (function () {
+        function sync() { document.querySelectorAll('.rr-table-wrap').forEach(function (w) { w.style.setProperty('--rr-wrap-w', w.clientWidth + 'px'); }); }
+        if (!window.__rrRatesBound) {              // the page is swapped in without a reload: bind the click and resize handlers only once
+          window.__rrRatesBound = true;
+          document.addEventListener('click', function (e) {
+            var b = e.target.closest ? e.target.closest('.rr-chev') : null;
+            if (!b) return;
+            var d = b.closest('tr').nextElementSibling;
+            if (!d || !d.classList.contains('rr2-detail')) return;
+            var open = d.hasAttribute('hidden');
+            if (open) d.removeAttribute('hidden'); else d.setAttribute('hidden', '');
+            b.classList.toggle('open', open); b.setAttribute('aria-expanded', open ? 'true' : 'false');
+            sync();
+          });
+          window.addEventListener('resize', sync);
+        }
+        window.__rrSync = sync;
+        sync();
+      })();
+      </script>
       {{ pager.render_pager('rrPager', rr_page, rr_total_pages, rr_per_page, rr_base_qs, rr_page_tokens, page_param='rr_page') }}
       {% else %}
       <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No per-MT rate data for this selection.</div>
@@ -305,12 +367,53 @@
 </div>
 
 <script>
-function showRTab(which, btn) {
+// Page numbers / Previous / Next / rows-per-page inside a Route Analytics table refresh ONLY that table: the tab stays where it is, nothing else on the
+// page is re-drawn, the scroll position is kept, and the address is updated so a browser refresh lands on the same page of the same tab.
+(function () {
+  if (window.__raPagerBound) return;
+  window.__raPagerBound = true;
+  function refresh(panel, url) {
+    var pager = panel.querySelector('.pager-row');
+    var anchor = pager ? pager.id : '';
+    panel.style.opacity = '0.55';
+    fetch(url, { headers: { 'X-Soft-Nav': '1' }, credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var p = doc.getElementById(anchor);
+        var fresh = p && p.closest('.ra-panel');
+        if (!fresh) throw new Error('panel not found');
+        panel.innerHTML = fresh.innerHTML;
+        panel.style.opacity = '';
+        if (window.__rrSync) window.__rrSync();
+        history.replaceState(history.state, '', url.split('#')[0]);
+      })
+      .catch(function () { window.location = url; });
+  }
+  function scope(el) { return el.closest && document.getElementById('ra-best-routes') ? el.closest('.ra-tab-panel .ra-panel') : null; }
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('a.pjax-page') : null;
+    var panel = a && scope(a);
+    if (!a || !panel || a.classList.contains('disabled')) return;
+    e.preventDefault(); e.stopPropagation();
+    refresh(panel, a.getAttribute('href'));
+  }, true);
+  document.addEventListener('change', function (e) {
+    var s = e.target;
+    var panel = s && s.matches && s.matches('.pager-row select[data-pager-qs]') ? scope(s) : null;
+    if (!panel) return;
+    e.stopPropagation();
+    var qs = s.getAttribute('data-pager-qs');
+    refresh(panel, '?' + qs + (qs ? '&' : '') + 'per_page=' + encodeURIComponent(s.value) + '#' + s.getAttribute('data-pager-anchor'));
+  }, true);
+})();
+function showRTab(which, btn, silent) {
   document.querySelectorAll('.ra-tab-panel').forEach(function(p) { p.classList.remove('active'); });
   document.querySelectorAll('.ra-tab').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById('ra-' + which).classList.add('active');
   (btn || document.getElementById('tabBtn-' + which)).classList.add('active');
   document.getElementById('activeTabField').value = which;
+  if (!silent && window.rememberView) window.rememberView({ tab: which });   // refresh lands on this tab
   // The From/To/date/vehicle filters above only apply to Best Routes and Route Rates — hide them on the live finder.
   var ff = document.getElementById('raFilterForm');
   if (ff) ff.style.display = (which === 'route-finder') ? 'none' : '';
@@ -318,7 +421,7 @@ function showRTab(which, btn) {
 }
 (function() {
   var initial = document.getElementById('activeTabField').value || 'best-routes';
-  showRTab(initial);
+  showRTab(initial, null, true);
   if (window.location.hash) {
     var target = document.querySelector(window.location.hash);
     if (target) target.scrollIntoView();

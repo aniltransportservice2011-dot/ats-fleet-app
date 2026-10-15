@@ -189,16 +189,17 @@
 </div>
 
 <script>
-function showPerfTab(which, btn) {
+function showPerfTab(which, btn, silent) {
   document.querySelectorAll('.perf-tab-panel').forEach(function(p) { p.classList.remove('active'); });
   document.querySelectorAll('.perf-tab').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById('perf-' + which).classList.add('active');
   (btn || document.getElementById('tabBtn-' + which)).classList.add('active');
   document.getElementById('activeTabField').value = which;
+  if (!silent && window.rememberView) window.rememberView({ tab: which });   // refresh lands on this tab
 }
 (function() {
   var initial = document.getElementById('activeTabField').value || 'driver';
-  showPerfTab(initial);
+  showPerfTab(initial, null, true);
   // The pagination anchor lives inside a tab panel that starts display:none, so the browser's
   // native hash-scroll can fire before showPerfTab() makes it visible and silently do nothing.
   // Scroll explicitly, now that the right tab is showing.

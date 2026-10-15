@@ -40,7 +40,7 @@ def check(cond, msg):
 
 TMP = tempfile.mkdtemp(prefix='tripnum_')
 DBP = os.path.join(TMP, 'test.db')
-src = sqlite3.connect(os.path.join(REPO, 'fleet.db'))
+src = sqlite3.connect(os.environ.get('TEST_SOURCE_DB') or os.path.join(REPO, 'fleet.db'))
 src.backup(sqlite3.connect(DBP))
 src.close()
 admin_id = ensure_test_user(DBP)
@@ -55,6 +55,11 @@ def gdb():
 m.get_db = gdb
 m.app.config['TESTING'] = True
 db = gdb()
+# SAFETY: this test uploads / replaces / removes signature pictures, and the app deletes the OLD picture's file when one is replaced. The database here
+# is a copy of the real one, so it may still point at a real, user-uploaded picture in the real static/uploads/signature folder — forget that
+# pointer first, or the test would delete the user's actual file (it once did).
+db.execute("UPDATE settings SET value='' WHERE key='signature_path'")
+db.commit()
 
 
 def add_user(name, level, mods=None):
@@ -311,6 +316,13 @@ try:
 
     # ---- on the invoice itself
     batch = db.execute("SELECT id FROM invoice_batches ORDER BY id LIMIT 1").fetchone()
+    if batch is None:                                  # a wiped / empty database has no invoice: make one from a trip we saved above
+        tr = db.execute("SELECT t.id, t.party_id FROM trips t WHERE t.party_id IS NOT NULL AND COALESCE(t.is_empty,0)=0 ORDER BY t.id LIMIT 1").fetchone()
+        cur = db.execute("INSERT INTO invoice_batches (invoice_number, invoice_type, party_id, invoice_date, due_date, status, payment_status, company_id) "
+                         "VALUES ('TEST/INV/0001','party',?,'2026-12-05','2026-12-20','Generated','Pending',1)", (tr['party_id'],))
+        db.execute("INSERT INTO invoice_batch_trips (invoice_batch_id, trip_id, company_id) VALUES (?,?,1)", (cur.lastrowid, tr['id']))
+        db.commit()
+        batch = db.execute("SELECT id FROM invoice_batches ORDER BY id LIMIT 1").fetchone()
     check(batch is not None, 'test database has an invoice to print')
     bid = batch['id']
     def pdf(label):
@@ -352,6 +364,8 @@ finally:
             os.rmdir(d)
         except OSError:
             pass
+
+check(before_files <= sig_files(), 'this test did not delete any signature picture that existed before it ran (your real uploads are safe)')
 
 # ------------------------------------------------------------------ repository hygiene
 gi = open(os.path.join(REPO, '.gitignore')).read()

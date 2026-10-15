@@ -92,7 +92,7 @@
 {% set kind_class = 'k-bill' if e.kind=='Trip Bill' else ('k-pay' if e.kind in ['Payment In','Payment Out'] else ('k-ob' if e.kind=='Opening Balance' else 'k-exp')) %}
 <!-- Plain, non-clickable card — deliberately no navigation anywhere (not to the website's own
      record page, not to any in-app popup). Just displays the entry's real fields. -->
-<div class="ld-txn-card">
+<div class="ld-txn-card"{% if e.link and '/payments/' in e.link %} data-pay="{{ e.link.split('/')[2] }}"{% endif %}>
   <div class="ld-txn-top">
     <span class="ld-txn-date">{{ e.date or '—' }}</span>
     <span class="ld-txn-kind {{ kind_class }}">{{ e.kind }}</span>
@@ -223,6 +223,20 @@
 {% endblock %}
 {% block extra_scripts %}
 <script>
+// Arriving from a trip's "Open ledger" link (?pay=ID): scroll to that payment's card and highlight it. The phone's Back button then returns
+// to the trip it came from.
+(function () {
+  var params = new URLSearchParams(window.location.search), pid = params.get('pay');
+  if (!pid || !/^[0-9]+$/.test(pid)) return;
+  var cards = document.querySelectorAll('.ld-txn-card[data-pay="' + pid + '"]');
+  if (cards.length) {
+    cards.forEach(function (c) { c.classList.add('ld-hl'); });
+    setTimeout(function () { cards[0].scrollIntoView({ block: 'center' }); }, 120);
+  }
+  params.delete('pay');
+  history.replaceState(history.state, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+})();
+
 __onDocClick(function (e) {
   var btn = e.target.closest('[data-loadmore]');
   if (!btn) return;

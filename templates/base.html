@@ -74,9 +74,9 @@
   .topbar-user .info { font-size:0.8rem; line-height:1.2; }
   .topbar-user .info .name { font-weight:600; color:var(--ink); }
   .topbar-user .info .role { color:var(--steel); font-size:0.72rem; }
-  .autocomplete-list { position:fixed; background:var(--white); border:1px solid var(--line); border-radius:4px;
-    box-shadow:0 4px 16px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto; z-index:500; display:none; }
-  .autocomplete-item { padding:8px 12px; font-size:0.88rem; cursor:pointer; }
+  .autocomplete-list { position:fixed; box-sizing:border-box; background:var(--white); border:1px solid var(--line); border-radius:4px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.12); max-height:220px; overflow-y:auto; overscroll-behavior:contain; z-index:2000; display:none; }
+  .autocomplete-item { padding:8px 12px; font-size:0.88rem; cursor:pointer; overflow-wrap:anywhere; }
   .autocomplete-item:hover, .autocomplete-item.highlighted { background:var(--paper); }
   .modal-close-x { position:absolute; top:14px; right:16px; background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--steel); line-height:1; padding:4px; border-radius:999px; }
   .modal-close-x:hover { background:var(--paper); color:var(--ink); }
@@ -253,7 +253,46 @@
   if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
   // Skip the forced scroll-to-top when the URL carries a hash (e.g. pagination links
   // pointing back at #pager) — let the browser jump to that anchor instead.
-  window.addEventListener('DOMContentLoaded', function() { if (!window.location.hash) window.scrollTo(0, 0); });
+  // A browser REFRESH or the Back / Forward buttons are the exceptions: they put the user back where they were (same screen, same tab, same scroll
+  // place) — e.g. a trip's "Open in ledger" link, then Back, lands on that trip again where they left it. Every other way of arriving — a link, a
+  // soft-nav click, typing the address — still opens at the top. The place is kept per address (path + query, which already names the tab and page)
+  // in sessionStorage — one entry per address, so visiting another screen in between never overwrites it.
+  (function () {
+    var key = function () { return window.location.pathname + window.location.search; };
+    var navType = '';
+    try { navType = (performance.getEntriesByType('navigation')[0] || {}).type || ''; } catch (e) {}
+    var readAll = function () { try { return JSON.parse(sessionStorage.getItem('fleetScroll') || '{}') || {}; } catch (e) { return {}; } };
+    var wantY = null;
+    var saved = readAll()[key()];
+    if ((navType === 'reload' || navType === 'back_forward') && typeof saved === 'number' && saved > 0) wantY = saved;
+    var settled = wantY === null;     // until the saved position has been re-applied, a save would overwrite it with the top of the page
+    var save = function () {
+      if (!settled) return;
+      try {
+        var all = readAll(), k = key();
+        delete all[k]; all[k] = Math.round(window.scrollY);          // most recent last
+        var keys = Object.keys(all);
+        while (keys.length > 40) delete all[keys.shift()];            // keep the store small
+        sessionStorage.setItem('fleetScroll', JSON.stringify(all));
+      } catch (e) {}
+    };
+    var timer = null;
+    window.addEventListener('scroll', function () { if (!timer) timer = setTimeout(function () { timer = null; save(); }, 150); }, { passive: true });
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') save(); });
+    window.addEventListener('DOMContentLoaded', function () {
+      if (wantY === null) { if (!window.location.hash) window.scrollTo(0, 0); return; }
+      // Tables and charts finish laying out a little after the first paint, so the position is re-applied a few times —
+      // and dropped the moment the user scrolls themselves.
+      var stop = false;
+      ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) { window.addEventListener(ev, function () { stop = true; settled = true; }, { once: true, passive: true }); });
+      var apply = function () { if (!stop) window.scrollTo(0, wantY); };
+      apply();
+      window.addEventListener('load', apply);
+      [150, 500, 1200].forEach(function (ms) { setTimeout(apply, ms); });
+      setTimeout(function () { settled = true; }, 1300);
+    });
+  })();
 
   // Dark mode — applied here in <head>, before <body> paints, so there's no flash of the wrong
   // theme on load. Persisted in localStorage; the toggle switch itself lives in the topbar and
@@ -281,6 +320,24 @@
     var input = document.getElementById('themeToggleInput');
     if (input) input.checked = (document.documentElement.getAttribute('data-theme') === 'dark');
   });
+</script>
+<script>
+// Tabs that switch inside the page (no reload) call this so the address bar always names the tab the user is on —
+// a browser refresh then lands on the same tab, not the screen's default or an older one. Pass null to drop a key.
+// The #anchor is cleared too: it belonged to the tab being left and would point at a hidden panel.
+window.rememberView = function (params) {
+  try {
+    var u = new URL(window.location.href);
+    Object.keys(params).forEach(function (k) {
+      if (params[k] === null || params[k] === '' || params[k] === undefined) u.searchParams.delete(k);
+      else u.searchParams.set(k, params[k]);
+    });
+    history.replaceState(history.state, '', u.pathname + u.search);
+  } catch (e) { /* the address bar is a convenience; the tab still switches */ }
+};
+window.viewParam = function (name) {
+  try { return new URL(window.location.href).searchParams.get(name); } catch (e) { return null; }
+};
 </script>
 </head>
 <body>
@@ -743,59 +800,7 @@
   }
   attachHandlers();
 
-  function enhanceAutocompleteInputs() {
-    document.querySelectorAll('input[list]').forEach(function(input) {
-      if (input.dataset.acEnhanced) return;
-      var listId = input.getAttribute('list');
-      var datalist = document.getElementById(listId);
-      if (!datalist) return;
-      input.dataset.acEnhanced = '1';
-      input.removeAttribute('list');
-      input.setAttribute('autocomplete', 'off');
-
-      var options = Array.from(datalist.querySelectorAll('option')).map(function(o) { return o.value; });
-
-      var dropdown = document.createElement('div');
-      dropdown.className = 'autocomplete-list';
-      document.body.appendChild(dropdown);
-
-      function positionDropdown() {
-        var rect = input.getBoundingClientRect();
-        dropdown.style.left = rect.left + 'px';
-        dropdown.style.top = (rect.bottom + 2) + 'px';
-        dropdown.style.width = rect.width + 'px';
-      }
-
-      function showMatches() {
-        var val = input.value.toLowerCase();
-        var matches = val ? options.filter(function(o) { return o.toLowerCase().indexOf(val) !== -1; }) : options;
-        matches = matches.slice(0, 50);
-        if (matches.length === 0) { dropdown.style.display = 'none'; return; }
-        dropdown.innerHTML = '';
-        matches.forEach(function(m) {
-          var item = document.createElement('div');
-          item.className = 'autocomplete-item';
-          item.textContent = m;
-          item.addEventListener('mousedown', function(e) {
-            e.preventDefault();
-            input.value = m;
-            dropdown.style.display = 'none';
-          });
-          dropdown.appendChild(item);
-        });
-        positionDropdown();
-        dropdown.style.display = 'block';
-      }
-
-      input.addEventListener('focus', showMatches);
-      input.addEventListener('input', showMatches);
-      input.addEventListener('blur', function() { setTimeout(function() { dropdown.style.display = 'none'; }, 150); });
-      window.addEventListener('scroll', function() { if (dropdown.style.display === 'block') positionDropdown(); }, true);
-      window.addEventListener('resize', function() { if (dropdown.style.display === 'block') positionDropdown(); });
-    });
-  }
-  enhanceAutocompleteInputs();
-  window.enhanceAutocompleteInputs = enhanceAutocompleteInputs;
+  // Auto-complete drop-downs (every <input list="...">) live in static/autocomplete.js — one engine shared with the phone app.
 
   window.addEventListener('popstate', function() {
     goTo(window.location.pathname + window.location.search);
@@ -838,5 +843,6 @@
   });
 })();
 </script>
+<script src="{{ asset_v('autocomplete.js') }}"></script>
 </body>
 </html>

@@ -874,85 +874,11 @@
   }
   window.__enhanceAllTimeInputs = enhanceAllTimeInputs;
 
-  // Every OTHER native list="..." datalist field across the app (Battery/Tyres/Urea/Toll/
-  // Maintenance/Expenses' own Vehicle/Vendor/Supplier/Category fields, etc.) gets the exact same
-  // tap-reliable suggestion widget trip_add.html's Vehicle/Party/Driver fields already use
-  // (twInitAutocomplete there) — native datalist dropdowns are a known, real bug on Android
-  // Chrome/WebView (silently show nothing at all on tap), which is what was making these fields
-  // look like they "weren't auto-populating" everywhere except the one page that had already
-  // worked around it. Reads real options straight out of that field's own existing <datalist> (no
-  // backend/template change needed anywhere — the real data was already there, just rendered
-  // through a control that doesn't reliably work), and doesn't touch trip_add.html's own fields at
-  // all (input[list] only matches datalist-based fields; that page's Vehicle/Party/Driver never
-  // used list= to begin with, see its own comment on why). .tw-ac-wrap/.tw-ac-list/.tw-ac-item are
-  // shared app.css classes, not scoped to trip_add.html, so this reuses them directly.
-  function enhanceDatalistInput(input) {
-    if (input.dataset.acEnhanced) return;
-    var listId = input.getAttribute('list');
-    if (!listId) return;
-    var datalist = document.getElementById(listId);
-    if (!datalist) return;
-    input.dataset.acEnhanced = '1';
-    input.removeAttribute('list'); // stop the OS from also trying (and failing) to show its own native popup
-    input.setAttribute('autocomplete', 'off');
-
-    var wrap = document.createElement('div');
-    wrap.className = 'tw-ac-wrap';
-    input.parentNode.insertBefore(wrap, input);
-    wrap.appendChild(input);
-    var list = document.createElement('div');
-    list.className = 'tw-ac-list';
-    wrap.appendChild(list);
-
-    function currentOptions() {
-      // Read live, not once at enhance-time — a couple of these datalists (e.g. Toll's own
-      // toll-plaza-list) are re-populated from real rows on the page itself, not just server data.
-      return Array.from(datalist.querySelectorAll('option')).map(function (o) { return o.value; }).filter(Boolean);
-    }
-    var suppressNextRender = false;
-    function render(query) {
-      var q = (query || '').trim().toLowerCase();
-      var options = currentOptions();
-      var matches = q ? options.filter(function (o) { return o.toLowerCase().indexOf(q) !== -1; }) : options;
-      if (!matches.length) {
-        list.innerHTML = '<div class="tw-ac-empty">No matches — you can type a new one</div>';
-      } else {
-        list.innerHTML = matches.slice(0, 50).map(function (o) {
-          return '<div class="tw-ac-item">' + o.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
-        }).join('');
-      }
-      list.classList.add('open');
-    }
-    input.addEventListener('focus', function () {
-      if (input.readOnly || input.disabled) return;
-      render(input.value);
-    });
-    input.addEventListener('input', function () {
-      if (suppressNextRender) { suppressNextRender = false; return; }
-      render(input.value);
-    });
-    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') list.classList.remove('open'); });
-    list.addEventListener('mousedown', function (e) {
-      var item = e.target.closest('.tw-ac-item');
-      if (!item) return;
-      e.preventDefault();
-      suppressNextRender = true;
-      input.value = item.textContent;
-      list.classList.remove('open');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    document.addEventListener('click', function (e) {
-      if (e.target !== input && !list.contains(e.target)) list.classList.remove('open');
-    });
-  }
-  function enhanceAllDatalistInputs(root) {
-    (root || document).querySelectorAll('input[list]:not([data-ac-enhanced])').forEach(enhanceDatalistInput);
-  }
-  window.__enhanceAllDatalistInputs = enhanceAllDatalistInputs;
+  // Every native list="..." datalist field (Battery/Tyres/Urea/Toll/Maintenance/Expenses/…) is turned into the app's own tap-reliable suggestion
+  // list by static/autocomplete.js (shared with the website): drawn straight under the field, flipping above it when a sheet leaves no room below.
+  // The browser's own datalist popup silently shows nothing on Android, and it cannot be placed or styled.
   enhanceAllDateInputs(document);
   enhanceAllTimeInputs(document);
-  enhanceAllDatalistInputs(document);
   wireAllDateRangePairs(document);
 })();
 </script>
@@ -1261,5 +1187,7 @@
   });
 })();
 </script>
+<script>window.AC_HINT = 'No matches — you can type a new one';</script>
+<script src="{{ asset_v('autocomplete.js') }}"></script>
 </body>
 </html>
