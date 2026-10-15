@@ -1,6 +1,6 @@
 {% macro render_pager(anchor, page, total_pages, per_page, qs_prefix, page_tokens, per_page_options=[10,25,50,100], page_param='page') %}
 <div class="pager-row" id="{{ anchor }}">
-  <select onchange="(window.goTo || function(u){window.location=u;})('?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}per_page='+this.value+'#{{ anchor }}')">
+  <select data-pager-qs="{{ qs_prefix }}" data-pager-anchor="{{ anchor }}" onchange="(window.goTo || function(u){window.location=u;})('?{{ qs_prefix }}{% if qs_prefix %}&{% endif %}per_page='+this.value+'#{{ anchor }}')">
     {% for n in per_page_options %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }} / page</option>{% endfor %}
   </select>
   <div class="pager-btns">

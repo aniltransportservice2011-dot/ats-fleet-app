@@ -168,38 +168,61 @@
     <span style="color:var(--a-steel); font-size:0.76rem;">{{ rr_rows|length }} of {{ rr_total_count }}</span>
   </div>
   <div id="rr-list">
+  {% macro rr_block(title, cls, s) %}
+    <div class="rr2m-block {{ cls }}"><div class="rr2m-ttl">{{ title }}</div>
+      <div class="rr2m-stats">
+        <div><div class="rr2m-lbl">High</div><div class="rr2m-val">₹{{ '{:,.0f}'.format(s.highest) }}</div></div>
+        <div><div class="rr2m-lbl">Avg</div><div class="rr2m-val">₹{{ '{:,.0f}'.format(s.average) }}</div></div>
+        <div><div class="rr2m-lbl">Low</div><div class="rr2m-val">₹{{ '{:,.0f}'.format(s.lowest) }}</div></div>
+        <div><div class="rr2m-lbl">Trips</div><div class="rr2m-val">{{ s.trips }}</div></div>
+      </div></div>
+  {% endmacro %}
   {% for r in rr_rows %}
   <div class="rr-row" data-idx="{{ loop.index0 }}">
-    <button type="button" class="rr-row-main" onclick="rrToggle({{ loop.index0 }})">
+    <button type="button" class="rr-row-main" onclick="rrToggle({{ loop.index0 }})" aria-label="Show own-vehicle driver advance and fuel for {{ r.clean_from }} to {{ r.clean_to }}">
       <div class="rr-row-top">
         <span class="rr-row-route">{{ r.clean_from }} → {{ r.clean_to }}</span>
-        <span class="rr-row-type">{{ VEHICLE_TYPE_LABELS.get(r.type, r.type) }}</span>
-      </div>
-      <div class="rr-row-stats">
-        <div><div class="rr-row-stat-lbl">Highest</div><div class="rr-row-stat-val">₹{{ '{:,.0f}'.format(r.highest) }}</div></div>
-        <div><div class="rr-row-stat-lbl">Average</div><div class="rr-row-stat-val">₹{{ '{:,.0f}'.format(r.average) }}</div></div>
-        <div><div class="rr-row-stat-lbl">Lowest</div><div class="rr-row-stat-val">₹{{ '{:,.0f}'.format(r.lowest) }}</div></div>
-        <div><div class="rr-row-stat-lbl">Trips</div><div class="rr-row-stat-val">{{ r.trips }}</div></div>
         <svg class="rr-row-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </div>
     </button>
     <div class="rr-row-detail" id="rrDetail{{ loop.index0 }}">
+    <div class="rr2m-blocks">
+      {% if r.own %}{{ rr_block('Own Vehicle → Party (₹)', 'rr2m-own', r.own) }}{% endif %}
+      {% if r.hired_party %}
+        {{ rr_block('Hired Vehicle → Party (₹)', 'rr2m-hp', r.hired_party) }}
+        {% if r.hired_owner %}
+          {{ rr_block('Hired Vehicle → Owner (₹)', 'rr2m-ho', r.hired_owner) }}
+          <div class="rr2m-block rr2m-hm"><div class="rr2m-ttl">Hired Margin</div>
+            <div class="rr2m-stats">
+              <div><div class="rr2m-lbl">Avg (₹)</div><div class="rr2m-val {{ 'pos' if r.margin_avg >= 0 else 'neg' }}">₹{{ '{:,.0f}'.format(r.margin_avg) }}</div></div>
+              <div><div class="rr2m-lbl">Avg (%)</div><div class="rr2m-val {{ 'pos' if r.margin_pct >= 0 else 'neg' }}">{{ '{:,.0f}'.format(r.margin_pct) }}%</div></div>
+            </div></div>
+        {% endif %}
+      {% endif %}
+    </div>
+      {% if r.op_trips and (r.da or r.fuel) %}
+      <div class="rr2m-opt">Own Vehicle Operational Details <span>(avg values from {{ r.op_trips }} trip{{ '' if r.op_trips == 1 else 's' }}) · only own vehicle trips</span></div>
+      {% if r.da %}
       <div class="rr-detail-block">
         <div class="rr-detail-title">Driver Advance (₹)</div>
         <div class="rr-range-row">
-          <div class="rr-range-item"><div class="rr-range-lbl">Lowest</div><div class="rr-range-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(r.da_lowest) }}</div></div>
-          <div class="rr-range-item"><div class="rr-range-lbl">Average</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.da_average) }}</div></div>
-          <div class="rr-range-item"><div class="rr-range-lbl">Highest</div><div class="rr-range-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(r.da_highest) }}</div></div>
+          <div class="rr-range-item"><div class="rr-range-lbl">High</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.da.highest) }}</div></div>
+          <div class="rr-range-item"><div class="rr-range-lbl">Avg</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.da.average) }}</div></div>
+          <div class="rr-range-item"><div class="rr-range-lbl">Low</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.da.lowest) }}</div></div>
         </div>
       </div>
+      {% endif %}
+      {% if r.fuel %}
       <div class="rr-detail-block">
         <div class="rr-detail-title">Fuel Taken (₹)</div>
         <div class="rr-range-row">
-          <div class="rr-range-item"><div class="rr-range-lbl">Lowest</div><div class="rr-range-val" style="color:var(--a-green);">₹{{ '{:,.0f}'.format(r.fuel_lowest) }}</div></div>
-          <div class="rr-range-item"><div class="rr-range-lbl">Average</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.fuel_average) }}</div></div>
-          <div class="rr-range-item"><div class="rr-range-lbl">Highest</div><div class="rr-range-val" style="color:var(--a-red);">₹{{ '{:,.0f}'.format(r.fuel_highest) }}</div></div>
+          <div class="rr-range-item"><div class="rr-range-lbl">High</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.fuel.highest) }}</div></div>
+          <div class="rr-range-item"><div class="rr-range-lbl">Avg</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.fuel.average) }}</div></div>
+          <div class="rr-range-item"><div class="rr-range-lbl">Low</div><div class="rr-range-val">₹{{ '{:,.0f}'.format(r.fuel.lowest) }}</div></div>
         </div>
       </div>
+      {% endif %}
+      {% endif %}
     </div>
   </div>
   {% else %}

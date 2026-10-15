@@ -93,10 +93,25 @@ with cl.session_transaction() as s:
 html = cl.get('/route-analytics?tab=route-rates&from_date=2020-01-01&to_date=2030-12-31').data.decode()
 check('rr-table' in html, 'Route Rates table renders')
 heads = re.findall(r'<th class="grp-title[^"]*"[^>]*>([^<]+)</th>', html)
-check(heads == ['Trip Rate (₹)', 'Driver Advance (₹)', 'Fuel Taken (₹)'], f'Route Rates has the three pink group headers {heads}')
+check(heads == ['Own Vehicle → Party (₹)', 'Hired Vehicle → Party (₹)', 'Hired Vehicle → Owner (₹)', 'Hired Margin (₹ / %)'], f'Route Rates has the four colour-coded group headers {heads}')
 check(html.count('grp-start') >= 9, 'each group starts after a divider (header and body cells)')
-check(len(re.findall(r'<th class="num grp-sub', html)) == 10, 'ten sub-headings (Highest/Average/Lowest[/Trips] x 3 groups)')
+check(len(re.findall(r'<th class="num grp-sub', html)) == 14, 'fourteen sub-headings (High / Avg / Low / Trips x 3 groups, Avg ₹ / Avg % for the margin)')
 check(re.search(r'th\.sticky-col\s*\{[^}]*background:var\(--th-bg-neutral\)', html) is not None, 'frozen From/To headers have their own readable background')
+# Route Rates pinned columns: From / To have FIXED widths equal to their pin offsets (otherwise a short place name lets the pinned To column
+# overlap Type, as it did on the live site), and the table lets its wrapper scroll so the pinning actually works
+def css_rule(selector):
+    m = re.search(re.escape(selector) + r'\s*\{([^}]*)\}', html)
+    return m.group(1) if m else ''
+def px(rule, prop):
+    m = re.search(r'(?<![-\w])' + prop + r'\s*:\s*(\d+)px', rule)
+    return int(m.group(1)) if m else None
+f_rule, t_rule = css_rule('.rr-table .sticky-from'), css_rule('.rr-table .sticky-to')
+f_w, f_min, f_max = px(f_rule, 'width'), px(f_rule, 'min-width'), px(f_rule, 'max-width')
+t_w, t_min, t_max, t_left = px(t_rule, 'width'), px(t_rule, 'min-width'), px(t_rule, 'max-width'), px(t_rule, 'left')
+check(f_w and f_w == f_min == f_max, f'From column has one fixed width ({f_w}/{f_min}/{f_max})')
+check(t_w and t_w == t_min == t_max, f'To column has one fixed width ({t_w}/{t_min}/{t_max})')
+check(t_left == f_w, f'To is pinned exactly where From ends (left {t_left}px = From width {f_w}px) — no gap, no overlap')
+check(re.search(r'\.rr-table\s*\{[^}]*overflow:\s*visible', html) is not None, 'Route Rates table does not clip itself, so the pinned columns can stick while the wrapper scrolls')
 shutil.rmtree(tmp, ignore_errors=True)
 print(f'\nSUMMARY: {ok} passed, {fail} failed')
 sys.exit(1 if fail else 0)

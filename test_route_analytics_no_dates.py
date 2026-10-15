@@ -97,15 +97,17 @@ try:
     # Route Rates: highest / lowest / average now come from every trip
     r, ctx = page('/route-analytics?tab=route-rates&from=ZZTESTFROM&to=ZZTESTTO')
     rows = ctx['rr_rows']
-    check(len(rows) == 1 and rows[0]['trips'] == 3, f'Route Rates groups all three trips ({[(x["trips"]) for x in rows]})')
-    check(rows[0]['highest'] == 900 and rows[0]['lowest'] == 500 and round(rows[0]['average']) == 700, f"rates span every year: highest/avg/lowest = {rows[0]['highest']}/{round(rows[0]['average'])}/{rows[0]['lowest']}")
-    check(99999 not in (rows[0]['highest'],) and ctx['total_trips_sel'] == 3, 'the empty run stays excluded')
+    own = rows[0]['own'] if rows else None
+    check(len(rows) == 1 and own and own['trips'] == 3, f'Route Rates groups all three trips on the one route ({[(x["clean_from"], x["clean_to"]) for x in rows]})')
+    check(own['highest'] == 900 and own['lowest'] == 500 and round(own['average']) == 700, f"rates span every year: highest/avg/lowest = {own['highest']}/{round(own['average'])}/{own['lowest']}")
+    check(own['highest'] != 99999 and ctx['total_trips_sel'] == 3, 'the empty run stays excluded')
     check({p['month'] for p in ctx['trend_points']} >= {'2024-05', '2026-06', '2028-01'}, f"the Rate Trend chart covers every month with data ({[p['month'] for p in ctx['trend_points']][:6]}...)")
 
     # layout of the Route Rates tab: the table comes first, the Driver Advances / Fuel Taken cards sit below it
     rr_html = cl.get('/route-analytics?tab=route-rates&from=ZZTESTFROM&to=ZZTESTTO').data.decode()
     panel = rr_html[rr_html.index('id="ra-route-rates"'):]
     pos = {k: panel.find(k) for k in ('Highest Rate', 'class="rr-table"', 'Driver Advances (₹)', 'Fuel Taken (₹)</div>', 'Rate Trend (Average')}
+    pos['Fuel Taken (₹)</div>'] = panel.rfind('Fuel Taken (₹)</div>')          # the summary card below the table (each route's details row has its own Fuel Taken heading)
     check(all(v >= 0 for v in pos.values()), 'Route Rates tab still shows the rate cards, the table, both advance cards and the charts')
     check(pos['Highest Rate'] < pos['class="rr-table"'] < pos['Driver Advances (₹)'] < pos['Fuel Taken (₹)</div>'] < pos['Rate Trend (Average'],
           'Route Rates tab order: rate cards, table, then Driver Advances and Fuel Taken, then the charts')

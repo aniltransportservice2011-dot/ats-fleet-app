@@ -90,7 +90,7 @@
                _update_trip_from_form()'s comment); wanting a different vehicle means deleting
                this trip and creating a fresh one, not editing this row out from under whatever
                ledger/invoice entries already reference it by vehicle_id.
-               Custom tap-to-show suggestion list (twInitAutocomplete, see extra_scripts) instead
+               Suggestion list from static/autocomplete.js (acRegister, see extra_scripts) instead
                of the browser's native list="..." datalist — native datalist dropdowns are
                notoriously unreliable on Android Chrome/WebView (often show nothing at all on
                tap), which is what made this field look like it "wasn't populating". -->
@@ -98,7 +98,6 @@
             <input type="text" name="vehicle_no" id="twVehicleNo" value="{{ t.get('vehicle_no','') or '' }}"
                    placeholder="Select Vehicle" oninput="twSyncVehicleType()" required autocomplete="off"
                    {% if mode == 'edit' %}readonly style="background:var(--a-paper);color:var(--a-steel);"{% endif %}>
-            <div class="tw-ac-list" id="twVehicleAcList"></div>
           </div></div>
         <div class="tw-field"><label>Type <span class="req">*</span></label>
           <select id="twTypeSelect" onchange="document.getElementById('twTypeHidden').value=this.value" disabled>
@@ -111,12 +110,10 @@
           <div class="tw-ac-wrap">
             <input type="text" name="party_name" id="twParty" value="{{ t.get('party_name','') or '' }}"
                    placeholder="Select Party / Customer" autocomplete="off">
-            <div class="tw-ac-list" id="twPartyAcList"></div>
           </div></div>
         <div class="tw-field"><label>Driver</label>
           <div class="tw-ac-wrap">
             <input type="text" name="driver_name" id="twDriver" value="{{ t.get('driver_name','') or '' }}" placeholder="Select Driver" autocomplete="off">
-            <div class="tw-ac-list" id="twDriverAcList"></div>
           </div></div>
 
         <div class="tw-field twcargo"><label>Material</label>
@@ -129,7 +126,7 @@
 
         <!-- Real, deduplicated suggestions from every from_loc/to_loc a trip has ever actually
              used (_get_route_locations() in app.py — a query over trips itself, no new table or
-             column) — same twInitAutocomplete() widget Vehicle/Party/Driver above already use
+             column) — same suggestion list (static/autocomplete.js) Vehicle/Party/Driver above already use
              (see that field's own comment for why: native list="..." datalist is unreliable on
              Android). Free typing still saves exactly what's typed either way — this only ever
              suggests, never restricts, so a genuinely new location is never blocked, just no
@@ -137,12 +134,10 @@
         <div class="tw-field"><label>From</label>
           <div class="tw-ac-wrap">
             <input type="text" name="from_loc" id="twFromLoc" value="{{ t.get('from_loc','') or '' }}" placeholder="Loading location" autocomplete="off">
-            <div class="tw-ac-list" id="twFromLocAcList"></div>
           </div></div>
         <div class="tw-field"><label>To</label>
           <div class="tw-ac-wrap">
             <input type="text" name="to_loc" id="twToLoc" value="{{ t.get('to_loc','') or '' }}" placeholder="Unloading location" autocomplete="off">
-            <div class="tw-ac-list" id="twToLocAcList"></div>
           </div></div>
 
         <!-- Quantity (Weight) stays visible & required for BOTH Freight Types, matching the
@@ -253,8 +248,16 @@
         <span class="tw-section-toggle">Collapse <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
       </div>
       <div class="tw-section-body">
+        {# Live Received / Balance / Pending figures (static/trip_payment_live.js) in both modes; the dated history only when updating an existing trip. #}
+        {% if pay is not defined or not pay %}{% set pay = blank_trip_pay() %}{% endif %}
+        {% set live_only = (mode != 'edit') %}
+        {% set tph2_on = (not pay.hidden) %}
+        {% if tph2_on %}<div class="tw-field full">{% set tph2_card = False %}{% include "app/_trip_payment_history.html" %}</div>{% endif %}
+        {# The two inputs stay in the form exactly as before (a closed <details> still submits them); tucked away once the history is shown, in plain view on a new trip. #}
+        {% if tph2_on and not live_only %}<details class="tph2-manual tw-field full"><summary>Edit totals by hand</summary><div class="tph2-fields">{% endif %}
         <div class="tw-field"><label>Party Advance</label><input type="number" step="0.01" name="party_advance" value="{{ t.get('party_advance',0) or 0 }}"></div>
         <div class="tw-field"><label>Payment Received</label><input type="number" step="0.01" name="payment_received" value="{{ t.get('payment_received',0) or 0 }}"></div>
+        {% if tph2_on and not live_only %}</div></details>{% endif %}
         <div class="tw-field full"><label>LR Received</label>
           <select name="lr_received">
             <option value="" {% if t.get('lr_received')!='Yes' %}selected{% endif %}>No</option>
@@ -291,6 +294,8 @@
       <div class="tw-review-row"><span class="lbl">Total Deductions</span><span class="val" style="color:var(--a-red);" id="rvDeductions">- ₹0</span></div>
       <div class="tw-review-row"><span class="lbl">Other Items <span style="font-weight:400;">(invoice only)</span></span><span class="val" id="rvOthers">₹0</span></div>
       <div class="tw-review-net"><span class="lbl">Net Billed Amount</span><span class="val" id="rvNet">₹0</span></div>
+      <div class="tw-review-row"><span class="lbl">Received (advance + payment)</span><span class="val" style="color:var(--a-green);" id="rvReceived">₹0</span></div>
+      <div class="tw-review-row"><span class="lbl">Balance due</span><span class="val" id="rvBalance">₹0</span></div>
     </div>
     <div class="tw-review-card" id="rvOwnerCard" style="display:none;">
       <h3>Hired Vehicle Profit</h3>
@@ -315,6 +320,8 @@
   </button>
 </div>
 
+<script src="{{ asset_v('autocomplete.js') }}"></script>
+<script src="{{ asset_v('trip_payment_live.js') }}"></script>
 <script>
 var VEHICLE_TYPE_MAP = {{ vehicle_type_map|tojson }};
 var VEHICLE_OPTIONS = {{ vehicles|tojson }};
@@ -463,6 +470,32 @@ function twValidateStep1() {
   return true;
 }
 
+// ---- live Received / Balance / Pending (Payment Tracking section + Review step). Nothing is saved until the wizard is submitted; the arithmetic is the
+// server's own (static/trip_payment_live.js).
+function twNetBilled() {
+  var guaranteeQty = twNum('twGuaranteeQty');
+  var billedQty = guaranteeQty ? guaranteeQty : twNum('twQuantity');
+  var freight = twVal('rate_type') === 'FIXED' ? twNum('twFixedAmt') : (billedQty * twNum('twRate'));
+  var additions = ['detention_charges','gps_cost','loading_charge','unloading_charge','police_charges','sim_tracking','union_charges','weight_charges','other_charges']
+    .reduce(function(s, k) { return s + twNum('tw_' + k); }, 0);
+  var deductions = ['brokerage','builty_commission','late_fees','material_damage','shortage_amount','tds','other_deductions']
+    .reduce(function(s, k) { return s + twNum('tw_' + k); }, 0);
+  return freight + additions - deductions;
+}
+function twOwnerAmount() {
+  return twVal('owner_rate_type') === 'FIXED' ? twNum('twOwnerFixed') : (twNum('twQuantity') * twNum('twOwnerRate'));
+}
+function twPayLive() {
+  if (!window.TripPayLive) return;
+  var form = document.getElementById('twForm');
+  var net = twNetBilled();
+  TripPayLive.update(form, net, twOwnerAmount(), document.getElementById('twTypeHidden').value === 'hired');
+  var f = TripPayLive.party(form, net);
+  var rc = document.getElementById('rvReceived'), rb = document.getElementById('rvBalance');
+  if (rc) rc.textContent = TripPayLive.money(f.received);
+  if (rb) { rb.textContent = TripPayLive.money(f.balance > 0 ? f.balance : 0); rb.style.color = f.balance > 0.004 ? 'var(--a-red)' : 'var(--a-green)'; }
+}
+
 function twUpdateReview() {
   document.getElementById('rvDate').textContent = twVal('date') || '—';
   document.getElementById('rvLr').textContent = twVal('lr_number') || '—';
@@ -486,6 +519,7 @@ function twUpdateReview() {
     .reduce(function(s, k) { return s + twNum('tw_' + k); }, 0);
   var net = freight + additions - deductions;
   var othersTotal = twOthersTotal();
+  twPayLive();
 
   document.getElementById('rvFreight').textContent = twMoney(freight);
   document.getElementById('rvAdditions').textContent = '+ ' + twMoney(additions);
@@ -576,61 +610,21 @@ twToggleOwnerRateType();
 // submitted form actually contains (see _save_trip_custom_items() in app.py).
 TW_EXISTING_ITEMS.forEach(function (item) { twAddItemRow(item); });
 
-// Custom tap-to-show suggestion list for Vehicle/Party/Driver — replaces the browser's native
-// list="..." datalist for just these 3 fields (see the HTML comment on the Vehicle field for
-// why: native datalist dropdowns are unreliable on Android). Fuel Vendor/Owner Name/etc. still
-// use the plain datalist elsewhere in this form, untouched.
-function twInitAutocomplete(inputId, listId, options) {
-  var input = document.getElementById(inputId);
-  var list = document.getElementById(listId);
-  if (!input || !list) return;
-  // Selecting an item sets input.value then dispatches a real 'input' event purely so any
-  // existing oninput="..." handler (twSyncVehicleType on the Vehicle field) still runs — but
-  // that same dispatched event would otherwise also hit OUR OWN input listener below and
-  // immediately re-render/reopen the list right after we just closed it. This flag skips that
-  // one self-triggered render without skipping any handler the input HTML attribute already has.
-  var suppressNextRender = false;
-  function render(query) {
-    var q = (query || '').trim().toLowerCase();
-    var matches = q ? options.filter(function (o) { return o.toLowerCase().indexOf(q) !== -1; }) : options;
-    if (!matches.length) {
-      list.innerHTML = '<div class="tw-ac-empty">No matches</div>';
-    } else {
-      list.innerHTML = matches.slice(0, 50).map(function (o) {
-        return '<div class="tw-ac-item">' + o.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
-      }).join('');
-    }
-    list.classList.add('open');
-  }
-  input.addEventListener('focus', function () {
-    if (input.readOnly) return;
-    render(input.value);
-  });
-  input.addEventListener('input', function () {
-    if (suppressNextRender) { suppressNextRender = false; return; }
-    render(input.value);
-  });
-  input.addEventListener('keydown', function (e) { if (e.key === 'Escape') list.classList.remove('open'); });
-  // mousedown (not click) fires before the input's own blur, so tapping an option isn't lost to
-  // the list closing first.
-  list.addEventListener('mousedown', function (e) {
-    var item = e.target.closest('.tw-ac-item');
-    if (!item) return;
-    e.preventDefault();
-    suppressNextRender = true;
-    input.value = item.textContent;
-    list.classList.remove('open');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  document.addEventListener('click', function (e) {
-    if (e.target !== input && !list.contains(e.target)) list.classList.remove('open');
-  });
-}
-twInitAutocomplete('twVehicleNo', 'twVehicleAcList', VEHICLE_OPTIONS);
-twInitAutocomplete('twParty', 'twPartyAcList', PARTY_OPTIONS);
-twInitAutocomplete('twDriver', 'twDriverAcList', DRIVER_OPTIONS);
-twInitAutocomplete('twFromLoc', 'twFromLocAcList', LOCATION_OPTIONS);
-twInitAutocomplete('twToLoc', 'twToLocAcList', LOCATION_OPTIONS);
+// Suggestion lists for Vehicle / Party / Driver / From / To come from static/autocomplete.js (the same engine as every other field in the
+// app): drawn straight under the field with its own scroll bar, opening above it when the screen has no room below. Choosing an item raises a
+// real 'input' event, so twSyncVehicleType() on the Vehicle field still runs. (Native list="..." datalists are unreliable on Android.)
+// The live payment figures follow every edit in the wizard (typing or changing any amount, rate, quantity or type) and are drawn once on load.
+(function () {
+  var f = document.getElementById('twForm');
+  if (!f) return;
+  f.addEventListener('input', twPayLive);
+  f.addEventListener('change', twPayLive);
+  twPayLive();
+})();
+window.AC_HINT = 'No matches';
+[['twVehicleNo', VEHICLE_OPTIONS], ['twParty', PARTY_OPTIONS], ['twDriver', DRIVER_OPTIONS], ['twFromLoc', LOCATION_OPTIONS], ['twToLoc', LOCATION_OPTIONS]].forEach(function (p) {
+  window.acRegister(document.getElementById(p[0]), p[1]);
+});
 </script>
 {% if mode != 'edit' %}
 <script src="{{ asset_v('trip_number_suggest.js') }}"></script>

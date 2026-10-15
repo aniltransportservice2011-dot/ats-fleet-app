@@ -722,13 +722,19 @@ function showSTab(id, btn) {
   document.querySelectorAll('.settings-tab').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById(id).classList.add('active');
   btn.classList.add('active');
+  if (window.rememberView) window.rememberView({ tab: id.replace('tab-', ''), sub: null });   // refresh lands on this tab
 }
-function urShowSub(id, btn) {
+function urShowSub(id, btn, silent) {
   document.querySelectorAll('.ur-subpanel').forEach(function(p) { p.classList.remove('active'); });
   document.querySelectorAll('.ur-subtab').forEach(function(t) { t.classList.remove('active'); });
   document.getElementById(id).classList.add('active');
-  btn.classList.add('active');
+  (btn || document.querySelector('.ur-subtab[onclick*="\'' + id + '\'"]')).classList.add('active');
+  if (!silent && window.rememberView) window.rememberView({ tab: 'users', sub: id === 'ur-manage' ? null : id.replace('ur-', '') });
 }
+(function () {
+  var s = window.viewParam ? window.viewParam('sub') : null;
+  if (s && document.getElementById('ur-' + s) && document.getElementById('tab-users').classList.contains('active')) urShowSub('ur-' + s, null, true);
+})();
 function urFilterTable() {
   var table = document.getElementById('urTable');
   if (!table) return;

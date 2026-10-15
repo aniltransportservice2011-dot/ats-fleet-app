@@ -1,0 +1,60 @@
+{# Payment figures + history for one trip (website trip page, right-hand Payment Tracking card). Data: pay = _trip_payment_block() in app.py — every dated
+   payment recorded for this trip in the Ledger, plus the undated remainder of the stored totals. The figures update live while the form is edited
+   (static/trip_payment_live.js, reads the data-tpl / data-tpl-root hooks below); the history itself is read-only. live_only = the Add Trip form: just the live
+   figures, no history. #}
+{% macro amt(v) %}{{ mny(v or 0, '{:,.0f}' if (v or 0) == ((v or 0)|round(0)) else '{:,.2f}') }}{% endmacro %}
+{% macro ledger_href(kind, r, b) -%}
+{%- if kind == 'party' -%}{{ url_for('party_ledger', party_id=(r.party_id or b.party_id)) }}?open_payment={{ r.payment_id }}
+{%- else -%}{{ url_for('vendor_ledger', vendor_id=(r.vendor_id or b.vendor_id)) }}?open_payment={{ r.payment_id }}{%- endif -%}
+{%- endmacro %}
+{% if pay and not pay.hidden %}
+{% for kind, b in [('party', pay.party), ('owner', pay.owner)] %}
+{% if b %}
+{% set undated = (b.before_tracking + (b.advance if kind == 'party' else 0)) %}
+{% set total_for_bar = (b.billed if kind == 'party' else b.owner_amount) or 0 %}
+{% set st_cls = ({'Paid': 'paid', 'Partly paid': 'part', 'Pending': 'pend'}[b.status] if b.status else 'part') %}
+<div class="tph" id="tph-{{ kind }}" data-tpl-root="{{ kind }}" data-dated="{{ '%.2f'|format(b.dated_total) }}" data-nrows="{{ b.rows|length }}"
+     {% if live_only %}data-add="1" {% endif %}{% if kind == 'owner' %}{% if live_only %}hidden {% endif %}data-init-paid="{{ '%.2f'|format(b.paid_total) }}" data-init-owner="{{ '%.2f'|format(b.owner_amount) }}"
+     {% else %}data-init-adv="{{ '%.2f'|format(b.advance) }}" data-init-received="{{ '%.2f'|format(b.received_total - b.advance) }}" data-init-billed="{{ '%.2f'|format(b.billed) }}"{% endif %}>
+  <div class="tph-hd"><span>{{ 'Received from party' if kind == 'party' else 'Paid out for this trip (hired)' }}</span>
+    <span data-tpl="pill" data-prefix="tph" class="tph-pill tph-{{ st_cls }}" {% if not b.status %}hidden{% endif %}>{{ b.status }}</span></div>
+  <div class="tph-tot">
+    {% if kind == 'party' %}
+    <div><span>Billed</span><b data-tpl="billed">{{ amt(b.billed) }}</b></div>
+    <div><span>Received</span><b class="tpl-good" data-tpl="received">{{ amt(b.received_total) }}</b></div>
+    <div><span>Balance</span><b class="{{ 'tpl-bad' if b.due > 0.004 else 'tpl-good' }}" data-tpl="balance">{{ amt(b.due if b.due > 0 else 0) }}</b></div>
+    {% else %}
+    <div><span>Owner amount</span><b data-tpl="owner-amount">{{ amt(b.owner_amount) }}</b></div>
+    <div><span>Paid</span><b class="tpl-good" data-tpl="paid">{{ amt(b.paid_total) }}</b></div>
+    <div><span>Pending</span><b class="{{ 'tpl-bad' if b.pending > 0.004 else 'tpl-good' }}" data-tpl="pending">{{ amt(b.pending if b.pending > 0 else 0) }}</b></div>
+    {% endif %}
+  </div>
+  {% if kind == 'owner' %}<div class="tph-sub">Fuel and advances paid by us: <b data-tpl="company">{{ amt(b.company_paid) }}</b> · net owed to the owner <b data-tpl="owner-net">{{ amt(b.owner_amount - b.company_paid) }}</b></div>{% endif %}
+  <div class="tph-bar" data-tpl="bar" role="img" aria-label="Share of the amount paid so far" {% if total_for_bar <= 0 %}hidden{% endif %}>
+    {% set undated_pct = [ (undated / total_for_bar * 100) if total_for_bar > 0 else 0, 100 ]|min %}
+    {% set dated_pct = [ (b.dated_total / total_for_bar * 100) if total_for_bar > 0 else 0, 100 - undated_pct ]|min %}
+    <i class="u" data-tpl="bar-u" style="width:{{ undated_pct }}%"></i><i class="d" data-tpl="bar-d" style="width:{{ dated_pct }}%"></i></div>
+  <div class="tph-note" data-tpl="note" hidden></div>
+
+  {% if not live_only %}
+  <div class="tph-tl">
+    {% if kind == 'party' %}
+    <div class="tph-ev nodate" data-tpl="adv-row" {% if b.advance <= 0.004 %}hidden{% endif %}><div class="h"><span class="dt">No date</span><span class="amt" data-tpl="adv-amt">{{ amt(b.advance) }}</span></div>
+      <div class="m"><span class="tph-chip adv">Party advance</span> typed on this trip</div></div>
+    {% endif %}
+    <div class="tph-ev nodate" data-tpl="lump-row" {% if b.before_tracking <= 0.004 %}hidden{% endif %}><div class="h"><span class="dt">No date</span><span class="amt" data-tpl="lump-amt">{{ amt(b.before_tracking) }}</span></div>
+      <div class="m">{{ 'Received' if kind == 'party' else 'Paid' }} without a payment record (typed on the trip or imported)</div></div>
+    {% for r in b.rows %}
+    <div class="tph-ev"><div class="h"><span class="dt">{{ r.date or 'No date' }}</span><span class="amt">{{ amt(r.amount) }}</span></div>
+      <div class="m">{% if r.label %}<span class="tph-chip {{ r.label_cls }}">{{ r.label }}</span> {% endif %}{{ r.mode or '—' }}{% if r.ref %} · ref {{ r.ref }}{% endif %}{% if r.split %} · part of {{ amt(r.payment_total) }}{% endif %}</div>
+      {% if r.remarks %}<div class="m">{{ r.remarks }}</div>{% endif %}
+      <div class="m">{% if r.recorded %}Recorded {{ r.recorded }}{% if r.by %} by {{ r.by }}{% endif %}{% else %}Recorded in the ledger{% endif %}{% if pay.ledger_ok %} · <a class="tph-lk" href="{{ ledger_href(kind, r, b) }}">Open in ledger</a>{% endif %}</div>
+    </div>
+    {% endfor %}
+    <div class="tph-none" data-tpl="none" {% if b.rows or undated > 0.004 %}hidden{% endif %}>{{ 'No payment has been recorded for this trip yet.' if kind == 'party' else 'Nothing has been paid to the owner for this trip yet.' }} Payments you add in the ledger and apply to this trip will appear here with their date.</div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
