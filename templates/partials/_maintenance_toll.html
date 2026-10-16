@@ -112,7 +112,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Date &amp; Time</th><th>Vehicle</th><th>Trip</th><th>Toll Plaza</th><th>Highway</th><th class="num">Amount</th><th>Source</th><th>Status</th><th></th></tr>
+    <tr>{{ sort_th('Date &amp; Time', 'date', first='desc') }}{{ sort_th('Vehicle', 'vehicle') }}{{ sort_th('Trip', 'trip') }}{{ sort_th('Toll Plaza', 'plaza') }}{{ sort_th('Highway', 'highway') }}{{ sort_th('Amount', 'amount', cls='num', first='desc') }}{{ sort_th('Source', 'source') }}{{ sort_th('Status', 'status') }}<th></th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="document.getElementById('tollDetail{{ loop.index }}').classList.add('open')">
       <td>{{ r['date'] }}{% if r['time'] %} <span style="color:var(--steel);">{{ r['time'] }}</span>{% endif %}</td>

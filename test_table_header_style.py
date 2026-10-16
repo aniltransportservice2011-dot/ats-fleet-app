@@ -95,7 +95,7 @@ check('rr-table' in html, 'Route Rates table renders')
 heads = re.findall(r'<th class="grp-title[^"]*"[^>]*>([^<]+)</th>', html)
 check(heads == ['Own Vehicle → Party (₹)', 'Hired Vehicle → Party (₹)', 'Hired Vehicle → Owner (₹)', 'Hired Margin (₹ / %)'], f'Route Rates has the four colour-coded group headers {heads}')
 check(html.count('grp-start') >= 9, 'each group starts after a divider (header and body cells)')
-check(len(re.findall(r'<th class="num grp-sub', html)) == 14, 'fourteen sub-headings (High / Avg / Low / Trips x 3 groups, Avg ₹ / Avg % for the margin)')
+check(len(re.findall(r'<th class="(?:sortable )?num grp-sub', html)) == 14, 'fourteen sub-headings (High / Avg / Low / Trips x 3 groups, Avg ₹ / Avg % for the margin)')
 check(re.search(r'th\.sticky-col\s*\{[^}]*background:var\(--th-bg-neutral\)', html) is not None, 'frozen From/To headers have their own readable background')
 # Route Rates pinned columns: From / To have FIXED widths equal to their pin offsets (otherwise a short place name lets the pinned To column
 # overlap Type, as it did on the live site), and the table lets its wrapper scroll so the pinning actually works

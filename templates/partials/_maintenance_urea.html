@@ -37,7 +37,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Date</th><th>Type</th><th>Vehicle / Source</th><th class="num">Qty (L)</th><th class="num">Total Value</th><th class="num">Balance</th><th>Location</th><th></th></tr>
+    <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Type', 'type') }}{{ sort_th('Vehicle / Source', 'vehicle') }}{{ sort_th('Qty (L)', 'qty', cls='num', first='desc') }}{{ sort_th('Total Value', 'value', cls='num', first='desc') }}{{ sort_th('Balance', 'balance', cls='num', first='desc') }}{{ sort_th('Location', 'location') }}<th></th></tr>
     {% for r in rows %}
     {% set balance = (r['total_value'] or 0) - (r['paid_amount'] or 0) if r['maintenance_id'] else 0 %}
     <tr class="clickable-row" onclick="document.getElementById('ureaDetail{{ loop.index }}').classList.add('open')">

@@ -48,7 +48,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Battery ID</th><th>Vehicle</th><th>Brand</th><th>Type / Capacity</th><th>Install Date</th><th>Warranty Upto</th><th>Status</th><th></th></tr>
+    <tr>{{ sort_th('Battery ID', 'battery') }}{{ sort_th('Vehicle', 'vehicle') }}{{ sort_th('Brand', 'brand') }}{{ sort_th('Type / Capacity', 'type') }}{{ sort_th('Install Date', 'install', first='desc') }}{{ sort_th('Warranty Upto', 'warranty', first='desc') }}{{ sort_th('Status', 'status') }}<th></th></tr>
     {% for r in rows %}
     <tr class="bat-row" onclick="document.getElementById('batteryDetailModal{{ loop.index }}').classList.add('open')">
       <td><b>{{ r['battery_no'] }}</b></td>

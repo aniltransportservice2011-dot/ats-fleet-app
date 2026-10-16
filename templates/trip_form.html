@@ -42,6 +42,8 @@
   .tf-switch-track { position:absolute; inset:0; background:var(--line); border-radius:11px; transition:background .15s; }
   .tf-switch-track::before { content:''; position:absolute; width:15px; height:15px; left:3px; top:3px; background:#fff; border-radius:50%; transition:transform .15s; }
   .tf-switch input:checked + .tf-switch-track { background:var(--accent); }
+  .tf-switch input:disabled + .tf-switch-track { opacity:0.5; cursor:not-allowed; }
+  .tf-empty-toggle:has(input:disabled) { cursor:not-allowed; }
   .tf-switch input:checked + .tf-switch-track::before { transform:translateX(17px); }
 
   /* Locked state of an existing trip: every control inside the fieldset is disabled by the browser (even the ones tfRecalc enables / disables itself),
@@ -175,7 +177,7 @@
       <label class="tf-empty-toggle">
         <span>Empty Trip</span>
         <span class="tf-switch">
-          <input type="checkbox" name="is_empty" id="tfIsEmpty" form="tripForm" {% if t.get('is_empty') %}checked{% endif %} {% if ro %}disabled{% endif %} onchange="tfToggleEmptyTrip()">
+          <input type="checkbox" name="is_empty" id="tfIsEmpty" form="tripForm" {% if t.get('is_empty') %}checked{% endif %} {% if ro or mode == 'edit' %}disabled title="Fixed once the trip is saved"{% endif %} onchange="tfToggleEmptyTrip()">
           <span class="tf-switch-track"></span>
         </span>
       </label>
@@ -470,6 +472,7 @@ var tfExistingItems = {{ custom_items|tojson }};
 var tfVehicleTypeMap = {{ vehicle_type_map|tojson }};
 var VEHICLE_TYPE_OWN = {{ VEHICLE_TYPE_OWN|tojson }};
 var VEHICLE_TYPE_HIRED = {{ VEHICLE_TYPE_HIRED|tojson }};
+var TF_MODE_EDIT = {{ (mode == 'edit')|tojson }};
 
 // Matching ignores case, spaces, dots and hyphens ("od 11 ab 1234" finds OD11AB1234), so a vehicle picked or typed
 // in any style still reflects its real own/hired type.
@@ -547,7 +550,7 @@ function tfSetEditing(on) {
   var fs = document.getElementById('tfFieldset');
   if (!fs) return;
   fs.disabled = !on;
-  var em = document.getElementById('tfIsEmpty'); if (em) em.disabled = !on;
+  var em = document.getElementById('tfIsEmpty'); if (em) em.disabled = !on || TF_MODE_EDIT;     // Empty Trip is fixed once the trip is saved: locked while editing too
   document.getElementById('tfEditBtn').hidden = on;
   document.getElementById('tfCancelEditBtn').hidden = !on;
   document.getElementById('tfSaveBtn').hidden = !on;

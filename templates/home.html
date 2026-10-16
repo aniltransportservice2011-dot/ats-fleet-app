@@ -109,7 +109,7 @@
 
   {% if rows %}
   <table class="lg-fin">
-    <tr><th>Name</th><th>Type</th><th>Group / Category</th><th>Phone</th><th>Email / GSTIN</th><th class="num">Receivable</th><th class="num">Payable</th><th class="num">Balance</th><th>Status</th><th>Action</th></tr>
+    <tr>{{ sort_th('Name', 'name', default=True, defdir='asc') }}{{ sort_th('Type', 'type') }}{{ sort_th('Group / Category', 'group') }}{{ sort_th('Phone', 'phone') }}{{ sort_th('Email / GSTIN', 'email') }}{{ sort_th('Receivable', 'receivable', cls='num', first='desc') }}{{ sort_th('Payable', 'payable', cls='num', first='desc') }}{{ sort_th('Balance', 'balance', cls='num', first='desc') }}{{ sort_th('Status', 'status') }}<th>Action</th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="goTo('/ledger/{{ 'party' if r.role=='Party' else 'vendor' }}/{{ r.id }}')">
       <td style="font-weight:600;">{{ r.name }}</td>

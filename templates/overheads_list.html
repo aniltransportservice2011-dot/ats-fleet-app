@@ -136,7 +136,7 @@
         {% if rows %}
         <div style="overflow-x:auto;">
         <table>
-          <tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Payment Mode</th><th>Status</th><th class="num">Amount</th><th>Actions</th></tr>
+          <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Category', 'category') }}{{ sort_th('Vendor', 'vendor') }}{{ sort_th('Description', 'description') }}{{ sort_th('Payment Mode', 'mode') }}{{ sort_th('Status', 'status') }}{{ sort_th('Amount', 'amount', cls='num', first='desc') }}<th>Actions</th></tr>
           {% for r in rows %}
           <tr class="clickable-row" onclick="document.getElementById('ohView{{ r.id }}').classList.add('open')">
             <td>{{ r.date }}</td>

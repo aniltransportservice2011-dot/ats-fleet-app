@@ -186,11 +186,49 @@
       </div>
     </div>
 
+    <div class="ra-grid-2">
+      <div class="ra-panel">
+        <div class="ra-panel-head"><h3>Bottom 5 Worst Performing Routes (By Profit &#8377;)</h3></div>
+        {% if bottom5_by_profit %}
+        <table>
+          <tr><th>Rank</th><th>Route</th><th class="num">Trips</th><th class="num">Revenue</th><th class="num">Profit</th><th class="num">Margin %</th></tr>
+          {% for r in bottom5_by_profit %}
+          <tr>
+            <td><span class="rank-badge" style="background:{% if r.profit<0 %}var(--red){% else %}#c7cede{% endif %};">{{ loop.index }}</span></td>
+            <td>{{ r.clean_from }} &rarr; {{ r.clean_to }}</td>
+            <td class="num">{{ r.trips }}</td>
+            <td class="num">₹{{ '{:,.0f}'.format(r.revenue) }}</td>
+            <td class="num" style="color:{% if r.profit>=0 %}var(--green){% else %}var(--red){% endif %};font-weight:600;">₹{{ '{:,.0f}'.format(r.profit) }}</td>
+            <td class="num" style="color:{% if r.margin>=0 %}var(--green){% else %}var(--red){% endif %};font-weight:600;">{{ r.margin }}%</td>
+          </tr>
+          {% endfor %}
+        </table>
+        <div style="color:var(--steel);font-size:0.74rem;margin-top:8px;">Lowest profit first &mdash; a route that loses money (negative profit) comes before any that only earns little.</div>
+        {% else %}
+        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No routes found for this selection.</div>
+        {% endif %}
+      </div>
+      <div class="ra-panel">
+        <div class="ra-panel-head"><h3>Bottom 5 Routes by Revenue</h3></div>
+        {% if bottom5_by_revenue %}
+        {% for r in bottom5_by_revenue %}
+        <div class="hbar-row">
+          <div class="hbar-label">{{ r.clean_from }} &rarr; {{ r.clean_to }}</div>
+          <div class="hbar-track"><div class="hbar-fill" style="width:{{ r.pct }}%;background:var(--red);"></div></div>
+          <div class="hbar-value">₹{{ '{:,.0f}'.format(r.revenue) }}</div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="color:var(--steel);font-size:0.85rem;text-align:center;padding:30px;">No routes found for this selection.</div>
+        {% endif %}
+      </div>
+    </div>
+
     <div class="ra-panel">
       <div class="ra-panel-head"><h3>Route Summary</h3></div>
       {% if summary_rows %}
       <table>
-        <tr><th>Route</th><th class="num">Trips</th><th class="num">Total Revenue</th><th class="num">Total Cost</th><th class="num">Profit</th><th class="num">Margin %</th><th>Action</th></tr>
+        <tr>{{ sort_th('Route', 'route', extra={'tab': 'best-routes'}) }}{{ sort_th('Trips', 'trips', cls='num', first='desc', extra={'tab': 'best-routes'}) }}{{ sort_th('Total Revenue', 'revenue', cls='num', first='desc', default=True, extra={'tab': 'best-routes'}) }}{{ sort_th('Total Cost', 'cost', cls='num', first='desc', extra={'tab': 'best-routes'}) }}{{ sort_th('Profit', 'profit', cls='num', first='desc', extra={'tab': 'best-routes'}) }}{{ sort_th('Margin %', 'margin', cls='num', first='desc', extra={'tab': 'best-routes'}) }}<th>Action</th></tr>
         {% for r in summary_rows %}
         <tr>
           <td><a href="/route-analytics?tab=route-finder&rf_from={{ rf_texts.get(r.clean_from, r.clean_from)|urlencode }}&rf_to={{ rf_texts.get(r.clean_to, r.clean_to)|urlencode }}" title="Show this route on the map" style="color:inherit;font-weight:600;text-decoration:none;">{{ r.clean_from }} &rarr; {{ r.clean_to }}</a></td>
@@ -233,8 +271,8 @@
       <table class="rr-table">
         <thead>
         <tr>
-          <th class="sticky-col sticky-from" rowspan="2" style="vertical-align:bottom;">From</th>
-          <th class="sticky-col sticky-to" rowspan="2" style="vertical-align:bottom;">To</th>
+          {{ sort_th('From', 'from', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='sticky-col sticky-from', attrs='rowspan="2" style="vertical-align:bottom;"') }}
+          {{ sort_th('To', 'to', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='sticky-col sticky-to', attrs='rowspan="2" style="vertical-align:bottom;"') }}
           <th class="grp-title g-own grp-start" colspan="4">Own Vehicle → Party (₹)</th>
           <th class="grp-title g-hp grp-start" colspan="4">Hired Vehicle → Party (₹)</th>
           <th class="grp-title g-ho grp-start" colspan="4">Hired Vehicle → Owner (₹)</th>
@@ -242,9 +280,10 @@
         </tr>
         <tr>
           {% for g in ('own', 'hp', 'ho') %}
-          <th class="num grp-sub g-{{ g }} grp-start">High</th><th class="num grp-sub g-{{ g }}">Avg</th><th class="num grp-sub g-{{ g }}">Low</th><th class="num grp-sub g-{{ g }}">Trips</th>
+          {% set gk = {'own': 'own', 'hp': 'hired_party', 'ho': 'hired_owner'}[g] %}
+          {{ sort_th('High', gk ~ '_highest', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='num grp-sub g-' ~ g ~ ' grp-start', first='desc') }}{{ sort_th('Avg', gk ~ '_average', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='num grp-sub g-' ~ g, first='desc') }}{{ sort_th('Low', gk ~ '_lowest', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='num grp-sub g-' ~ g, first='desc') }}{{ sort_th('Trips', gk ~ '_trips', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='num grp-sub g-' ~ g, first='desc') }}
           {% endfor %}
-          <th class="num grp-sub g-hm grp-start">Avg (₹)</th><th class="num grp-sub g-hm">Avg (%)</th>
+          {{ sort_th('Avg (₹)', 'margin_avg', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='num grp-sub g-hm grp-start', first='desc') }}{{ sort_th('Avg (%)', 'margin_pct', sp='rr_sort', dp='rr_dir', pagekey='rr_page', extra={'tab': 'route-rates'}, cls='num grp-sub g-hm', first='desc') }}
         </tr>
         </thead>
         <tbody>

@@ -97,6 +97,44 @@
   {% endfor %}
 </div>
 
+<div class="ra-panel">
+  <div class="ra-panel-head">
+    <h2>Bottom 5 Worst Performing Routes</h2>
+  </div>
+  {% for r in bottom5_by_profit %}
+  <a class="ra-route-row" style="text-decoration:none;color:inherit;" href="{{ url_for('app_analytics') }}?tab=finder&rf_from={{ rf_texts.get(r.clean_from, r.clean_from)|urlencode }}&rf_to={{ rf_texts.get(r.clean_to, r.clean_to)|urlencode }}" title="Show this route on the map">
+    <div class="ra-rank {{ 'rbad' if r.profit < 0 else 'rn' }}">{{ loop.index }}</div>
+    <div class="ra-route-body">
+      <div class="ra-route-name">{{ r.clean_from }} → {{ r.clean_to }}</div>
+      <div class="ra-route-meta">{{ r.trips }} trip{{ 's' if r.trips != 1 else '' }} · ₹{{ '{:,.0f}'.format(r.revenue) }} revenue · margin {{ r.margin }}%</div>
+    </div>
+    <div class="ra-route-right">
+      <div class="ra-route-margin {{ 'neg' if r.profit < 0 else '' }}">{{ '-' if r.profit < 0 else '' }}₹{{ '{:,.0f}'.format(r.profit|abs) }}</div>
+      <div class="ra-route-meta">profit</div>
+    </div>
+  </a>
+  {% else %}
+  <div class="ra-empty">No route data for this period.</div>
+  {% endfor %}
+</div>
+
+<div class="ra-panel">
+  <div class="ra-panel-head">
+    <h2>Bottom 5 Routes by Revenue</h2>
+  </div>
+  {% for r in bottom5_by_revenue %}
+  <div class="ra-bar-row">
+    <div class="ra-bar-top">
+      <span class="ra-bar-name">{{ r.clean_from }} → {{ r.clean_to }}</span>
+      <span class="ra-bar-val">₹{{ '{:,.0f}'.format(r.revenue) }}</span>
+    </div>
+    <div class="ra-bar-track"><div class="ra-bar-fill" style="width:{{ r.pct }}%;background:var(--a-red);"></div></div>
+  </div>
+  {% else %}
+  <div class="ra-empty">No route data for this period.</div>
+  {% endfor %}
+</div>
+
 <div class="ra-stat-grid">
   <div class="ra-stat-card">
     <div class="ra-stat-lbl">

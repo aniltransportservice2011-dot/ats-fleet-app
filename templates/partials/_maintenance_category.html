@@ -28,7 +28,7 @@
   <div class="mt-panel-head"><div class="ttl">{{ tab_label }} Entries</div><span style="color:var(--steel);font-size:0.8rem;">Showing {{ rows|length }} of {{ total_count }}</span></div>
   {% if rows %}
   <table>
-    <tr><th>Date</th><th>Vehicle</th><th>Category</th><th>Vendor</th><th class="num">Amount</th><th>Status</th></tr>
+    <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Vehicle', 'vehicle') }}{{ sort_th('Category', 'category') }}{{ sort_th('Vendor', 'vendor') }}{{ sort_th('Amount', 'amount', cls='num', first='desc') }}{{ sort_th('Status', 'status') }}</tr>
     {% for r in rows %}
     {% set is_paid = (r['paid_amount'] or 0) >= (r['amount'] or 0) and (r['amount'] or 0) > 0 %}
     <tr>

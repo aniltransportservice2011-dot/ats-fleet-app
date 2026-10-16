@@ -749,6 +749,8 @@ input[type="date"] { accent-color: var(--a-accent); }
 .tw-switch-track { position: absolute; inset: 0; background: var(--a-line); border-radius: 20px; transition: background 0.15s; }
 .tw-switch-track::after { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: #fff; top: 3px; left: 3px; transition: left 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
 .tw-switch input:checked + .tw-switch-track { background: var(--a-accent); }
+.tw-switch input:disabled { cursor: not-allowed; }
+.tw-switch input:disabled + .tw-switch-track { opacity: 0.5; }
 .tw-switch input:checked + .tw-switch-track::after { left: 21px; }
 
 .tw-others-card { background: var(--a-white); border-radius: 16px; padding: 14px 16px; margin-bottom: 12px; position: relative; }
@@ -1510,11 +1512,13 @@ input[type="date"] { accent-color: var(--a-accent); }
 .ra-rank.r2 { background: #94a3b8; }
 .ra-rank.r3 { background: #c05621; }
 .ra-rank.rn { background: var(--a-line); color: var(--a-steel); }
+.ra-rank.rbad { background: var(--a-red); }
 .ra-route-body { flex: 1; min-width: 0; }
 .ra-route-name { font-weight: 700; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ra-route-meta { font-size: 0.7rem; color: var(--a-steel); margin-top: 1px; }
 .ra-route-right { text-align: right; flex-shrink: 0; }
 .ra-route-margin { font-weight: 800; font-size: 0.84rem; color: var(--a-green); }
+.ra-route-margin.neg { color: var(--a-red); }
 .ra-route-revenue { font-weight: 800; font-size: 0.84rem; }
 
 .ra-bar-row { margin-bottom: 12px; }
@@ -2000,3 +2004,8 @@ input[type="date"] { accent-color: var(--a-accent); }
 .te-fixed { padding: 11px 12px; border-radius: 10px; background: var(--a-white); border: 1px solid var(--a-line); font-weight: 700; font-size: 0.86rem; }
 .te-fixed[hidden], #teSheet [hidden] { display: none !important; }
 #teGrid.te-pay .te-only-cost, #teGrid.te-cost .te-only-pay, #teGrid:not(.te-fuel) .te-only-fuel { display: none; }
+
+/* Sortable table columns on the phone (static/table_sort.js): label + ⇅ / ▲ / ▼, tap a header to sort. */
+th.sort-js { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-ic { color: var(--a-steel); font-size: 0.68rem; margin-left: 4px; opacity: 0.75; }
+.sort-ic.on { color: var(--a-accent); opacity: 1; }
