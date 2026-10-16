@@ -59,9 +59,9 @@
   <div class="tw-step active" data-step="1">
 
     <div class="tw-empty-row">
-      <div class="lbl">Empty Trip<span class="sub">Vehicle ran with no cargo/party — hides freight fields</span></div>
+      <div class="lbl">Empty Trip<span class="sub">{{ "Fixed once the trip is saved" if mode == "edit" else "Vehicle ran with no cargo/party — hides freight fields" }}</span></div>
       <label class="tw-switch">
-        <input type="checkbox" name="is_empty" id="twIsEmpty" onchange="twToggleEmpty()" {% if t.get('is_empty') %}checked{% endif %}>
+        <input type="checkbox" name="is_empty" id="twIsEmpty" onchange="twToggleEmpty()" {% if t.get('is_empty') %}checked{% endif %} {% if mode == 'edit' %}disabled{% endif %}>
         <span class="tw-switch-track"></span>
       </label>
     </div>

@@ -102,7 +102,7 @@
       <h3>Driver Performance Detail</h3>
       {% if driver_rows %}
       <table>
-        <tr><th>Driver Name</th><th class="num">Completed Trips</th><th class="num">Total Billed</th><th class="num">Fuel Cost</th><th class="num">Profit</th><th>Last Trip Date</th></tr>
+        <tr>{{ sort_th('Driver Name', 'name', sp='d_sort', dp='d_dir', pagekey='d_page', extra={'tab': 'driver'}) }}{{ sort_th('Completed Trips', 'trips', sp='d_sort', dp='d_dir', pagekey='d_page', extra={'tab': 'driver'}, cls='num', first='desc') }}{{ sort_th('Total Billed', 'billed', sp='d_sort', dp='d_dir', pagekey='d_page', extra={'tab': 'driver'}, cls='num', first='desc') }}{{ sort_th('Fuel Cost', 'fuel', sp='d_sort', dp='d_dir', pagekey='d_page', extra={'tab': 'driver'}, cls='num', first='desc') }}{{ sort_th('Profit', 'profit', sp='d_sort', dp='d_dir', pagekey='d_page', extra={'tab': 'driver'}, cls='num', first='desc') }}{{ sort_th('Last Trip Date', 'last', sp='d_sort', dp='d_dir', pagekey='d_page', extra={'tab': 'driver'}, first='desc') }}</tr>
         {% for r in driver_rows %}
         <tr>
           <td>{{ r['name'] }}</td>
@@ -166,7 +166,7 @@
       <h3>Vehicle Performance Detail</h3>
       {% if vehicle_rows %}
       <table>
-        <tr><th>Vehicle No</th><th>Type</th><th class="num">Completed Trips</th><th class="num">Total Billed</th><th class="num">Fuel Cost</th><th class="num">Maintenance</th><th class="num">Profit</th><th>Last Trip Date</th></tr>
+        <tr>{{ sort_th('Vehicle No', 'name', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}) }}{{ sort_th('Type', 'type', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}) }}{{ sort_th('Completed Trips', 'trips', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}, cls='num', first='desc') }}{{ sort_th('Total Billed', 'billed', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}, cls='num', first='desc') }}{{ sort_th('Fuel Cost', 'fuel', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}, cls='num', first='desc') }}{{ sort_th('Maintenance', 'maint', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}, cls='num', first='desc') }}{{ sort_th('Profit', 'profit', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}, cls='num', first='desc') }}{{ sort_th('Last Trip Date', 'last', sp='v_sort', dp='v_dir', pagekey='v_page', extra={'tab': 'vehicle'}, first='desc') }}</tr>
         {% for r in vehicle_rows %}
         <tr>
           <td>{{ r['name'] }}</td>

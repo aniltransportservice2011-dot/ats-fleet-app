@@ -45,7 +45,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Date</th><th>Vehicle</th><th>Service Type</th><th class="num">KM Reading</th><th>Workshop</th><th class="num">Cost</th><th>Status</th><th>Next Due</th><th></th></tr>
+    <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Vehicle', 'vehicle') }}{{ sort_th('Service Type', 'service') }}{{ sort_th('KM Reading', 'km', cls='num', first='desc') }}{{ sort_th('Workshop', 'workshop') }}{{ sort_th('Cost', 'cost', cls='num', first='desc') }}{{ sort_th('Status', 'status') }}{{ sort_th('Next Due', 'due') }}<th></th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="document.getElementById('viewModal{{ loop.index }}').classList.add('open')">
       <td style="white-space:nowrap;">{{ r['date'] }}</td>

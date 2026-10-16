@@ -912,6 +912,78 @@ def _paginate(page_raw, per_page_raw, total_count, per_page_options=(10, 25, 50,
     page = min(page, total_pages)
     return page, per_page, total_pages
 
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+# Sortable table columns. A paginated table is sorted on the server BEFORE it is cut into pages, so a sort covers every row, not just the page on screen
+# (a table that shows all its rows is sorted in the browser instead — static/table_sort.js). A table opts in with two things:
+#   - the route: rows, key, direction = _table_sort(rows, {'vehicle': 'vehicle_no', 'billed': lambda r: r['billed_amount'], ...})   (the value of "?sort=key&dir=asc|desc")
+#   - the header: {{ sort_th('Vehicle', 'vehicle') }}   — draws the label with the ⇅ / ▲ / ▼ icon; clicking it re-opens the page sorted that way, on page 1.
+# A page with two sortable tables gives each its own parameter names (sp='d_sort', dp='d_dir', pagekey='d_page').
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+def _sort_blank(v):
+    return v is None or (isinstance(v, str) and v.strip() in ('', '—', '-'))
+
+
+def _sort_value(v):
+    """One comparable value: numbers as numbers, text case-insensitively (so a column of names is alphabetical, not capitals first), dates as ISO text."""
+    if isinstance(v, bool):
+        return (0, float(v), '')
+    if isinstance(v, (int, float)):
+        return (0, float(v), '')
+    return (1, 0.0, str(v).strip().casefold())
+
+
+def _table_sort(rows, spec, sp='sort', dp='dir'):
+    """Sort `rows` by the column named in ?<sp>= (one of spec's keys; anything else is ignored) in the direction ?<dp>= (asc | desc). A spec value is a column name
+    (row[name]) or a function of the row. Rows with nothing in that column always go last, whichever way it is sorted, and equal rows keep their order.
+    Returns (rows, key, direction); key is '' when the table is not being sorted."""
+    key = (request.args.get(sp) or '').strip()
+    if key not in spec:
+        return rows, '', ''
+    direction = 'desc' if (request.args.get(dp) or '').lower() == 'desc' else 'asc'
+    getter = spec[key]
+    if not callable(getter):
+        col = getter
+        getter = lambda r, _c=col: r[_c]
+    present, blank = [], []
+    for r in rows:
+        try:
+            v = getter(r)
+        except (KeyError, IndexError, TypeError):
+            v = None
+        (blank if _sort_blank(v) else present).append((_sort_value(v), r))
+    present.sort(key=lambda t: t[0], reverse=(direction == 'desc'))        # sort() is stable, and reverse keeps ties in their original order too
+    return [r for _, r in present] + [r for _, r in blank], key, direction
+
+
+@app.template_global('sort_th')
+def _sort_th(label, key, sp='sort', dp='dir', pagekey='page', extra=None, cls='', attrs='', default=False, defdir='desc', first='asc'):
+    """A clickable column header: the label plus a ⇅ (not sorted) / ▲ (ascending) / ▼ (descending) icon. The link keeps every filter of the page (the query string
+    as it is), drops the page number, and sets ?<sp>=<key>&<dp>=<direction>; a first click sorts in `first` direction and the next one reverses it.
+    `default` marks the column the page is already ordered by (direction `defdir`) so its icon shows that state before anything is clicked."""
+    from urllib.parse import urlencode
+    from markupsafe import Markup, escape
+    cur = request.args.get(sp, '')
+    cdir = 'desc' if (request.args.get(dp) or '').lower() == 'desc' else 'asc'
+    if cur == key:
+        eff = cdir
+    elif default and not cur:
+        eff = defdir
+    else:
+        eff = ''
+    nxt = ('desc' if eff == 'asc' else 'asc') if eff else first
+    q = {k: v for k, v in request.args.items() if k not in (sp, dp, pagekey)}
+    if extra:
+        q.update(extra)
+    q[sp] = key
+    q[dp] = nxt
+    href = request.path + '?' + urlencode(q)
+    icon = '▲' if eff == 'asc' else ('▼' if eff == 'desc' else '⇅')
+    import re as _re
+    plain = Markup(_re.sub(r'<span[^>]*>.*?</span>', '', str(label))).striptags()      # labels are the template's own text (an ⓘ info icon is dropped from the title); never user input
+    return Markup('<th class="sortable %s"%s><a class="sort-link pjax-page" href="%s" title="Sort by %s">%s<span class="sort-ic%s">%s</span></a></th>' % (
+        escape(cls), (' ' + attrs) if attrs else '', escape(href), escape(' '.join(plain.split())), label, ' on' if eff else '', icon))
+
+
 def _page_tokens(page, total_pages):
     """Windowed page-number list with ellipses, e.g. [1, '...', 6, 7, 8, '...', 42]."""
     if total_pages <= 7:
@@ -1317,6 +1389,8 @@ def accounts():
 
     rows = _filter_accounts_rows(all_rows, search_f, role_f, group_f, status_f)
     conn.close()
+    rows, _, _ = _table_sort(rows, {'name': 'name', 'type': 'role', 'group': 'group', 'phone': 'contact', 'email': lambda r: r['email'] or r['gstin'],
+                                    'receivable': lambda r: max(r['balance'], 0), 'payable': lambda r: max(-r['balance'], 0), 'balance': 'balance', 'status': 'status'})
 
     total_count = len(rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
@@ -2277,18 +2351,17 @@ def vehicles_list():
         d['road_tax_days_left'] = (datetime.datetime.strptime(road_tax_upto, '%Y-%m-%d').date() - datetime.date.today()).days if road_tax_upto else None
         all_rows.append(d)
 
-    # Column-header sorting (Age / Challan) — both computed/derived fields, so sorted here in
-    # Python rather than in SQL. Rows with no age on file always sort to the bottom regardless
-    # of direction, since "unknown" isn't meaningfully "oldest" or "youngest".
+    # Column-header sorting — every column; the compliance dates and age are derived values, so this is done here in Python rather than in SQL, before the
+    # list is cut into pages. Rows with nothing in the sorted column (no age on file, a hired vehicle with no compliance dates) always go last.
+    # Compliance badges (Insurance/Fitness/PUC/Permit) — own fleet only, see compliance_service's module docstring for why Hired vehicles are excluded. Keyed by
+    # vehicle_id for O(1) lookup in the template; a Hired vehicle simply has no entry and renders "—" for every badge.
+    compliance_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
+    _comp_expiry = lambda ctype: (lambda r: ((compliance_by_vehicle.get(r['id']) or {}).get(ctype) or {}).get('expiry'))
+    all_rows, _, _ = _table_sort(all_rows, {'vehicle': 'vehicle_no', 'age': 'age_years', 'insurance': _comp_expiry('insurance'), 'fitness': _comp_expiry('fitness'),
+                                            'puc': _comp_expiry('puc'), 'permit': _comp_expiry('permit'), 'roadtax': 'road_tax_upto',
+                                            'status': lambda r: r['status'] or 'Active', 'challan': lambda r: r['challan_amount'] or 0})
     sort_f = request.args.get('sort', '')
     dir_f = request.args.get('dir', 'asc')
-    if sort_f == 'age':
-        known = [r for r in all_rows if r['age_years'] is not None]
-        unknown = [r for r in all_rows if r['age_years'] is None]
-        known.sort(key=lambda r: r['age_years'], reverse=(dir_f == 'desc'))
-        all_rows = known + unknown
-    elif sort_f == 'challan':
-        all_rows.sort(key=lambda r: (r['challan_amount'] or 0), reverse=(dir_f == 'desc'))
 
     # Real, vehicle-level compliance snapshot for the overview cards + sidebar — every count
     # below is derived straight from the (filtered) vehicles table, never fabricated.
@@ -2343,11 +2416,6 @@ def vehicles_list():
     base_qs = urlencode(base_params)
 
     all_vehicle_nos = conn.execute("SELECT DISTINCT vehicle_no FROM vehicles WHERE vehicle_no IS NOT NULL AND COALESCE(status,'Active')='Active' ORDER BY vehicle_no").fetchall()
-
-    # Compliance badges (Insurance/Fitness/PUC/Permit) — own fleet only, see compliance_service's
-    # module docstring for why Hired vehicles are excluded. Keyed by vehicle_id for O(1) lookup
-    # in the template; a Hired vehicle simply has no entry and renders "—" for every badge.
-    compliance_by_vehicle = {c['vehicle_id']: c for c in cs.refresh_compliance(conn)}
 
     conn.close()
     # Remember this exact URL for next time — a later bare /vehicles hit (see the redirect at the
@@ -2534,6 +2602,7 @@ def _employees_overview_tab(conn):
             for k in ('mobile', 'email', 'address', 'date_of_birth', 'bank_account', 'ifsc_code', 'upi_id', 'emergency_contact', 'aadhaar', 'pan', 'driving_license'):
                 rows[-1][k] = None
 
+    rows, _, _ = _table_sort(rows, {'employee': 'name', 'role': 'role', 'joining': 'joining_date', 'attendance': 'attendance_pct', 'salary': 'salary_status', 'advance': 'outstanding'})
     total_count = len(rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(5, 10, 25, 50), default_per_page=5)
@@ -2605,6 +2674,7 @@ def _employees_salary_tab(conn):
     proven flow this always used. This tab just reports what happened in the selected period."""
     d = _employees_salary_data(conn)
     rows, total_count = d['rows'], d['total_count']
+    rows, _, _ = _table_sort(rows, {'employee': 'name', 'role': 'role', 'paid': 'total_paid', 'payments': 'payment_count', 'last': 'last_paid_date', 'advance': 'outstanding'})
 
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(5, 10, 25, 50), default_per_page=5)
@@ -2958,6 +3028,7 @@ def overheads_list():
     for c in category_summary_rows:
         c['pct'] = round(c['amount'] / total_amount * 100, 1) if total_amount else 0
 
+    rows, _, _ = _table_sort(rows, {'date': 'date', 'category': 'category', 'vendor': 'vendor', 'description': 'description', 'mode': 'payment_mode', 'status': 'status', 'amount': 'amount'})
     total_count_filtered = len(rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count_filtered,
                                              per_page_options=(8, 25, 50, 100), default_per_page=8)
@@ -3114,10 +3185,19 @@ def trips_list():
 
     # Whitelisted column map — sort_f/dir_f come straight from the query string, so they're
     # never interpolated directly into SQL; only the vetted values on the right ever reach it.
-    sort_columns = {'date': 't.date', 'party': 'p.name'}
-    order_col = sort_columns.get(sort_f, 't.date')
+    # (SQL expression, is_text). Blank values always go last, text sorts without regard to case. A user who may not see trip amounts cannot sort by them either
+    # (the order would give the amounts away).
+    sort_columns = {'date': ('t.date', False), 'lr': ('t.lr_number', True), 'vehicle': ('v.vehicle_no', True), 'party': ('p.name', True),
+                    'from': ('t.from_loc', True), 'to': ('t.to_loc', True), 'status': ('CASE WHEN t.end_date IS NULL THEN \'Active\' ELSE \'Completed\' END', True)}
+    if not _hide_trip_amounts():
+        sort_columns['billed'] = ('COALESCE(t.billed_amount,0)', False)
+        sort_columns['pending'] = ('(COALESCE(t.billed_amount,0) - COALESCE(t.payment_received,0) - COALESCE(t.party_advance,0))', False)
     order_dir = 'ASC' if dir_f == 'asc' else 'DESC'
-    query += f" ORDER BY {order_col} {order_dir}, t.date DESC LIMIT {per_page} OFFSET {offset}"
+    if sort_f in sort_columns:
+        expr, is_text = sort_columns[sort_f]
+        query += f" ORDER BY ({expr} IS NULL OR TRIM({expr}) = ''), {expr}{' COLLATE NOCASE' if is_text else ''} {order_dir}, t.date DESC, t.id DESC LIMIT {per_page} OFFSET {offset}"
+    else:
+        query += f" ORDER BY t.date DESC LIMIT {per_page} OFFSET {offset}"
 
     trips = conn.execute(query, params).fetchall()
     if _hide_trip_amounts():
@@ -3151,7 +3231,7 @@ def trips_list():
                             vehicles=vehicles, parties=parties,
                             f_vehicle=vehicle_f, f_party=party_f, f_date_from=date_from, f_date_to=date_to,
                             f_status=status_f, f_lr=lr_f, f_lr_number=lr_number_f, f_from=from_f, f_to=to_f, f_type=type_f,
-                            f_sort=sort_f, f_dir=dir_f,
+                            f_sort=sort_f, f_dir=dir_f, can_sort_amounts=not _hide_trip_amounts(),
                             end_error=request.args.get('end_error', ''), delete_error=request.args.get('error', ''), delete_error_amount=request.args.get('amount', ''),
                             delete_error_lr=request.args.get('lr', ''), delete_error_toll_count=request.args.get('toll_count', ''),
                             active='trips')
@@ -3426,6 +3506,20 @@ def _insert_trip_from_form(conn, f):
     _save_trip_custom_items(conn, cur.lastrowid, f)
     return cur.lastrowid
 
+def _form_with_stored_empty_flag(conn, trip_id, form):
+    """Whether a trip is an "Empty Trip" is fixed the moment it is saved: the switch is locked (disabled, so it is not even posted) on the edit screens. An edit
+    therefore always carries the STORED flag — it drives the validation (party / quantity are not needed on an empty trip) and the update — whatever the posted
+    form says. Returns a copy of the form; the form itself is untouched."""
+    row = conn.execute("SELECT is_empty FROM trips WHERE id=?", (trip_id,)).fetchone()
+    f2 = form.copy()
+    if row is not None:
+        if row['is_empty']:
+            f2['is_empty'] = 'on'
+        else:
+            f2.pop('is_empty', None)
+    return f2
+
+
 def _update_trip_from_form(conn, trip_id, f):
     """Builds and runs one trips UPDATE from a submitted form — the exact same real logic
     edit_trip() (website) has always used, extracted here so app_edit_trip() (mobile) can share
@@ -3437,9 +3531,10 @@ def _update_trip_from_form(conn, trip_id, f):
     — this function always updates, unconditionally. The vehicle on a trip is locked at creation
     and never changed here, same rule edit_trip() enforces. Returns (ok, error_message_or_None);
     does not commit or close conn."""
-    existing = conn.execute("SELECT vehicle_id FROM trips WHERE id=?", (trip_id,)).fetchone()
+    existing = conn.execute("SELECT vehicle_id, is_empty FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not existing:
         return False, 'Trip not found.'
+    f = _form_with_stored_empty_flag(conn, trip_id, f)          # Empty Trip is fixed once the trip exists
 
     def n(key):
         return float(f.get(key) or 0)
@@ -4345,6 +4440,12 @@ def _maintenance_urea_tab(conn):
     d = _urea_management_data(conn, location_f, supplier_f, type_f, search_f, date_from, date_to)
     all_rows = d['all_rows']
 
+    all_rows, _, _ = _table_sort(all_rows, {'date': 'date', 'type': lambda r: ('Added to Stock' if r['txn_type'] == 'stock_in' else ('Direct (Off-Stock)' if r['source'] == 'direct' else 'Used from Stock')),
+                                            'vehicle': lambda r: r['vehicle_no'] or r['supplier_name'], 'qty': 'quantity_l',
+                                            'value': lambda r: (r['total_value'] or 0) if r['maintenance_id'] else (r['quantity_l'] or 0) * (d.get('avg_unit_cost') or 0),
+                                            'balance': lambda r: ((r['total_value'] or 0) - (r['paid_amount'] or 0)) if r['maintenance_id'] else None,
+                                            'location': 'location'})
+
     total_count = len(all_rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=8)
@@ -4536,6 +4637,9 @@ def _toll_tab_base_context(conn, date_from=None, date_to=None):
     top_vehicles = sorted([{'vehicle_no': k, 'amount': v} for k, v in veh_totals.items()], key=lambda x: -x['amount'])[:6]
     veh_max = max([v['amount'] for v in top_vehicles], default=1) or 1
 
+    all_rows, _, _ = _table_sort(all_rows, {'date': lambda r: ((r['date'] or '') + ' ' + (r['time'] or '')).strip(), 'vehicle': 'vehicle_no', 'trip': 'lr_number', 'plaza': 'toll_plaza',
+                                            'highway': 'highway', 'amount': 'amount', 'source': 'source', 'status': 'status'})
+
     total_count = len(all_rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
@@ -4666,6 +4770,9 @@ def _compliance_expense_tab_context(conn):
         trend.append({'label': calendar.month_abbr[mm], 'amount': cost})
     trend_max = max([t['amount'] for t in trend], default=1) or 1
 
+    all_rows, _, _ = _table_sort(all_rows, {'date': 'date', 'vehicle': 'vehicle_no', 'type': 'compliance_type', 'description': 'description', 'vendor': 'vendor_name',
+                                            'amount': 'amount', 'mode': 'payment_mode'})
+
     total_count = len(all_rows)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
@@ -4724,6 +4831,9 @@ def _maintenance_category_tab(conn, tab_slug, template='maintenance.html', activ
     paid_total = sum(r['paid_amount'] or 0 for r in rows)
     unpaid_total = total_amount - paid_total
     vehicles_involved = len(set(r['vehicle_no'] for r in rows if r['vehicle_no']))
+
+    rows, _, _ = _table_sort(rows, {'date': 'date', 'vehicle': 'vehicle_no', 'category': 'category', 'vendor': 'vendor_name', 'amount': 'amount',
+                                    'status': lambda r: 'Paid' if ((r['paid_amount'] or 0) >= (r['amount'] or 0) and (r['amount'] or 0) > 0) else 'Unpaid'})
 
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=25)
@@ -4859,6 +4969,9 @@ def _maintenance_tyres_tab(conn):
         if r['vehicle_no']:
             cost_by_vehicle[r['vehicle_no']] = cost_by_vehicle.get(r['vehicle_no'], 0) + (r['amount'] or 0)
     top_costly = sorted(cost_by_vehicle.items(), key=lambda x: -x[1])[:5]
+
+    rows, _, _ = _table_sort(rows, {'date': 'date', 'vehicle': 'vehicle_no', 'action': lambda r: r['tyre_action'] or r['category'], 'position': 'tyre_position', 'tyre_id': 'tyre_id',
+                                    'brand': 'tyre_brand', 'supplier': 'vendor_name', 'cost': 'amount'})
 
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
@@ -5080,6 +5193,9 @@ def _maintenance_battery_tab(conn):
     replaced_year = sum(1 for r in all_rows if r['status'] == 'Dead' and (r['last_checked_date'] or r['install_date'] or '').startswith(this_year))
     cost_per_battery = round(total_cost_year / total_batteries) if total_batteries else 0
 
+    rows, _, _ = _table_sort(rows, {'battery': 'battery_no', 'vehicle': 'vehicle_no', 'brand': 'brand', 'type': lambda r: ((r['model'] or '') + ' ' + str(r['capacity_ah'] or '')).strip(),
+                                    'install': 'install_date', 'warranty': 'warranty_upto', 'status': 'status'})
+
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
     page_rows = rows[(page - 1) * per_page: page * per_page]
@@ -5288,6 +5404,10 @@ def _maintenance_service_tab(conn):
         if r['vehicle_no']:
             cost_by_vehicle[r['vehicle_no']] = cost_by_vehicle.get(r['vehicle_no'], 0) + (r['amount'] or 0)
     top_costly = sorted(cost_by_vehicle.items(), key=lambda x: -x[1])[:5]
+
+    rows, _, _ = _table_sort(rows, {'date': 'date', 'vehicle': 'vehicle_no', 'service': lambda r: r['service_type'] or r['category'], 'km': 'km_reading', 'workshop': 'vendor_name',
+                                    'cost': 'amount', 'status': lambda r: r['status'] or 'Completed',
+                                    'due': lambda r: r['next_due_km'] if r['next_due_km'] else r['next_service_date']})
 
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
@@ -6508,6 +6628,8 @@ def _ledger_page_context(all_entries):
 
     entries = _filter_ledger_entries(all_entries, date_from, date_to, kind_f, vtype_f)
     entries = _tab_filter_entries(entries, tab_f)
+    entries, _, _ = _table_sort(entries, {'date': 'date', 'type': 'kind', 'details': lambda e: (e['detail'] or '').split(' — ')[0], 'ref': 'ref', 'debit': lambda e: e['debit'] or None,
+                                          'credit': lambda e: e['credit'] or None, 'balance': 'balance'})
 
     total_count = len(entries)
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_count,
@@ -8694,13 +8816,16 @@ def performance():
 
     # ---------- Pagination (client-independent, shared page-size convention) ----------
     per_page_raw = request.args.get('per_page')
+    d_sorted, _, _ = _table_sort(d['driver_rows'], {'name': 'name', 'trips': 'trip_count', 'billed': 'total_billed', 'fuel': 'total_fuel', 'profit': 'profit', 'last': 'last_trip'}, sp='d_sort', dp='d_dir')
+    v_sorted, _, _ = _table_sort(d['vehicle_rows'], {'name': 'name', 'type': 'type', 'trips': 'trip_count', 'billed': 'total_billed', 'fuel': 'total_fuel', 'maint': 'maint_cost',
+                                                     'profit': 'profit', 'last': 'last_trip'}, sp='v_sort', dp='v_dir')
     d_page, per_page, d_total_pages = _paginate(request.args.get('d_page'), per_page_raw, d['total_drivers'],
                                                  per_page_options=(5, 10, 25, 50), default_per_page=5)
-    driver_page_rows = d['driver_rows'][(d_page - 1) * per_page: d_page * per_page]
+    driver_page_rows = d_sorted[(d_page - 1) * per_page: d_page * per_page]
 
     v_page, per_page, v_total_pages = _paginate(request.args.get('v_page'), per_page_raw, d['total_vehicles'],
                                                  per_page_options=(5, 10, 25, 50), default_per_page=5)
-    vehicle_page_rows = d['vehicle_rows'][(v_page - 1) * per_page: v_page * per_page]
+    vehicle_page_rows = v_sorted[(v_page - 1) * per_page: v_page * per_page]
     d_page_tokens = _page_tokens(d_page, d_total_pages)
     v_page_tokens = _page_tokens(v_page, v_total_pages)
 
@@ -12028,12 +12153,19 @@ def _route_analytics_data(conn, date_from, date_to, from_f, to_f, type_f, vehicl
     top_rev_max = max([r['revenue'] for r in top5_by_revenue], default=1) or 1
     for r in top5_by_revenue:
         r['pct'] = round(r['revenue'] / top_rev_max * 100, 1)
+    # The WORST five, lowest first: least profit in rupees (a route that loses money — negative profit — comes before any that merely earns little) and least
+    # revenue. Ties fall back to the route name so the order never shuffles between page loads.
+    bottom5_by_profit = sorted(route_rows, key=lambda r: (r['profit'], r['route']))[:5]
+    bottom5_by_revenue = sorted(route_rows, key=lambda r: (r['revenue'], r['route']))[:5]
+    bottom_rev_max = max([r['revenue'] for r in bottom5_by_revenue], default=1) or 1
+    bottom5_by_revenue = [dict(r, pct=round(r['revenue'] / bottom_rev_max * 100, 1)) for r in bottom5_by_revenue]
 
     return {
         'trips': trips, 'route_rows': route_rows, 'all_from_list': all_from_list, 'all_to_list': all_to_list,
         'total_routes': total_routes, 'total_trips_sel': total_trips_sel, 'total_revenue_sel': total_revenue_sel,
         'total_cost_sel': total_cost_sel, 'avg_margin': avg_margin, 'avg_rate': avg_rate,
         'top5_by_margin': top5_by_margin, 'top5_by_revenue': top5_by_revenue,
+        'bottom5_by_profit': bottom5_by_profit, 'bottom5_by_revenue': bottom5_by_revenue,
     }
 
 def _owner_rate_per_tonne(t):
@@ -12385,9 +12517,11 @@ def route_analytics():
     total_revenue_sel = _ra['total_revenue_sel']
     avg_margin = _ra['avg_margin']; avg_rate = _ra['avg_rate']
     top5_by_margin = _ra['top5_by_margin']; top5_by_revenue = _ra['top5_by_revenue']
+    bottom5_by_profit = _ra['bottom5_by_profit']; bottom5_by_revenue = _ra['bottom5_by_revenue']
 
     # Route Summary table — same rows, paginated, sorted by revenue.
     route_rows.sort(key=lambda r: r['revenue'], reverse=True)
+    route_rows, _, _ = _table_sort(route_rows, {'route': 'route', 'trips': 'trips', 'revenue': 'revenue', 'cost': 'cost', 'profit': 'profit', 'margin': 'margin'})
     page, per_page, total_pages = _paginate(request.args.get('page'), request.args.get('per_page'), total_routes,
                                              per_page_options=(10, 25, 50, 100), default_per_page=10)
     summary_rows = route_rows[(page - 1) * per_page: page * per_page]
@@ -12405,6 +12539,12 @@ def route_analytics():
     # Route Rates table — its own page number (rr_page) but shares the same per_page value/param
     # as the Best Routes summary table above, same two-pagers-one-per_page pattern Performance
     # already uses for its Driver/Vehicle tabs (d_page/v_page sharing one per_page).
+    _rr_spec = {'from': 'clean_from', 'to': 'clean_to', 'margin_avg': lambda r: r.get('margin_avg') if r.get('hired_owner') else None,
+                'margin_pct': lambda r: r.get('margin_pct') if r.get('hired_owner') else None}
+    for _grp in ('own', 'hired_party', 'hired_owner'):
+        for _stat in ('highest', 'average', 'lowest', 'trips'):
+            _rr_spec[f'{_grp}_{_stat}'] = (lambda r, _g=_grp, _s=_stat: (r.get(_g) or {}).get(_s) if r.get(_g) else None)
+    rr_rows, _, _ = _table_sort(rr_rows, _rr_spec, sp='rr_sort', dp='rr_dir')
     rr_total_count = len(rr_rows)
     rr_page, rr_per_page, rr_total_pages = _paginate(request.args.get('rr_page'), request.args.get('per_page'), rr_total_count,
                                                        per_page_options=(10, 25, 50, 100), default_per_page=10)
@@ -12474,6 +12614,7 @@ def route_analytics():
         total_routes=total_routes, total_trips_sel=total_trips_sel, total_revenue_sel=total_revenue_sel,
         avg_rate=avg_rate, avg_margin=avg_margin,
         top5_by_margin=top5_by_margin, top5_by_revenue=top5_by_revenue,
+        bottom5_by_profit=bottom5_by_profit, bottom5_by_revenue=bottom5_by_revenue,
         summary_rows=summary_rows, page=page, per_page=per_page, total_pages=total_pages,
         page_tokens=page_tokens, base_qs=base_qs,
         rr_rows=rr_rows_page, rr_total_count=rr_total_count, rr_page=rr_page, rr_per_page=rr_per_page,
@@ -12837,7 +12978,7 @@ def export_fleet_utilization():
 def edit_trip(trip_id):
     conn = get_db()
     if request.method == 'POST':
-        f = request.form
+        f = _form_with_stored_empty_flag(conn, trip_id, request.form)
 
         # Same duplicate-LR guard as add_trip (see the comment there) — excludes this trip's own
         # row so re-saving a trip without changing its LR Number doesn't trip over itself.
@@ -14293,7 +14434,7 @@ def app_edit_trip(trip_id):
                 vehicle_type_map, location_options)
 
     if request.method == 'POST':
-        f = request.form
+        f = _form_with_stored_empty_flag(conn, trip_id, request.form)
         dup = _duplicate_lr_trip(conn, f.get('lr_number'), exclude_trip_id=trip_id)
         form_error = None if dup else _trip_form_error(f, check_advance=False)
         if dup or form_error:
@@ -15426,6 +15567,7 @@ def app_analytics():
         all_from_list=d['all_from_list'], all_to_list=d['all_to_list'],
         total_routes=d['total_routes'], total_trips_sel=d['total_trips_sel'], total_revenue_sel=d['total_revenue_sel'],
         avg_margin=d['avg_margin'], top5_by_margin=d['top5_by_margin'], top5_by_revenue=d['top5_by_revenue'],
+        bottom5_by_profit=d['bottom5_by_profit'], bottom5_by_revenue=d['bottom5_by_revenue'],
         most_trips_route=most_trips_route, avg_revenue_per_trip=avg_revenue_per_trip, **rf_ctx)
     if rr is not None:
         rows = rr['rr_rows']

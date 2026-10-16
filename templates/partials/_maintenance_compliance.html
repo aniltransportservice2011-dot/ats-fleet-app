@@ -56,7 +56,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Date</th><th>Vehicle No</th><th>Compliance Type</th><th>Description</th><th>Vendor</th><th class="num">Amount</th><th>Payment Mode</th><th></th></tr>
+    <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Vehicle No', 'vehicle') }}{{ sort_th('Compliance Type', 'type') }}{{ sort_th('Description', 'description') }}{{ sort_th('Vendor', 'vendor') }}{{ sort_th('Amount', 'amount', cls='num', first='desc') }}{{ sort_th('Payment Mode', 'mode') }}<th></th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="document.getElementById('complianceDetail{{ loop.index }}').classList.add('open')">
       <td>{{ r['date'] }}</td>

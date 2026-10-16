@@ -206,7 +206,7 @@
     {% if entries %}
     <div style="overflow-x:auto;">
     <table>
-      <tr><th>Date</th><th>Type</th><th>Details</th><th>Ref / Document</th><th class="num">Debit (₹)</th><th class="num">Credit (₹)</th><th class="num">Balance (₹)</th></tr>
+      <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Type', 'type') }}{{ sort_th('Details', 'details') }}{{ sort_th('Ref / Document', 'ref') }}{{ sort_th('Debit (₹)', 'debit', cls='num', first='desc') }}{{ sort_th('Credit (₹)', 'credit', cls='num', first='desc') }}{{ sort_th('Balance (₹)', 'balance', cls='num', first='desc') }}</tr>
       {% for e in entries %}
       <tr{% if e.link %} class="clickable-row" onclick="openRecordModal('{{ e.link }}')" title="View details (read-only)"{% endif %}>
         <td style="white-space:nowrap;">{{ e.date }}</td>
@@ -225,19 +225,6 @@
       // in base.html) — only this page's clickable rows, in the same top-to-bottom order shown
       // here, so stepping through the popup matches what's visually on screen.
       window.LEDGER_DETAIL_LINKS = [{% for e in entries %}{% if e.link %}{{ e.link|tojson }},{% endif %}{% endfor %}];
-      // Arriving from a trip's "Open in ledger" link (?open_payment=ID): show that payment's detail straight away, on whatever page of the
-      // ledger it is. The browser's Back button then returns to the trip it came from.
-      (function () {
-        var pid = new URLSearchParams(window.location.search).get('open_payment');
-        if (!pid || !/^[0-9]+$/.test(pid)) return;
-        function go() {
-          if (!window.openRecordModal) return;
-          window.openRecordModal('/payments/' + pid + '/view');
-          var u = new URL(window.location.href); u.searchParams.delete('open_payment');
-          history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-        }
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
-      })();
     </script>
     {{ pager.render_pager('pager', page, total_pages, per_page, base_qs, page_tokens) }}
     {% else %}

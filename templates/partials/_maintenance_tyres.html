@@ -182,7 +182,7 @@ function tyShowPos(pos) {
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Date</th><th>Vehicle</th><th>Action</th><th>Position</th><th>Tyre ID</th><th>Brand</th><th>Supplier</th><th class="num">Cost</th><th></th></tr>
+    <tr>{{ sort_th('Date', 'date', first='desc') }}{{ sort_th('Vehicle', 'vehicle') }}{{ sort_th('Action', 'action') }}{{ sort_th('Position', 'position') }}{{ sort_th('Tyre ID', 'tyre_id') }}{{ sort_th('Brand', 'brand') }}{{ sort_th('Supplier', 'supplier') }}{{ sort_th('Cost', 'cost', cls='num', first='desc') }}<th></th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="document.getElementById('viewTyreModal{{ loop.index }}').classList.add('open')">
       <td style="white-space:nowrap;">{{ r['date'] }}</td>

@@ -128,10 +128,11 @@
   {% if trips %}
   <table>
     <tr>
-      <th>Date <a class="trip-sort-ic" title="Sort by Date" href="?{{ filter_qs }}&sort=date&dir={{ 'asc' if (f_sort=='date' and f_dir=='desc') or f_sort=='' else 'desc' }}">{% if f_sort=='date' or f_sort=='' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a></th>
-      <th>LR Number</th><th>Vehicle</th>
-      <th>Party <a class="trip-sort-ic" title="Sort by Party" href="?{{ filter_qs }}&sort=party&dir={{ 'desc' if (f_sort=='party' and f_dir=='asc') else 'asc' }}">{% if f_sort=='party' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a></th>
-      <th>From</th><th>To</th><th class="num">Billed</th><th class="num">Pending</th><th></th><th>Action</th>
+      {{ sort_th('Date', 'date', default=True, defdir='desc', first='desc') }}
+      {{ sort_th('LR Number', 'lr') }}{{ sort_th('Vehicle', 'vehicle') }}{{ sort_th('Party', 'party') }}
+      {{ sort_th('From', 'from') }}{{ sort_th('To', 'to') }}
+      {% if can_sort_amounts %}{{ sort_th('Billed', 'billed', cls='num', first='desc') }}{{ sort_th('Pending', 'pending', cls='num', first='desc') }}{% else %}<th class="num">Billed</th><th class="num">Pending</th>{% endif %}
+      {{ sort_th('Status', 'status') }}<th>Action</th>
     </tr>
     {% for t in trips %}
     <tr class="clickable-row" onclick="goTo('/trips/edit/{{ t['id'] }}')">

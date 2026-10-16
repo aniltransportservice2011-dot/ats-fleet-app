@@ -4,8 +4,8 @@
    figures, no history. #}
 {% macro amt(v) %}{{ mny(v or 0, '{:,.0f}' if (v or 0) == ((v or 0)|round(0)) else '{:,.2f}') }}{% endmacro %}
 {% macro ledger_href(kind, r, b) -%}
-{%- if kind == 'party' -%}{{ url_for('party_ledger', party_id=(r.party_id or b.party_id)) }}?open_payment={{ r.payment_id }}
-{%- else -%}{{ url_for('vendor_ledger', vendor_id=(r.vendor_id or b.vendor_id)) }}?open_payment={{ r.payment_id }}{%- endif -%}
+{%- if kind == 'party' -%}{{ url_for('party_ledger', party_id=(r.party_id or b.party_id)) }}
+{%- else -%}{{ url_for('vendor_ledger', vendor_id=(r.vendor_id or b.vendor_id)) }}{%- endif -%}
 {%- endmacro %}
 {% if pay and not pay.hidden %}
 {% for kind, b in [('party', pay.party), ('owner', pay.owner)] %}

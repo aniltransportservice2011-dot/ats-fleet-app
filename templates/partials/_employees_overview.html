@@ -27,7 +27,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Employee</th><th>Role</th><th>Joining Date</th><th>Attendance</th><th>Salary Status</th><th class="num">Advance</th><th></th></tr>
+    <tr>{{ sort_th('Employee', 'employee') }}{{ sort_th('Role', 'role') }}{{ sort_th('Joining Date', 'joining') }}{{ sort_th('Attendance', 'attendance', first='desc') }}{{ sort_th('Salary Status', 'salary') }}{{ sort_th('Advance', 'advance', cls='num', first='desc') }}<th></th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="document.getElementById('viewEmpModal{{ r.id }}').classList.add('open')">
       <td>

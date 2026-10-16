@@ -28,7 +28,7 @@
   {% if rows %}
   <div style="overflow-x:auto;">
   <table>
-    <tr><th>Employee</th><th>Role</th><th class="num">Total Paid</th><th class="num">Payments</th><th>Last Paid</th><th class="num">Outstanding Advance</th><th></th></tr>
+    <tr>{{ sort_th('Employee', 'employee') }}{{ sort_th('Role', 'role') }}{{ sort_th('Total Paid', 'paid', cls='num', first='desc') }}{{ sort_th('Payments', 'payments', cls='num', first='desc') }}{{ sort_th('Last Paid', 'last', first='desc') }}{{ sort_th('Outstanding Advance', 'advance', cls='num', first='desc') }}<th></th></tr>
     {% for r in rows %}
     <tr class="clickable-row" onclick="window.location='/employee/{{ r.name|urlencode }}?from_tab=salary'">
       <td>

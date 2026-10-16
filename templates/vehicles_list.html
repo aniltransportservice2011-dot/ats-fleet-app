@@ -164,19 +164,15 @@
     <div style="overflow-x:auto;">
     <table class="veh-table">
       <tr>
-        <th>Vehicle No</th>
-        <th>Age <span class="veh-info-ic" title="Computed from Registration Date">&#9432;</span>
-          <a class="veh-sort-ic" title="Sort by Age" href="?vehicle={{ f_vehicle }}&type={{ f_type }}&status={{ f_status }}&age={{ f_age }}&sort=age&dir={{ 'desc' if (f_sort=='age' and f_dir=='asc') else 'asc' }}">{% if f_sort=='age' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a>
-        </th>
-        <th>Insurance <span class="veh-info-ic" title="Insurance validity">&#9432;</span></th>
-        <th>Fitness <span class="veh-info-ic" title="Fitness certificate validity">&#9432;</span></th>
-        <th>PUC <span class="veh-info-ic" title="Pollution certificate validity">&#9432;</span></th>
-        <th>Permit <span class="veh-info-ic" title="Permit validity">&#9432;</span></th>
-        <th>Road Tax <span class="veh-info-ic" title="From the eChallan RC sync — Tax Valid Upto">&#9432;</span></th>
-        <th>Status</th>
-        <th>Challan
-          <a class="veh-sort-ic" title="Sort by Challan Amount" href="?vehicle={{ f_vehicle }}&type={{ f_type }}&status={{ f_status }}&age={{ f_age }}&sort=challan&dir={{ 'desc' if (f_sort=='challan' and f_dir=='asc') else 'asc' }}">{% if f_sort=='challan' %}{{ '▲' if f_dir=='asc' else '▼' }}{% else %}⇅{% endif %}</a>
-        </th>
+        {{ sort_th('Vehicle No', 'vehicle') }}
+        {{ sort_th('Age <span class="veh-info-ic" title="Computed from Registration Date">&#9432;</span>', 'age') }}
+        {{ sort_th('Insurance <span class="veh-info-ic" title="Insurance validity">&#9432;</span>', 'insurance') }}
+        {{ sort_th('Fitness <span class="veh-info-ic" title="Fitness certificate validity">&#9432;</span>', 'fitness') }}
+        {{ sort_th('PUC <span class="veh-info-ic" title="Pollution certificate validity">&#9432;</span>', 'puc') }}
+        {{ sort_th('Permit <span class="veh-info-ic" title="Permit validity">&#9432;</span>', 'permit') }}
+        {{ sort_th('Road Tax <span class="veh-info-ic" title="From the eChallan RC sync — Tax Valid Upto">&#9432;</span>', 'roadtax') }}
+        {{ sort_th('Status', 'status') }}
+        {{ sort_th('Challan', 'challan', first='desc') }}
         <th>Actions</th>
       </tr>
       {% set comp_colors = {'Valid': ('#e8f5ee','var(--green)'), 'Expiring Soon': ('#fff3e8','var(--accent)'), 'Expired': ('#fdecea','var(--red)'), 'Cancelled': ('#fdecea','var(--red)'), 'Unknown': ('var(--paper)','var(--steel)')} %}
