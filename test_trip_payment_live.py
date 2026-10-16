@@ -56,7 +56,8 @@ def read(p):
 js = read('static/trip_payment_live.js')
 check('window.TripPayLive' in js and 'update:' in js and 'party:' in js, 'A: the shared live script exposes update() and party()')
 check('Math.max(typed, dated)' in js and 'Math.max(typed, dated)' in js.replace('\n', ''), 'A: it applies the same floor the server does (never below what the ledger applied)')
-check("'Not saved yet" in js or 'Not saved yet' in js, 'A: it says the figures are unsaved while they differ from what is stored')
+check('Not saved yet' not in js and 'Not saved yet' not in read('templates/partials/_trip_payment_history.html'), 'A: no "not saved yet" message anywhere (the figures simply follow what is typed and revert if the page is left)')
+check('No payment has been recorded' not in read('templates/partials/_trip_payment_history.html') + read('templates/app/_trip_payment_history.html') and 'Nothing has been paid to the owner' not in read('templates/partials/_trip_payment_history.html') + read('templates/app/_trip_payment_history.html'), 'A: no "no payment recorded yet" message in either card')
 web = read('templates/trip_form.html')
 phone = read('templates/app/trip_add.html')
 check("asset_v('trip_payment_live.js')" in web and 'TripPayLive.update(document.getElementById(\'tripForm\'), net, ownerAmount, isHired)' in web, 'A: website form loads the script and tfRecalc (runs on every input / change) calls it')
@@ -154,11 +155,14 @@ def form_fields(html_text):
     return d
 
 
-def save_edit(tid, **typed):
+def save_edit(tid, entries=(), **typed):
     body = form_fields(cl.get(f'/trips/edit/{tid}').data.decode('utf-8', 'ignore'))
     body.update({k: str(v) for k, v in typed.items()})
     body['return_to'] = ''
-    return cl.post(f'/trips/edit/{tid}', data=body)
+    data = {k: [v] for k, v in body.items()}
+    data['entry_kind'] = [e[0] for e in entries]; data['entry_date'] = ['2026-10-12'] * len(entries); data['entry_amount'] = [str(e[1]) for e in entries]
+    data['entry_mode'] = ['Cash'] * len(entries); data['entry_ref'] = [f'LV{tid}-{i}' for i in range(len(entries))]
+    return cl.post(f'/trips/edit/{tid}', data=data)
 
 
 def stored_pay(tid):
@@ -191,14 +195,18 @@ for (const sc of scenarios) {
   const ownerRoot = mkEl({ 'data-dated': String(sc.owner_dated), 'data-nrows': '1', 'data-init-paid': '0', 'data-init-owner': '0', ...(sc.add ? { 'data-add': '1' } : {}) });
   for (const n of ['billed', 'received', 'balance', 'pill', 'bar', 'bar-u', 'bar-d', 'note', 'adv-row', 'adv-amt', 'lump-row', 'lump-amt', 'none']) partyRoot.children[n] = mkEl({ 'data-prefix': 'tph' });
   for (const n of ['owner-amount', 'company', 'paid', 'owner-net', 'pending', 'pill', 'bar', 'bar-u', 'bar-d', 'note', 'lump-row', 'lump-amt', 'none']) ownerRoot.children[n] = mkEl({ 'data-prefix': 'tph' });
-  const form = { elements: {}, querySelector(sel) { return sel.indexOf('"party"') > -1 ? partyRoot : (sel.indexOf('"owner"') > -1 ? ownerRoot : null); } };
+  const rowEls = (sc.rows || []).map(r => ({ hasAttribute(n) { return n === 'data-id' && !!r.id; },
+    getAttribute(n) { return n === 'data-id' ? (r.id || '') : n === 'data-changed' ? (r.changed ? '1' : '') : n === 'data-orig-alloc' ? String(r.origAlloc || 0) : null; },
+    querySelector(sel) { return sel.indexOf('kind') > -1 ? { value: r.kind } : (sel.indexOf('vendor') > -1 ? { value: r.vendor || '' } : { value: String(r.amount) }); } }));
+  const delEls = (sc.deleted || []).map(d => ({ getAttribute(n) { return n === 'data-kind' ? d.kind : String(d.alloc); } }));
+  const form = { elements: {}, querySelectorAll(sel) { return { forEach: f => (sel.indexOf('entry_delete') > -1 ? delEls : rowEls).forEach(f) }; }, querySelector(sel) { return sel.indexOf('"party"') > -1 ? partyRoot : (sel.indexOf('"owner"') > -1 ? ownerRoot : null); } };
   for (const [k, v] of Object.entries(sc.fields)) form.elements[k] = { value: String(v) };
   window.TripPayLive.update(form, sc.billed, sc.owner_amount, sc.hired);
   const g = (r, n) => r.children[n];
   out.push({ party: { billed: g(partyRoot, 'billed').textContent, received: g(partyRoot, 'received').textContent, balance: g(partyRoot, 'balance').textContent,
                       pill: g(partyRoot, 'pill').hidden ? '' : g(partyRoot, 'pill').textContent, note: g(partyRoot, 'note').hidden ? '' : g(partyRoot, 'note').textContent,
                       advRow: !g(partyRoot, 'adv-row').hidden, lumpRow: !g(partyRoot, 'lump-row').hidden, lumpAmt: g(partyRoot, 'lump-amt').textContent },
-             owner: { amount: g(ownerRoot, 'owner-amount').textContent, company: g(ownerRoot, 'company').textContent, paid: g(ownerRoot, 'paid').textContent,
+             owner: { note: g(ownerRoot, 'note').hidden ? '' : g(ownerRoot, 'note').textContent, amount: g(ownerRoot, 'owner-amount').textContent, company: g(ownerRoot, 'company').textContent, paid: g(ownerRoot, 'paid').textContent,
                       pending: g(ownerRoot, 'pending').textContent, pill: g(ownerRoot, 'pill').hidden ? '' : g(ownerRoot, 'pill').textContent, hidden: ownerRoot.hidden } });
 }
 process.stdout.write(JSON.stringify(out));
@@ -303,6 +311,121 @@ check(not bad, f'C: JS Paid / Pending / company-paid / status == the server afte
 lv_nohire = run_live([{'billed': 1000, 'owner_amount': 0, 'hired': False, 'party_dated': 0, 'owner_dated': 0, 'fields': {}}])[0]
 check(lv_nohire['owner']['hidden'] is True, 'C: the owner block is hidden when the trip is not hired')
 
+# ---------------------------------------------------------------------------------------------------------------- B2/C2. payment ROWS being added
+bad = []
+plan_r = []; scen_r = []
+for i in range(24):
+    billed = random.choice([10000, 20000, 48000, 125000])
+    t = mk_trip(f'TL-R{i}', billed, party_advance=random.choice([0, 1000]), payment_received=random.choice([0, 3000]))
+    c.commit()
+    rows_ = [('received', random.choice([500, 3000, 9000, billed, billed * 2])) for _ in range(random.choice([1, 2, 3]))]
+    plan_r.append((t, billed, rows_))
+for (t, billed, rows_) in plan_r:
+    f = form_fields(cl.get(f'/trips/edit/{t}').data.decode('utf-8', 'ignore'))
+    scen_r.append({'billed': billed, 'owner_amount': 0, 'hired': False, 'party_dated': 0, 'owner_dated': 0,
+                   'fields': {'party_advance': f['party_advance'], 'payment_received': f['payment_received']}, 'rows': [{'kind': k, 'amount': a} for k, a in rows_]})
+live_r = run_live(scen_r)
+for (t, billed, rows_), lv in zip(plan_r, live_r):
+    r = save_edit(t, entries=rows_)
+    fresh()
+    p = stored_pay(t)['pay']['party']
+    exp_due = max(p['due'], 0)
+    if 'nothing is left to receive' in lv['party']['note']:        # the live card flags a row the server will refuse; the server must refuse it (and save nothing)
+        if r.status_code != 200 or one('SELECT COUNT(*) FROM payments WHERE reference_id LIKE ?', f'LV{t}-%') != 0:
+            bad.append((t, rows_, 'flagged but the server saved', r.status_code))
+        continue
+    if r.status_code != 302 or abs(exp_due - money(lv['party']['balance'])) > 0.011 or abs(p['received_total'] - money(lv['party']['received'])) > 0.011 or (p['status'] or '') != lv['party']['pill']:
+        bad.append((t, billed, rows_, r.status_code, 'server', round(exp_due, 2), p['received_total'], p['status'], 'js', lv['party']['balance'], lv['party']['received'], lv['party']['pill']))
+check(not bad, f'B2: JS balance / received / status with payment ROWS == the server after saving the same rows, for {len(plan_r)} trips: {bad[:2]}')
+check(any('more than this trip still owes' in lv['party']['note'] for lv in live_r) and any('nothing is left to receive' in lv['party']['note'] for lv in live_r), 'B2: entering more than the trip owes says the extra stays in the ledger as an advance; a row that comes when nothing is left is flagged')
+bad = []; plan_w = []
+for i in range(10):
+    t = mk_trip(f'TL-W{i}', 50000, type='hired', vehicle_id=hveh, owner_vendor_id=owner, owner_name='TL OWNER', owner_rate=4000, owner_rate_type='PER_MT',
+                fuel_amount=6000, fuel_vendor_id=fuel_v, driver_adv_amount=2000)
+    c.commit()
+    plan_w.append((t, [('owner', random.choice([1000, 12000, 30000, 90000])) for _ in range(random.choice([1, 2]))]))
+scen_w = []
+for (t, rows_) in plan_w:
+    f = form_fields(cl.get(f'/trips/edit/{t}').data.decode('utf-8', 'ignore'))
+    scen_w.append({'billed': 50000, 'owner_amount': 40000, 'hired': True, 'party_dated': 0, 'owner_dated': 0,
+                   'fields': {'party_advance': 0, 'payment_received': 0, 'paid_to_owner': f['paid_to_owner'], 'owner_name': 'TL OWNER', 'fuel_vendor': 'TL FUEL',
+                              'fuel_amount': 6000, 'driver_adv_vendor': '', 'driver_adv_amount': 2000}, 'rows': [{'kind': k, 'amount': a} for k, a in rows_]})
+live_w = run_live(scen_w)
+for (t, rows_), lv in zip(plan_w, live_w):
+    r = save_edit(t, entries=rows_)
+    fresh()
+    o = stored_pay(t)['pay']['owner']
+    if 'nothing is left to pay the owner' in lv['owner']['note']:
+        if r.status_code != 200 or one('SELECT COUNT(*) FROM payments WHERE reference_id LIKE ?', f'LV{t}-%') != 0:
+            bad.append((t, rows_, 'flagged but the server saved', r.status_code))
+        continue
+    if r.status_code != 302 or abs(max(o['pending'], 0) - money(lv['owner']['pending'])) > 0.011 or abs(o['paid_total'] - money(lv['owner']['paid'])) > 0.011 or (o['status'] or '') != lv['owner']['pill']:
+        bad.append((t, rows_, r.status_code, 'server', round(o['pending'], 2), o['paid_total'], o['status'], 'js', lv['owner']))
+check(not bad, f'C2: JS Paid / Pending / status with owner ROWS == the server after saving them, for {len(plan_w)} hired trips: {bad[:2]}')
+
+# ---------------------------------------------------------------------------------------------------------------- B3/C3. stored entries edited / removed, fuel vendors
+def entry_post(tid, rows, deletes=()):
+    body = form_fields(cl.get(f'/trips/edit/{tid}').data.decode('utf-8', 'ignore'))
+    body['return_to'] = ''
+    data = {k: [v] for k, v in body.items()}
+    for k in ('id', 'kind', 'date', 'amount', 'mode', 'ref', 'vendor', 'liters'):
+        data['entry_' + k] = [r.get(k, '') for r in rows]
+    data['entry_delete'] = list(deletes)
+    return cl.post(f'/trips/edit/{tid}', data=data)
+
+
+bad = []
+for i in range(12):
+    billed = random.choice([20000, 48000])
+    t = mk_trip(f'TL-E{i}', billed)
+    c.commit()
+    entry_post(t, [{'kind': 'received', 'date': '2026-10-01', 'amount': '4000', 'mode': 'UPI', 'ref': f'EA{i}'}, {'kind': 'received', 'date': '2026-10-02', 'amount': '3000', 'mode': 'Cash', 'ref': f'EB{i}'}])
+    fresh()
+    ids = [r_['id'] for r_ in c.execute("SELECT id FROM payments WHERE reference_id IN (?,?) ORDER BY id", (f'EA{i}', f'EB{i}')).fetchall()]
+    f = form_fields(cl.get(f'/trips/edit/{t}').data.decode('utf-8', 'ignore'))
+    dated = float(c.execute('SELECT COALESCE(SUM(amount),0) FROM payment_allocations WHERE trip_id=?', (t,)).fetchone()[0])
+    new_first = random.choice([1000, 9000, billed * 2])
+    extra = random.choice([0, 2500])
+    rows_ = [{'id': 'p%d' % ids[0], 'kind': 'received', 'changed': True, 'origAlloc': 4000, 'amount': new_first}]
+    if extra:
+        rows_.append({'kind': 'received', 'amount': extra})
+    sc = {'billed': billed, 'owner_amount': 0, 'hired': False, 'party_dated': dated, 'owner_dated': 0,
+          'fields': {'party_advance': f['party_advance'], 'payment_received': f['payment_received']}, 'rows': rows_,
+          'deleted': [{'kind': 'received', 'alloc': 3000}]}
+    lv = run_live([sc])[0]
+    post_rows = [{'id': 'p%d' % ids[0], 'kind': 'received', 'date': '2026-10-01', 'amount': str(new_first), 'mode': 'UPI', 'ref': f'EA{i}x'}]
+    if extra:
+        post_rows.append({'kind': 'received', 'date': '2026-10-05', 'amount': str(extra), 'mode': 'Cash', 'ref': f'EN{i}'})
+    r = entry_post(t, post_rows, ['p%d' % ids[1]])
+    fresh()
+    p = stored_pay(t)['pay']['party']
+    exp_due = max(p['due'], 0)
+    if 'nothing is left' in lv['party']['note']:
+        if r.status_code != 200:
+            bad.append((t, 'flagged but saved'))
+        continue
+    if r.status_code != 302 or abs(exp_due - money(lv['party']['balance'])) > 0.011 or abs(p['received_total'] - money(lv['party']['received'])) > 0.011:
+        bad.append((t, billed, new_first, extra, r.status_code, 'server', round(exp_due, 2), p['received_total'], 'js', lv['party']['balance'], lv['party']['received']))
+check(not bad, f'B3: JS == server after EDITING one stored payment, REMOVING another and adding a new one, for 12 trips: {bad[:2]}')
+
+bad = []
+for i in range(8):
+    t = mk_trip(f'TL-F{i}', 50000, type='hired', vehicle_id=hveh, owner_vendor_id=owner, owner_name='TL OWNER', owner_rate=4000, owner_rate_type='PER_MT')
+    c.commit()
+    fuel_rows = [{'kind': 'fuel', 'amount': 3000, 'vendor': random.choice(['TL FUEL', 'TL OWNER', ''])}, {'kind': 'driver_adv', 'amount': 1000, 'vendor': random.choice(['Raju', 'TL OWNER'])}]
+    f = form_fields(cl.get(f'/trips/edit/{t}').data.decode('utf-8', 'ignore'))
+    sc = {'billed': 50000, 'owner_amount': 40000, 'hired': True, 'party_dated': 0, 'owner_dated': 0, 'rows': fuel_rows,
+          'fields': {'party_advance': 0, 'payment_received': 0, 'paid_to_owner': f['paid_to_owner'], 'owner_name': 'TL OWNER',
+                     'legacy_fuel_amount': f['legacy_fuel_amount'], 'legacy_fuel_vendor': f['legacy_fuel_vendor'], 'legacy_adv_amount': f['legacy_adv_amount'], 'legacy_adv_vendor': f['legacy_adv_vendor']}}
+    lv = run_live([sc])[0]
+    post_rows = [{'kind': r_['kind'], 'date': '2026-10-05', 'amount': str(r_['amount']), 'vendor': r_['vendor']} for r_ in fuel_rows]
+    r = entry_post(t, post_rows)
+    fresh()
+    o = stored_pay(t)['pay']['owner']
+    if r.status_code != 302 or abs(max(o['pending'], 0) - money(lv['owner']['pending'])) > 0.011 or abs(o['company_paid'] - money(lv['owner']['company'])) > 0.011:
+        bad.append((t, fuel_rows, r.status_code, 'server', round(o['pending'], 2), o['company_paid'], 'js', lv['owner']['pending'], lv['owner']['company']))
+check(not bad, f'C3: JS company-paid / pending == the server with fuel and driver-advance ENTRIES for different vendors (owner as vendor does not count): {bad[:2]}')
+
 # ---------------------------------------------------------------------------------------------------------------- D. nothing stored by viewing / typing; fields unchanged
 tid = rows[0][0]
 snap = tuple(c.execute('SELECT payment_received, paid_to_owner, party_advance, billed_amount FROM trips WHERE id=?', (tid,)).fetchone())
@@ -314,7 +437,8 @@ check(tuple(c.execute('SELECT payment_received, paid_to_owner, party_advance, bi
       and one('SELECT COUNT(*) FROM payment_allocations') == n_alloc, 'D: opening the forms stores nothing')
 for url in (f'/trips/edit/{tid}', f'/app/trips/{tid}/edit', '/trips/add', '/app/trips/add'):
     names = set(form_fields(cl.get(url).data.decode('utf-8', 'ignore')))
-    check({'party_advance', 'payment_received', 'paid_to_owner', 'fuel_amount', 'driver_adv_amount', 'quantity'} <= names, f'D: {url} still posts the same payment fields')
+    need = {'party_advance', 'payment_received', 'paid_to_owner', 'quantity', 'legacy_fuel_amount', 'legacy_adv_amount'}
+    check(need <= names, f'D: {url} still posts the payment fields (website and phone alike: fuel / driver advance as the "earlier total")')
 
 # ---------------------------------------------------------------------------------------------------------------- E. Add Trip: live figures, no history, warning
 html = cl.get('/trips/add').data.decode('utf-8', 'ignore')
@@ -324,7 +448,7 @@ html = cl.get('/app/trips/add').data.decode('utf-8', 'ignore')
 check('data-tpl-root="party"' in html and 'data-add="1"' in html and 'class="tph2-tl"' not in html, 'E: phone Add Trip has the live figures only')
 add_live = run_live([{'billed': 10000, 'owner_amount': 0, 'hired': False, 'party_dated': 0, 'owner_dated': 0, 'add': True, 'fields': {'party_advance': 12000, 'payment_received': 0}},
                      {'billed': 10000, 'owner_amount': 0, 'hired': False, 'party_dated': 0, 'owner_dated': 0, 'add': True, 'fields': {'party_advance': 4000, 'payment_received': 0}}])
-check('can’t be more than the trip bill' in add_live[0]['party']['note'] and add_live[1]['party']['note'] == '', 'E: on a new trip an advance above the bill is flagged live (the server refuses it); a normal one is not, and there is no "not saved yet" line')
+check('can’t be more than the trip bill' in add_live[0]['party']['note'] and add_live[1]['party']['note'] == '', 'E: on a new trip an advance above the bill is flagged live (the server refuses it); a normal one is not, and there is no extra line')
 r = cl.post('/trips/add', data={'date': '2026-10-20', 'lr_number': 'TL-ADV', 'vehicle_no': 'TLV01', 'party_name': 'TL PARTY', 'quantity': '10', 'rate': '1000', 'rate_type': 'PER_MT',
                                  'party_advance': '12000', 'payment_received': '0', 'type': 'own'})
 fresh()

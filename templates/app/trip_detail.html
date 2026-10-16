@@ -124,6 +124,20 @@
 </div>
 {# every dated payment behind the totals above, recorded in the Ledger — read-only, see _trip_payment_block() in app.py #}
 {% set tph2_card = True %}{% include "app/_trip_payment_history.html" %}
+{% set en = pay.entries if (pay and not pay.hidden and pay.entries) else none %}
+{% if en and (en.payments or en.costs or en.legacy.fuel_amount > 0 or en.legacy.adv_amount > 0) %}
+<div class="ld-card">
+  <div class="ld-card-head"><h2>Entries on this trip</h2></div>
+  {% macro te_row(kind, label, date, amount, sub) %}
+  <div class="te-item"><div class="te-body"><div class="te-top"><span class="te-badge k-{{ kind }}">{{ label }}</span><span class="te-amt">{{ mny(amount or 0, '{:,.0f}' if (amount or 0) == ((amount or 0)|round(0)) else '{:,.2f}') }}</span></div>
+    <div class="te-dt">{{ date or 'No date' }}</div><div class="te-sub">{{ sub }}</div></div></div>
+  {% endmacro %}
+  {% if en.legacy.fuel_amount > 0 %}{{ te_row('fuel', 'Fuel — earlier total', '', en.legacy.fuel_amount, (en.legacy.fuel_vendor or 'paid directly') ~ (' · ' ~ en.legacy.fuel_liters ~ ' L' if en.legacy.fuel_liters else '')) }}{% endif %}
+  {% if en.legacy.adv_amount > 0 %}{{ te_row('driver_adv', 'Driver advance — earlier total', '', en.legacy.adv_amount, en.legacy.adv_vendor or 'paid directly') }}{% endif %}
+  {% for e in en.payments %}{{ te_row(e.kind, 'Payment received' if e.kind == 'received' else 'Payout to owner', e.date, e.amount, e.mode ~ (' · ref ' ~ e.ref if e.ref else '')) }}{% endfor %}
+  {% for e in en.costs %}{{ te_row(e.kind, 'Fuel' if e.kind == 'fuel' else 'Driver advance', e.date, e.amount, (e.vendor or 'paid directly') ~ (' · ' ~ e.liters ~ ' L' if e.liters != '' and e.kind == 'fuel' else '') ~ (' · ' ~ e.ref if e.ref else '')) }}{% endfor %}
+</div>
+{% endif %}
 {% set add_fields = [('detention_charges','Detention'), ('gps_cost','GPS'), ('loading_charge','Loading'), ('unloading_charge','Unloading'), ('police_charges','Police'), ('sim_tracking','SIM Tracking'), ('union_charges','Union'), ('weight_charges','Weight'), ('other_charges','Other')] %}
 <div class="ld-card">
   <div class="ld-card-head"><h2>Additional Charges <span style="color:var(--a-ink);font-weight:800;">{{ mny(additions_total, '{:,.0f}') }}</span></h2></div>

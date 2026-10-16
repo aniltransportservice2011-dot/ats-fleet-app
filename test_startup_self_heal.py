@@ -46,7 +46,7 @@ def fingerprint(path, skip=()):
 tmp = tempfile.mkdtemp(prefix='selfheal_')
 sources = sorted(glob.glob(os.path.join(REPO, 'fleet.db.b*')))
 check(len(sources) > 0, f'{len(sources)} older database backups found to test against')
-skip = {'trips.guarantee_qty', 'invoice_batch_items.vendor_id', 'payment_allocations.overhead_id', 'payment_allocations.maintenance_id'}   # the columns the two start-up steps add
+skip = {'trips.guarantee_qty', 'invoice_batch_items.vendor_id', 'payment_allocations.overhead_id', 'payment_allocations.maintenance_id', 'payments.entered_from'}   # the columns the two start-up steps add
 tested_invoices = 0
 for src in sources:
     name = os.path.basename(src)
@@ -69,6 +69,7 @@ for src in sources:
     check('guarantee_qty' in [r[1] for r in c.execute('PRAGMA table_info(trips)')], f'{name}: trips.guarantee_qty present')
     check('vendor_id' in [r[1] for r in c.execute('PRAGMA table_info(invoice_batch_items)')], f'{name}: invoice_batch_items.vendor_id present')
     check(c.execute("SELECT 1 FROM sqlite_master WHERE name='invoice_batch_charge_exclusions'").fetchone() is not None, f'{name}: charge-exclusions table present')
+    check(c.execute("SELECT 1 FROM sqlite_master WHERE name='trip_cost_entries'").fetchone() is not None and 'entered_from' in [r[1] for r in c.execute('PRAGMA table_info(payments)')], f'{name}: trip_cost_entries table and payments.entered_from present')
     if 'guarantee_qty' not in trip_cols:
         check(c.execute('SELECT COUNT(*) FROM trips WHERE COALESCE(guarantee_qty,0)<>0').fetchone()[0] == 0, f'{name}: every existing trip has guarantee 0 (billing unchanged)')
     c.close()

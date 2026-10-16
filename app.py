@@ -21,6 +21,8 @@ app = Flask(__name__)
 # actually set. A real deployment MUST set SECRET_KEY to something random and never commit it;
 # a leaked/guessable secret key lets someone forge login sessions.
 app.secret_key = os.environ.get('SECRET_KEY', 'fleet-local-app-anil-transport-secret-key-2026')
+# Staying signed in: every login is a long-lived session (the cookie survives closing the browser / the installed app) that is renewed on each request, so a
+# person stays signed in until they press Logout — there is no idle logout. 30 days of not opening the app at all is the only other way a session ends.
 app.permanent_session_lifetime = datetime.timedelta(days=30)
 # Security defaults. SameSite=Lax stops a cookie being sent with a cross-site POST (the usual forged-form attack);
 # Secure (https only) is switched on when running on Render, which always serves https; the upload cap stops one
@@ -462,6 +464,26 @@ print('[schema] users extra columns:', _ensure_user_extra_columns(), file=sys.st
 _BILLING_EXTRA_COLUMNS = (                                  # (table, column, definition) — exactly what migrate_guarantee_qty.sql / migrate_invoice_batch_items_vendor.sql add
     ('trips', 'guarantee_qty', 'REAL DEFAULT 0'),                                # Minimum Guarantee Weight; 0 = none, so every existing trip bills exactly as before
     ('invoice_batch_items', 'vendor_id', 'INTEGER REFERENCES vendors(id)'),      # which vendor an invoice's extra line belongs to; empty for existing lines
+    ('payments', 'entered_from', 'TEXT'),                                        # 'trip' = entered on a trip's own screen; empty (every existing payment) = entered in the Ledger
+)
+_TRIP_COST_ENTRIES_DDL = (                                  # same as migrate_trip_entries.sql — dated fuel / driver-advance entries of a trip
+    """CREATE TABLE IF NOT EXISTS trip_cost_entries (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        trip_id     INTEGER NOT NULL REFERENCES trips(id),
+        kind        TEXT NOT NULL CHECK(kind IN ('fuel','driver_adv')),
+        date        TEXT,
+        vendor_id   INTEGER REFERENCES vendors(id),
+        amount      REAL NOT NULL,
+        liters      REAL,
+        ref         TEXT,
+        company_id  INTEGER NOT NULL DEFAULT 1,
+        created_by  INTEGER REFERENCES users(id),
+        created_at  TEXT,
+        updated_by  INTEGER REFERENCES users(id),
+        updated_at  TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_trip_cost_entries_trip ON trip_cost_entries(trip_id)",
+    "CREATE INDEX IF NOT EXISTS idx_trip_cost_entries_vendor ON trip_cost_entries(vendor_id)",
 )
 _BILLING_CHARGE_EXCLUSIONS_DDL = (                          # same as migrate_invoice_charge_exclusions.sql
     """CREATE TABLE IF NOT EXISTS invoice_batch_charge_exclusions (
@@ -508,6 +530,11 @@ def _ensure_billing_columns(db_path=None):
                     conn.execute(stmt)
                 conn.commit()
                 done.append('invoice_batch_charge_exclusions')
+            if 'trips' in tables and 'trip_cost_entries' not in tables:
+                for stmt in _TRIP_COST_ENTRIES_DDL:
+                    conn.execute(stmt)
+                conn.commit()
+                done.append('trip_cost_entries')
             return ('added ' + ', '.join(done)) if done else 'already up to date'
         finally:
             conn.close()
@@ -1165,22 +1192,25 @@ def _bulk_balances(conn):
     for m in conn.execute("SELECT id, vendor_id, amount, paid_amount FROM maintenance WHERE vendor_id IS NOT NULL").fetchall():
         if m['vendor_id'] in vbal:
             vbal[m['vendor_id']] += max((m['paid_amount'] or 0) - maint_alloc.get(m['id'], 0), 0) - (m['amount'] or 0)
-    for t in conn.execute("""SELECT id, owner_vendor_id, fuel_vendor_id, fuel_amount, driver_adv_vendor_id, driver_adv_amount, owner_rate_type,
+    cost_entries = _load_cost_entries(conn)
+    for t in conn.execute("""SELECT id, date, owner_vendor_id, fuel_vendor_id, fuel_amount, driver_adv_vendor_id, driver_adv_amount, owner_rate_type,
                                     owner_fixed_amount, owner_rate, quantity, paid_to_owner FROM trips
-                             WHERE owner_vendor_id IS NOT NULL OR fuel_vendor_id IS NOT NULL OR driver_adv_vendor_id IS NOT NULL""").fetchall():
-        owner, fv, av = t['owner_vendor_id'], t['fuel_vendor_id'], t['driver_adv_vendor_id']
-        if fv in vbal and (owner is None or owner != fv):          # fuel paid out of the owner's own freight is already inside his Trip Bill
-            vbal[fv] -= (t['fuel_amount'] or 0)
-        if av in vbal and (owner is None or owner != av):
-            vbal[av] -= (t['driver_adv_amount'] or 0)
+                             WHERE owner_vendor_id IS NOT NULL OR fuel_vendor_id IS NOT NULL OR driver_adv_vendor_id IS NOT NULL
+                                OR COALESCE(fuel_amount,0) > 0 OR COALESCE(driver_adv_amount,0) > 0""").fetchall():
+        owner = t['owner_vendor_id']
+        parts = _cost_parts(t, cost_entries.get(t['id'], []))
+        for kind in ('fuel', 'driver_adv'):
+            for (pv, pamt, _pd, _eid) in parts[kind]:
+                if pv in vbal and (owner is None or owner != pv):      # fuel paid out of the owner's own freight is already inside his Trip Bill
+                    vbal[pv] -= pamt
         if owner in vbal:
             owed = (t['owner_fixed_amount'] if (t['owner_rate_type'] or 'PER_MT') == 'FIXED' else (t['owner_rate'] or 0) * (t['quantity'] or 0))
             if owed:
                 vbal[owner] += max((t['paid_to_owner'] or 0) - trip_alloc.get(t['id'], 0), 0) - owed
-                if fv != owner and t['fuel_amount']:
-                    vbal[owner] += t['fuel_amount']
-                if av != owner and t['driver_adv_amount']:
-                    vbal[owner] += t['driver_adv_amount']
+                for kind in ('fuel', 'driver_adv'):
+                    for (pv, pamt, _pd, _eid) in parts[kind]:
+                        if pv != owner and pamt:
+                            vbal[owner] += pamt
     for r in conn.execute("SELECT ii.vendor_id, ii.amount FROM invoice_items ii JOIN trips t ON ii.trip_id=t.id WHERE ii.vendor_id IS NOT NULL").fetchall():
         if r['vendor_id'] in vbal:
             vbal[r['vendor_id']] -= (r['amount'] or 0)
@@ -1759,8 +1789,9 @@ def dashboard():
     overdue_payables = 0
     for r in payables:
         last = conn.execute("""SELECT MAX(date) as d FROM trips
-                               WHERE owner_vendor_id=? OR fuel_vendor_id=? OR driver_adv_vendor_id=? OR misc_vendor_id=?""",
-                            (r['id'], r['id'], r['id'], r['id'])).fetchone()['d']
+                               WHERE owner_vendor_id=? OR fuel_vendor_id=? OR driver_adv_vendor_id=? OR misc_vendor_id=?
+                                  OR id IN (SELECT trip_id FROM trip_cost_entries WHERE vendor_id=?)""",
+                            (r['id'], r['id'], r['id'], r['id'], r['id'])).fetchone()['d']
         if last and last < overdue_cutoff:
             overdue_payables += -r['balance']
 
@@ -3450,6 +3481,19 @@ def _update_trip_from_form(conn, trip_id, f):
                                     (trip_id,)).fetchone()['amt']
     payment_received_val = max(n('payment_received'), received_floor)
     paid_to_owner_val = max(n('paid_to_owner'), paid_owner_floor)
+    # same idea for fuel / driver advance: the total can never drop below what the dated entries added on the trip's own screen already add up to
+    # (a form that does not know about the entries — the phone app — would otherwise silently leave them bigger than the total)
+    fuel_entries_sum = driver_entries_sum = 0
+    try:
+        for kk, vv in conn.execute("SELECT kind, COALESCE(SUM(amount),0) FROM trip_cost_entries WHERE trip_id=? GROUP BY kind", (trip_id,)).fetchall():
+            if kk == 'fuel':
+                fuel_entries_sum = vv
+            else:
+                driver_entries_sum = vv
+    except sqlite3.OperationalError:
+        pass
+    fuel_amount_val = max(n('fuel_amount'), fuel_entries_sum)
+    driver_adv_val = max(n('driver_adv_amount'), driver_entries_sum)
 
     conn.execute("""UPDATE trips SET
         date=?, lr_number=?, vehicle_id=?, type=?, party_id=?, from_loc=?, to_loc=?, quantity=?, guarantee_qty=?, rate=?,
@@ -3469,7 +3513,7 @@ def _update_trip_from_form(conn, trip_id, f):
          n('police_charges'), n('sim_tracking'), n('union_charges'), n('weight_charges'), n('other_charges'),
          n('brokerage'), n('builty_commission'), n('late_fees'), n('material_damage'), n('shortage_amount'),
          n('shortage_qty'), n('tds'), n('other_deductions'),
-         n('fuel_amount'), f.get('fuel_liters') or None, n('fuel_price'), n('driver_adv_amount'), n('party_advance'), payment_received_val, fuel_vendor_id, driveradv_vendor_id,
+         fuel_amount_val, f.get('fuel_liters') or None, n('fuel_price'), driver_adv_val, n('party_advance'), payment_received_val, fuel_vendor_id, driveradv_vendor_id,
          f.get('owner_name'), fixed_rate_amount, n('owner_rate'), owner_rate_type, owner_fixed_amount, paid_to_owner_val, owner_vendor_id,
          n('agent_commission'), n('builty_expense'), n('fine'), n('labour_charges'),
          n('parking'), n('puncture'), n('toll'), n('urea'), n('loading_expense'), n('unloading_expense'),
@@ -3499,7 +3543,19 @@ def add_trip():
                                     vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                                     employees=employees, vehicle_type_map=vehicle_type_map,
                                     return_to=f.get('return_to', ''), active='trips', error=error)
-        _insert_trip_from_form(conn, f)
+        rows, deletes = _parse_trip_entries(f)
+        ok_c, err_c, plan = _plan_cost_entries(conn, None, rows, deletes, f)
+        if not ok_c:
+            conn.close()
+            return _trip_form_error_page('add', f, err_c)
+        new_id = _insert_trip_from_form(conn, _form_with_cost_totals(f, plan))
+        if plan and plan.get('totals'):
+            _write_cost_entries(conn, new_id, plan)
+        ok_e, err_e = _apply_trip_payments(conn, new_id, rows, deletes)
+        if not ok_e:
+            conn.rollback()                 # the trip is not saved either — nothing half-done
+            conn.close()
+            return _trip_form_error_page('add', f, err_e)
         conn.commit()
         conn.close()
         return redirect(url_for('trips_list'))
@@ -3512,6 +3568,231 @@ def add_trip():
     return render_template('trip_form.html', mode='add', t={}, custom_items=[],
                             vehicles=vehicles, parties=parties, vendors=vendors, combined_names=combined_names,
                             employees=employees, vehicle_type_map=vehicle_type_map, return_to='', active='trips')
+
+_ENTRY_PAY_KINDS = ('received', 'owner')
+_ENTRY_COST_KINDS = ('fuel', 'driver_adv')
+
+
+def _parse_trip_entries(form):
+    """The "Payment entries" rows of the trip form (one value per row, in order): entry_id ('' = new; 'p12' = a payment entered on this trip earlier;
+    'c5' = a fuel / driver-advance entry), entry_kind (received | owner | fuel | driver_adv), entry_date, entry_amount, entry_mode, entry_ref,
+    entry_vendor, entry_liters. A new row with nothing typed in it is an untouched blank row and is ignored. Returns (rows, ids_to_delete)."""
+    cols = {k: form.getlist('entry_' + k) for k in ('id', 'kind', 'date', 'amount', 'mode', 'ref', 'vendor', 'liters')}
+    n = max(len(v) for v in cols.values())
+    rows = []
+    for i in range(n):
+        g = lambda k: ((cols[k][i] if i < len(cols[k]) else '') or '').strip()
+        row = {'id': g('id'), 'kind': g('kind') or 'received', 'date': g('date'), 'amount': g('amount'), 'mode': g('mode'), 'ref': g('ref'),
+               'vendor': g('vendor'), 'liters': g('liters')}
+        if row['id'] or row['amount'] or row['ref'] or row['vendor'] or row['liters']:
+            rows.append(row)
+    return rows, [d.strip() for d in form.getlist('entry_delete') if d.strip()]
+
+
+def _entry_money(text, label):
+    amount, err = _parse_money(text, label, required=True, allow_zero=False)
+    return amount, err
+
+
+def _plan_cost_entries(conn, trip_id, rows, deletes, form):
+    """Validate the fuel / driver-advance rows and work out what the trip's totals will be — WITHOUT writing anything. Fuel and driver advance on a trip are made of:
+       - the "earlier total" (the old single value: legacy_fuel_amount / legacy_fuel_vendor / legacy_fuel_liters / legacy_fuel_price, legacy_adv_amount /
+         legacy_adv_vendor), kept as it was and still editable; and
+       - dated entries, each with its own vendor.
+    trips.fuel_amount / driver_adv_amount stay the TOTAL (earlier part + all entries) because everything else reads them. A form that has no legacy_* fields
+    (the phone app) is left exactly as it posts. Returns (ok, error, plan)."""
+    plan = {'insert': [], 'update': [], 'delete': [], 'totals': None}
+    existing = {}
+    if trip_id:
+        for r in conn.execute("SELECT * FROM trip_cost_entries WHERE trip_id=? ORDER BY date, id", (trip_id,)).fetchall():
+            existing['c%d' % r['id']] = dict(r)
+    cost_rows = [r for r in rows if r['kind'] in _ENTRY_COST_KINDS]
+    for d in deletes:
+        if d.startswith('c'):
+            if d not in existing:
+                return False, 'A fuel / driver advance entry you removed no longer exists on this trip.', None
+            plan['delete'].append(existing[d]['id'])
+    final = {k: v for k, v in existing.items() if ('c%d' % v['id']) not in deletes}
+    for n, r in enumerate(cost_rows, 1):
+        label = f"{'Fuel' if r['kind'] == 'fuel' else 'Driver advance'} entry: "
+        d = (r['date'] or '').strip()
+        try:
+            datetime.date.fromisoformat(d)
+        except ValueError:
+            return False, label + 'Date is required and must be a valid date.', None
+        amount, err = _entry_money(r['amount'], label + 'Amount')
+        if err:
+            return False, label + err, None
+        liters = None
+        if r['kind'] == 'fuel' and r['liters']:
+            liters, err = _parse_money(r['liters'], 'Litres', required=False, allow_zero=True)
+            if err:
+                return False, label + err, None
+        if len(r['vendor']) > 120:
+            return False, label + 'Vendor name is too long.', None
+        vals = {'kind': r['kind'], 'date': d, 'vendor_name': r['vendor'], 'amount': amount, 'liters': liters, 'ref': r['ref'][:100]}
+        if r['id']:
+            if r['id'] not in final:
+                return False, label + 'this entry does not belong to this trip.', None
+            cur = final[r['id']]
+            if cur['kind'] != r['kind']:
+                return False, label + "an entry's type can't be changed — remove it and add a new one.", None
+            final[r['id']] = dict(cur, date=d, amount=amount, liters=liters, ref=vals['ref'], _vendor_name=r['vendor'])
+            plan['update'].append((cur['id'], vals))
+        else:
+            tmp = 'n%d' % n
+            final[tmp] = {'id': None, 'kind': r['kind'], 'date': d, 'amount': amount, 'liters': liters, 'ref': vals['ref'], '_vendor_name': r['vendor']}
+            plan['insert'].append(vals)
+    # an existing row that was not submitted and not deleted keeps its stored values (final already holds it)
+    if 'legacy_fuel_amount' in form:
+        def _legacy(name):
+            v, e = _parse_money(form.get(name), name, required=False, allow_zero=True)
+            return (v or 0), e
+        la, e1 = _legacy('legacy_fuel_amount'); lb, e2 = _legacy('legacy_adv_amount')
+        if e1 or e2:
+            return False, e1 or e2, None
+        fuel_rows = [v for v in final.values() if v['kind'] == 'fuel']
+        adv_rows = [v for v in final.values() if v['kind'] == 'driver_adv']
+        fuel_sum = round(sum(v['amount'] or 0 for v in fuel_rows), 2)
+        adv_sum = round(sum(v['amount'] or 0 for v in adv_rows), 2)
+        lit = round(sum(v['liters'] or 0 for v in fuel_rows), 2)
+        lit_amt = round(sum(v['amount'] or 0 for v in fuel_rows if v['liters']), 2)
+        try:
+            legacy_lit = float((form.get('legacy_fuel_liters') or '').replace(',', '').strip() or 0)
+        except ValueError:
+            legacy_lit = 0
+        plan['totals'] = {
+            'fuel_amount': round(la + fuel_sum, 2), 'driver_adv_amount': round(lb + adv_sum, 2),
+            'fuel_vendor': form.get('legacy_fuel_vendor', ''), 'driver_adv_vendor': form.get('legacy_adv_vendor', ''),
+            'fuel_liters': (str(round(legacy_lit + lit, 2)).rstrip('0').rstrip('.') if lit > 0 else (form.get('legacy_fuel_liters') or '')),
+            'fuel_price': (round(lit_amt / lit, 2) if lit > 0 else (form.get('legacy_fuel_price') or 0))}
+    elif cost_rows or plan['delete']:
+        return False, 'Fuel and driver advance entries need the current form. Reload the page and try again.', None
+    return True, None, plan
+
+
+def _write_cost_entries(conn, trip_id, plan):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    uid_ = session.get('user_id')
+    for eid in plan['delete']:
+        conn.execute("DELETE FROM trip_cost_entries WHERE id=? AND trip_id=?", (eid, trip_id))
+    for eid, v in plan['update']:
+        conn.execute("UPDATE trip_cost_entries SET date=?, vendor_id=?, amount=?, liters=?, ref=?, updated_by=?, updated_at=? WHERE id=? AND trip_id=?",
+                     (v['date'], get_or_create_vendor(conn, v['vendor_name']), v['amount'], v['liters'], v['ref'] or None, uid_, now, eid, trip_id))
+    for v in plan['insert']:
+        conn.execute("INSERT INTO trip_cost_entries (trip_id, kind, date, vendor_id, amount, liters, ref, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (trip_id, v['kind'], v['date'], get_or_create_vendor(conn, v['vendor_name']), v['amount'], v['liters'], v['ref'] or None, uid_, now))
+
+
+def _form_with_cost_totals(form, plan):
+    """The posted form with fuel / driver-advance totals, vendors, litres and price replaced by what the entries add up to (the legacy_* fields are the
+    "earlier total"); every other field is exactly as posted. Without a plan the form itself is returned."""
+    t = plan and plan.get('totals')
+    if not t:
+        return form
+    f2 = form.copy()
+    for k in ('fuel_amount', 'driver_adv_amount', 'fuel_vendor', 'fuel_liters', 'fuel_price'):
+        f2[k] = ''
+    f2['fuel_amount'] = str(t['fuel_amount']); f2['driver_adv_amount'] = str(t['driver_adv_amount'])
+    f2['fuel_vendor'] = t['fuel_vendor']; f2['driver_adv_vendor'] = t['driver_adv_vendor']
+    f2['fuel_liters'] = t['fuel_liters']; f2['fuel_price'] = str(t['fuel_price'])
+    return f2
+
+
+def _reverse_trip_payment(conn, trip_id, payment_id):
+    """Undo one payment that was ENTERED ON THIS TRIP: take its allocation back off the trip's total, then remove the allocation and the payment itself.
+    Refuses anything not entered on this trip (a ledger payment can never be undone from here)."""
+    p = conn.execute("SELECT id, payment_type, entered_from FROM payments WHERE id=?", (payment_id,)).fetchone()
+    if not p or p['entered_from'] != 'trip':
+        return False, 'That payment was recorded in the ledger, so it can only be changed there.'
+    allocs = conn.execute("SELECT id, trip_id, amount FROM payment_allocations WHERE payment_id=?", (payment_id,)).fetchall()
+    if any(a['trip_id'] != trip_id for a in allocs):
+        return False, 'That payment is applied to another trip as well and cannot be changed here.'
+    col = 'payment_received' if p['payment_type'] == 'received' else 'paid_to_owner'
+    for a in allocs:
+        conn.execute(f"UPDATE trips SET {col} = MAX(COALESCE({col},0) - ?, 0) WHERE id=?", (a['amount'], trip_id))
+    conn.execute("DELETE FROM payment_allocations WHERE payment_id=?", (payment_id,))
+    conn.execute("DELETE FROM payments WHERE id=?", (payment_id,))
+    return True, None
+
+
+def _apply_trip_payments(conn, trip_id, rows, deletes):
+    """Record / change / remove the PAYMENT rows through the SAME functions the Ledger uses (same validation, duplicate check, dated `payments` row,
+    allocation and totals) limited to this trip: 'received' = money from the trip's party, 'owner' = money paid to the hired vehicle's owner. A payment
+    entered here is marked entered_from='trip': it can be edited or removed here; in the Ledger it is read-only like every payment. A payment that
+    came from the Ledger is never touched. Returns (ok, error_or_None); does not commit (the caller rolls the whole save back on an error)."""
+    from werkzeug.datastructures import MultiDict
+    pay_rows = [r for r in rows if r['kind'] in _ENTRY_PAY_KINDS]
+    pay_deletes = [d for d in deletes if d.startswith('p')]
+    if not pay_rows and not pay_deletes:
+        return True, None
+    t = conn.execute("SELECT id, party_id, owner_vendor_id, type FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if not t:
+        return False, 'Trip not found.'
+    if _hide_trip_amounts() or _module_level('Ledger') != 'e':
+        return False, "You don't have access to record payments (it needs edit access to the Ledger)."
+    mine = {}
+    for r in conn.execute("""SELECT p.id, p.date, p.amount, p.mode, p.reference_id, p.payment_type FROM payments p
+                             WHERE p.entered_from='trip' AND EXISTS (SELECT 1 FROM payment_allocations pa WHERE pa.payment_id=p.id AND pa.trip_id=?)""", (trip_id,)).fetchall():
+        mine['p%d' % r['id']] = dict(r)
+    to_reverse, to_insert = [], []
+    for d in pay_deletes:
+        if d not in mine:
+            return False, 'That payment was recorded in the ledger (or no longer exists), so it cannot be removed here.'
+        to_reverse.append(int(d[1:]))
+    for n, row in enumerate(pay_rows, 1):
+        label = f'Payment entry {n}: '
+        if row['id']:
+            cur = mine.get(row['id'])
+            if cur is None:
+                return False, label + 'that payment was recorded in the ledger, so it can only be changed there.'
+            same = (cur['date'] == row['date'] and abs((cur['amount'] or 0) - (_parse_money(row['amount'], 'x', required=False, allow_zero=True)[0] or 0)) < 0.005
+                    and (cur['mode'] or '') == row['mode'] and (cur['reference_id'] or '') == row['ref']
+                    and (('received' if cur['payment_type'] == 'received' else 'owner') == row['kind']))
+            if same:
+                continue
+            if row['id'] not in [('p%d' % x) for x in to_reverse]:
+                to_reverse.append(int(row['id'][1:]))
+        to_insert.append((n, row))
+    for pid in to_reverse:
+        ok, err = _reverse_trip_payment(conn, trip_id, pid)
+        if not ok:
+            return False, err
+    for n, row in to_insert:
+        label = f'Payment entry {n}: '
+        fm = MultiDict({'date': row['date'], 'amount': row['amount'], 'mode': row['mode'], 'reference_id': row['ref']})
+        if row['kind'] == 'owner':
+            if t['type'] != VEHICLE_TYPE_HIRED or not t['owner_vendor_id']:
+                return False, label + 'this trip has no hired-vehicle owner, so there is nobody to pay. Choose the owner first.'
+            if trip_id not in {x['id'] for x in _vendor_pending_trips(conn, t['owner_vendor_id'])}:
+                return False, label + 'nothing is left to pay the owner on this trip.'
+            ok, err = _insert_vendor_payment_from_form(conn, t['owner_vendor_id'], fm, only_trip_id=trip_id, entered_from='trip')
+        else:
+            if not t['party_id']:
+                return False, label + 'this trip has no party, so there is no payment to receive.'
+            if trip_id not in {x['id'] for x in _party_pending_trips(conn, t['party_id'])}:
+                return False, label + 'nothing is left to receive on this trip.'
+            ok, err = _insert_party_payment_from_form(conn, t['party_id'], fm, only_trip_id=trip_id, entered_from='trip')
+        if not ok:
+            return False, label + err
+    return True, None
+
+
+def _trip_form_error_page(mode, f, error, trip_id=None):
+    """Re-draw the trip form after a save failed, keeping what was typed — including the payment rows — and opening it ready to edit."""
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    conn2 = get_db()
+    employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+    vehicle_type_map = _vehicle_type_map(conn2)
+    conn2.close()
+    custom_items = [{'description': d, 'item_type': (f.getlist('other_type') + [''] * 99)[i] or 'charge', 'rate': (f.getlist('other_rate') + [''] * 99)[i] or 0,
+                     'quantity': (f.getlist('other_qty') + [''] * 99)[i] or 1, 'vendor_name': (f.getlist('other_vendor') + [''] * 99)[i] or ''}
+                    for i, d in enumerate(f.getlist('other_desc')) if (d or '').strip()]
+    return render_template('trip_form.html', mode=mode, t=f, custom_items=custom_items, vehicles=vehicles, parties=parties, vendors=vendors,
+                            combined_names=combined_names, employees=employees, vehicle_type_map=vehicle_type_map, return_to=f.get('return_to', ''),
+                            active='trips', error=error, entry_rows=_parse_trip_entries(f)[0], entry_deleted=f.getlist('entry_delete'),
+                            pay=(_trip_pay_for(trip_id) if trip_id else None))
+
 
 def _save_trip_custom_items(conn, trip_id, form):
     """Replace a trip's custom "Others" line items (stored in invoice_items, the same table the
@@ -6445,14 +6726,25 @@ def _get_vendor_ledger_entries(vendor_id, conn=None):
     # trip — that means the fuel/driver advance was paid by the owner out of their own freight
     # money, not a separate expense we owe them for. It's already inside the Trip Bill credit
     # below; counting it again here would double it.
-    fuel = conn.execute("""SELECT t.id, t.date, t.lr_number, t.fuel_amount, t.type, v.vehicle_no
-                           FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                           WHERE t.fuel_vendor_id=? AND (t.owner_vendor_id IS NULL OR t.owner_vendor_id != t.fuel_vendor_id)
-                           ORDER BY t.date""", (vendor_id,)).fetchall()
-    adv = conn.execute("""SELECT t.id, t.date, t.lr_number, t.driver_adv_amount, t.type, v.vehicle_no
-                          FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
-                          WHERE t.driver_adv_vendor_id=? AND (t.owner_vendor_id IS NULL OR t.owner_vendor_id != t.driver_adv_vendor_id)
-                          ORDER BY t.date""", (vendor_id,)).fetchall()
+    # One line per fuel / driver-advance PART owed to this vendor (see _cost_parts): the trip's own vendor's share of the total, and each dated entry
+    # added on the trip's screen whose vendor is this one. A trip with no entries gives exactly the one line it always did.
+    try:
+        cost_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.type, v.vehicle_no, t.owner_vendor_id, t.fuel_vendor_id, t.fuel_amount,
+                                      t.driver_adv_vendor_id, t.driver_adv_amount
+                               FROM trips t LEFT JOIN vehicles v ON t.vehicle_id=v.id
+                               WHERE t.fuel_vendor_id=? OR t.driver_adv_vendor_id=?
+                                  OR t.id IN (SELECT trip_id FROM trip_cost_entries WHERE vendor_id=?)
+                               ORDER BY t.date""", (vendor_id, vendor_id, vendor_id)).fetchall()
+    except sqlite3.OperationalError:
+        cost_trips = []
+    cost_entries = _load_cost_entries(conn, [t['id'] for t in cost_trips])
+    fuel, adv = [], []
+    for t in cost_trips:
+        parts = _cost_parts(t, cost_entries.get(t['id'], []))
+        for kind, bucket, key in (('fuel', fuel, 'fuel_amount'), ('driver_adv', adv, 'driver_adv_amount')):
+            for (pv, pamt, pdate, _eid) in parts[kind]:
+                if pv == vendor_id and (t['owner_vendor_id'] is None or t['owner_vendor_id'] != pv):
+                    bucket.append({'id': t['id'], 'date': pdate, 'lr_number': t['lr_number'], key: pamt, 'type': t['type'], 'vehicle_no': t['vehicle_no']})
     owner_trips = conn.execute("""SELECT t.id, t.date, t.lr_number, t.rate_type, t.fixed_rate_amount, t.owner_rate,
                                   t.owner_rate_type, t.owner_fixed_amount,
                                   t.quantity, t.paid_to_owner, t.type, v.vehicle_no,
@@ -6548,6 +6840,7 @@ def _get_vendor_ledger_entries(vendor_id, conn=None):
         entries.append({'date': a['date'], 'detail': detail, 'debit': 0, 'credit': a['driver_adv_amount'] or 0,
                          'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(a['id'], ''), 'vehicle_type': a['type'] or '',
                          'link': url_for('trip_view', trip_id=a['id'])})
+    owner_cost_entries = _load_cost_entries(conn, [o['id'] for o in owner_trips])
     for o in owner_trips:
         owed = o['owner_fixed_amount'] if (o['owner_rate_type'] or 'PER_MT')=='FIXED' else (o['owner_rate'] or 0) * (o['quantity'] or 0)
         if owed:
@@ -6571,18 +6864,14 @@ def _get_vendor_ledger_entries(vendor_id, conn=None):
             # different vendor (who also gets their own payable via the fuel/adv loops above). The
             # ONLY case that's excluded is the vendor field explicitly set to the owner himself —
             # that's the deliberate signal that he paid it out of his own freight money.
-            if o['fuel_vendor_id'] != vendor_id and o['fuel_amount']:
-                fdetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Fuel (Company Paid)"
-                entries.append({'date': o['date'], 'detail': fdetail,
-                                 'debit': o['fuel_amount'], 'credit': 0,
-                                 'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
-                                 'link': url_for('trip_view', trip_id=o['id'])})
-            if o['driver_adv_vendor_id'] != vendor_id and o['driver_adv_amount']:
-                adetail = f"Trip: {_lr_label(o['lr_number'], o['id'])} — Driver Advance (Company Paid)"
-                entries.append({'date': o['date'], 'detail': adetail,
-                                 'debit': o['driver_adv_amount'], 'credit': 0,
-                                 'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
-                                 'link': url_for('trip_view', trip_id=o['id'])})
+            oparts = _cost_parts(o, owner_cost_entries.get(o['id'], []))
+            for kind, label in (('fuel', 'Fuel'), ('driver_adv', 'Driver Advance')):
+                for (pv, pamt, pdate, _eid) in oparts[kind]:
+                    if pv != vendor_id and pamt:
+                        entries.append({'date': pdate if _eid else o['date'], 'detail': f"Trip: {_lr_label(o['lr_number'], o['id'])} — {label} (Company Paid)",
+                                         'debit': pamt, 'credit': 0,
+                                         'kind': 'Expense Adj.', 'ref': trip_invoice_no.get(o['id']) or o['lr_number'] or '', 'vehicle_type': o['type'] or '',
+                                         'link': url_for('trip_view', trip_id=o['id'])})
     for it in other_items:
         detail = f"Trip: {_lr_label(it['lr_number'], it['trip_id'])} — {it['description']}"
         amt = it['amount'] or 0
@@ -6790,11 +7079,52 @@ def _invoice_numbers_error(f):
             return f'{label} cannot be more than {cap}.'
     return None
 
+def _load_cost_entries(conn, trip_ids=None):
+    """{trip_id: [row, ...]} — the dated fuel / driver-advance entries added on trips' own screens (oldest first). A database that does not have the
+    table yet behaves as if no trip has any entry, i.e. exactly as before."""
+    try:
+        if trip_ids is None:
+            rows = conn.execute("SELECT id, trip_id, kind, date, vendor_id, amount, liters, ref FROM trip_cost_entries ORDER BY date, id").fetchall()
+        else:
+            ids = list(trip_ids)
+            if not ids:
+                return {}
+            rows = conn.execute(f"SELECT id, trip_id, kind, date, vendor_id, amount, liters, ref FROM trip_cost_entries WHERE trip_id IN ({','.join('?' * len(ids))}) ORDER BY date, id", ids).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    out = {}
+    for r in rows:
+        out.setdefault(r['trip_id'], []).append(r)
+    return out
+
+
+def _cost_parts(trip, entries):
+    """What a trip's fuel and driver-advance TOTALS are made of, and which vendor each part is owed to: {'fuel': [(vendor_id, amount, date, entry_id)], 'driver_adv': [...]}.
+    trips.fuel_amount / driver_adv_amount stay the totals everything else reads; the entries added on the trip's own screen are parts of them, each with its own
+    vendor and date, and whatever is left over (everything on a trip that has no entries — i.e. every trip entered the old way) belongs to the trip's own
+    fuel / driver-advance vendor, dated the trip's date. A trip with no entries therefore gives exactly the single (vendor, total) pair it always did."""
+    out = {}
+    for kind, vcol, acol in (('fuel', 'fuel_vendor_id', 'fuel_amount'), ('driver_adv', 'driver_adv_vendor_id', 'driver_adv_amount')):
+        total = trip[acol] or 0
+        parts = [(e['vendor_id'], e['amount'] or 0, e['date'] or trip['date'], e['id']) for e in entries if e['kind'] == kind]
+        rest = round(total - sum(p[1] for p in parts), 2)
+        if rest > 0.004:
+            parts.insert(0, (trip[vcol], rest, trip['date'], None))
+        elif not parts and trip[vcol] is not None:
+            parts.append((trip[vcol], 0, trip['date'], None))      # a vendor named with a 0 amount still has its (zero) line, as it always did
+        out[kind] = parts
+    return out
+
+
 _OWNER_OWED_SQL = "(CASE WHEN t.owner_rate_type='FIXED' THEN COALESCE(t.owner_fixed_amount,0) ELSE COALESCE(t.owner_rate,0)*COALESCE(t.quantity,0) END)"
 # Fuel / driver advance the COMPANY paid on an owner-hire trip is deducted from what the owner is owed
 # (see _get_vendor_ledger_entries) — the payment popup has to net it too or it over-states the dues.
-_OWNER_COMPANY_PAID_SQL = ("(CASE WHEN COALESCE(t.fuel_vendor_id,0) != t.owner_vendor_id THEN COALESCE(t.fuel_amount,0) ELSE 0 END"
-                           " + CASE WHEN COALESCE(t.driver_adv_vendor_id,0) != t.owner_vendor_id THEN COALESCE(t.driver_adv_amount,0) ELSE 0 END)")
+_OWNER_COMPANY_PAID_SQL = (
+    # legacy part (the trip's own fuel / driver-advance vendor) + the dated entries, each counting unless its vendor is the owner himself
+    "(CASE WHEN COALESCE(t.fuel_vendor_id,0) != t.owner_vendor_id THEN MAX(COALESCE(t.fuel_amount,0) - COALESCE((SELECT SUM(e.amount) FROM trip_cost_entries e WHERE e.trip_id=t.id AND e.kind='fuel'),0), 0) ELSE 0 END"
+    " + COALESCE((SELECT SUM(e.amount) FROM trip_cost_entries e WHERE e.trip_id=t.id AND e.kind='fuel' AND COALESCE(e.vendor_id,0) != t.owner_vendor_id),0)"
+    " + CASE WHEN COALESCE(t.driver_adv_vendor_id,0) != t.owner_vendor_id THEN MAX(COALESCE(t.driver_adv_amount,0) - COALESCE((SELECT SUM(e.amount) FROM trip_cost_entries e WHERE e.trip_id=t.id AND e.kind='driver_adv'),0), 0) ELSE 0 END"
+    " + COALESCE((SELECT SUM(e.amount) FROM trip_cost_entries e WHERE e.trip_id=t.id AND e.kind='driver_adv' AND COALESCE(e.vendor_id,0) != t.owner_vendor_id),0))")
 
 def _party_pending_trips(conn, party_id):
     """Trips this party still owes on, oldest first — the rows the Add Payment popup offers."""
@@ -6935,13 +7265,16 @@ def _ticked_ids(f):
             out.append(tid)
     return out
 
-def _insert_party_payment_from_form(conn, party_id, f):
+def _insert_party_payment_from_form(conn, party_id, f, only_trip_id=None, entered_from=None):
     """Records one payment received from a party and applies it to the party's trips. Trips the
     user ticked are paid first (in ticked order, capped at each trip's pending); whatever is left
     — or the whole amount if nothing was ticked — then flows to the party's other pending trips,
     oldest first, so the Trips screen and the Ledger can't drift apart. Only a genuine surplus
     (more than every trip owes — e.g. an advance or an opening-balance settlement) stays
-    unallocated. Returns (ok, error_message_or_None) — does not commit or close conn."""
+    unallocated. Returns (ok, error_message_or_None) — does not commit or close conn.
+
+    only_trip_id (a payment entered on a trip's own screen): the money is applied to THAT trip only, capped at what it still owes; anything above
+    that stays unallocated on the ledger as an advance, like any other surplus. The payment is the same dated `payments` row either way."""
     if not conn.execute("SELECT 1 FROM parties WHERE id=?", (party_id,)).fetchone():
         return False, 'Party not found.'
     total_amount, err = _validated_payment_basics(f)
@@ -6956,11 +7289,16 @@ def _insert_party_payment_from_form(conn, party_id, f):
                         (f.get('date'), 'received', total_amount, party_id, f.get('mode'),
                          f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
     payment_id = cur.lastrowid
+    if entered_from:                       # 'trip' = typed on a trip's own screen (editable there, read-only everywhere else)
+        conn.execute("UPDATE payments SET entered_from=? WHERE id=?", (entered_from, payment_id))
     # Pending is computed live (billed_amount - payment_received - party_advance) since it isn't a
     # stored column. Ticked trips must belong to THIS party; anything else is ignored.
     pending = {t['id']: t['pending'] for t in _party_pending_trips(conn, party_id)}
-    order = [tid for tid in _ticked_ids(f) if tid in pending]
-    order += [tid for tid in pending if tid not in order]
+    if only_trip_id is not None:
+        order = [only_trip_id] if only_trip_id in pending else []
+    else:
+        order = [tid for tid in _ticked_ids(f) if tid in pending]
+        order += [tid for tid in pending if tid not in order]
     remaining = total_amount
     allocated_total = 0
     for tid in order:
@@ -6998,14 +7336,17 @@ def add_party_payment(party_id):
     conn.close()
     return render_template('add_payment.html', name=party['name'], role='Party', action_url=f'/payment/party/{party_id}', active='accounts')
 
-def _insert_vendor_payment_from_form(conn, vendor_id, f):
+def _insert_vendor_payment_from_form(conn, vendor_id, f, only_trip_id=None, entered_from=None):
     """Records one payment made to a vendor and applies it: ticked owner-hire trips first (capped
     at what is still owed on each, net of fuel/advance the company paid), then the vendor's other
     pending owner-hire trips, then the vendor's unpaid maintenance / tyre / battery / service /
     insurance bills, then the vendor's Pending expense bills (oldest first) — so Maintenance's
     "unpaid", the Expenses page's "Pending Bills" and the Ledger all agree. Only a
     genuine surplus stays unallocated. Returns (ok, error_message_or_None) — does not commit or
-    close conn."""
+    close conn.
+
+    only_trip_id (a payment to the owner entered on a hired trip's own screen): applied to THAT owner-hire trip only, capped at what it still owes;
+    the vendor's other trips, maintenance bills and expense bills are left alone and any surplus stays unallocated."""
     if not conn.execute("SELECT 1 FROM vendors WHERE id=?", (vendor_id,)).fetchone():
         return False, 'Vendor not found.'
     total_amount, err = _validated_payment_basics(f)
@@ -7020,9 +7361,14 @@ def _insert_vendor_payment_from_form(conn, vendor_id, f):
                         (f.get('date'), 'paid', total_amount, vendor_id, f.get('mode'),
                          f.get('reference_id') or None, f.get('remarks') or None, session.get('user_id'), now))
     payment_id = cur.lastrowid
+    if entered_from:
+        conn.execute("UPDATE payments SET entered_from=? WHERE id=?", (entered_from, payment_id))
     pending = {t['id']: t['pending'] for t in _vendor_pending_trips(conn, vendor_id)}
-    order = [tid for tid in _ticked_ids(f) if tid in pending]
-    order += [tid for tid in pending if tid not in order]
+    if only_trip_id is not None:
+        order = [only_trip_id] if only_trip_id in pending else []
+    else:
+        order = [tid for tid in _ticked_ids(f) if tid in pending]
+        order += [tid for tid in pending if tid not in order]
     remaining = total_amount
     allocated_total = 0
     for tid in order:
@@ -7035,7 +7381,7 @@ def _insert_vendor_payment_from_form(conn, vendor_id, f):
                      (payment_id, tid, alloc, session.get('user_id'), now))
         remaining -= alloc
         allocated_total += alloc
-    for m in _vendor_pending_maintenance(conn, vendor_id):
+    for m in (_vendor_pending_maintenance(conn, vendor_id) if only_trip_id is None else []):
         if remaining <= 0.004:
             break
         alloc = round(min(m['pending'], remaining), 2)
@@ -7045,7 +7391,7 @@ def _insert_vendor_payment_from_form(conn, vendor_id, f):
                      (payment_id, m['id'], alloc, session.get('user_id'), now))
         remaining -= alloc
         allocated_total += alloc
-    for o in _vendor_pending_overheads(conn, vendor_id):
+    for o in (_vendor_pending_overheads(conn, vendor_id) if only_trip_id is None else []):
         if remaining <= 0.004:
             break
         alloc = round(min(o['pending'], remaining), 2)
@@ -7113,8 +7459,13 @@ def payment_view(payment_id):
                             'trip_id': None, 'from_loc': '', 'to_loc': ''})
     conn.close()
     leftover = (p['amount'] or 0) - (p['allocated_amount'] or 0)
+    # a payment typed on a trip's own screen says so here — it is changed there, never in the ledger
+    from_trip = None
+    if 'entered_from' in p.keys() and p['entered_from'] == 'trip':
+        first = next((a for a in allocations if a.get('trip_id')), None)
+        from_trip = {'trip_id': first['trip_id'], 'label': first['lr_number'] or ('Trip #%s' % first['trip_id'])} if first else {'trip_id': None, 'label': 'a trip'}
     return render_template('payment_view.html', p=p, entity_name=entity_name, entity_type=entity_type,
-                            entity_id=entity_id, allocations=allocations, leftover=max(leftover, 0), active='accounts')
+                            entity_id=entity_id, allocations=allocations, leftover=max(leftover, 0), active='accounts', from_trip=from_trip)
 
 
 def _insert_overhead_from_form(conn, f):
@@ -7231,6 +7582,10 @@ def delete_trip(trip_id):
         conn.close()
         return redirect(url_for('trips_list', error='has_toll', toll_count=toll_ct['c'],
                                  lr=(trip['lr_number'] if trip else '') or f'#{trip_id}'))
+    try:
+        conn.execute("DELETE FROM trip_cost_entries WHERE trip_id=?", (trip_id,))
+    except sqlite3.OperationalError:
+        pass
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
     conn.close()
@@ -10360,7 +10715,6 @@ def inject_challan_alerts():
         return {'challan_alert_vehicles': [], 'challan_alert_count': 0,
                 'login_token': session.get('login_at', ''), 'fleet_warning_marker': ''}
 
-IDLE_TIMEOUT_SECONDS = 3 * 60 * 60  # auto-logout after 3 hours with zero requests, any request resets it
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -10405,7 +10759,7 @@ _MODULE_ENDPOINTS = {
 _ENDPOINT_MODULE = {ep: m for m, eps in _MODULE_ENDPOINTS.items() for ep in eps}
 # open to every signed-in user (own profile, password, sign-in/out, static files)
 _COMMON_ENDPOINTS = {'settings_page', 'website_change_password', 'website_update_my_profile', 'app_profile', 'app_change_password',
-                     'app_update_profile', 'logout', 'static', 'app_manifest', 'favicon'}
+                     'app_update_profile', 'logout', 'static', 'app_manifest', 'favicon', 'session_ping'}
 # the whole-database Excel export is for Full Access users only (Limited users never get it)
 _FULL_ACCESS_ONLY_ENDPOINTS = {'export_excel'}
 # where each screen opens: (website, app)
@@ -10710,6 +11064,15 @@ def add_security_headers(resp):
         resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
     return resp
 
+@app.route('/session-ping')
+def session_ping():
+    """Tiny "am I still signed in?" check the pages make when they have been left untouched for a long time (static/session_guard.js). require_login runs
+    first, so a signed-out visitor is redirected to the login page instead of reaching this."""
+    resp = jsonify({'ok': True})
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
 @app.before_request
 def require_login():
     if request.endpoint == 'static' and request.path.startswith(_PRIVATE_UPLOAD_PREFIXES) and not session.get('user_id'):
@@ -10725,20 +11088,8 @@ def require_login():
     in_app_section = request.path.startswith('/app/')
     if not session.get('user_id'):
         return redirect(url_for('app_login') if in_app_section else url_for('login'))
-    # Idle timeout — genuinely idle time, not a fixed session length: every authenticated request
-    # (including "Remember me" sessions) refreshes this timestamp, so someone actively using the
-    # app never gets logged out mid-work; only real inactivity for 3+ hours does.
-    now = datetime.datetime.now()
-    last_activity = session.get('last_activity')
-    if last_activity:
-        try:
-            idle_seconds = (now - datetime.datetime.fromisoformat(last_activity)).total_seconds()
-        except (ValueError, TypeError):
-            idle_seconds = 0
-        if idle_seconds > IDLE_TIMEOUT_SECONDS:
-            session.clear()
-            return redirect(url_for('app_login') if in_app_section else url_for('login'))
-    session['last_activity'] = now.isoformat()
+    # No idle timeout: a signed-in person stays signed in until they log out. The session is permanent (cookie renewed on every request).
+    session.permanent = True
 
     # ---- user access level, read from the database on EVERY request so that an admin changing someone
     # to Read Only (or deactivating them) takes effect immediately, not at their next login.
@@ -10923,7 +11274,7 @@ def login():
                 conn.close()
                 return render_template('login.html', error='This account has been deactivated. Contact an administrator.')
             _auth_clear(conn, 'login_fail_user', username.lower())
-            session.permanent = bool(f.get('remember_me'))
+            session.permanent = True
             session['user_id'] = user['id']
             session['username'] = user['username']
             session['is_admin'] = user['is_admin']
@@ -11052,6 +11403,7 @@ def _finish_otp_login(phone, code):
     if (user['status'] or 'Active') == 'Inactive':
         conn.close()
         return None, 'This account has been deactivated. Contact an administrator.'
+    session.permanent = True
     session['user_id'] = user['id']
     session['username'] = user['username']
     session['is_admin'] = user['is_admin']
@@ -12521,10 +12873,22 @@ def edit_trip(trip_id):
         # The whole recompute-and-UPDATE (billed amount, payment/owner floors, vendors, custom items) lives in
         # _update_trip_from_form(), the single copy the mobile app also uses — this route used to carry its own
         # ~100-line duplicate of it, which is exactly how the two once drifted apart.
-        ok, err = _update_trip_from_form(conn, trip_id, f)
+        rows, deletes = _parse_trip_entries(f)
+        ok_c, err_c, plan = _plan_cost_entries(conn, trip_id, rows, deletes, f)
+        if not ok_c:
+            conn.close()
+            return _trip_form_error_page('edit', f, err_c, trip_id)
+        if plan and plan.get('totals'):
+            _write_cost_entries(conn, trip_id, plan)          # first: the update below floors fuel / driver advance at what the entries add up to
+        ok, err = _update_trip_from_form(conn, trip_id, _form_with_cost_totals(f, plan))
         if not ok:
             conn.close()
             return redirect(url_for('trips_list'))
+        ok_e, err_e = _apply_trip_payments(conn, trip_id, rows, deletes)
+        if not ok_e:
+            conn.rollback()                 # the edits are not saved either — nothing half-done
+            conn.close()
+            return _trip_form_error_page('edit', f, err_e, trip_id)
         conn.commit()
         conn.close()
         return_to = f.get('return_to')
@@ -12599,7 +12963,7 @@ def _trip_payment_block(conn, t, is_hired, owner_amount):
         return {'hidden': True}
     ledger_ok = bool(_module_level('Ledger'))
     rows = conn.execute("""SELECT pa.amount AS amt, p.id AS payment_id, p.date AS raw_date, p.payment_type, p.mode, p.reference_id, p.remarks,
-                                  p.amount AS payment_total, p.created_at, p.party_id, p.vendor_id, u.full_name AS by_name
+                                  p.amount AS payment_total, p.created_at, p.party_id, p.vendor_id, p.entered_from, u.full_name AS by_name
                            FROM payment_allocations pa JOIN payments p ON pa.payment_id=p.id
                            LEFT JOIN users u ON p.created_by=u.id
                            WHERE pa.trip_id=? ORDER BY p.date, p.id""", (t['id'],)).fetchall()
@@ -12609,7 +12973,8 @@ def _trip_payment_block(conn, t, is_hired, owner_amount):
                 'ref': r['reference_id'] or '', 'remarks': r['remarks'] or '', 'amount': r['amt'] or 0, 'payment_total': r['payment_total'] or 0,
                 'split': abs((r['payment_total'] or 0) - (r['amt'] or 0)) > 0.004,
                 'recorded': _pay_recorded_label(r['created_at']), 'by': (r['by_name'] or '').strip(),
-                'party_id': r['party_id'], 'vendor_id': r['vendor_id'], 'label': '', 'label_cls': ''}
+                'party_id': r['party_id'], 'vendor_id': r['vendor_id'], 'label': '', 'label_cls': '',
+                'origin': 'trip' if r['entered_from'] == 'trip' else 'ledger'}
 
     out = {'hidden': False, 'ledger_ok': ledger_ok, 'party': None, 'owner': None}
     if t.get('party_id'):
@@ -12631,7 +12996,7 @@ def _trip_payment_block(conn, t, is_hired, owner_amount):
                 r['label'], r['label_cls'] = 'Advance', 'adv'
             else:
                 r['label'], r['label_cls'] = 'Part payment', 'part'
-        out['party'] = {'rows': got, 'dated_total': dated, 'before_tracking': before, 'advance': advance,
+        out['party'] = {'rows': got, 'ledger_rows': [r for r in got if r['origin'] != 'trip'], 'dated_total': dated, 'before_tracking': before, 'advance': advance,
                         'received_total': round(stored + advance, 2), 'billed': billed, 'due': due,
                         'status': _pay_status(billed, due, (stored + advance) > 0.004),
                         'party_id': t['party_id'], 'party_name': t.get('party_name') or ''}
@@ -12645,17 +13010,53 @@ def _trip_payment_block(conn, t, is_hired, owner_amount):
         # the same rule as _OWNER_COMPANY_PAID_SQL, which the ledger's own pending list uses
         company_paid = 0
         if owner_vid:
-            if (t.get('fuel_vendor_id') or 0) != owner_vid:
-                company_paid += t.get('fuel_amount') or 0
-            if (t.get('driver_adv_vendor_id') or 0) != owner_vid:
-                company_paid += t.get('driver_adv_amount') or 0
+            tparts = _cost_parts(t, _load_cost_entries(conn, [t['id']]).get(t['id'], []))
+            for kind in ('fuel', 'driver_adv'):
+                for (pv, pamt, _pd, _eid) in tparts[kind]:
+                    if (pv or 0) != owner_vid:
+                        company_paid += pamt
         stored = t.get('paid_to_owner') or 0
         before = round(max(stored - dated, 0), 2)
         pending = round(owner_amount - stored - company_paid, 2)
-        out['owner'] = {'rows': got, 'dated_total': dated, 'before_tracking': before, 'paid_total': stored, 'owner_amount': owner_amount,
+        out['owner'] = {'rows': got, 'ledger_rows': [r for r in got if r['origin'] != 'trip'], 'dated_total': dated, 'before_tracking': before, 'paid_total': stored, 'owner_amount': owner_amount,
                         'company_paid': company_paid, 'pending': pending, 'vendor_id': owner_vid, 'owner_name': t.get('owner_name') or '',
                         'status': _pay_status(owner_amount, pending, (stored + company_paid) > 0.004)}
+    out['entries'] = _trip_editable_entries(conn, t)
     return out
+
+
+def _trip_editable_entries(conn, t):
+    """What can be edited on the trip's own screen: the payments typed on this trip (entered_from='trip', with what each one applied to this trip), the dated fuel /
+    driver-advance entries, and the "earlier total" of fuel / driver advance (the old single values, whatever the dated entries do not account for).
+    Payments recorded in the Ledger are NOT here — they are listed read-only in the history."""
+    tid = t['id']
+    pays = []
+    for r in conn.execute("""SELECT p.id, p.date, p.amount, p.mode, p.reference_id, p.payment_type,
+                                    (SELECT COALESCE(SUM(pa.amount),0) FROM payment_allocations pa WHERE pa.payment_id=p.id AND pa.trip_id=?) AS alloc
+                             FROM payments p WHERE p.entered_from='trip'
+                               AND EXISTS (SELECT 1 FROM payment_allocations pa WHERE pa.payment_id=p.id AND pa.trip_id=?)
+                             ORDER BY p.date, p.id""", (tid, tid)).fetchall():
+        pays.append({'id': 'p%d' % r['id'], 'kind': 'received' if r['payment_type'] == 'received' else 'owner', 'date': r['date'] or '', 'amount': r['amount'] or 0,
+                     'mode': r['mode'] or '', 'ref': r['reference_id'] or '', 'vendor': '', 'liters': '', 'orig_alloc': r['alloc'] or 0})
+    costs = []
+    try:
+        for r in conn.execute("""SELECT e.*, v.name AS vendor_name FROM trip_cost_entries e LEFT JOIN vendors v ON e.vendor_id=v.id
+                                 WHERE e.trip_id=? ORDER BY e.date, e.id""", (tid,)).fetchall():
+            costs.append({'id': 'c%d' % r['id'], 'kind': r['kind'], 'date': r['date'] or '', 'amount': r['amount'] or 0, 'mode': '', 'ref': r['ref'] or '',
+                          'vendor': r['vendor_name'] or '', 'liters': ('' if r['liters'] is None else r['liters']), 'orig_alloc': 0})
+    except sqlite3.OperationalError:
+        pass
+    fsum = sum(c['amount'] for c in costs if c['kind'] == 'fuel')
+    dsum = sum(c['amount'] for c in costs if c['kind'] == 'driver_adv')
+    fl = sum((c['liters'] or 0) for c in costs if c['kind'] == 'fuel')
+    try:
+        legacy_lit = float(str(t.get('fuel_liters') or '0').replace(',', '').strip() or 0) - fl
+    except ValueError:
+        legacy_lit = 0
+    legacy = {'fuel_amount': round(max((t.get('fuel_amount') or 0) - fsum, 0), 2), 'fuel_vendor': t.get('fuel_vendor_name') or '',
+              'fuel_liters': (round(legacy_lit, 2) if legacy_lit > 0.004 else ''), 'fuel_price': t.get('fuel_price') or 0,
+              'adv_amount': round(max((t.get('driver_adv_amount') or 0) - dsum, 0), 2), 'adv_vendor': t.get('driveradv_vendor_name') or ''}
+    return {'payments': pays, 'costs': costs, 'legacy': legacy}
 
 
 @app.template_global('blank_trip_pay')
@@ -12668,7 +13069,8 @@ def _blank_trip_pay():
             'party': {'rows': [], 'dated_total': 0, 'before_tracking': 0, 'advance': 0, 'received_total': 0, 'billed': 0, 'due': 0, 'status': '',
                       'party_id': None, 'party_name': ''},
             'owner': {'rows': [], 'dated_total': 0, 'before_tracking': 0, 'paid_total': 0, 'owner_amount': 0, 'company_paid': 0, 'pending': 0,
-                      'vendor_id': None, 'owner_name': '', 'status': ''}}
+                      'vendor_id': None, 'owner_name': '', 'status': ''},
+            'entries': {'payments': [], 'costs': [], 'legacy': {'fuel_amount': 0, 'fuel_vendor': '', 'fuel_liters': '', 'fuel_price': 0, 'adv_amount': 0, 'adv_vendor': ''}}}
 
 
 def _trip_pay_for(trip_id):
@@ -13396,7 +13798,7 @@ def app_login():
                 return render_template('app/login.html', error='This account has been deactivated. Contact an administrator.',
                                         year=datetime.date.today().year)
             _auth_clear(conn, 'login_fail_user', username.lower())
-            session.permanent = bool(f.get('remember_me'))
+            session.permanent = True
             session['user_id'] = user['id']
             session['username'] = user['username']
             session['is_admin'] = user['is_admin']
@@ -13480,7 +13882,7 @@ def app_signup():
                                  (username, generate_password_hash(password), 'Staff', 0, phone, email,
                                   full_name, 'Read Only', 'Active', now))
                     user_id = cur.lastrowid
-                    session.permanent = False
+                    session.permanent = True
                     session['user_id'] = user_id
                     session['username'] = username
                     session['is_admin'] = 0
@@ -13816,20 +14218,23 @@ def app_add_trip():
         form_error = None if dup else _trip_form_error(f)
         if dup or form_error:
             conn.close()
-            vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
-            conn2 = get_db()
-            employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
-            vehicle_type_map = _vehicle_type_map(conn2)
-            location_options = _get_route_locations(conn2)
-            conn2.close()
             error = form_error or (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
                                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
-            return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles],
-                                    combined_names=combined_names, employees=[e['name'] for e in employees],
-                                    vehicle_type_map=vehicle_type_map, location_options=location_options,
-                                    error=error,
-                                    mode='add', custom_items=[])
-        _insert_trip_from_form(conn, f)
+            return _app_trip_error_page('add', f, error)
+        # Same save order and same functions as the website's add_trip(): fuel / driver-advance entries first, then the trip, then the payments typed on it.
+        rows, deletes = _parse_trip_entries(f)
+        ok_c, err_c, plan = _plan_cost_entries(conn, None, rows, deletes, f)
+        if not ok_c:
+            conn.close()
+            return _app_trip_error_page('add', f, err_c)
+        new_id = _insert_trip_from_form(conn, _form_with_cost_totals(f, plan))
+        if plan and plan.get('totals'):
+            _write_cost_entries(conn, new_id, plan)
+        ok_e, err_e = _apply_trip_payments(conn, new_id, rows, deletes)
+        if not ok_e:
+            conn.rollback()                 # the trip is not saved either — nothing half-done
+            conn.close()
+            return _app_trip_error_page('add', f, err_e)
         conn.commit()
         conn.close()
         return redirect(url_for('app_dashboard', trip_added='1'))
@@ -13845,6 +14250,24 @@ def app_add_trip():
                             vehicle_type_map=vehicle_type_map, location_options=location_options,
                             error=None,
                             mode='add', custom_items=[])
+
+
+def _app_trip_error_page(mode, f, error, trip_id=None):
+    """Re-draw the phone Add / Update Trip wizard after a save failed, keeping everything typed — including the payment / fuel / driver-advance rows."""
+    vehicles, parties, vendors, combined_names = _get_autocomplete_lists()
+    conn2 = get_db()
+    employees = conn2.execute("SELECT name FROM employees ORDER BY name").fetchall()
+    vehicle_type_map = _vehicle_type_map(conn2)
+    location_options = _get_route_locations(conn2)
+    conn2.close()
+    # the "Other Items" rows exactly as typed (a row removed before saving stays removed)
+    custom_items = [{'description': d, 'item_type': (f.getlist('other_type') + [''] * 99)[i] or 'charge', 'rate': (f.getlist('other_rate') + [''] * 99)[i] or 0,
+                     'quantity': (f.getlist('other_qty') + [''] * 99)[i] or 1, 'vendor_name': (f.getlist('other_vendor') + [''] * 99)[i] or ''}
+                    for i, d in enumerate(f.getlist('other_desc')) if (d or '').strip()]
+    return render_template('app/trip_add.html', t=f, vehicles=[v['vehicle_no'] for v in vehicles], combined_names=combined_names,
+                            employees=[e['name'] for e in employees], vehicle_type_map=vehicle_type_map, location_options=location_options, error=error,
+                            mode=mode, trip_id=trip_id, custom_items=custom_items, entry_rows=_parse_trip_entries(f)[0], entry_deleted=f.getlist('entry_delete'),
+                            pay=(_trip_pay_for(trip_id) if trip_id else None))
 
 @app.route('/app/trips/<int:trip_id>/edit', methods=['GET', 'POST'])
 def app_edit_trip(trip_id):
@@ -13874,23 +14297,27 @@ def app_edit_trip(trip_id):
         dup = _duplicate_lr_trip(conn, f.get('lr_number'), exclude_trip_id=trip_id)
         form_error = None if dup else _trip_form_error(f, check_advance=False)
         if dup or form_error:
-            custom_item_rows = conn.execute("""SELECT ii.description, ii.amount, ii.item_type, ve.name as vendor_name
-                                               FROM invoice_items ii LEFT JOIN vendors ve ON ii.vendor_id=ve.id
-                                               WHERE ii.trip_id=?""", (trip_id,)).fetchall()
-            custom_items = [{'description': r['description'], 'item_type': r['item_type'], 'rate': r['amount'], 'quantity': 1,
-                              'vendor_name': r['vendor_name'] or ''} for r in custom_item_rows]
             conn.close()
-            vehicles, combined_names, employees, vehicle_type_map, location_options = _load_form_context()
             error = form_error or (f"LR Number \"{(f.get('lr_number') or '').strip()}\" is already used on trip #{dup['id']} "
                                     f"({dup['date']}, {dup['vehicle_no'] or 'no vehicle'}).")
-            return render_template('app/trip_add.html', t=f, vehicles=vehicles, combined_names=combined_names,
-                                    employees=employees, vehicle_type_map=vehicle_type_map,
-                                    location_options=location_options, error=error,
-                                    mode='edit', trip_id=trip_id, custom_items=custom_items, pay=_trip_pay_for(trip_id))
-        ok, error = _update_trip_from_form(conn, trip_id, f)
+            return _app_trip_error_page('edit', f, error, trip_id)
+        # Same save order and same functions as the website's edit_trip().
+        rows, deletes = _parse_trip_entries(f)
+        ok_c, err_c, plan = _plan_cost_entries(conn, trip_id, rows, deletes, f)
+        if not ok_c:
+            conn.close()
+            return _app_trip_error_page('edit', f, err_c, trip_id)
+        if plan and plan.get('totals'):
+            _write_cost_entries(conn, trip_id, plan)          # first: the update below floors fuel / driver advance at what the entries add up to
+        ok, error = _update_trip_from_form(conn, trip_id, _form_with_cost_totals(f, plan))
         if not ok:
             conn.close()
             return redirect(url_for('app_trips'))
+        ok_e, err_e = _apply_trip_payments(conn, trip_id, rows, deletes)
+        if not ok_e:
+            conn.rollback()                 # the edits are not saved either — nothing half-done
+            conn.close()
+            return _app_trip_error_page('edit', f, err_e, trip_id)
         conn.commit()
         conn.close()
         return redirect(url_for('app_trip_detail', trip_id=trip_id, updated='1'))

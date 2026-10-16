@@ -29,6 +29,12 @@
     </div>
   </div>
 
+  {% if from_trip %}
+  <div class="rd-section" style="margin-bottom:14px;">
+    <div class="rd-fld"><div class="lbl">Entered on a trip</div><div class="val" style="font-weight:600;">This payment was typed on {% if from_trip.trip_id %}<a href="/trips/edit/{{ from_trip.trip_id }}">{{ from_trip.label }}</a>{% else %}{{ from_trip.label }}{% endif %}. It can be edited or removed there; in the ledger it is read-only.</div></div>
+  </div>
+  {% endif %}
+
   <div class="rd-stat-row" style="grid-template-columns:repeat(3,minmax(0,1fr));">
     <div class="rd-stat"><div class="rd-stat-icon" style="background:#eaf1fb;color:#2a78d6;">&#128179;</div><div><div class="lbl">Total Amount</div><div class="val">&#8377;{{ '{:,.0f}'.format(p['amount'] or 0) }}</div></div></div>
     <div class="rd-stat"><div class="rd-stat-icon" style="background:#e8f5ee;color:var(--green);">&#10003;</div><div><div class="lbl">Allocated</div><div class="val">&#8377;{{ '{:,.0f}'.format(p['allocated_amount'] or 0) }}</div></div></div>

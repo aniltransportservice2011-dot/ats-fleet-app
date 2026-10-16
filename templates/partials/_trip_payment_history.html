@@ -44,14 +44,13 @@
     {% endif %}
     <div class="tph-ev nodate" data-tpl="lump-row" {% if b.before_tracking <= 0.004 %}hidden{% endif %}><div class="h"><span class="dt">No date</span><span class="amt" data-tpl="lump-amt">{{ amt(b.before_tracking) }}</span></div>
       <div class="m">{{ 'Received' if kind == 'party' else 'Paid' }} without a payment record (typed on the trip or imported)</div></div>
-    {% for r in b.rows %}
+    {% for r in b.ledger_rows %}
     <div class="tph-ev"><div class="h"><span class="dt">{{ r.date or 'No date' }}</span><span class="amt">{{ amt(r.amount) }}</span></div>
       <div class="m">{% if r.label %}<span class="tph-chip {{ r.label_cls }}">{{ r.label }}</span> {% endif %}{{ r.mode or '—' }}{% if r.ref %} · ref {{ r.ref }}{% endif %}{% if r.split %} · part of {{ amt(r.payment_total) }}{% endif %}</div>
       {% if r.remarks %}<div class="m">{{ r.remarks }}</div>{% endif %}
-      <div class="m">{% if r.recorded %}Recorded {{ r.recorded }}{% if r.by %} by {{ r.by }}{% endif %}{% else %}Recorded in the ledger{% endif %}{% if pay.ledger_ok %} · <a class="tph-lk" href="{{ ledger_href(kind, r, b) }}">Open in ledger</a>{% endif %}</div>
+      <div class="m"><span class="tph-lock" title="Recorded in the ledger — it can only be changed there">&#128274; From ledger</span> · {% if r.recorded %}Recorded {{ r.recorded }}{% if r.by %} by {{ r.by }}{% endif %}{% else %}Recorded in the ledger{% endif %}{% if pay.ledger_ok %} · <a class="tph-lk" href="{{ ledger_href(kind, r, b) }}">Open in ledger</a>{% endif %}</div>
     </div>
     {% endfor %}
-    <div class="tph-none" data-tpl="none" {% if b.rows or undated > 0.004 %}hidden{% endif %}>{{ 'No payment has been recorded for this trip yet.' if kind == 'party' else 'Nothing has been paid to the owner for this trip yet.' }} Payments you add in the ledger and apply to this trip will appear here with their date.</div>
   </div>
   {% endif %}
 </div>

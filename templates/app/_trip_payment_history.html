@@ -43,15 +43,15 @@
     {% endif %}
     <div class="tph2-ev nodate" data-tpl="lump-row" {% if b.before_tracking <= 0.004 %}hidden{% endif %}><div class="h"><span class="dt">No date</span><span class="amt" data-tpl="lump-amt">{{ tpamt(b.before_tracking) }}</span></div>
       <div class="m">{{ 'Received' if kind == 'party' else 'Paid' }} without a payment record (typed on the trip or imported)</div></div>
-    {% for r in b.rows %}
+    {# the wizard lists only the Ledger's payments here (the ones typed on the trip are in its editable list); the detail screen lists all of them #}
+    {% for r in (b.rows if tph2_card else b.ledger_rows) %}
     <div class="tph2-ev"><div class="h"><span class="dt">{{ r.date or 'No date' }}</span><span class="amt">{{ tpamt(r.amount) }}</span></div>
       <div class="m">{% if r.label %}<span class="tph2-chip {{ r.label_cls }}">{{ r.label }}</span> {% endif %}{{ r.mode or '—' }}{% if r.ref %} · ref {{ r.ref }}{% endif %}{% if r.split %} · part of {{ tpamt(r.payment_total) }}{% endif %}</div>
       {% if r.remarks %}<div class="m">{{ r.remarks }}</div>{% endif %}
-      <div class="m">{% if r.recorded %}Recorded {{ r.recorded }}{% if r.by %} by {{ r.by }}{% endif %}{% else %}Recorded in the ledger{% endif %}</div>
+      <div class="m">{% if r.origin == 'trip' %}Entered on this trip{% else %}&#128274; From ledger{% endif %} · {% if r.recorded %}Recorded {{ r.recorded }}{% if r.by %} by {{ r.by }}{% endif %}{% else %}Recorded in the ledger{% endif %}</div>
       {% if pay.ledger_ok %}<a class="tph2-lk" href="{{ tph_href(kind, r, b) }}">Open ledger &#8250;</a>{% endif %}
     </div>
     {% endfor %}
-    <div class="tph2-none" data-tpl="none" {% if b.rows or undated > 0.004 %}hidden{% endif %}>{{ 'No payment has been recorded for this trip yet.' if kind == 'party' else 'Nothing has been paid to the owner for this trip yet.' }} Payments you add in the ledger and apply to this trip will appear here with their date.</div>
   </div>
   {% endif %}
 </div>
