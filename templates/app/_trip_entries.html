@@ -1,0 +1,21 @@
+{# Phone Add / Update Trip wizard — the "Entries on this trip" list (payment received / payout to owner / fuel / driver advance), the same entries the website's
+   trip form has. Included inside the Payment Tracking section of templates/app/trip_add.html; the pop-up sheet and the script are in _trip_entries_sheet.html.
+   The stored totals travel with the form as hidden fields (so saving never changes them by itself); the "earlier total" of fuel / driver advance is rendered here by the
+   server, so a save always carries it. #}
+{% set lg = pay.entries.legacy if (pay is defined and pay and not pay.hidden and pay.entries) else {'fuel_amount': 0, 'fuel_vendor': '', 'fuel_liters': '', 'fuel_price': 0, 'adv_amount': 0, 'adv_vendor': ''} %}
+<input type="hidden" name="party_advance" value="{{ t.get('party_advance',0) or 0 }}">
+<input type="hidden" name="payment_received" value="{{ t.get('payment_received',0) or 0 }}">
+<input type="hidden" name="paid_to_owner" value="{{ t.get('paid_to_owner',0) or 0 }}">
+<div class="te tw-field full" id="teEntries">
+  <div class="te-hd">Entries on this trip</div>
+  <div id="teLegacy">
+    <input type="hidden" name="legacy_fuel_price" value="{{ lg.fuel_price }}">
+    <input type="hidden" name="legacy_fuel_amount" value="{{ lg.fuel_amount }}"><input type="hidden" name="legacy_fuel_vendor" value="{{ lg.fuel_vendor }}"><input type="hidden" name="legacy_fuel_liters" value="{{ lg.fuel_liters }}">
+    <input type="hidden" name="legacy_adv_amount" value="{{ lg.adv_amount }}"><input type="hidden" name="legacy_adv_vendor" value="{{ lg.adv_vendor }}">
+    <div class="te-item te-legacy" id="teLg-fuel" {% if not (lg.fuel_amount > 0 or lg.fuel_vendor) %}hidden{% endif %}></div>
+    <div class="te-item te-legacy" id="teLg-adv" {% if not (lg.adv_amount > 0 or lg.adv_vendor) %}hidden{% endif %}></div>
+  </div>
+  <div id="teRows"></div>
+  <div id="teDeleted"></div>
+  <button type="button" class="te-add" onclick="teOpen()">+ Add entry</button>
+</div>

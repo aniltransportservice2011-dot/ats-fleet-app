@@ -318,7 +318,8 @@ CREATE TABLE payments (
     created_at       TEXT,
     updated_by       INTEGER,
     updated_at       TEXT,
-    company_id       INTEGER NOT NULL REFERENCES companies(id)
+    company_id       INTEGER NOT NULL REFERENCES companies(id),
+    entered_from     TEXT              -- 'trip' = entered on a trip's own screen; NULL = entered in the Ledger
 );
 CREATE INDEX idx_payments_company ON payments(company_id);
 
@@ -1059,3 +1060,23 @@ CREATE INDEX IF NOT EXISTS idx_toll_trip ON toll_entries(trip_id);
 CREATE INDEX IF NOT EXISTS idx_urea_vehicle ON urea_transactions(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_batteries_vehicle ON batteries(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_insurance_vehicle ON insurance_policies(vehicle_id);
+
+-- Dated fuel / driver-advance entries of a trip (trips.fuel_amount / driver_adv_amount stay the totals everything else reads).
+CREATE TABLE trip_cost_entries (
+    id          SERIAL PRIMARY KEY,
+    trip_id     INTEGER NOT NULL REFERENCES trips(id),
+    kind        TEXT NOT NULL CHECK(kind IN ('fuel','driver_adv')),
+    date        TEXT,
+    vendor_id   INTEGER REFERENCES vendors(id),
+    amount      REAL NOT NULL,
+    liters      REAL,
+    ref         TEXT,
+    created_by  INTEGER,
+    created_at  TEXT,
+    updated_by  INTEGER,
+    updated_at  TEXT,
+    company_id  INTEGER NOT NULL REFERENCES companies(id)
+);
+CREATE INDEX idx_trip_cost_entries_company ON trip_cost_entries(company_id);
+CREATE INDEX idx_trip_cost_entries_trip ON trip_cost_entries(trip_id);
+CREATE INDEX idx_trip_cost_entries_vendor ON trip_cost_entries(vendor_id);

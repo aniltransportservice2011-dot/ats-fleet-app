@@ -163,7 +163,7 @@ check('tph-chip full">Full payment<' in h5, 'A: the only money on a trip that cl
 st, hh = page(W(HT))
 check('id="tph-owner"' in hh and 'Owner payment' in hh and 'ref OWN-1' in hh and '04 Oct 2026' in hh, 'A: a hired trip lists the owner payment too')
 st, hn = page(W(NT))
-check('No payment has been recorded for this trip yet.' in hn and 'will appear here with their date' in hn, 'A: a trip with no payment says so and where payments come from')
+check('No payment has been recorded' not in hn and 'will appear here with their date' not in hn, 'A: a trip with no payment shows no explanatory message (the totals simply show nothing received)')
 st, he = page(W(EMP))
 check(st == 200 and 'id="tph-party"' not in he, 'A: a trip with no party has no party section (and still opens)')
 # phone: edit wizard and detail
@@ -251,11 +251,11 @@ def form_of(html_text):
 fp = form_of(page(W(T2))[1])
 names = [n for n, _ in fp.fields]
 check('party_advance' in names and 'payment_received' in names, 'C: Party Advance and Payment Received are still inputs inside the trip form')
-check({'party_advance', 'payment_received'} <= fp.in_details_names, 'C: they sit inside the closed "Edit totals by hand" section (a closed <details> still submits them)')
-check('<details class="tph-manual"><summary>Edit totals by hand</summary>' in page(W(T2))[1], 'C: the section exists and is closed by default')
+check('<input type="hidden" name="party_advance"' in page(W(T2))[1] and '<input type="hidden" name="payment_received"' in page(W(T2))[1], 'C: the stored totals travel with the form as hidden fields, so saving never changes them by itself')
+check('Edit totals by hand' not in page(W(T2))[1] and 'id="tpEntries"' in page(W(T2))[1], 'C: payments are added as dated entries now (the by-hand boxes are gone)')
 # add mode (new trip) is exactly as before: plain inputs, no history, no details
 st, ah = page('/trips/add')
-check(st == 200 and '<details class="tph-manual"' not in ah and 'name="payment_received"' in ah and 'class="tph-tl"' not in ah, 'C: Add Trip keeps plain inputs and has no history list (only the live figures, see test_trip_payment_live.py)')
+check(st == 200 and 'name="payment_received"' in ah and 'class="tph-tl"' not in ah and 'id="tpEntries"' in ah, 'C: Add Trip has the entries list and no history list (only the live figures, see test_trip_payment_live.py)')
 # re-save the edit form exactly as shown -> no stored number and no payment/allocation row changes
 for tid in (T1, T2, T3, T4, HT):
     body = {}

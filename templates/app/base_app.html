@@ -1077,7 +1077,7 @@
 
     fetch(url, { credentials: 'same-origin' }).then(function (res) {
       if (myToken !== navToken) return null; // a newer navigate() already started; drop this one
-      if (!res.ok) { window.location.href = url; return null; } // e.g. session expired -> login
+      if (!res.ok || (res.redirected && /\/login/.test(new URL(res.url).pathname))) { window.location.href = url; return null; } // e.g. session expired -> login
       return res.text();
     }).then(function (html) {
       if (html == null || myToken !== navToken) return;
@@ -1189,5 +1189,6 @@
 </script>
 <script>window.AC_HINT = 'No matches — you can type a new one';</script>
 <script src="{{ asset_v('autocomplete.js') }}"></script>
+<script src="{{ asset_v('session_guard.js') }}"></script>
 </body>
 </html>

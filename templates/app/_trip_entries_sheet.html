@@ -1,0 +1,224 @@
+{# Phone wizard: the bottom sheet for adding / editing one entry, and the script that keeps the entry rows, the earlier-total lines and the live figures in step.
+   Mirrors the website's pop-up (templates/trip_form.html: tfOpenEntry / tfCommitEntry ...). Nothing is saved until the wizard's own Save / Update. #}
+<div class="vam-backdrop" id="teBackdrop" onclick="teClose()"></div>
+<div class="vam-modal" id="teSheet" role="dialog" aria-modal="true" aria-label="Entry">
+  <div class="vam-head">
+    <h2 id="teTitle">Add entry</h2>
+    <button type="button" class="vam-close" onclick="teClose()" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="vam-error" id="teErr" style="display:none; margin:0 18px 14px;"></div>
+  <div class="vam-form" id="teForm">
+    <div class="vam-grid" id="teGrid">
+      <div class="vam-field vam-field-full" id="teKindWrap"><label>Type</label>
+        <select id="teKind" onchange="teKindChanged()">
+          <option value="received">Payment received (party)</option><option value="owner">Payout to owner (hired trip)</option>
+          <option value="fuel">Fuel</option><option value="driver_adv">Driver advance</option>
+        </select>
+        <div class="te-fixed" id="teKindFixed" hidden></div></div>
+      <div class="vam-field vam-field-full" id="teWho" hidden><label id="teWhoLbl"></label><div class="te-fixed" id="teWhoVal"></div></div>
+      <div class="vam-field" id="teDateWrap"><label>Date <span class="req">*</span></label><input type="date" id="teDate"></div>
+      <div class="vam-field"><label>Amount (&#8377;) <span class="req">*</span></label><input type="number" inputmode="decimal" step="0.01" min="0.01" id="teAmount"></div>
+      <div class="vam-field te-only-pay"><label>Mode <span class="req">*</span></label><select id="teMode"><option>Bank Transfer</option><option>UPI</option><option>Cash</option><option>Cheque</option></select></div>
+      <div class="vam-field vam-field-full te-only-cost"><label id="teVendorLbl">Vendor paid</label><input type="text" id="teVendor" list="combined-list" maxlength="120" placeholder="Choose the vendor (blank = paid directly)" autocomplete="off"></div>
+      <div class="vam-field te-only-fuel"><label>Litres</label><input type="number" inputmode="decimal" step="0.01" min="0" id="teLiters" placeholder="e.g. 120"></div>
+      <div class="vam-field" id="teRefWrap"><label id="teRefLbl">Reference</label><input type="text" id="teRef" maxlength="100"></div>
+    </div>
+    <div class="vam-actions">
+      <button type="button" class="vam-btn-cancel" onclick="teClose()">Cancel</button>
+      <button type="button" class="vam-btn-save" onclick="teCommit()">Save entry</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var KIND = { received: 'Payment received', owner: 'Payout to owner', fuel: 'Fuel', driver_adv: 'Driver advance' };
+  var posted = {{ (entry_rows or [])|tojson }};              // rows as typed, when the wizard comes back after an error
+  var deleted = {{ (entry_deleted or [])|tojson }};
+  var existing = {{ (pay.entries.payments + pay.entries.costs if (pay is defined and pay and not pay.hidden and pay.entries) else [])|tojson }};
+  var form = document.getElementById('twForm');
+  var editing = null;                                        // {el: row element | null, legacy: 'fuel' | 'adv' | null}
+
+  function today() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+  function money(n) { n = Number(n) || 0; return '₹' + (Math.abs(n - Math.round(n)) < 1e-9 ? Math.round(n).toLocaleString('en-IN') : n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }
+  function dateLabel(iso) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); if (!m) return iso || ''; return parseInt(m[3], 10) + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m[2], 10) - 1] + ' ' + m[1]; }
+  function $(id) { return document.getElementById(id); }
+  function val(el, n) { var x = el.querySelector('[name="entry_' + n + '"]'); return x ? x.value : ''; }
+  function snapshotOf(r) { return JSON.stringify([r.kind, r.date || '', String(r.amount == null ? '' : r.amount), r.mode || '', r.ref || '', r.vendor || '', String(r.liters == null ? '' : r.liters)]); }
+  function currentSnapshot(el) { return JSON.stringify([val(el, 'kind'), val(el, 'date'), val(el, 'amount'), val(el, 'mode'), val(el, 'ref'), val(el, 'vendor'), val(el, 'liters')]); }
+  function isHired() { return $('twTypeHidden').value === 'hired'; }
+  function who(kind) {
+    if (kind === 'received') { var p = $('twParty'); return p && p.value.trim() ? p.value.trim() : ''; }
+    if (kind === 'owner') { var o = $('twOwnerName'); return o && o.value.trim() ? o.value.trim() : ''; }
+    return '';
+  }
+
+  // ---- the read-only line of one entry
+  function menuHtml() {
+    return '<div class="te-menu"><button type="button" class="te-dots" aria-label="Options" onclick="teMenu(this, event)">&#8942;</button>' +
+      '<div class="te-pop" hidden><button type="button" onclick="teEdit(this)">Edit</button><button type="button" class="danger" onclick="teDelete(this)">Delete</button></div></div>';
+  }
+  function renderRow(el) {
+    var kind = val(el, 'kind'), vend = val(el, 'vendor'), lit = val(el, 'liters'), ref = val(el, 'ref'), mode = val(el, 'mode'), sub = [];
+    if (kind === 'received' || kind === 'owner') { sub.push(mode); if (ref) sub.push('ref ' + ref); var w = who(kind); if (w) sub.push((kind === 'received' ? 'from ' : 'to ') + w); }
+    else { sub.push(vend ? vend : 'paid directly'); if (lit) sub.push(lit + ' L'); if (ref) sub.push(ref); }
+    el.querySelector('.te-body').innerHTML = '<div class="te-top"><span class="te-badge k-' + kind + '">' + KIND[kind] + '</span><span class="te-amt">' + money(val(el, 'amount')) + '</span></div>' +
+      '<div class="te-dt">' + esc(dateLabel(val(el, 'date'))) + '</div><div class="te-sub">' + esc(sub.join(' · ')) + '</div>';
+  }
+  window.teMenu = function (btn, ev) {
+    ev.stopPropagation();
+    var pop = btn.parentNode.querySelector('.te-pop'), was = pop.hidden;
+    document.querySelectorAll('.te-pop').forEach(function (p) { p.hidden = true; });
+    pop.hidden = !was;
+  };
+  document.addEventListener('click', function () { document.querySelectorAll('.te-pop').forEach(function (p) { p.hidden = true; }); });
+
+  // ---- build / update a row (hidden fields carry what the form posts; the line is only a read-only view of them)
+  function buildRow(row, orig) {
+    var el = document.createElement('div');
+    el.className = 'te-item';
+    el.setAttribute('data-entry-row', '1');
+    var h = function (name, v, f) { return '<input type="hidden" name="entry_' + name + '" ' + (f ? 'data-f="' + f + '" ' : '') + 'value="' + esc(v) + '">'; };
+    el.innerHTML = h('id', row.id || '') + h('kind', row.kind, 'kind') + h('date', row.date || '', 'date') + h('amount', row.amount == null ? '' : row.amount, 'amount') + h('mode', row.mode || '') +
+      h('ref', row.ref || '') + h('vendor', row.vendor || '', 'vendor') + h('liters', row.liters == null ? '' : row.liters) + '<div class="te-body"></div>' + menuHtml();
+    if (row.id) {
+      var o = orig || row;
+      el.setAttribute('data-id', row.id);
+      el.setAttribute('data-orig-alloc', o.orig_alloc || 0);
+      el.setAttribute('data-orig', snapshotOf(o));
+    }
+    renderRow(el);
+    $('teRows').appendChild(el);
+    return el;
+  }
+  function setRow(el, v) {
+    [['kind', v.kind], ['date', v.date], ['amount', v.amount], ['mode', v.mode], ['ref', v.ref], ['vendor', v.vendor], ['liters', v.liters]].forEach(function (p) {
+      el.querySelector('[name="entry_' + p[0] + '"]').value = p[1] == null ? '' : p[1];
+    });
+    renderRow(el);
+  }
+  // ---- the "earlier total" lines (the old single fuel / driver-advance values)
+  function renderLegacy() {
+    [['fuel', 'Fuel', 'legacy_fuel_amount', 'legacy_fuel_vendor', 'legacy_fuel_liters'], ['adv', 'Driver advance', 'legacy_adv_amount', 'legacy_adv_vendor', null]].forEach(function (c) {
+      var row = $('teLg-' + c[0]);
+      var amt = parseFloat(form.elements[c[2]].value) || 0, vend = form.elements[c[3]].value, lit = c[4] ? form.elements[c[4]].value : '';
+      row.hidden = !(amt > 0 || vend);
+      row.innerHTML = '<div class="te-body"><div class="te-top"><span class="te-badge k-' + (c[0] === 'fuel' ? 'fuel' : 'driver_adv') + '">' + c[1] + ' — earlier total</span><span class="te-amt">' + money(amt) + '</span></div>' +
+        '<div class="te-dt">No date</div><div class="te-sub">' + esc([vend || 'paid directly', lit ? lit + ' L' : ''].filter(Boolean).join(' · ')) + '</div></div>' + menuHtml();
+      row.setAttribute('data-legacy', c[0]);
+    });
+  }
+
+  // ---- the sheet
+  function setDateInput(v) {
+    var inp = $('teDate'); inp.value = v;
+    var t = inp.nextElementSibling;                           // the calendar enhancer's visible trigger
+    if (t && t.classList.contains('cal-trigger')) { t.textContent = v ? dateLabel(v) : 'Select date'; t.classList.toggle('cal-placeholder', !v); }
+  }
+  window.teKindChanged = function () {
+    var k = $('teKind').value, pay = (k === 'received' || k === 'owner');
+    var grid = $('teGrid');
+    grid.classList.toggle('te-pay', pay); grid.classList.toggle('te-cost', !pay); grid.classList.toggle('te-fuel', k === 'fuel');
+    var w = $('teWho'); w.hidden = !pay;
+    if (pay) { $('teWhoLbl').textContent = k === 'received' ? 'Received from' : 'Paid to'; $('teWhoVal').textContent = who(k) || (k === 'owner' ? 'No owner is set on this trip yet — choose the owner first.' : 'No party is set on this trip yet — choose the party first.'); }
+    $('teVendorLbl').textContent = k === 'fuel' ? 'Fuel vendor (which vendor was paid)' : 'Vendor paid (driver advance)';
+    $('teRefLbl').textContent = pay ? 'Reference / transaction ID' : 'Bill / note';
+  };
+  window.teOpen = function (target) {
+    $('teErr').style.display = 'none';
+    editing = { el: null, legacy: null };
+    var kind = 'received', v = { date: today(), amount: '', mode: 'Bank Transfer', ref: '', vendor: '', liters: '' }, fixed = false;
+    if (target && target.getAttribute('data-legacy')) {         // the earlier total: amount, vendor, litres only
+      var lg = target.getAttribute('data-legacy');
+      editing.legacy = lg; kind = lg === 'fuel' ? 'fuel' : 'driver_adv'; fixed = true;
+      v.amount = form.elements[lg === 'fuel' ? 'legacy_fuel_amount' : 'legacy_adv_amount'].value; v.vendor = form.elements[lg === 'fuel' ? 'legacy_fuel_vendor' : 'legacy_adv_vendor'].value;
+      v.liters = lg === 'fuel' ? form.elements.legacy_fuel_liters.value : '';
+      $('teTitle').textContent = (lg === 'fuel' ? 'Fuel' : 'Driver advance') + ' — earlier total';
+    } else if (target) {
+      editing.el = target; kind = val(target, 'kind'); fixed = !!target.getAttribute('data-id');
+      v = { date: val(target, 'date'), amount: val(target, 'amount'), mode: val(target, 'mode') || 'Bank Transfer', ref: val(target, 'ref'), vendor: val(target, 'vendor'), liters: val(target, 'liters') };
+      $('teTitle').textContent = 'Edit entry';
+    } else { $('teTitle').textContent = 'Add entry'; }
+    $('teKind').querySelector('option[value="owner"]').disabled = !isHired();
+    $('teKind').value = kind;
+    $('teKind').hidden = fixed;
+    var kf = $('teKindFixed'); kf.hidden = !fixed; kf.textContent = KIND[kind] + (editing.legacy ? ' (earlier total, no date)' : '');
+    setDateInput(v.date || today());
+    $('teDateWrap').hidden = !!editing.legacy; $('teRefWrap').hidden = !!editing.legacy;
+    $('teAmount').value = v.amount; $('teMode').value = v.mode || 'Bank Transfer';
+    $('teRef').value = v.ref; $('teVendor').value = v.vendor; $('teLiters').value = v.liters;
+    window.teKindChanged();
+    $('teBackdrop').classList.add('open'); $('teSheet').classList.add('open');
+    document.body.classList.add('a-scroll-lock');
+  };
+  window.teClose = function () {
+    $('teBackdrop').classList.remove('open'); $('teSheet').classList.remove('open');
+    document.body.classList.remove('a-scroll-lock'); editing = null;
+  };
+  function err(msg) { var e = $('teErr'); e.textContent = msg; e.style.display = ''; }
+  window.teCommit = function () {
+    var ed = editing; if (!ed) return;
+    var kind = $('teKind').value, amount = parseFloat($('teAmount').value);
+    var date = $('teDate').value, vendor = $('teVendor').value.trim(), liters = $('teLiters').value.trim();
+    if (!(amount > 0)) return err('Enter an amount greater than zero.');
+    if (ed.legacy) {
+      var fuel = ed.legacy === 'fuel';
+      form.elements[fuel ? 'legacy_fuel_amount' : 'legacy_adv_amount'].value = amount; form.elements[fuel ? 'legacy_fuel_vendor' : 'legacy_adv_vendor'].value = vendor;
+      if (fuel) form.elements.legacy_fuel_liters.value = liters;
+      renderLegacy(); window.teClose(); sync(); return;
+    }
+    if (!date) return err('Choose the date.');
+    if ((kind === 'received' || kind === 'owner') && !who(kind)) return err(kind === 'owner' ? 'Choose the owner on this trip first, then add the payout.' : 'Choose the party on this trip first.');
+    var pay = (kind === 'received' || kind === 'owner');
+    var v = { id: ed.el ? val(ed.el, 'id') : '', kind: kind, date: date, amount: String(amount), mode: pay ? $('teMode').value : '',
+              ref: $('teRef').value.trim(), vendor: pay ? '' : vendor, liters: kind === 'fuel' ? liters : '' };
+    if (ed.el) setRow(ed.el, v); else buildRow(v);
+    window.teClose(); sync();
+  };
+  window.teEdit = function (btn) { window.teOpen(btn.closest('[data-entry-row], [data-legacy]')); };
+  window.teDelete = function (btn) {
+    var row = btn.closest('[data-entry-row], [data-legacy]');
+    if (row.getAttribute('data-legacy')) {                       // the earlier total: "deleting" it sets it to nothing
+      var fuel = row.getAttribute('data-legacy') === 'fuel';
+      form.elements[fuel ? 'legacy_fuel_amount' : 'legacy_adv_amount'].value = 0; form.elements[fuel ? 'legacy_fuel_vendor' : 'legacy_adv_vendor'].value = '';
+      if (fuel) form.elements.legacy_fuel_liters.value = '';
+      renderLegacy(); sync(); return;
+    }
+    var id = row.getAttribute('data-id');
+    if (id) {                                                    // a saved entry: remember to delete it when the trip is saved
+      var h = document.createElement('input');
+      h.type = 'hidden'; h.name = 'entry_delete'; h.value = id;
+      h.setAttribute('data-kind', val(row, 'kind')); h.setAttribute('data-orig-alloc', row.getAttribute('data-orig-alloc') || 0);
+      $('teDeleted').appendChild(h);
+    }
+    row.remove(); sync();
+  };
+  // an edited saved entry is flagged so the live figures can model "undo the old one, apply the new one"; then the figures are redrawn
+  function sync() {
+    document.querySelectorAll('#teRows [data-entry-row]').forEach(function (r) { r.setAttribute('data-changed', r.hasAttribute('data-id') && r.getAttribute('data-orig') !== currentSnapshot(r) ? '1' : ''); });
+    if (window.twPayLive) window.twPayLive();
+  }
+  window.teSync = sync;
+
+  // Esc closes the sheet (the suggestion list closes first when it is open)
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && $('teSheet').classList.contains('open') && !document.querySelector('.autocomplete-list[style*="block"]')) window.teClose(); });
+
+  // ---- initial rows
+  renderLegacy();
+  var byId = {}; existing.forEach(function (e) { byId[e.id] = e; });
+  if (posted.length || deleted.length) {                         // back from an error: the rows exactly as typed, removals kept
+    posted.forEach(function (r) { buildRow(r, r.id ? byId[r.id] : null); });
+    deleted.forEach(function (id) {
+      var e = byId[id]; if (!e) return;
+      var h = document.createElement('input'); h.type = 'hidden'; h.name = 'entry_delete'; h.value = id; h.setAttribute('data-kind', e.kind); h.setAttribute('data-orig-alloc', e.orig_alloc || 0);
+      $('teDeleted').appendChild(h);
+    });
+    existing.forEach(function (e) {                              // an existing entry the posted form did not mention keeps showing
+      var isPosted = posted.some(function (r) { return r.id === e.id; }), isDeleted = deleted.indexOf(e.id) >= 0;
+      if (!isPosted && !isDeleted) buildRow(e);
+    });
+  } else { existing.forEach(function (e) { buildRow(e); }); }
+  sync();
+})();
+</script>

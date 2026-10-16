@@ -288,7 +288,8 @@ CREATE TABLE payments (
     created_at       TEXT,
     updated_by       INTEGER REFERENCES users(id),
     updated_at       TEXT,
-    company_id            INTEGER NOT NULL DEFAULT 1
+    company_id            INTEGER NOT NULL DEFAULT 1,
+    entered_from TEXT                      -- 'trip' = entered on a trip's own screen; NULL = entered in the Ledger
 );
 
 -- trip_id/maintenance_id: exactly one is set, never both, never neither (CHECK below) -- a
@@ -880,3 +881,23 @@ CREATE INDEX IF NOT EXISTS idx_batteries_vehicle ON batteries(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_insurance_vehicle ON insurance_policies(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_advances_employee_nocase ON advances(employee COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_salaries_employee_nocase ON salaries(employee COLLATE NOCASE);
+
+-- Dated fuel / driver-advance entries of a trip (added on the trip's own screen). trips.fuel_amount / driver_adv_amount stay the TOTALS everything else reads;
+-- these rows say what the total is made of, and which vendor each part is owed to. See migrate_trip_entries.sql.
+CREATE TABLE trip_cost_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id     INTEGER NOT NULL REFERENCES trips(id),
+    kind        TEXT NOT NULL CHECK(kind IN ('fuel','driver_adv')),
+    date        TEXT,
+    vendor_id   INTEGER REFERENCES vendors(id),
+    amount      REAL NOT NULL,
+    liters      REAL,
+    ref         TEXT,
+    company_id  INTEGER NOT NULL DEFAULT 1,
+    created_by  INTEGER REFERENCES users(id),
+    created_at  TEXT,
+    updated_by  INTEGER REFERENCES users(id),
+    updated_at  TEXT
+);
+CREATE INDEX idx_trip_cost_entries_trip ON trip_cost_entries(trip_id);
+CREATE INDEX idx_trip_cost_entries_vendor ON trip_cost_entries(vendor_id);

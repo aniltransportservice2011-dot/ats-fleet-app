@@ -61,6 +61,43 @@
     if (id) id.style.width = Math.max(d, 0) + '%';
   }
 
+  // The entry rows on the form (payment received / payout to owner / fuel / driver advance): new ones, stored ones that were edited, and stored ones that were
+  // removed. A stored payment that is edited or removed is first undone (its share of the trip's total comes back off) and an edited one is then applied again
+  // like a new row — exactly what the server does when the trip is saved.
+  function entryInfo(form) {
+    var info = { received: [], owner: [], removedReceived: 0, removedOwner: 0, fuel: [], driver_adv: [] };
+    if (!form.querySelectorAll) return info;
+    form.querySelectorAll('[data-entry-row]').forEach(function (r) {
+      var k = r.querySelector('[data-f="kind"]'), a = r.querySelector('[data-f="amount"]'), v = r.querySelector('[data-f="vendor"]');
+      var kind = k ? k.value : 'received', amt = num(a ? a.value : 0);
+      var stored = r.hasAttribute('data-id') ? r.getAttribute('data-id') : '';
+      if (kind === 'received' || kind === 'owner') {
+        if (stored && r.getAttribute('data-changed') !== '1') return;                      // an untouched stored payment: already in the totals
+        if (stored) { var oa = num(r.getAttribute('data-orig-alloc')); if (kind === 'received') info.removedReceived += oa; else info.removedOwner += oa; }
+        if (amt > 0) info[kind].push(amt);
+      } else if (amt > 0) {
+        info[kind].push({ amount: amt, vendor: v ? v.value : '' });
+      }
+    });
+    form.querySelectorAll('input[name="entry_delete"]').forEach(function (h) {
+      var oa = num(h.getAttribute('data-orig-alloc')), k = h.getAttribute('data-kind');
+      if (k === 'received') info.removedReceived += oa; else if (k === 'owner') info.removedOwner += oa;
+    });
+    return info;
+  }
+
+  // Rows are saved in order, each capped at what is still owed (the server does exactly this). A row that comes when NOTHING is left is refused
+  // by the server — flagged here as `blocked`; a row bigger than what is left is applied up to that, the rest stays in the ledger as an advance.
+  function allocate(amounts, owedNow) {
+    var left = Math.max(owedNow, 0), applied = 0, entered = 0, blocked = 0;
+    amounts.forEach(function (a, i) {
+      entered += a;
+      if (left <= EPS) { if (!blocked) blocked = i + 1; return; }
+      var ap = Math.min(a, left); applied += ap; left -= ap;
+    });
+    return { entered: round2(entered), applied: round2(applied), over: round2(entered - applied), blocked: blocked };
+  }
+
   // ---- party side ------------------------------------------------------------------------------------------------------------------------
   function party(form, billed) {
     var root = form.querySelector('[data-tpl-root="party"]');
@@ -68,9 +105,17 @@
     var adv = val(form, 'party_advance');
     var typed = val(form, 'payment_received');
     var eff = Math.max(typed, dated);                       // the server's floor
-    var received = round2(eff + adv);
-    var balance = round2(billed - eff - adv);
+    // new rows are applied to THIS trip only and never beyond what it still owes (the rest stays in the ledger as an advance) — as the server does
+    var info = entryInfo(form);
+    var remR = info.removedReceived;
+    typed = Math.max(typed - remR, 0); dated = Math.max(dated - remR, 0);
+    eff = Math.max(typed, dated);
+    var al = allocate(info.received, billed - eff - adv);
+    var entered = al.entered, applied = al.applied;
+    var received = round2(eff + adv + applied);
+    var balance = round2(billed - eff - adv - applied);
     return { root: root, dated: dated, advance: adv, typed: typed, effective: eff, undated: round2(Math.max(eff - dated, 0)),
+             entered: entered, applied: applied, over: al.over, blocked: al.blocked,
              received: received, balance: balance, floored: typed + EPS < dated, status: status(billed, balance, received > EPS) };
   }
 
@@ -82,23 +127,18 @@
     text(root, 'balance', money(f.balance > 0 ? f.balance : 0));
     tone(root, 'balance', f.balance > EPS);
     pill(root, f.status);
-    bar(root, billed, f.advance + f.undated, f.dated);
-    var none = part(root, 'none');
-    if (none) none.hidden = !(num(root.getAttribute('data-nrows')) === 0 && f.advance <= EPS && f.undated <= EPS);
+    bar(root, billed, f.advance + f.undated, f.dated + f.applied);
     var ar = part(root, 'adv-row');
     show(ar, f.advance > EPS); text(root, 'adv-amt', money(f.advance));
     var lr = part(root, 'lump-row');
     show(lr, f.undated > EPS); text(root, 'lump-amt', money(f.undated));
-    // on a brand-new trip there is nothing stored to go back to, so no "not saved yet" line there
-    var changed = !root.hasAttribute('data-add') && (Math.abs(f.advance - num(root.getAttribute('data-init-adv'))) > EPS ||
-                  Math.abs(f.typed - num(root.getAttribute('data-init-received'))) > EPS ||
-                  Math.abs(billed - num(root.getAttribute('data-init-billed'))) > EPS);
     var note = part(root, 'note');
     if (note) {
       var msg = '';
       if (root.hasAttribute('data-add') && f.advance > billed + 0.011) msg = 'Party advance can\u2019t be more than the trip bill.';    // the server refuses this on a new trip
+      else if (f.blocked) msg = 'Entry ' + f.blocked + ': nothing is left to receive on this trip. Remove it before saving.';
+      else if (f.over > EPS) msg = money(f.over) + ' of what you entered is more than this trip still owes. It stays in the ledger as an advance.';
       else if (f.floored) msg = '₹' + Math.round(f.dated).toLocaleString('en-US') + ' is already recorded in the ledger for this trip, so Payment Received can’t go lower than that.';
-      else if (changed) msg = 'Not saved yet — these figures change only when you save the trip. Leave the page and they go back to what was saved.';
       note.textContent = msg;
       note.hidden = !msg;
     }
@@ -106,12 +146,25 @@
   }
 
   // ---- owner side (hired trips) ------------------------------------------------------------------------------------------------------------
+  function norm(el) { return ((el || {}).value || '').trim().toLowerCase(); }
+  // Fuel / driver advance the COMPANY paid on this trip: every part whose vendor is not the owner himself (a blank vendor counts — it was paid directly).
+  // The parts are the "earlier total" (legacy_* fields) plus each dated entry with its own vendor.
   function companyPaid(form) {
-    var owner = ((field(form, 'owner_name') || {}).value || '').trim().toLowerCase();
+    var owner = norm(field(form, 'owner_name'));
     if (!owner) return 0;                                    // no owner chosen: nothing is "paid on his behalf"
-    var fv = ((field(form, 'fuel_vendor') || {}).value || '').trim().toLowerCase();
-    var dv = ((field(form, 'driver_adv_vendor') || {}).value || '').trim().toLowerCase();
-    return (fv !== owner ? val(form, 'fuel_amount') : 0) + (dv !== owner ? val(form, 'driver_adv_amount') : 0);
+    var sum = 0;
+    if (field(form, 'legacy_fuel_amount')) {
+      sum += (norm(field(form, 'legacy_fuel_vendor')) !== owner ? val(form, 'legacy_fuel_amount') : 0);
+      sum += (norm(field(form, 'legacy_adv_vendor')) !== owner ? val(form, 'legacy_adv_amount') : 0);
+    } else {
+      sum += (norm(field(form, 'fuel_vendor')) !== owner ? val(form, 'fuel_amount') : 0);
+      sum += (norm(field(form, 'driver_adv_vendor')) !== owner ? val(form, 'driver_adv_amount') : 0);
+    }
+    var info = entryInfo(form);
+    ['fuel', 'driver_adv'].forEach(function (k) {
+      info[k].forEach(function (e) { if ((e.vendor || '').trim().toLowerCase() !== owner) sum += e.amount; });
+    });
+    return sum;
   }
 
   function updateOwner(form, ownerAmount, isHired) {
@@ -121,27 +174,29 @@
     if (!isHired) return;
     var dated = num(root.getAttribute('data-dated'));
     var typed = val(form, 'paid_to_owner');
+    var info = entryInfo(form);
+    typed = Math.max(typed - info.removedOwner, 0); dated = Math.max(dated - info.removedOwner, 0);
     var eff = Math.max(typed, dated);
     var company = round2(companyPaid(form));
-    var pending = round2(ownerAmount - eff - company);
+    var al = allocate(info.owner, ownerAmount - eff - company);
+    var entered = al.entered, applied = al.applied;
+    var pending = round2(ownerAmount - eff - company - applied);
     text(root, 'owner-amount', money(ownerAmount));
     text(root, 'company', money(company));
-    text(root, 'paid', money(eff));
+    text(root, 'paid', money(eff + applied));
     text(root, 'owner-net', money(ownerAmount - company));
     text(root, 'pending', money(pending > 0 ? pending : 0));
     tone(root, 'pending', pending > EPS);
-    pill(root, status(ownerAmount, pending, (eff + company) > EPS));
+    pill(root, status(ownerAmount, pending, (eff + applied + company) > EPS));
     var undated = round2(Math.max(eff - dated, 0));
-    bar(root, ownerAmount, undated, dated);
+    bar(root, ownerAmount, undated, dated + applied);
     show(part(root, 'lump-row'), undated > EPS); text(root, 'lump-amt', money(undated));
-    var none = part(root, 'none');
-    if (none) none.hidden = !(num(root.getAttribute('data-nrows')) === 0 && undated <= EPS);
     var note = part(root, 'note');
     if (note) {
       var msg = '';
-      if (typed + EPS < dated) msg = '₹' + Math.round(dated).toLocaleString('en-US') + ' is already recorded in the ledger for this trip, so the amount paid can’t go lower than that.';
-      else if (!root.hasAttribute('data-add') && (Math.abs(typed - num(root.getAttribute('data-init-paid'))) > EPS || Math.abs(ownerAmount - num(root.getAttribute('data-init-owner'))) > EPS))
-        msg = 'Not saved yet — these figures change only when you save the trip.';
+      if (al.blocked) msg = 'Entry ' + al.blocked + ': nothing is left to pay the owner on this trip. Remove it before saving.';
+      else if (round2(entered - applied) > EPS) msg = money(round2(entered - applied)) + ' of what you entered is more than the owner is still owed. It stays in the ledger as an advance.';
+      else if (typed + EPS < dated) msg = '₹' + Math.round(dated).toLocaleString('en-US') + ' is already recorded in the ledger for this trip, so the amount paid can’t go lower than that.';
       note.textContent = msg;
       note.hidden = !msg;
     }

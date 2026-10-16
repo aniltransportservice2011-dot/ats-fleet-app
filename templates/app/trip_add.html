@@ -194,21 +194,6 @@
 
     <div class="tw-section collapsed">
       <div class="tw-section-head" onclick="twToggleSection(this)">
-        <h2><span class="tw-accordion-dot"></span>Fuel &amp; Driver Advance</h2>
-        <span class="tw-section-toggle">Expand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
-      </div>
-      <div class="tw-section-body">
-        <div class="tw-field"><label>Fuel Amount</label><input type="number" step="0.01" name="fuel_amount" value="{{ t.get('fuel_amount',0) or 0 }}"></div>
-        <div class="tw-field"><label>Fuel Vendor</label><input type="text" name="fuel_vendor" list="combined-list" value="{{ t.get('fuel_vendor_name','') or '' }}" placeholder="Blank = paid directly"></div>
-        <div class="tw-field"><label>Fuel Filled (Litres)</label><input type="text" name="fuel_liters" value="{{ t.get('fuel_liters','') or '' }}" placeholder="e.g. 120"></div>
-        <div class="tw-field"><label>Fuel Price (per Litre)</label><input type="number" step="0.01" name="fuel_price" value="{{ t.get('fuel_price',0) or 0 }}"></div>
-        <div class="tw-field"><label>Driver Advance</label><input type="number" step="0.01" name="driver_adv_amount" value="{{ t.get('driver_adv_amount',0) or 0 }}"></div>
-        <div class="tw-field"><label>Driver Adv. Vendor</label><input type="text" name="driver_adv_vendor" list="combined-list" value="{{ t.get('driveradv_vendor_name','') or '' }}"></div>
-      </div>
-    </div>
-
-    <div class="tw-section collapsed">
-      <div class="tw-section-head" onclick="twToggleSection(this)">
         <h2><span class="tw-accordion-dot"></span>Other Expenses</h2>
         <span class="tw-section-toggle">Expand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
       </div>
@@ -237,7 +222,6 @@
           </select></div>
         <div class="tw-field" id="twOwnerRateFld"><label>Owner Rate (per unit)</label><input type="number" step="0.01" class="tw-calc" name="owner_rate" id="twOwnerRate" value="{{ t.get('owner_rate',0) or 0 }}"></div>
         <div class="tw-field" id="twOwnerFixedFld" style="display:none;"><label>Owner Fixed Amount</label><input type="number" step="0.01" class="tw-calc" name="owner_fixed_amount" id="twOwnerFixed" value="{{ t.get('owner_fixed_amount',0) or 0 }}"></div>
-        <div class="tw-field full"><label>Advance / Paid to Owner</label><input type="number" step="0.01" name="paid_to_owner" value="{{ t.get('paid_to_owner',0) or 0 }}"></div>
         <div class="tw-hint">Owner Amount is what you owe this vehicle's owner — Per MT uses Quantity × Owner Rate, Fixed uses Owner Fixed Amount. Set independently of the party's own Freight Type.</div>
       </div>
     </div>
@@ -253,11 +237,8 @@
         {% set live_only = (mode != 'edit') %}
         {% set tph2_on = (not pay.hidden) %}
         {% if tph2_on %}<div class="tw-field full">{% set tph2_card = False %}{% include "app/_trip_payment_history.html" %}</div>{% endif %}
-        {# The two inputs stay in the form exactly as before (a closed <details> still submits them); tucked away once the history is shown, in plain view on a new trip. #}
-        {% if tph2_on and not live_only %}<details class="tph2-manual tw-field full"><summary>Edit totals by hand</summary><div class="tph2-fields">{% endif %}
-        <div class="tw-field"><label>Party Advance</label><input type="number" step="0.01" name="party_advance" value="{{ t.get('party_advance',0) or 0 }}"></div>
-        <div class="tw-field"><label>Payment Received</label><input type="number" step="0.01" name="payment_received" value="{{ t.get('payment_received',0) or 0 }}"></div>
-        {% if tph2_on and not live_only %}</div></details>{% endif %}
+        {# Payments, fuel and driver advances are added as dated entries (pop-up sheet); the stored totals travel as hidden fields. #}
+        {% include "app/_trip_entries.html" %}
         <div class="tw-field full"><label>LR Received</label>
           <select name="lr_received">
             <option value="" {% if t.get('lr_received')!='Yes' %}selected{% endif %}>No</option>
@@ -309,6 +290,8 @@
 <input type="hidden" name="return_to" value="">
 </form>
 
+{% include "app/_trip_entries_sheet.html" %}
+
 <datalist id="vehicle-list">{% for v in vehicles %}<option value="{{ v }}">{% endfor %}</datalist>
 <datalist id="combined-list">{% for n in combined_names %}<option value="{{ n }}">{% endfor %}</datalist>
 <datalist id="employee-list">{% for e in employees %}<option value="{{ e }}">{% endfor %}</datalist>
@@ -321,6 +304,7 @@
 </div>
 
 <script src="{{ asset_v('autocomplete.js') }}"></script>
+<script src="{{ asset_v('session_guard.js') }}"></script>
 <script src="{{ asset_v('trip_payment_live.js') }}"></script>
 <script>
 var VEHICLE_TYPE_MAP = {{ vehicle_type_map|tojson }};
@@ -571,6 +555,7 @@ var TW_DRAFT_KEY = 'fleetapp_trip_draft_v1';
 function twSaveDraft() {
   var data = {};
   document.querySelectorAll('#twForm [name]').forEach(function(el) {
+    if (/^(entry_|legacy_)/.test(el.name)) return;      // entries are rows of their own; a draft keeps only the plain fields
     if (el.name === 'other_desc' || el.name === 'other_type' || el.name === 'other_rate' || el.name === 'other_qty' || el.name === 'other_vendor') return;
     data[el.name] = el.type === 'checkbox' ? el.checked : el.value;
   });

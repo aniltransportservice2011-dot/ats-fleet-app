@@ -75,8 +75,14 @@ for path in glob.glob('templates/**/*.html', recursive=True):
     s = read(path)
     for mo in re.finditer(r'<input[^>]*\blist="([A-Za-z0-9_\-]+)"', s):
         lid = mo.group(1)
-        if f'id="{lid}"' not in s and 'include' not in s and '_modals' not in path:
-            bad.append((path, lid))
+        if f'id="{lid}"' in s or 'include' in s or '_modals' in path:
+            continue
+        # a fragment (_name.html) borrows its datalist from the page that includes it: every includer must define it
+        base = os.path.basename(path)
+        includers = [q_ for q_ in glob.glob('templates/**/*.html', recursive=True) if base.startswith('_') and ('/' + base) in read(q_) and q_ != path and 'include' in read(q_)]
+        if includers and all(f'id="{lid}"' in read(q_) for q_ in includers):
+            continue
+        bad.append((path, lid))
 check(not bad, f'every <input list> has its datalist in the same template: {bad[:5]}')
 
 print(f'\n{ok} passed, {fail} failed')

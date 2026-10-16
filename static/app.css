@@ -1972,3 +1972,31 @@ input[type="date"] { accent-color: var(--a-accent); }
 .tph2 [hidden] { display: none !important; }
 .tph2-sub { font-size: 0.72rem; color: var(--a-steel); margin-top: 6px; } .tph2-sub b { color: var(--a-ink); }
 .tph2-note { margin-top: 8px; font-size: 0.74rem; color: #8a5a00; background: rgba(237,161,0,0.13); border-radius: 8px; padding: 7px 9px; }
+
+/* Phone trip wizard — "Entries on this trip" (templates/app/_trip_entries.html / _trip_entries_sheet.html): payments, fuel and driver advances as dated rows with a
+   three-dot Edit / Delete menu, added and edited in a bottom sheet. */
+.te-hd { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--a-steel); margin-bottom: 8px; }
+.te-item { display: flex; align-items: flex-start; gap: 8px; background: var(--a-paper); border-radius: 12px; padding: 10px 10px 10px 12px; margin-bottom: 8px; position: relative; }
+.te-item[hidden] { display: none !important; }
+.te-body { flex: 1; min-width: 0; }
+.te-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.te-badge { display: inline-block; font-size: 0.66rem; font-weight: 800; border-radius: 6px; padding: 2px 8px; background: var(--a-white); border: 1px solid var(--a-line); color: var(--a-steel); }
+.te-badge.k-received { background: rgba(26,156,91,0.13); color: var(--a-green); border-color: transparent; }
+.te-badge.k-owner { background: rgba(42,120,214,0.13); color: var(--a-blue); border-color: transparent; }
+.te-badge.k-fuel { background: rgba(237,161,0,0.17); color: #8a5a00; border-color: transparent; }
+.te-badge.k-driver_adv { background: rgba(122,90,214,0.14); color: var(--a-purple); border-color: transparent; }
+.te-amt { font-weight: 800; font-size: 0.92rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.te-dt { font-size: 0.78rem; font-weight: 700; color: var(--a-ink); margin-top: 4px; }
+.te-sub { font-size: 0.74rem; color: var(--a-steel); margin-top: 1px; overflow-wrap: anywhere; }
+.te-menu { position: relative; flex: none; }
+.te-dots { border: none; background: transparent; color: var(--a-steel); font-size: 1.25rem; line-height: 1; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; padding: 0; font-weight: 800; }
+.te-dots:active { background: var(--a-line); }
+.te-pop { position: absolute; right: 0; top: 36px; z-index: 20; background: var(--a-white); border: 1px solid var(--a-line); border-radius: 12px; box-shadow: 0 8px 22px rgba(20,24,40,.18); min-width: 120px; overflow: hidden; }
+.te-pop[hidden] { display: none; }
+.te-pop button { display: block; width: 100%; text-align: left; border: none; background: none; padding: 12px 16px; font-size: 0.88rem; font-weight: 700; font-family: inherit; cursor: pointer; color: var(--a-ink); }
+.te-pop button + button { border-top: 1px solid var(--a-line); }
+.te-pop button.danger { color: var(--a-red); }
+.te-add { width: 100%; border: 1.5px dashed var(--a-accent); color: var(--a-accent); background: transparent; border-radius: 12px; padding: 12px; font-weight: 800; font-size: 0.86rem; font-family: inherit; cursor: pointer; }
+.te-fixed { padding: 11px 12px; border-radius: 10px; background: var(--a-white); border: 1px solid var(--a-line); font-weight: 700; font-size: 0.86rem; }
+.te-fixed[hidden], #teSheet [hidden] { display: none !important; }
+#teGrid.te-pay .te-only-cost, #teGrid.te-cost .te-only-pay, #teGrid:not(.te-fuel) .te-only-fuel { display: none; }

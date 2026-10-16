@@ -590,10 +590,26 @@ window.viewParam = function (name) {
     }
   }
 
+  // A soft-navigation answer is only usable when it is a real page of the app: a signed-out session answers with the login page (a redirect) and a failing
+  // server with an error — swapping those in used to leave the click looking dead. Anything else is a normal full page load of the same address.
+  function softOk(resp) {
+    if (!resp.ok) return false;
+    try { if (resp.redirected && /\/login/.test(new URL(resp.url).pathname)) return false; } catch (e) {}
+    return true;
+  }
+  // pop-ups: a signed-out / failing answer reloads the page (to the login screen) instead of drawing the login page inside the pop-up
+  function textOrReload(resp) {
+    if (!softOk(resp)) { window.location.reload(); return new Promise(function () {}); }
+    return resp.text();
+  }
   function goTo(url) {
     fetch(url, { headers: { 'X-Soft-Nav': '1' } })
-      .then(function(resp) { return resp.text(); })
-      .then(function(html) { swapContent(html, url, true); })
+      .then(function(resp) { if (!softOk(resp)) { window.location = url; return null; } return resp.text(); })
+      .then(function(html) {
+        if (html == null) return;
+        if (!/id=["']main-content["']/.test(html)) { window.location = url; return; }
+        swapContent(html, url, true);
+      })
       .catch(function() { window.location = url; });
   }
   window.goTo = goTo;
@@ -605,7 +621,7 @@ window.viewParam = function (name) {
     inner.innerHTML = '<div style="padding:40px;text-align:center;color:var(--steel);">Loading...</div>';
     panel.classList.add('open');
     fetch(url, { headers: { 'X-Soft-Nav': '1' } })
-      .then(function(resp) { return resp.text(); })
+      .then(textOrReload)
       .then(function(html) {
         var parser = new DOMParser();
         var doc = parser.parseFromString(html, 'text/html');
@@ -647,7 +663,7 @@ window.viewParam = function (name) {
     box.innerHTML = '<div style="padding:60px;text-align:center;color:var(--steel);">Loading...</div>';
     overlay.classList.add('open');
     fetch(url, { headers: { 'X-Soft-Nav': '1' } })
-      .then(function(resp) { return resp.text(); })
+      .then(textOrReload)
       .then(function(html) {
         var parser = new DOMParser();
         var doc = parser.parseFromString(html, 'text/html');
@@ -677,7 +693,7 @@ window.viewParam = function (name) {
     box.innerHTML = '<div style="padding:60px;text-align:center;color:var(--steel);">Loading...</div>';
     overlay.classList.add('open');
     fetch(url, { headers: { 'X-Soft-Nav': '1' } })
-      .then(function(resp) { return resp.text(); })
+      .then(textOrReload)
       .then(function(html) {
         var parser = new DOMParser();
         var doc = parser.parseFromString(html, 'text/html');
@@ -844,5 +860,6 @@ window.viewParam = function (name) {
 })();
 </script>
 <script src="{{ asset_v('autocomplete.js') }}"></script>
+<script src="{{ asset_v('session_guard.js') }}"></script>
 </body>
 </html>
